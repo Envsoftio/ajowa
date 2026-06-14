@@ -1,0 +1,5 @@
+.nuxt
+.output
+.netlify
+node_modules
+package-lock.json
