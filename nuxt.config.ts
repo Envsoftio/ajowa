@@ -106,6 +106,7 @@ export default defineNuxtConfig({
         'ConfirmDialog',
         'DataTable',
         'DatePicker',
+        'Dialog',
         'Drawer',
         'FileUpload',
         'IconField',

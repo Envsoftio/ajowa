@@ -36,6 +36,10 @@ export const shellNavigation: Record<AppShellType, AppNavItem[]> = {
   ],
   'admin-manager': [
     { label: 'Dashboard', to: '/admin/dashboard', icon: 'pi pi-home' },
+    { label: 'Society', to: '/admin/society', icon: 'pi pi-building' },
+    { label: 'Blocks', to: '/admin/blocks', icon: 'pi pi-th-large' },
+    { label: 'Flats', to: '/admin/flats', icon: 'pi pi-home' },
+    { label: 'Residents', to: '/admin/residents', icon: 'pi pi-users' },
     { label: 'Setup', to: '/setup', icon: 'pi pi-wrench' },
     { label: 'Password Change', to: '/change-password', icon: 'pi pi-key' },
   ],

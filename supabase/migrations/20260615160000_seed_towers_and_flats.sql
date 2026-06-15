@@ -1,0 +1,1 @@
+-- Seed data moved to supabase/seed.sql to ensure society_profile exists prior to insertion.

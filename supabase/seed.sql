@@ -151,6 +151,120 @@ begin
         occupancy_status = excluded.occupancy_status,
         updated_at = now();
 
+  -- Seed Tower 1 to 12 blocks and flats
+  declare
+    v_society_id uuid := '11111111-1111-1111-1111-111111111111';
+    v_block_id uuid;
+    v_tower_num integer;
+    v_floor_num integer;
+    v_flat_num integer;
+    v_flat_number text;
+    v_floor_label text;
+    v_unit_type text;
+    v_area numeric;
+  begin
+    for v_tower_num in 1..12 loop
+      insert into blocks (id, society_id, code, name, sort_order)
+      values (
+        ('40000000-0000-0000-0000-000000000' || lpad(v_tower_num::text, 3, '0'))::uuid,
+        v_society_id,
+        'T' || v_tower_num,
+        'Tower ' || v_tower_num,
+        v_tower_num + 2
+      )
+      on conflict (id) do update
+        set code = excluded.code,
+            name = excluded.name,
+            sort_order = excluded.sort_order,
+            updated_at = now()
+      returning id into v_block_id;
+
+      if v_tower_num <= 6 then
+        for v_floor_num in 1..14 loop
+          v_floor_label := v_floor_num::text;
+          for v_flat_num in 1..4 loop
+            v_flat_number := 'T' || v_tower_num || '-' || (v_floor_num * 100 + v_flat_num)::text;
+            
+            if v_flat_num % 2 = 1 then
+              v_unit_type := '2BHK';
+              v_area := 1250.00;
+            else
+              v_unit_type := '3BHK';
+              v_area := 1600.00;
+            end if;
+
+            insert into flats (
+              id,
+              society_id,
+              block_id,
+              flat_number,
+              floor_label,
+              unit_type,
+              area_sq_ft,
+              occupancy_status
+            )
+            values (
+              ('41000000-0000-0000-' || lpad(v_tower_num::text, 4, '0') || '-' || lpad((v_floor_num * 100 + v_flat_num)::text, 12, '0'))::uuid,
+              v_society_id,
+              v_block_id,
+              v_flat_number,
+              v_floor_label,
+              v_unit_type,
+              v_area,
+              'VACANT'
+            )
+            on conflict (block_id, flat_number) do update
+              set floor_label = excluded.floor_label,
+                  unit_type = excluded.unit_type,
+                  area_sq_ft = excluded.area_sq_ft,
+                  updated_at = now();
+          end loop;
+        end loop;
+      else
+        for v_floor_num in 1..9 loop
+          v_floor_label := v_floor_num::text;
+          for v_flat_num in 1..4 loop
+            v_flat_number := 'T' || v_tower_num || '-' || (v_floor_num * 100 + v_flat_num)::text;
+            
+            if v_flat_num % 2 = 1 then
+              v_unit_type := '2BHK';
+              v_area := 1250.00;
+            else
+              v_unit_type := '3BHK';
+              v_area := 1600.00;
+            end if;
+
+            insert into flats (
+              id,
+              society_id,
+              block_id,
+              flat_number,
+              floor_label,
+              unit_type,
+              area_sq_ft,
+              occupancy_status
+            )
+            values (
+              ('41000000-0000-0000-' || lpad(v_tower_num::text, 4, '0') || '-' || lpad((v_floor_num * 100 + v_flat_num)::text, 12, '0'))::uuid,
+              v_society_id,
+              v_block_id,
+              v_flat_number,
+              v_floor_label,
+              v_unit_type,
+              v_area,
+              'VACANT'
+            )
+            on conflict (block_id, flat_number) do update
+              set floor_label = excluded.floor_label,
+                  unit_type = excluded.unit_type,
+                  area_sq_ft = excluded.area_sq_ft,
+                  updated_at = now();
+          end loop;
+        end loop;
+      end if;
+    end loop;
+  end;
+
   insert into flat_residents (
     id,
     flat_id,
@@ -173,7 +287,7 @@ begin
     ('42000000-0000-0000-0000-000000000001', '41000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000003', 'OWNER', true, true, true, true, 'PRIMARY_OWNER', 60.00, 'Primary owner', '2024-01-01', null, null, 'SELF_OCCUPIED', 'OWNERSHIP'),
     ('42000000-0000-0000-0000-000000000002', '41000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000004', 'OWNER', false, false, true, true, 'CO_OWNER', 40.00, 'Co-owner', '2024-01-01', null, null, 'SELF_OCCUPIED', 'OWNERSHIP'),
     ('42000000-0000-0000-0000-000000000003', '41000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000006', 'FAMILY_MEMBER', false, false, true, true, null, null, null, null, null, null, 'SELF_OCCUPIED', 'HOUSEHOLD'),
-    ('42000000-0000-0000-0000-000000000004', '41000000-0000-0000-0000-000000000002', '30000000-0000-0000-0000-000000000003', 'OWNER', true, true, true, true, 'PRIMARY_OWNER', 100.00, 'Single owner', '2023-06-01', null, null, 'TENANTED', 'OWNERSHIP'),
+    ('42000000-0000-0000-0000-000000000004', '41000000-0000-0000-0000-000000000002', '30000000-0000-0000-0000-000000000003', 'OWNER', false, true, true, true, 'PRIMARY_OWNER', 100.00, 'Single owner', '2023-06-01', null, null, 'TENANTED', 'OWNERSHIP'),
     ('42000000-0000-0000-0000-000000000005', '41000000-0000-0000-0000-000000000002', '30000000-0000-0000-0000-000000000005', 'TENANT', true, false, true, true, null, null, 'Tenant household', null, '2026-04-01', '2027-03-31', 'TENANTED', 'TENANCY')
   on conflict (id) do update
     set is_primary_contact = excluded.is_primary_contact,

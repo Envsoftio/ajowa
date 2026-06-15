@@ -143,7 +143,8 @@ const resolveCellValue = (row: TRow, field: string) => {
         <h1>{{ title }}</h1>
         <p v-if="description">{{ description }}</p>
       </div>
-      <div v-if="exportActions.length" class="list-page__exports">
+      <div v-if="exportActions.length || $slots.actions" class="list-page__exports">
+        <slot name="actions" />
         <Button
           v-for="action in exportActions"
           :key="action.key"

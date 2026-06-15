@@ -2,7 +2,7 @@ import { z } from 'zod'
 import type { ListQueryParams, PaginatedResult, PaginationParams, SortDirection } from '~/types/api'
 
 export const DEFAULT_PAGE_SIZE = 20
-export const MAX_PAGE_SIZE = 100
+export const MAX_PAGE_SIZE = 2000
 
 const positiveInt = z.coerce.number().int().positive()
 
@@ -15,7 +15,11 @@ export const listQuerySchema = z
   .object({
     page: positiveInt.default(1),
     pageSize: positiveInt.max(MAX_PAGE_SIZE).default(DEFAULT_PAGE_SIZE),
-    search: z.string().trim().min(1).optional(),
+    search: z
+      .string()
+      .trim()
+      .transform((val) => (val === '' ? undefined : val))
+      .optional(),
     sortBy: z.string().trim().min(1).optional(),
     sortDirection: z.enum(['asc', 'desc']).optional(),
   })
