@@ -1,0 +1,22 @@
+{{> header title=title}}
+<p style="margin: 0 0 16px; color: #5f6b7a;">
+  Hi {{name}},
+</p>
+<p style="margin: 0 0 16px; color: #5f6b7a;">
+  {{inviterName}} invited you to join AJOWA as {{roleLabel}}.
+</p>
+<p style="margin: 0 0 16px; color: #5f6b7a;">
+  {{details}}
+</p>
+<p style="margin: 24px 0;">
+  <a
+    href="{{actionUrl}}"
+    style="display: inline-block; padding: 14px 22px; border-radius: 999px; background: #f59e0b; color: #102033; text-decoration: none; font-weight: 700;"
+  >
+    Accept Invite
+  </a>
+</p>
+<p style="margin: 0 0 16px; color: #5f6b7a;">
+  This invite expires on {{expiresLabel}}.
+</p>
+{{> footer}}

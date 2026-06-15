@@ -16,7 +16,9 @@ export const useApi = () => {
       }
 
       if (fetchError.statusCode === 401) {
-        await navigateTo('/login')
+        const authStore = useAuthStore()
+        authStore.reset()
+        await navigateTo('/login?reason=session-expired')
         return Promise.reject(error)
       }
 

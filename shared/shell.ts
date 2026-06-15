@@ -26,25 +26,25 @@ export const shellTitles: Record<AppShellType, string> = {
 export const shellNavigation: Record<AppShellType, AppNavItem[]> = {
   public: [
     { label: 'Overview', to: '/', icon: 'pi pi-home' },
+    { label: 'Login', to: '/login', icon: 'pi pi-sign-in' },
     { label: 'Setup', to: '/setup', icon: 'pi pi-wrench' },
   ],
   resident: [
-    { label: 'Dashboard', to: '/', icon: 'pi pi-home' },
-    { label: 'Dues', to: '/setup', icon: 'pi pi-wallet' },
-    { label: 'Notices', to: '/setup', icon: 'pi pi-megaphone', badge: '3' },
+    { label: 'Dues', to: '/my/dues', icon: 'pi pi-wallet' },
+    { label: 'Verify Email', to: '/verify-email', icon: 'pi pi-envelope' },
+    { label: 'Password Change', to: '/change-password', icon: 'pi pi-key' },
   ],
   'admin-manager': [
-    { label: 'Dashboard', to: '/', icon: 'pi pi-home' },
-    { label: 'Residents', to: '/setup', icon: 'pi pi-users' },
-    { label: 'Finance', to: '/setup', icon: 'pi pi-building-columns' },
-    { label: 'Tickets', to: '/setup', icon: 'pi pi-briefcase', badge: '12' },
+    { label: 'Dashboard', to: '/admin/dashboard', icon: 'pi pi-home' },
+    { label: 'Setup', to: '/setup', icon: 'pi pi-wrench' },
+    { label: 'Password Change', to: '/change-password', icon: 'pi pi-key' },
   ],
   'service-staff': [
-    { label: 'Queue', to: '/', icon: 'pi pi-list-check' },
-    { label: 'Assigned', to: '/setup', icon: 'pi pi-bolt' },
+    { label: 'Dashboard', to: '/service/dashboard', icon: 'pi pi-list-check' },
+    { label: 'Password Change', to: '/change-password', icon: 'pi pi-key' },
   ],
   guard: [
-    { label: 'Scan Desk', to: '/', icon: 'pi pi-qrcode' },
-    { label: 'Logbook', to: '/setup', icon: 'pi pi-book' },
+    { label: 'Scan Desk', to: '/guard/scan', icon: 'pi pi-qrcode' },
+    { label: 'Password Change', to: '/change-password', icon: 'pi pi-key' },
   ],
 }

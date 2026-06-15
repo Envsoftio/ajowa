@@ -62,3 +62,38 @@ export const validateInput = <T>(schema: ZodType<T>, input: unknown): T => {
     throw error
   }
 }
+
+const readNodeRequestBody = async (event: H3Event) => {
+  const request = event.node?.req
+
+  if (!request) {
+    return undefined
+  }
+
+  return await new Promise<string>((resolve, reject) => {
+    let body = ''
+
+    request.setEncoding('utf8')
+    request.on('data', (chunk) => {
+      body += chunk
+    })
+    request.on('end', () => resolve(body))
+    request.on('error', reject)
+  })
+}
+
+export const readJsonBody = async <T = unknown>(event: H3Event): Promise<T> => {
+  const request = event.req as { json?: () => Promise<unknown>; text?: () => Promise<string> }
+
+  if (typeof request?.json === 'function') {
+    return (await request.json()) as T
+  }
+
+  if (typeof request?.text === 'function') {
+    const text = await request.text()
+    return (text.length > 0 ? JSON.parse(text) : {}) as T
+  }
+
+  const rawBody = await readNodeRequestBody(event)
+  return (rawBody && rawBody.length > 0 ? JSON.parse(rawBody) : {}) as T
+}

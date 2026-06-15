@@ -1,0 +1,19 @@
+{{> header title=title}}
+<p style="margin: 0 0 16px; color: #5f6b7a;">
+  Hi {{name}},
+</p>
+<p style="margin: 0 0 16px; color: #5f6b7a;">
+  Verify your email address to finish setting up your AJOWA account.
+</p>
+<p style="margin: 24px 0;">
+  <a
+    href="{{actionUrl}}"
+    style="display: inline-block; padding: 14px 22px; border-radius: 999px; background: #0f766e; color: #ffffff; text-decoration: none; font-weight: 700;"
+  >
+    Verify Email
+  </a>
+</p>
+<p style="margin: 0 0 16px; color: #5f6b7a;">
+  This link will expire on {{expiresLabel}}.
+</p>
+{{> footer}}

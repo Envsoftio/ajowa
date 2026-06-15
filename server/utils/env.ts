@@ -27,6 +27,7 @@ const pushIntegrationSchema = z.object({
 })
 
 const runtimeConfigSchema = z.object({
+  databaseUrl: z.string().min(1, 'DATABASE_URL or SUPABASE_DB_URL is required'),
   supabaseServiceRoleKey: z.string().min(1, 'SUPABASE_SERVICE_ROLE_KEY is required'),
   betterAuthSecret: z.string().min(1, 'BETTER_AUTH_SECRET is required'),
   betterAuthUrl: z.string().url('BETTER_AUTH_URL must be a valid URL'),

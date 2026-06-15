@@ -8,6 +8,7 @@ export default defineNuxtConfig({
   modules: ['@pinia/nuxt', '@primevue/nuxt-module', '@nuxt/eslint'],
   css: ['~/assets/css/main.css'],
   runtimeConfig: {
+    databaseUrl: process.env.DATABASE_URL ?? process.env.SUPABASE_DB_URL ?? '',
     supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
     betterAuthSecret: process.env.BETTER_AUTH_SECRET ?? '',
     betterAuthUrl: process.env.BETTER_AUTH_URL ?? '',
@@ -111,6 +112,7 @@ export default defineNuxtConfig({
         'InputIcon',
         'InputText',
         'Menu',
+        'Password',
         'ProgressSpinner',
         'Skeleton',
         'Tag',

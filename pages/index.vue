@@ -25,8 +25,9 @@ const surfaceCards = [
         for the AJOWA residential community.
       </p>
       <div class="hero-actions">
-        <Button label="Open Health Check" as="a" href="/api/health" />
-        <Button label="Read Setup Guide" as="a" href="/setup" severity="secondary" outlined />
+        <Button label="Login" as="a" href="/login" />
+        <Button label="Forgot Password" as="a" href="/forgot-password" severity="secondary" outlined />
+        <Button label="Read Setup Guide" as="a" href="/setup" severity="contrast" text />
       </div>
     </section>
 

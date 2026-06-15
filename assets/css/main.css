@@ -398,6 +398,96 @@ a {
   color: var(--color-muted);
 }
 
+.w-full {
+  width: 100%;
+}
+
+.auth-page {
+  min-height: calc(100vh - 12rem);
+  display: grid;
+  place-items: center;
+  padding: 1rem 0 3rem;
+}
+
+.auth-card {
+  width: min(100%, 32rem);
+  padding: clamp(1.5rem, 4vw, 2.5rem);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+}
+
+.auth-card h1 {
+  margin: 1rem 0 0.75rem;
+  font-family: var(--font-display);
+  font-size: clamp(2rem, 5vw, 3rem);
+  line-height: 0.96;
+}
+
+.auth-card p {
+  color: var(--color-muted);
+}
+
+.auth-form {
+  display: grid;
+  gap: 1rem;
+  margin-top: 1.5rem;
+}
+
+.auth-form label {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.auth-form span {
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.auth-banner {
+  margin-top: 1rem;
+  padding: 0.95rem 1rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+}
+
+.auth-banner-success {
+  background: var(--color-success-soft);
+  color: var(--color-success);
+}
+
+.auth-banner-warning {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+
+.auth-banner-danger {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+
+.auth-banner-info {
+  background: var(--color-info-soft);
+  color: var(--color-info);
+}
+
+.auth-links,
+.auth-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-top: 1rem;
+  align-items: center;
+}
+
+.auth-inline-link {
+  color: var(--color-brand);
+  font-weight: 700;
+  text-decoration: none;
+}
+
 .p-inputtext,
 .p-select,
 .p-datepicker-input,
@@ -532,6 +622,10 @@ a {
 
   .list-page__cards {
     display: grid;
+  }
+
+  .auth-card {
+    width: 100%;
   }
 }
 

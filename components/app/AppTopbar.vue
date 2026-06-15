@@ -8,6 +8,7 @@ const props = defineProps<{
 }>()
 
 const appStore = useAppStore()
+const authStore = useAuthStore()
 const theme = useTheme()
 const route = useRoute()
 const loading = useLoadingIndicator()
@@ -16,6 +17,7 @@ const menu = ref()
 const shellLabel = computed(() => shellLabels[props.shell])
 const pageTitle = computed(() => String(route.meta.title ?? 'Delivery Foundation'))
 const isLoading = computed(() => loading.isLoading.value)
+const userInitial = computed(() => authStore.me?.user.fullName?.charAt(0).toUpperCase() || 'A')
 
 const avatarItems = computed<MenuItem[]>(() => [
   {
@@ -30,6 +32,14 @@ const avatarItems = computed<MenuItem[]>(() => [
   {
     label: 'Profile',
     icon: 'pi pi-user',
+  },
+  {
+    label: 'Logout',
+    icon: 'pi pi-sign-out',
+    command: async () => {
+      await authStore.logout()
+      await navigateTo('/login')
+    },
   },
 ])
 
@@ -75,7 +85,7 @@ const toggleMenu = (event: Event) => {
         @click="theme.toggle()"
       />
       <Button class="avatar-trigger" text rounded aria-label="Open profile menu" @click="toggleMenu">
-        <Avatar label="A" shape="circle" />
+        <Avatar :label="userInitial" shape="circle" />
       </Button>
       <Menu ref="menu" :model="avatarItems" popup />
     </div>
