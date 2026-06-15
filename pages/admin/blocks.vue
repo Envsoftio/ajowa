@@ -127,7 +127,7 @@ const submit = async () => {
 
 <template>
   <div class="landing-page">
-    <div class="surface-grid">
+    <!-- <div class="surface-grid">
       <section class="surface-card">
         <p class="eyebrow">Inventory</p>
         <h3>{{ data?.data.total ?? 0 }} blocks</h3>
@@ -138,7 +138,7 @@ const submit = async () => {
         <h3>{{ data?.data.items.filter((item) => item.isActive).length ?? 0 }}</h3>
         <p>Inactive blocks remain preserved for financial and occupancy history.</p>
       </section>
-    </div>
+    </div> -->
 
     <div>
       <section class="list-page surface-card">

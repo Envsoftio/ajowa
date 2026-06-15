@@ -23,8 +23,10 @@ export const useAuthStore = defineStore('auth', {
       this.loading = true
 
       try {
+        const requestHeaders = useRequestHeaders(['cookie'])
         const response = await $fetch<{ ok: true; data: AuthMe | null }>('/api/auth/me', {
           credentials: 'include',
+          headers: requestHeaders as HeadersInit,
         })
         this.me = response.data
         this.loaded = true

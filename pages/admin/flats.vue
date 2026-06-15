@@ -156,11 +156,7 @@ const submit = async () => {
 
 <template>
   <div class="landing-page">
-    <section class="hero-panel">
-      <Tag severity="contrast" value="Flats" rounded />
-      <h1>Flats and occupancy</h1>
-      <p>Manage searchable flat inventory with block, type, occupancy, and active-state controls.</p>
-    </section>
+   
 
     <div>
       <section class="list-page surface-card">

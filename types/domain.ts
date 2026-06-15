@@ -34,6 +34,8 @@ export type SocietyPolicySettings = {
   financeApprovalRequired: boolean
   attachmentsRequired: boolean
   highValueThreshold: number
+  graceDays: number
+  lateFeePerDay: number
 }
 
 export type SocietyProfile = AuditFields & {
@@ -154,4 +156,139 @@ export type ResidentDetail = ResidentSummary & {
   leaseAgreementPath: string | null
   preferredNotificationChannels: string
   relationships: FlatResidentRelationship[]
+}
+
+// --- Phase 6: Billing Types ---
+
+export type BillingFrequency = 'MONTHLY' | 'QUARTERLY' | 'HALF_YEARLY' | 'YEARLY' | 'CUSTOM'
+
+export type BillingPeriodStatus = 'OPEN' | 'LOCKED' | 'CLOSED'
+
+export type BillingPeriod = AuditFields & {
+  id: string
+  societyId: string
+  label: string
+  frequency: BillingFrequency
+  startDate: string
+  endDate: string
+  dueDate: string
+  isLocked: boolean
+  lockedAt: string | null
+  lockReason: string | null
+  status: BillingPeriodStatus
+  dueCount?: number
+  paidDueCount?: number
+  unpaidDueCount?: number
+}
+
+export type ChargeBreakdownItem = {
+  label: string
+  amount: number
+}
+
+export type MaintenanceChargeScope = 'SOCIETY_DEFAULT' | 'FLAT_TYPE' | 'FLAT'
+
+export type MaintenanceCharge = AuditFields & {
+  id: string
+  societyId: string
+  billingPeriodId: string | null
+  scope: MaintenanceChargeScope
+  flatType: string | null
+  flatId: string | null
+  flatNumber: string | null
+  chargeName: string
+  amount: number
+  effectiveStartDate: string | null
+  effectiveEndDate: string | null
+  chargeBreakdown: ChargeBreakdownItem[]
+  isActive: boolean
+}
+
+export type DueStatus = 'DRAFT' | 'OPEN' | 'PARTIALLY_PAID' | 'PAID' | 'WAIVED' | 'OVERDUE' | 'CANCELLED'
+
+export type MaintenanceDue = AuditFields & {
+  id: string
+  societyId: string
+  billingPeriodId: string
+  billingPeriodLabel: string
+  billingPeriodDueDate: string
+  flatId: string
+  flatNumber: string
+  blockName: string
+  unitType: string
+  dueDate: string
+  baseAmount: number
+  lateFeeAmount: number
+  waivedAmount: number
+  paidAmount: number
+  totalAmount: number
+  balanceAmount: number
+  status: DueStatus
+  chargeBreakdown: ChargeBreakdownItem[]
+  generatedAt: string
+  primaryResidentName: string | null
+}
+
+export type DueGenerationRequest = {
+  billingPeriodId: string
+  flatIds?: string[]
+}
+
+export type DueGenerationPreview = {
+  billingPeriodId: string
+  billingPeriodLabel: string
+  billingPeriodDueDate: string
+  totalFlats: number
+  totalAmount: number
+  flatTypeBreakdown: {
+    flatType: string
+    flatCount: number
+    totalAmount: number
+    chargeTemplate: ChargeBreakdownItem[]
+  }[]
+  warnings: string[]
+}
+
+export type BillingChargeConfig = {
+  periodId: string | null
+  graceDays: number
+  lateFeePerDay: number
+  defaultCharges: ChargeBreakdownItem[]
+  flatTypeCharges: {
+    flatType: string
+    label: string
+    charges: ChargeBreakdownItem[]
+  }[]
+  flatOverrideCharges: {
+    flatId: string
+    flatNumber: string
+    blockName: string
+    charges: ChargeBreakdownItem[]
+  }[]
+}
+
+export type DefaulterSummary = {
+  userId: string
+  authUserId: string
+  residentName: string
+  residentEmail: string
+  residentMobileNumber: string
+  flatCount: number
+  flats: {
+    flatId: string
+    flatNumber: string
+    blockName: string
+    relationshipType: string
+    dueId: string
+    dueStatus: string
+    billingPeriodLabel: string
+    totalAmount: number
+    paidAmount: number
+    balanceAmount: number
+    daysOverdue: number
+  }[]
+  totalDue: number
+  totalPaid: number
+  totalBalance: number
+  maxDaysOverdue: number
 }

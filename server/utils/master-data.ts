@@ -67,6 +67,8 @@ export const societyPolicySchema = z.object({
   financeApprovalRequired: z.boolean(),
   attachmentsRequired: z.boolean(),
   highValueThreshold: z.coerce.number().nonnegative(),
+  graceDays: z.coerce.number().int().nonnegative().default(0),
+  lateFeePerDay: z.coerce.number().nonnegative().default(50),
 })
 
 export const societyProfileSchema = z.object({
@@ -164,6 +166,8 @@ export const defaultSocietyPolicies: z.infer<typeof societyPolicySchema> = {
   financeApprovalRequired: true,
   attachmentsRequired: true,
   highValueThreshold: 10000,
+  graceDays: 0,
+  lateFeePerDay: 50,
 }
 
 export const getQuerySafe = (event: H3Event) => {

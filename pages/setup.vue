@@ -50,7 +50,7 @@ const updateQuery = (value: ListQueryParams) => {
 
 <template>
   <div class="landing-page">
-    <section class="hero-panel">
+    <!-- <section class="hero-panel">
       <Tag severity="contrast" value="Setup" rounded />
       <h1>Local Setup</h1>
       <p>
@@ -61,7 +61,7 @@ const updateQuery = (value: ListQueryParams) => {
         Phase 2 will add the full local Supabase bootstrap, but the standard workflow is
         already documented in the repository README and `docs/project-setup.md`.
       </p>
-    </section>
+    </section> -->
 
     <AppListPage
       title="Foundation Completion Tracker"

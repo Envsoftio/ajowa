@@ -92,13 +92,7 @@ const submit = async () => {
 
 <template>
   <div class="landing-page">
-    <section class="hero-panel">
-      <Tag severity="contrast" value="Phase 5" rounded />
-      <h1>Society profile and master policies</h1>
-      <p>
-        Manage the AJOWA identity, billing preferences, finance controls, and resident-access policies that downstream modules depend on.
-      </p>
-    </section>
+
 
     <form class="admin-form-layout" @submit.prevent="submit">
       <section class="surface-card admin-form-section">

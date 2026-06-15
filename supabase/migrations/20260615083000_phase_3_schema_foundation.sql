@@ -138,10 +138,6 @@ create or replace function ensure_valid_flat_resident()
 returns trigger
 language plpgsql
 as $$
-declare
-  v_sum numeric(7,2);
-  v_count integer;
-  v_percent_count integer;
 begin
   if new.relationship_type = 'TENANT' and (new.lease_start_date is null or new.lease_end_date is null) then
     raise exception 'tenant relationships require lease_start_date and lease_end_date';
@@ -149,10 +145,6 @@ begin
 
   if new.relationship_type <> 'TENANT' and (new.lease_start_date is not null or new.lease_end_date is not null) then
     raise exception 'lease dates are only valid for tenant relationships';
-  end if;
-
-  if new.relationship_type <> 'OWNER' and (new.ownership_percent is not null or new.owner_type is not null) then
-    raise exception 'ownership fields are only valid for owner relationships';
   end if;
 
   if new.relationship_type = 'OWNER' and new.access_scope is null then
@@ -163,64 +155,7 @@ begin
     new.access_scope = 'HOUSEHOLD';
   end if;
 
-  select
-    coalesce(sum(ownership_percent), 0),
-    count(*),
-    count(ownership_percent)
-  into v_sum, v_count, v_percent_count
-  from flat_residents
-  where flat_id = new.flat_id
-    and relationship_type = 'OWNER'
-    and is_active = true
-    and id <> coalesce(new.id, '00000000-0000-0000-0000-000000000000'::uuid);
-
-  if new.relationship_type = 'OWNER' and new.is_active then
-    v_count = v_count + 1;
-    if new.ownership_percent is not null then
-      v_sum = v_sum + new.ownership_percent;
-      v_percent_count = v_percent_count + 1;
-    end if;
-  end if;
-
-  if v_sum > 100.00 then
-    raise exception 'active owner ownership percentages cannot exceed 100 for flat %', new.flat_id;
-  end if;
-
   return new;
-end;
-$$;
-
-create or replace function validate_owner_percentages_complete()
-returns trigger
-language plpgsql
-as $$
-declare
-  v_flat_id uuid;
-  v_sum numeric(7,2);
-  v_count integer;
-  v_percent_count integer;
-begin
-  v_flat_id = coalesce(new.flat_id, old.flat_id);
-
-  if v_flat_id is null then
-    return coalesce(new, old);
-  end if;
-
-  select
-    coalesce(sum(ownership_percent), 0),
-    count(*),
-    count(ownership_percent)
-  into v_sum, v_count, v_percent_count
-  from flat_residents
-  where flat_id = v_flat_id
-    and relationship_type = 'OWNER'
-    and is_active = true;
-
-  if v_count > 0 and v_percent_count = v_count and v_sum <> 100.00 then
-    raise exception 'active owner ownership percentages must total exactly 100 for flat %', v_flat_id;
-  end if;
-
-  return coalesce(new, old);
 end;
 $$;
 

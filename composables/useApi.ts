@@ -2,11 +2,16 @@ import type { ApiErrorPayload } from '~/types/api'
 
 export const useApi = () => {
   const toast = useToast()
+  const requestHeaders = useRequestHeaders(['cookie'])
 
   return async function apiFetch<T>(url: string, options?: Parameters<typeof $fetch<T>>[1]) {
     try {
       return await $fetch<T>(url, {
         credentials: 'include',
+        headers: {
+          ...requestHeaders,
+          ...options?.headers,
+        } as HeadersInit,
         ...options,
       })
     } catch (error) {

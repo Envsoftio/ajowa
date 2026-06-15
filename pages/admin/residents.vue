@@ -21,6 +21,7 @@ const query = ref<ListQueryParams>({
 })
 
 const selectedResident = ref<ResidentSummary | null>(null)
+const displayDialog = ref(false)
 const form = reactive({
   role: 'RESIDENT',
   fullName: '',
@@ -104,6 +105,7 @@ const columns = [
   { field: 'email', header: 'Email', sortable: true },
   { field: 'canLogin', header: 'Login', sortable: true, kind: 'status' as const },
   { field: 'isActive', header: 'Active', sortable: true, kind: 'status' as const },
+  { field: 'actions', header: 'Actions', sortable: false },
 ]
 
 const addRelationship = () => {
@@ -181,6 +183,16 @@ const resetForm = () => {
   ]
 }
 
+const openCreateDialog = () => {
+  resetForm()
+  displayDialog.value = true
+}
+
+const closeDialog = () => {
+  displayDialog.value = false
+  resetForm()
+}
+
 const loadResident = async (resident: ResidentSummary) => {
   const response = await api<{ ok: true; data: ResidentDetail }>(`/api/admin/residents/${resident.id}`)
   const item = response.data
@@ -225,6 +237,7 @@ const loadResident = async (resident: ResidentSummary) => {
     securityDepositAmount: relationship.securityDepositAmount,
     securityDepositNote: relationship.securityDepositNote ?? '',
   }))
+  displayDialog.value = true
 }
 
 const saving = ref(false)
@@ -275,7 +288,7 @@ const submit = async () => {
       detail: selectedResident.value ? 'Resident updated.' : 'Resident created.',
       life: 3000,
     })
-    resetForm()
+    closeDialog()
     await refresh()
   } finally {
     saving.value = false
@@ -285,78 +298,227 @@ const submit = async () => {
 const updateQuery = (value: ListQueryParams) => {
   query.value = value
 }
+
+const first = computed(() => (query.value.page - 1) * query.value.pageSize)
+
+const onPage = (event: any) => {
+  updateQuery({
+    ...query.value,
+    page: Math.floor(event.first / event.rows) + 1,
+    pageSize: event.rows,
+  })
+}
+
+const onSort = (event: any) => {
+  updateQuery({
+    ...query.value,
+    sortBy: typeof event.sortField === 'string' ? event.sortField : '',
+    sortDirection: event.sortOrder === -1 ? 'desc' : 'asc',
+  })
+}
+
+const globalSearch = ref(query.value.search ?? '')
+const onSearch = () => {
+  updateQuery({
+    ...query.value,
+    page: 1,
+    search: globalSearch.value.trim(),
+  })
+}
+
+const roleFilter = computed({
+  get: () => query.value.filters.role?.[0] ?? '',
+  set: (val) => {
+    updateQuery({
+      ...query.value,
+      page: 1,
+      filters: {
+        ...query.value.filters,
+        role: val ? [val] : [],
+      },
+    })
+  },
+})
+
+const activeFilter = computed({
+  get: () => query.value.filters.isActive?.[0] ?? '',
+  set: (val) => {
+    updateQuery({
+      ...query.value,
+      page: 1,
+      filters: {
+        ...query.value.filters,
+        isActive: val ? [val] : [],
+      },
+    })
+  },
+})
+
+const loginFilter = computed({
+  get: () => query.value.filters.canLogin?.[0] ?? '',
+  set: (val) => {
+    updateQuery({
+      ...query.value,
+      page: 1,
+      filters: {
+        ...query.value.filters,
+        canLogin: val ? [val] : [],
+      },
+    })
+  },
+})
 </script>
 
 <template>
   <div class="landing-page">
-    <section class="hero-panel">
-      <Tag severity="contrast" value="Residents" rounded />
-      <h1>Residents and occupancy relationships</h1>
-      <p>Manage owners, co-owners, tenants, family members, shop occupants, and multi-flat relationships from one master flow.</p>
-    </section>
+   
 
-    <div class="admin-two-column admin-two-column--wide">
-      <AppListPage
-        title="Resident registry"
-        description="Resident CRUD with server-driven search, role filters, and account-state visibility."
-        :rows="data?.data.items ?? []"
-        :columns="columns"
-        :query="query"
-        :total-records="data?.data.total ?? 0"
-        :loading="pending"
-        search-placeholder="Search residents by name, email, or mobile"
-        @query="updateQuery"
-      >
-        <template #filters>
-          <Select
-            :model-value="query.filters.role?.[0] ?? ''"
-            :options="['', 'RESIDENT', 'ADMIN', 'MANAGER', 'SERVICE_STAFF', 'GUARD']"
-            placeholder="Role"
-            @update:model-value="(value) => updateQuery({ ...query, filters: { ...query.filters, role: value ? [String(value)] : [] } })"
-          />
-        </template>
-        <template #cell-fullName="{ row }">
-          <div class="admin-inline-actions">
-            <button class="table-link-button" type="button" @click="loadResident(row as ResidentSummary)">
-              {{ (row as ResidentSummary).fullName }}
-            </button>
-            <NuxtLink :to="`/admin/residents/${(row as ResidentSummary).id}`" class="table-inline-link">
-              View
-            </NuxtLink>
-          </div>
-        </template>
-      </AppListPage>
-
-      <form class="surface-card admin-form-section" @submit.prevent="submit">
-        <div class="admin-form-section__header">
+    <div>
+      <section class="list-page surface-card">
+        <header class="list-page__header">
           <div>
-            <p class="eyebrow">Grouped Flow</p>
-            <h2>{{ selectedResident ? 'Edit resident' : 'Create resident' }}</h2>
+            <h1>Resident registry</h1>
+            <p>Resident CRUD with server-driven search, role filters, and account-state visibility.</p>
           </div>
-          <div class="admin-inline-actions">
-            <Button type="button" label="Reset" severity="secondary" outlined @click="resetForm" />
-            <Button type="submit" :label="selectedResident ? 'Update resident' : 'Create resident'" :loading="saving" />
+          <div class="list-page__exports">
+            <Button label="Create resident" icon="pi pi-plus" @click="openCreateDialog" />
+          </div>
+        </header>
+
+        <div class="list-page__toolbar">
+          <IconField class="list-page__search">
+            <InputIcon class="pi pi-search" />
+            <InputText
+              v-model="globalSearch"
+              placeholder="Search residents by name, email, or mobile"
+              @keydown.enter="onSearch"
+            />
+          </IconField>
+          <div class="list-page__filters">
+            <Select
+              v-model="roleFilter"
+              :options="[
+                { label: 'All roles', value: '' },
+                { label: 'Resident', value: 'RESIDENT' },
+                { label: 'Admin', value: 'ADMIN' },
+                { label: 'Manager', value: 'MANAGER' },
+                { label: 'Service Staff', value: 'SERVICE_STAFF' },
+                { label: 'Guard', value: 'GUARD' }
+              ]"
+              option-label="label"
+              option-value="value"
+              placeholder="Role"
+            />
+            <Select
+              v-model="loginFilter"
+              :options="[
+                { label: 'All logins', value: '' },
+                { label: 'Login enabled', value: 'true' },
+                { label: 'Login disabled', value: 'false' }
+              ]"
+              option-label="label"
+              option-value="value"
+              placeholder="Login state"
+            />
+            <Select
+              v-model="activeFilter"
+              :options="[
+                { label: 'All status', value: '' },
+                { label: 'Active only', value: 'true' },
+                { label: 'Inactive only', value: 'false' }
+              ]"
+              option-label="label"
+              option-value="value"
+              placeholder="Active state"
+            />
+            <Button label="Search" @click="onSearch" />
           </div>
         </div>
 
+        <DataTable
+          :value="data?.data.items ?? []"
+          :loading="pending"
+          :lazy="true"
+          paginator
+          responsive-layout="scroll"
+          class="list-page__table"
+          :rows="query.pageSize"
+          :first="first"
+          :total-records="data?.data.total ?? 0"
+          :sort-field="query.sortBy"
+          :sort-order="query.sortDirection === 'desc' ? -1 : 1"
+          @page="onPage"
+          @sort="onSort"
+        >
+          <Column field="fullName" header="Resident" sortable />
+          <Column field="role" header="Role" sortable />
+          <Column field="email" header="Email" sortable />
+          <Column field="canLogin" header="Login" sortable>
+            <template #body="{ data: row }">
+              <AppStatusBadge :status="row.canLogin ? 'active' : 'inactive'" />
+            </template>
+          </Column>
+          <Column field="isActive" header="Active" sortable>
+            <template #body="{ data: row }">
+              <AppStatusBadge :status="row.isActive ? 'active' : 'inactive'" />
+            </template>
+          </Column>
+          <Column header="Actions" class="text-right" style="width: 150px">
+            <template #body="{ data: row }">
+              <div class="admin-inline-actions" style="justify-content: flex-end; gap: 0.5rem;">
+                <NuxtLink :to="`/admin/residents/${row.id}`">
+                  <Button
+                    icon="pi pi-eye"
+                    severity="secondary"
+                    text
+                    rounded
+                    aria-label="View detail"
+                  />
+                </NuxtLink>
+                <Button
+                  icon="pi pi-pencil"
+                  severity="secondary"
+                  text
+                  rounded
+                  aria-label="Edit resident"
+                  @click="loadResident(row)"
+                />
+              </div>
+            </template>
+          </Column>
+        </DataTable>
+      </section>
+    </div>
+
+    <Dialog
+      v-model:visible="displayDialog"
+      :header="selectedResident ? 'Edit Resident' : 'Create Resident'"
+      modal
+      class="p-dialog-custom"
+      :style="{ width: '900px', maxWidth: '95vw' }"
+      :pt="{
+        root: { style: { borderRadius: 'var(--radius-lg)', overflow: 'hidden' } }
+      }"
+    >
+      <form class="admin-form-layout" style="padding: 1.5rem 0.5rem 0; max-height: 75vh; overflow-y: auto;" @submit.prevent="submit">
         <section class="admin-form-subsection">
           <h3>Account</h3>
           <div class="admin-form-grid">
             <label>
               <span>Full name</span>
-              <InputText v-model="form.fullName" />
+              <InputText v-model="form.fullName" required />
             </label>
             <label>
               <span>Email</span>
-              <InputText v-model="form.email" type="email" />
+              <InputText v-model="form.email" type="email" required />
             </label>
             <label>
               <span>Role</span>
-              <Select v-model="form.role" :options="['RESIDENT', 'ADMIN', 'MANAGER', 'SERVICE_STAFF', 'GUARD']" />
+              <Select v-model="form.role" :options="['RESIDENT', 'ADMIN', 'MANAGER', 'SERVICE_STAFF', 'GUARD']" required />
             </label>
             <label>
               <span>Notification preset</span>
-              <Select v-model="form.preferredNotificationChannels" :options="['ALL_CHANNELS', 'PUSH_EMAIL_WHATSAPP', 'PUSH_AND_EMAIL', 'PUSH', 'EMAIL', 'WHATSAPP']" />
+              <Select v-model="form.preferredNotificationChannels" :options="['ALL_CHANNELS', 'PUSH_EMAIL_WHATSAPP', 'PUSH_AND_EMAIL', 'PUSH', 'EMAIL', 'WHATSAPP']" required />
             </label>
           </div>
         </section>
@@ -366,7 +528,7 @@ const updateQuery = (value: ListQueryParams) => {
           <div class="admin-form-grid">
             <label>
               <span>Mobile</span>
-              <InputText v-model="form.mobileNumber" />
+              <InputText v-model="form.mobileNumber" required />
             </label>
             <label>
               <span>WhatsApp</span>
@@ -401,19 +563,19 @@ const updateQuery = (value: ListQueryParams) => {
             <div class="admin-form-grid">
               <label>
                 <span>Flat</span>
-                <Select v-model="relationship.flatId" :options="flatOptions" option-label="label" option-value="value" />
+                <Select v-model="relationship.flatId" :options="flatOptions" option-label="label" option-value="value" required />
               </label>
               <label>
                 <span>Relationship type</span>
-                <Select v-model="relationship.relationshipType" :options="['OWNER', 'CO_OWNER', 'TENANT', 'FAMILY_MEMBER', 'SHOP_OWNER', 'SHOP_TENANT', 'COMMERCIAL_OCCUPANT']" />
+                <Select v-model="relationship.relationshipType" :options="['OWNER', 'CO_OWNER', 'TENANT', 'FAMILY_MEMBER', 'SHOP_OWNER', 'SHOP_TENANT', 'COMMERCIAL_OCCUPANT']" required />
               </label>
               <label>
                 <span>Occupancy status</span>
-                <Select v-model="relationship.occupancyStatus" :options="['SELF_OCCUPIED', 'TENANTED', 'VACANT']" />
+                <Select v-model="relationship.occupancyStatus" :options="['SELF_OCCUPIED', 'TENANTED', 'VACANT']" required />
               </label>
               <label>
                 <span>Access scope</span>
-                <Select v-model="relationship.accessScope" :options="['OWNERSHIP', 'TENANCY', 'HOUSEHOLD']" />
+                <Select v-model="relationship.accessScope" :options="['OWNERSHIP', 'TENANCY', 'HOUSEHOLD']" required />
               </label>
               <label>
                 <span>Ownership %</span>
@@ -441,7 +603,7 @@ const updateQuery = (value: ListQueryParams) => {
               </label>
             </div>
 
-            <div class="admin-toggle-grid">
+            <div class="admin-toggle-grid" style="margin-top: 1rem;">
               <label class="admin-toggle-card">
                 <span>Primary contact</span>
                 <ToggleSwitch v-model="relationship.isPrimaryContact" />
@@ -466,6 +628,7 @@ const updateQuery = (value: ListQueryParams) => {
               label="Remove relationship"
               severity="danger"
               text
+              style="margin-top: 1rem;"
               @click="removeRelationship(index)"
             />
           </article>
@@ -484,11 +647,11 @@ const updateQuery = (value: ListQueryParams) => {
             </label>
             <label>
               <span>KYC status</span>
-              <Select v-model="form.kycStatus" :options="['PENDING', 'VERIFIED', 'REJECTED', 'NOT_REQUIRED']" />
+              <Select v-model="form.kycStatus" :options="['PENDING', 'VERIFIED', 'REJECTED', 'NOT_REQUIRED']" required />
             </label>
             <label>
               <span>Police verification</span>
-              <Select v-model="form.policeVerificationStatus" :options="['PENDING', 'VERIFIED', 'REJECTED', 'NOT_REQUIRED']" />
+              <Select v-model="form.policeVerificationStatus" :options="['PENDING', 'VERIFIED', 'REJECTED', 'NOT_REQUIRED']" required />
             </label>
             <label class="admin-form-grid__full">
               <span>Government ID document path</span>
@@ -504,7 +667,7 @@ const updateQuery = (value: ListQueryParams) => {
             </label>
           </div>
 
-          <div class="admin-toggle-grid">
+          <div class="admin-toggle-grid" style="margin-top: 1rem;">
             <label class="admin-toggle-card">
               <span>User can login</span>
               <ToggleSwitch v-model="form.canLogin" />
@@ -519,7 +682,12 @@ const updateQuery = (value: ListQueryParams) => {
             </label>
           </div>
         </section>
+
+        <div class="admin-inline-actions" style="justify-content: flex-end; margin-top: 2rem; gap: 0.75rem;">
+          <Button type="button" label="Cancel" severity="secondary" outlined @click="closeDialog" />
+          <Button type="submit" :label="selectedResident ? 'Update resident' : 'Create resident'" :loading="saving" />
+        </div>
       </form>
-    </div>
+    </Dialog>
   </div>
 </template>

@@ -1,4 +1,5 @@
 import process from 'node:process'
+import Aura from '@primevue/themes/aura'
 
 export default defineNuxtConfig({
   compatibilityDate: '2025-01-01',
@@ -6,7 +7,7 @@ export default defineNuxtConfig({
     enabled: true,
   },
   modules: ['@pinia/nuxt', '@primevue/nuxt-module', '@nuxt/eslint'],
-  css: ['~/assets/css/main.css'],
+  css: ['primeicons/primeicons.css', '~/assets/css/main.css'],
   runtimeConfig: {
     databaseUrl: process.env.DATABASE_URL ?? process.env.SUPABASE_DB_URL ?? '',
     supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
@@ -90,7 +91,7 @@ export default defineNuxtConfig({
     options: {
       ripple: true,
       theme: {
-        preset: 'Aura',
+        preset: Aura,
         options: {
           darkModeSelector: '.app-theme-dark',
         },
