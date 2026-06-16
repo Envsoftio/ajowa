@@ -1,7 +1,8 @@
 import { createPaginatedSuccess } from '~/server/utils/api'
 import { requireRole } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
-import { parseListQuery } from '~/server/utils/master-data'
+import { normalizeSocietySettings, parseListQuery } from '~/server/utils/master-data'
+import { computeDueAmounts, todayDate } from '~/server/utils/billing'
 import type { MaintenanceDue } from '~/types/domain'
 
 type DueRow = {
@@ -42,6 +43,7 @@ export default defineEventHandler(async (event) => {
   const authMe = await requireRole(event, ['ADMIN', 'MANAGER'])
   const query = parseListQuery(event)
   const pool = getDatabasePool()
+  const today = todayDate()
   const where: string[] = ['md.society_id = $1']
   const values: unknown[] = [authMe.user.societyId]
 
@@ -68,6 +70,19 @@ export default defineEventHandler(async (event) => {
     where.push(`md.status = $${values.length}`)
   }
 
+  const balanceFilter = query.filters.balance?.[0]
+  if (balanceFilter === 'outstanding') {
+    where.push('md.balance_amount > 0')
+  } else if (balanceFilter === 'paid') {
+    where.push('md.balance_amount = 0')
+  }
+
+  const overdueFilter = query.filters.overdue?.[0]
+  if (overdueFilter === 'true') {
+    where.push(`md.balance_amount > 0 and md.due_date < $${values.length + 1}::date`)
+    values.push(today)
+  }
+
   const blockFilter = query.filters.blockId?.[0]
   if (blockFilter) {
     values.push(blockFilter)
@@ -78,6 +93,12 @@ export default defineEventHandler(async (event) => {
   const orderBy = sortColumns[query.sortBy ?? 'flatNumber'] ?? 'f.flat_number'
   const direction = query.sortDirection === 'desc' ? 'desc' : 'asc'
   values.push(query.pageSize, (query.page - 1) * query.pageSize)
+
+  const settingsResult = await pool.query<{ settings: Record<string, unknown> }>(
+    `select settings from society_profile where id = $1 limit 1`,
+    [authMe.user.societyId],
+  )
+  const settings = normalizeSocietySettings(settingsResult.rows[0]?.settings)
 
   const [dataResult, countResult] = await Promise.all([
     pool.query<DueRow>(
@@ -137,30 +158,48 @@ export default defineEventHandler(async (event) => {
     ),
   ])
 
-  const items: MaintenanceDue[] = dataResult.rows.map((row) => ({
-    id: row.id,
-    societyId: row.society_id,
-    billingPeriodId: row.billing_period_id,
-    billingPeriodLabel: row.billing_period_label,
-    billingPeriodDueDate: row.billing_period_due_date,
-    flatId: row.flat_id,
-    flatNumber: row.flat_number,
-    blockName: row.block_name,
-    unitType: row.unit_type,
-    dueDate: row.due_date,
-    baseAmount: Number(row.base_amount),
-    lateFeeAmount: Number(row.late_fee_amount),
-    waivedAmount: Number(row.waived_amount),
-    paidAmount: Number(row.paid_amount),
-    totalAmount: Number(row.total_amount),
-    balanceAmount: Number(row.balance_amount),
-    status: row.status as MaintenanceDue['status'],
-    chargeBreakdown: Array.isArray(row.charge_breakdown) ? row.charge_breakdown : [],
-    generatedAt: row.generated_at,
-    primaryResidentName: row.primary_resident_name,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  }))
+  const items: MaintenanceDue[] = dataResult.rows.map((row) => {
+    const baseAmount = Number(row.base_amount)
+    const waivedAmount = Number(row.waived_amount)
+    const paidAmount = Number(row.paid_amount)
+    const computed = computeDueAmounts(
+      {
+        dueDate: row.due_date,
+        baseAmount,
+        waivedAmount,
+        paidAmount,
+        storedStatus: row.status,
+      },
+      today,
+      settings.graceDays,
+      settings.lateFeePerDay,
+    )
+
+    return {
+      id: row.id,
+      societyId: row.society_id,
+      billingPeriodId: row.billing_period_id,
+      billingPeriodLabel: row.billing_period_label,
+      billingPeriodDueDate: row.billing_period_due_date,
+      flatId: row.flat_id,
+      flatNumber: row.flat_number,
+      blockName: row.block_name,
+      unitType: row.unit_type,
+      dueDate: row.due_date,
+      baseAmount,
+      lateFeeAmount: computed.lateFeeAmount,
+      waivedAmount,
+      paidAmount,
+      totalAmount: computed.totalAmount,
+      balanceAmount: computed.balanceAmount,
+      status: computed.status,
+      chargeBreakdown: Array.isArray(row.charge_breakdown) ? row.charge_breakdown : [],
+      generatedAt: row.generated_at,
+      primaryResidentName: row.primary_resident_name,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }
+  })
 
   return createPaginatedSuccess(event, items, Number(countResult.rows[0]?.count ?? 0), query)
 })

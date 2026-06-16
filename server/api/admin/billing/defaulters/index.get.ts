@@ -1,7 +1,8 @@
 import { createApiSuccess } from '~/server/utils/api'
 import { requireRole } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
-import { getDaysOverdue, todayDate } from '~/server/utils/billing'
+import { computeDueAmounts, getDaysOverdue, todayDate } from '~/server/utils/billing'
+import { normalizeSocietySettings } from '~/server/utils/master-data'
 import type { DefaulterSummary } from '~/types/domain'
 
 type DefaulterRow = {
@@ -17,6 +18,8 @@ type DefaulterRow = {
   due_id: string
   due_status: string
   billing_period_label: string
+  base_amount: string
+  waived_amount: string
   total_amount: string
   paid_amount: string
   balance_amount: string
@@ -27,6 +30,12 @@ export default defineEventHandler(async (event) => {
   const authMe = await requireRole(event, ['ADMIN', 'MANAGER'])
   const pool = getDatabasePool()
   const today = todayDate()
+
+  const societyResult = await pool.query<{ settings: Record<string, unknown> }>(
+    `select settings from society_profile where id = $1 limit 1`,
+    [authMe.user.societyId],
+  )
+  const settings = normalizeSocietySettings(societyResult.rows[0]?.settings)
 
   // Fetch all unpaid dues with resident info
   const result = await pool.query<DefaulterRow>(
@@ -44,6 +53,8 @@ export default defineEventHandler(async (event) => {
         md.id as due_id,
         md.status::text as due_status,
         bp.label as billing_period_label,
+        md.base_amount::text,
+        md.waived_amount::text,
         md.total_amount::text,
         md.paid_amount::text,
         md.balance_amount::text,
@@ -67,6 +78,22 @@ export default defineEventHandler(async (event) => {
 
   for (const row of result.rows) {
     const existing = userMap.get(row.user_id)
+    const computed = computeDueAmounts(
+      {
+        dueDate: row.due_date,
+        baseAmount: Number(row.base_amount),
+        waivedAmount: Number(row.waived_amount),
+        paidAmount: Number(row.paid_amount),
+        storedStatus: row.due_status,
+      },
+      today,
+      settings.graceDays,
+      settings.lateFeePerDay,
+    )
+
+    if (computed.balanceAmount <= 0 || ['PAID', 'WAIVED', 'CANCELLED'].includes(computed.status)) {
+      continue
+    }
 
     const flatInfo = {
       flatId: row.flat_id,
@@ -74,11 +101,11 @@ export default defineEventHandler(async (event) => {
       blockName: row.block_name,
       relationshipType: row.relationship_type,
       dueId: row.due_id,
-      dueStatus: row.due_status,
+      dueStatus: computed.status,
       billingPeriodLabel: row.billing_period_label,
-      totalAmount: Number(row.total_amount),
+      totalAmount: computed.totalAmount,
       paidAmount: Number(row.paid_amount),
-      balanceAmount: Number(row.balance_amount),
+      balanceAmount: computed.balanceAmount,
       daysOverdue: getDaysOverdue(row.due_date, today),
     }
 

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { DataTablePageEvent, DataTableSortEvent } from 'primevue/datatable'
 import type { ListQueryParams } from '~/types/api'
 import type { FlatSummary, ResidentDetail, ResidentSummary } from '~/types/domain'
 
@@ -98,15 +99,6 @@ const loadResidents = () =>
 const { data, pending, refresh } = await useAsyncData('admin-residents', loadResidents, {
   watch: [query],
 })
-
-const columns = [
-  { field: 'fullName', header: 'Resident', sortable: true },
-  { field: 'role', header: 'Role', sortable: true },
-  { field: 'email', header: 'Email', sortable: true },
-  { field: 'canLogin', header: 'Login', sortable: true, kind: 'status' as const },
-  { field: 'isActive', header: 'Active', sortable: true, kind: 'status' as const },
-  { field: 'actions', header: 'Actions', sortable: false },
-]
 
 const addRelationship = () => {
   form.relationships.push({
@@ -301,7 +293,7 @@ const updateQuery = (value: ListQueryParams) => {
 
 const first = computed(() => (query.value.page - 1) * query.value.pageSize)
 
-const onPage = (event: any) => {
+const onPage = (event: DataTablePageEvent) => {
   updateQuery({
     ...query.value,
     page: Math.floor(event.first / event.rows) + 1,
@@ -309,7 +301,7 @@ const onPage = (event: any) => {
   })
 }
 
-const onSort = (event: any) => {
+const onSort = (event: DataTableSortEvent) => {
   updateQuery({
     ...query.value,
     sortBy: typeof event.sortField === 'string' ? event.sortField : '',

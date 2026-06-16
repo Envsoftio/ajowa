@@ -24,6 +24,12 @@ export const billingPeriodUpdateSchema = billingPeriodSchema.partial().extend({
 export const chargeConfigSchema = z.object({
   graceDays: z.coerce.number().int().nonnegative().default(0),
   lateFeePerDay: z.coerce.number().nonnegative().default(50),
+  billingTenure: z
+    .enum(['MONTHLY', 'QUARTERLY', 'HALF_YEARLY', 'YEARLY', 'CUSTOM'])
+    .default('MONTHLY'),
+  excessPaymentHandling: z
+    .enum(['KEEP_AS_ADVANCE', 'REFUND', 'MANUAL_REVIEW'])
+    .default('KEEP_AS_ADVANCE'),
   defaultCharges: chargeBreakdownSchema.optional().default([]),
   flatTypeCharges: z
     .array(
@@ -58,13 +64,33 @@ export const dueWaiveSchema = z.object({
   reason: z.string().trim().min(2).max(500),
 })
 
+export const dueReminderSchema = z.object({
+  dueIds: z.array(z.string().uuid()).min(1).max(500),
+})
+
 export type BillingPeriodInput = z.infer<typeof billingPeriodSchema>
 export type BillingPeriodUpdateInput = z.infer<typeof billingPeriodUpdateSchema>
 export type ChargeConfigInput = z.infer<typeof chargeConfigSchema>
 export type DueGenerationInput = z.infer<typeof dueGenerationSchema>
 export type DueWaiveInput = z.infer<typeof dueWaiveSchema>
+export type DueReminderInput = z.infer<typeof dueReminderSchema>
 
 export const todayDate = () => new Date().toISOString().slice(0, 10)
+
+export type DueAmountInput = {
+  dueDate: string
+  baseAmount: number
+  paidAmount: number
+  waivedAmount: number
+  storedStatus: string
+}
+
+export type ComputedDueAmounts = {
+  lateFeeAmount: number
+  totalAmount: number
+  balanceAmount: number
+  status: import('~/types/domain').DueStatus
+}
 
 export const computeLateFee = (
   dueDate: string,
@@ -77,6 +103,40 @@ export const computeLateFee = (
   const diffMs = now.getTime() - due.getTime()
   const diffDays = Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24)) - graceDays)
   return Math.round(diffDays * lateFeePerDay * 100) / 100
+}
+
+export const computeDueAmounts = (
+  due: DueAmountInput,
+  today: string,
+  graceDays: number,
+  lateFeePerDay: number,
+): ComputedDueAmounts => {
+  const lateFeeAmount = computeLateFee(due.dueDate, today, graceDays, lateFeePerDay)
+  const totalAmount = Math.max(
+    0,
+    Math.round((due.baseAmount + lateFeeAmount - due.waivedAmount) * 100) / 100,
+  )
+  const balanceAmount = Math.max(0, Math.round((totalAmount - due.paidAmount) * 100) / 100)
+  let status = due.storedStatus as import('~/types/domain').DueStatus
+
+  if (!['WAIVED', 'CANCELLED'].includes(status)) {
+    if (balanceAmount <= 0) {
+      status = 'PAID'
+    } else if (due.paidAmount > 0) {
+      status = 'PARTIALLY_PAID'
+    } else if (lateFeeAmount > 0) {
+      status = 'OVERDUE'
+    } else {
+      status = 'OPEN'
+    }
+  }
+
+  return {
+    lateFeeAmount,
+    totalAmount,
+    balanceAmount,
+    status,
+  }
 }
 
 export const getDaysOverdue = (dueDate: string, today: string): number => {

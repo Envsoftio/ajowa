@@ -23,6 +23,10 @@ export const appStatusMap: Record<string, AppStatusConfig> = {
   overdue: { label: 'Overdue', severity: 'danger', tone: 'danger' },
   inactive: { label: 'Inactive', severity: 'secondary', tone: 'neutral' },
   draft: { label: 'Draft', severity: 'contrast', tone: 'accent' },
+  locked: { label: 'Locked', severity: 'contrast', tone: 'accent' },
+  partially_paid: { label: 'Partially Paid', severity: 'warn', tone: 'warning' },
+  waived: { label: 'Waived', severity: 'secondary', tone: 'neutral' },
+  cancelled: { label: 'Cancelled', severity: 'secondary', tone: 'neutral' },
 }
 
 export const getStatusConfig = (status: string) => {

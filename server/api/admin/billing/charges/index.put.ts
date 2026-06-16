@@ -1,7 +1,7 @@
 import { createApiSuccess, readJsonBody } from '~/server/utils/api'
 import { requireRole } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
-import { validatePayload } from '~/server/utils/master-data'
+import { normalizeSocietySettings, validatePayload, writeMasterAudit } from '~/server/utils/master-data'
 import { chargeConfigSchema } from '~/server/utils/billing'
 
 export default defineEventHandler(async (event) => {
@@ -19,11 +19,29 @@ export default defineEventHandler(async (event) => {
       [authMe.user.societyId],
     )
 
-    const currentSettings = (societyResult.rows[0]?.settings ?? {}) as Record<string, unknown>
+    const currentSettings = normalizeSocietySettings(societyResult.rows[0]?.settings)
+    const existingCharges = await client.query<{
+      scope: string
+      flat_type: string | null
+      flat_id: string | null
+      charge_name: string
+      amount: string
+      charge_breakdown: unknown
+    }>(
+      `
+        select scope::text, flat_type, flat_id, charge_name, amount::text, charge_breakdown
+        from maintenance_charges
+        where society_id = $1 and is_active = true
+        order by scope, flat_type, flat_id, charge_name
+      `,
+      [authMe.user.societyId],
+    )
     const updatedSettings = {
       ...currentSettings,
       graceDays: body.graceDays,
       lateFeePerDay: body.lateFeePerDay,
+      billingTenure: body.billingTenure,
+      excessPaymentHandling: body.excessPaymentHandling,
     }
 
     await client.query(
@@ -75,6 +93,26 @@ export default defineEventHandler(async (event) => {
         )
       }
     }
+
+    await writeMasterAudit({
+      client,
+      event,
+      actorUserId: authMe.user.id,
+      actorAuthUserId: authMe.authUser.id,
+      action: 'UPDATED',
+      eventKey: 'billing_charges.updated',
+      beforeState: {
+        graceDays: currentSettings.graceDays,
+        lateFeePerDay: currentSettings.lateFeePerDay,
+        billingTenure: currentSettings.billingTenure,
+        excessPaymentHandling: currentSettings.excessPaymentHandling,
+        charges: existingCharges.rows,
+      },
+      afterState: body as unknown as Record<string, unknown>,
+      relatedEntities: [
+        { entityTable: 'society_profile', entityId: authMe.user.societyId, entityLabel: 'AJOWA' },
+      ],
+    })
 
     await client.query('commit')
     return createApiSuccess(event, { ok: true })

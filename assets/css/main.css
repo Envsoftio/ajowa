@@ -625,6 +625,79 @@ a {
   color: var(--color-muted);
 }
 
+.table-muted {
+  margin: 0.25rem 0 0;
+  color: var(--color-muted);
+  font-size: 0.9rem;
+}
+
+.admin-charge-section,
+.admin-charge-card,
+.resident-due-groups,
+.resident-due-group {
+  display: grid;
+  gap: 1rem;
+}
+
+.admin-charge-card,
+.resident-due-group,
+.defaulter-flat-pill {
+  padding: 1rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-strong);
+}
+
+.admin-charge-row {
+  display: grid;
+  grid-template-columns: minmax(12rem, 1fr) minmax(9rem, 12rem) auto;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.dialog-actions {
+  justify-content: flex-end;
+}
+
+.billing-total-line,
+.resident-due-group__header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+.billing-total-line {
+  padding-top: 1rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.resident-due-group__header h2,
+.resident-due-group__header p {
+  margin: 0;
+}
+
+.resident-due-group__header p {
+  color: var(--color-muted);
+}
+
+.defaulter-flat-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.defaulter-flat-pill {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.7rem 0.8rem;
+  min-width: 9rem;
+}
+
+.defaulter-flat-pill small {
+  color: var(--color-muted);
+}
+
 .p-invalid,
 .p-inputtext.p-invalid,
 .p-select.p-invalid {
@@ -707,7 +780,8 @@ a {
 
   .admin-two-column,
   .admin-two-column--wide,
-  .admin-form-grid {
+  .admin-form-grid,
+  .admin-charge-row {
     grid-template-columns: 1fr;
   }
 

@@ -227,6 +227,9 @@ export type MaintenanceDue = AuditFields & {
   chargeBreakdown: ChargeBreakdownItem[]
   generatedAt: string
   primaryResidentName: string | null
+  relationshipType?: string
+  isBillingContact?: boolean
+  canPayNow?: boolean
 }
 
 export type DueGenerationRequest = {
@@ -253,6 +256,8 @@ export type BillingChargeConfig = {
   periodId: string | null
   graceDays: number
   lateFeePerDay: number
+  billingTenure: BillingFrequency
+  excessPaymentHandling: SocietyPolicySettings['excessPaymentHandling']
   defaultCharges: ChargeBreakdownItem[]
   flatTypeCharges: {
     flatType: string

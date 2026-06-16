@@ -1,7 +1,8 @@
 import { createApiSuccess } from '~/server/utils/api'
 import { requireActiveUser } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
-import { computeLateFee, todayDate } from '~/server/utils/billing'
+import { computeDueAmounts, todayDate } from '~/server/utils/billing'
+import { normalizeSocietySettings } from '~/server/utils/master-data'
 import type { MaintenanceDue } from '~/types/domain'
 
 type DueRow = {
@@ -27,6 +28,7 @@ type DueRow = {
   created_at: string
   updated_at: string
   relationship_type: string
+  is_billing_contact: boolean
 }
 
 export default defineEventHandler(async (event) => {
@@ -40,9 +42,7 @@ export default defineEventHandler(async (event) => {
     [authMe.user.societyId],
   )
 
-  const settings = (societyResult.rows[0]?.settings ?? {}) as Record<string, unknown>
-  const graceDays = Number(settings.graceDays ?? 0)
-  const lateFeePerDay = Number(settings.lateFeePerDay ?? 50)
+  const settings = normalizeSocietySettings(societyResult.rows[0]?.settings)
 
   // Determine which flats this resident can see
   const accessibleFlatIds = authMe.flatAccess.map((f) => f.flatId)
@@ -75,7 +75,8 @@ export default defineEventHandler(async (event) => {
         md.generated_at::text,
         md.created_at::text,
         md.updated_at::text,
-        fr.relationship_type::text
+        fr.relationship_type::text,
+        fr.is_billing_contact
       from maintenance_dues md
       inner join billing_periods bp on bp.id = md.billing_period_id
       inner join flats f on f.id = md.flat_id
@@ -90,17 +91,20 @@ export default defineEventHandler(async (event) => {
 
   const items: MaintenanceDue[] = result.rows.map((row) => {
     const baseAmount = Number(row.base_amount)
-    const currentLateFee = computeLateFee(row.due_date, today, graceDays, lateFeePerDay)
     const waivedAmount = Number(row.waived_amount)
     const paidAmount = Number(row.paid_amount)
-    const totalAmount = Math.round((baseAmount + currentLateFee - waivedAmount) * 100) / 100
-    const balanceAmount = Math.max(0, Math.round((totalAmount - paidAmount) * 100) / 100)
-
-    // Derive status based on current computation
-    let status: MaintenanceDue['status'] = row.status as MaintenanceDue['status']
-    if (status === 'OPEN' && currentLateFee > 0 && balanceAmount > 0) {
-      status = 'OVERDUE'
-    }
+    const computed = computeDueAmounts(
+      {
+        dueDate: row.due_date,
+        baseAmount,
+        waivedAmount,
+        paidAmount,
+        storedStatus: row.status,
+      },
+      today,
+      settings.graceDays,
+      settings.lateFeePerDay,
+    )
 
     return {
       id: row.id,
@@ -114,15 +118,22 @@ export default defineEventHandler(async (event) => {
       unitType: row.unit_type,
       dueDate: row.due_date,
       baseAmount,
-      lateFeeAmount: currentLateFee,
+      lateFeeAmount: computed.lateFeeAmount,
       waivedAmount,
       paidAmount,
-      totalAmount,
-      balanceAmount,
-      status,
+      totalAmount: computed.totalAmount,
+      balanceAmount: computed.balanceAmount,
+      status: computed.status,
       chargeBreakdown: Array.isArray(row.charge_breakdown) ? row.charge_breakdown : [],
       generatedAt: row.generated_at,
       primaryResidentName: authMe.user.fullName,
+      relationshipType: row.relationship_type,
+      isBillingContact: row.is_billing_contact,
+      canPayNow:
+        row.is_billing_contact &&
+        (['OWNER', 'CO_OWNER', 'SHOP_OWNER'].includes(row.relationship_type) ||
+          (['TENANT', 'SHOP_TENANT', 'COMMERCIAL_OCCUPANT'].includes(row.relationship_type) &&
+            settings.tenantPaymentsEnabled)),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }

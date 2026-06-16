@@ -16,9 +16,19 @@ export default defineEventHandler(async (event) => {
     await client.query('begin')
 
     const existing = await client.query<{
-      id: string; label: string; is_locked: boolean; start_date: string; end_date: string; due_date: string
+      id: string
+      label: string
+      frequency: string
+      is_locked: boolean
+      start_date: string
+      end_date: string
+      due_date: string
     }>(
-      `select id, label, is_locked, start_date::text, end_date::text, due_date::text from billing_periods where id = $1 and society_id = $2`,
+      `
+        select id, label, frequency::text, is_locked, start_date::text, end_date::text, due_date::text
+        from billing_periods
+        where id = $1 and society_id = $2
+      `,
       [periodId, authMe.user.societyId],
     )
 
@@ -31,6 +41,63 @@ export default defineEventHandler(async (event) => {
     }
 
     const current = existing.rows[0]
+    const hasMetadataChanges = [
+      body.label,
+      body.frequency,
+      body.startDate,
+      body.endDate,
+      body.dueDate,
+    ].some((value) => value !== undefined)
+
+    if (current.is_locked && hasMetadataChanges) {
+      throw new AppError({
+        code: 'VALIDATION_ERROR',
+        statusCode: 400,
+        message: 'Locked billing periods cannot be edited.',
+      })
+    }
+
+    const nextStartDate = body.startDate ?? current.start_date
+    const nextEndDate = body.endDate ?? current.end_date
+    const nextDueDate = body.dueDate ?? current.due_date
+
+    if (nextStartDate > nextEndDate) {
+      throw new AppError({
+        code: 'VALIDATION_ERROR',
+        statusCode: 400,
+        message: 'Start date must be before or equal to end date.',
+      })
+    }
+
+    if (nextDueDate < nextStartDate) {
+      throw new AppError({
+        code: 'VALIDATION_ERROR',
+        statusCode: 400,
+        message: 'Due date must be on or after start date.',
+      })
+    }
+
+    if (hasMetadataChanges) {
+      const overlap = await client.query<{ id: string; label: string }>(
+        `
+          select id, label
+          from billing_periods
+          where society_id = $1
+            and id <> $2
+            and daterange(start_date, end_date, '[]') && daterange($3::date, $4::date, '[]')
+          limit 1
+        `,
+        [authMe.user.societyId, periodId, nextStartDate, nextEndDate],
+      )
+
+      if (overlap.rows[0]) {
+        throw new AppError({
+          code: 'VALIDATION_ERROR',
+          statusCode: 400,
+          message: `The date range overlaps with existing period "${overlap.rows[0].label}".`,
+        })
+      }
+    }
 
     // Lock/unlock logic
     if (body.isLocked !== undefined && body.isLocked !== current.is_locked) {
@@ -42,13 +109,15 @@ export default defineEventHandler(async (event) => {
         })
       }
 
+      const lockReason = body.isLocked ? body.lockReason : null
+
       await client.query(
         `
           update billing_periods
           set is_locked = $1, locked_at = $3, lock_reason = $4, updated_at = now()
           where id = $2
         `,
-        [body.isLocked, periodId, body.isLocked ? new Date().toISOString() : null, body.lockReason ?? null],
+        [body.isLocked, periodId, body.isLocked ? new Date().toISOString() : null, lockReason],
       )
 
       await writeMasterAudit({
@@ -59,7 +128,7 @@ export default defineEventHandler(async (event) => {
         action: 'STATE_CHANGED',
         eventKey: body.isLocked ? 'billing_periods.locked' : 'billing_periods.unlocked',
         beforeState: { isLocked: current.is_locked },
-        afterState: { isLocked: body.isLocked, lockReason: body.lockReason },
+        afterState: { isLocked: body.isLocked, lockReason },
         relatedEntities: [
           { entityTable: 'billing_periods', entityId: periodId, entityLabel: current.label },
         ],
@@ -113,6 +182,10 @@ export default defineEventHandler(async (event) => {
         eventKey: 'billing_periods.updated',
         beforeState: {
           label: current.label,
+          frequency: current.frequency,
+          startDate: current.start_date,
+          endDate: current.end_date,
+          dueDate: current.due_date,
         },
         afterState: body as unknown as Record<string, unknown>,
         relatedEntities: [

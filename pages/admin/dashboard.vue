@@ -5,7 +5,6 @@ definePageMeta({
   title: 'Admin Dashboard',
 })
 
-const authStore = useAuthStore()
 </script>
 
 <template>

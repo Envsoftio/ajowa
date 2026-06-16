@@ -1,6 +1,7 @@
 import { createApiSuccess } from '~/server/utils/api'
 import { requireRole } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
+import { normalizeSocietySettings } from '~/server/utils/master-data'
 import type { BillingChargeConfig, ChargeBreakdownItem } from '~/types/domain'
 
 type ChargeRow = {
@@ -30,9 +31,7 @@ export default defineEventHandler(async (event) => {
     [authMe.user.societyId],
   )
 
-  const settings = (societyResult.rows[0]?.settings ?? {}) as Record<string, unknown>
-  const graceDays = Number(settings.graceDays ?? 0)
-  const lateFeePerDay = Number(settings.lateFeePerDay ?? 50)
+  const settings = normalizeSocietySettings(societyResult.rows[0]?.settings)
 
   const result = await pool.query<ChargeRow>(
     `
@@ -71,25 +70,37 @@ export default defineEventHandler(async (event) => {
     if (row.scope === 'SOCIETY_DEFAULT') {
       defaultCharges.push(...breakdown)
     } else if (row.scope === 'FLAT_TYPE' && row.flat_type) {
-      flatTypeCharges.push({
-        flatType: row.flat_type,
-        label: row.charge_name,
-        charges: breakdown,
-      })
+      const existing = flatTypeCharges.find((item) => item.flatType === row.flat_type)
+      if (existing) {
+        existing.charges.push(...breakdown)
+      } else {
+        flatTypeCharges.push({
+          flatType: row.flat_type,
+          label: row.charge_name,
+          charges: breakdown,
+        })
+      }
     } else if (row.scope === 'FLAT' && row.flat_id) {
-      flatOverrideCharges.push({
-        flatId: row.flat_id,
-        flatNumber: row.flat_number ?? '',
-        blockName: row.block_name ?? '',
-        charges: breakdown,
-      })
+      const existing = flatOverrideCharges.find((item) => item.flatId === row.flat_id)
+      if (existing) {
+        existing.charges.push(...breakdown)
+      } else {
+        flatOverrideCharges.push({
+          flatId: row.flat_id,
+          flatNumber: row.flat_number ?? '',
+          blockName: row.block_name ?? '',
+          charges: breakdown,
+        })
+      }
     }
   }
 
   const config: BillingChargeConfig = {
     periodId: null,
-    graceDays,
-    lateFeePerDay,
+    graceDays: settings.graceDays,
+    lateFeePerDay: settings.lateFeePerDay,
+    billingTenure: settings.billingTenure,
+    excessPaymentHandling: settings.excessPaymentHandling,
     defaultCharges,
     flatTypeCharges,
     flatOverrideCharges,
