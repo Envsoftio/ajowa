@@ -39,6 +39,11 @@ export default defineNuxtRouteMiddleware(async (to) => {
     if (!['ADMIN', 'MANAGER'].includes(me.user.role)) {
       return navigateTo('/forbidden')
     }
+
+    const requiredPermission = getAdminRoutePermission(to.path)
+    if (requiredPermission && !me.user.permissions.includes(requiredPermission)) {
+      return navigateTo('/forbidden')
+    }
   }
 
   if (to.path.startsWith('/my')) {
@@ -53,3 +58,31 @@ export default defineNuxtRouteMiddleware(async (to) => {
     }
   }
 })
+
+const getAdminRoutePermission = (path: string) => {
+  if (path.startsWith('/admin/staff')) {
+    return 'staff.manage'
+  }
+  if (path.startsWith('/admin/society')) {
+    return 'society.manage'
+  }
+  if (path.startsWith('/admin/blocks')) {
+    return 'blocks.manage'
+  }
+  if (path.startsWith('/admin/flats')) {
+    return 'flats.manage'
+  }
+  if (path.startsWith('/admin/residents')) {
+    return 'residents.manage'
+  }
+  if (path.startsWith('/admin/billing/periods')) {
+    return 'billing.manage'
+  }
+  if (path.startsWith('/admin/billing/dues')) {
+    return 'dues.manage'
+  }
+  if (path.startsWith('/admin/billing/defaulters')) {
+    return 'defaulters.view'
+  }
+  return null
+}

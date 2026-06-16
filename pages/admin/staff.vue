@@ -1,0 +1,375 @@
+<script setup lang="ts">
+import type { DataTablePageEvent, DataTableSortEvent } from 'primevue/datatable'
+import type { ListQueryParams } from '~/types/api'
+import type { StaffSummary } from '~/types/domain'
+import { staffPermissionLabels, staffPermissions, type StaffPermission } from '~/shared/permissions'
+
+definePageMeta({
+  layout: 'admin',
+  middleware: ['protected'],
+  title: 'Staff',
+})
+
+const api = useApi()
+const toast = useToast()
+
+const query = ref<ListQueryParams>({
+  page: 1,
+  pageSize: 10,
+  search: '',
+  sortBy: 'fullName',
+  sortDirection: 'asc',
+  filters: {},
+})
+
+const selectedStaff = ref<StaffSummary | null>(null)
+const displayDialog = ref(false)
+const saving = ref(false)
+const globalSearch = ref('')
+
+const form = reactive({
+  role: 'MANAGER' as StaffSummary['role'],
+  fullName: '',
+  email: '',
+  mobileNumber: '',
+  whatsappNumber: '',
+  canLogin: true,
+  isActive: true,
+  permissions: [] as StaffPermission[],
+})
+
+const permissionOptions = staffPermissions.map((permission) => ({
+  label: staffPermissionLabels[permission],
+  value: permission,
+}))
+
+const loadStaff = () =>
+  api<{ ok: true; data: { items: StaffSummary[]; total: number } }>('/api/admin/staff', {
+    query: {
+      page: query.value.page,
+      pageSize: query.value.pageSize,
+      search: query.value.search,
+      sortBy: query.value.sortBy,
+      sortDirection: query.value.sortDirection,
+      role: query.value.filters.role?.[0],
+      canLogin: query.value.filters.canLogin?.[0],
+      isActive: query.value.filters.isActive?.[0],
+    },
+  })
+
+const { data, pending, refresh } = await useAsyncData('admin-staff', loadStaff, {
+  watch: [query],
+})
+
+const resetForm = () => {
+  selectedStaff.value = null
+  form.role = 'MANAGER'
+  form.fullName = ''
+  form.email = ''
+  form.mobileNumber = ''
+  form.whatsappNumber = ''
+  form.canLogin = true
+  form.isActive = true
+  form.permissions = []
+}
+
+const openCreateDialog = () => {
+  resetForm()
+  displayDialog.value = true
+}
+
+const editStaff = (staff: StaffSummary) => {
+  selectedStaff.value = staff
+  form.role = staff.role
+  form.fullName = staff.fullName
+  form.email = staff.email
+  form.mobileNumber = staff.mobileNumber
+  form.whatsappNumber = staff.whatsappNumber ?? ''
+  form.canLogin = staff.canLogin
+  form.isActive = staff.isActive
+  form.permissions = staff.permissions.filter((permission): permission is StaffPermission =>
+    staffPermissions.includes(permission as StaffPermission),
+  )
+  displayDialog.value = true
+}
+
+const closeDialog = () => {
+  displayDialog.value = false
+  resetForm()
+}
+
+const submit = async () => {
+  saving.value = true
+
+  try {
+    const payload = {
+      role: form.role,
+      fullName: form.fullName,
+      mobileNumber: form.mobileNumber,
+      whatsappNumber: form.whatsappNumber || null,
+      canLogin: form.canLogin,
+      isActive: form.isActive,
+      permissions: form.permissions,
+      ...(selectedStaff.value ? {} : { email: form.email }),
+    }
+
+    if (selectedStaff.value) {
+      await api(`/api/admin/staff/${selectedStaff.value.id}`, {
+        method: 'PATCH',
+        body: payload,
+      })
+    } else {
+      await api('/api/admin/staff', {
+        method: 'POST',
+        body: payload,
+      })
+    }
+
+    toast.add({
+      severity: 'success',
+      summary: 'Saved',
+      detail: selectedStaff.value ? 'Staff member updated.' : 'Staff member created.',
+      life: 3000,
+    })
+    closeDialog()
+    await refresh()
+  } finally {
+    saving.value = false
+  }
+}
+
+const updateQuery = (value: ListQueryParams) => {
+  query.value = value
+}
+
+const first = computed(() => (query.value.page - 1) * query.value.pageSize)
+
+const onPage = (event: DataTablePageEvent) => {
+  updateQuery({
+    ...query.value,
+    page: Math.floor(event.first / event.rows) + 1,
+    pageSize: event.rows,
+  })
+}
+
+const onSort = (event: DataTableSortEvent) => {
+  updateQuery({
+    ...query.value,
+    sortBy: typeof event.sortField === 'string' ? event.sortField : '',
+    sortDirection: event.sortOrder === -1 ? 'desc' : 'asc',
+  })
+}
+
+const onSearch = () => {
+  updateQuery({
+    ...query.value,
+    page: 1,
+    search: globalSearch.value.trim(),
+  })
+}
+
+const roleFilter = computed({
+  get: () => query.value.filters.role?.[0] ?? '',
+  set: (val) => {
+    updateQuery({
+      ...query.value,
+      page: 1,
+      filters: { ...query.value.filters, role: val ? [val] : [] },
+    })
+  },
+})
+
+const activeFilter = computed({
+  get: () => query.value.filters.isActive?.[0] ?? '',
+  set: (val) => {
+    updateQuery({
+      ...query.value,
+      page: 1,
+      filters: { ...query.value.filters, isActive: val ? [val] : [] },
+    })
+  },
+})
+
+const loginFilter = computed({
+  get: () => query.value.filters.canLogin?.[0] ?? '',
+  set: (val) => {
+    updateQuery({
+      ...query.value,
+      page: 1,
+      filters: { ...query.value.filters, canLogin: val ? [val] : [] },
+    })
+  },
+})
+
+const permissionLabel = (permission: string) =>
+  staffPermissionLabels[permission as StaffPermission] ?? permission
+</script>
+
+<template>
+  <div class="landing-page">
+    <section class="list-page surface-card">
+      <header class="list-page__header">
+        <div>
+          <h1>Staff registry</h1>
+          <p>Admin-managed staff accounts with route-level permissions.</p>
+        </div>
+        <div class="list-page__exports">
+          <Button label="Add staff" icon="pi pi-plus" @click="openCreateDialog" />
+        </div>
+      </header>
+
+      <div class="list-page__toolbar">
+        <IconField class="list-page__search">
+          <InputIcon class="pi pi-search" />
+          <InputText v-model="globalSearch" placeholder="Search staff by name, email, or mobile" @keydown.enter="onSearch" />
+        </IconField>
+        <div class="list-page__filters">
+          <Select
+            v-model="roleFilter"
+            :options="[
+              { label: 'All roles', value: '' },
+              { label: 'Manager', value: 'MANAGER' },
+              { label: 'Service Staff', value: 'SERVICE_STAFF' },
+              { label: 'Guard', value: 'GUARD' }
+            ]"
+            option-label="label"
+            option-value="value"
+            placeholder="Role"
+          />
+          <Select
+            v-model="loginFilter"
+            :options="[
+              { label: 'All logins', value: '' },
+              { label: 'Login enabled', value: 'true' },
+              { label: 'Login disabled', value: 'false' }
+            ]"
+            option-label="label"
+            option-value="value"
+            placeholder="Login state"
+          />
+          <Select
+            v-model="activeFilter"
+            :options="[
+              { label: 'All status', value: '' },
+              { label: 'Active only', value: 'true' },
+              { label: 'Inactive only', value: 'false' }
+            ]"
+            option-label="label"
+            option-value="value"
+            placeholder="Active state"
+          />
+          <Button label="Search" @click="onSearch" />
+        </div>
+      </div>
+
+      <DataTable
+        :value="data?.data.items ?? []"
+        :loading="pending"
+        :lazy="true"
+        paginator
+        responsive-layout="scroll"
+        class="list-page__table"
+        :rows="query.pageSize"
+        :first="first"
+        :total-records="data?.data.total ?? 0"
+        :sort-field="query.sortBy"
+        :sort-order="query.sortDirection === 'desc' ? -1 : 1"
+        @page="onPage"
+        @sort="onSort"
+      >
+        <Column field="fullName" header="Staff member" sortable />
+        <Column field="role" header="Role" sortable />
+        <Column field="email" header="Email" sortable />
+        <Column header="Permissions">
+          <template #body="{ data: row }">
+            <div class="admin-inline-actions" style="gap: 0.35rem; flex-wrap: wrap;">
+              <Tag
+                v-for="permission in row.permissions.slice(0, 3)"
+                :key="permission"
+                severity="secondary"
+                :value="permissionLabel(permission)"
+                rounded
+              />
+              <Tag v-if="row.permissions.length > 3" severity="contrast" :value="`+${row.permissions.length - 3}`" rounded />
+            </div>
+          </template>
+        </Column>
+        <Column field="canLogin" header="Login" sortable>
+          <template #body="{ data: row }">
+            <AppStatusBadge :status="row.canLogin ? 'active' : 'inactive'" />
+          </template>
+        </Column>
+        <Column header="Actions" class="text-right" style="width: 100px">
+          <template #body="{ data: row }">
+            <Button icon="pi pi-pencil" severity="secondary" text rounded aria-label="Edit staff" @click="editStaff(row)" />
+          </template>
+        </Column>
+      </DataTable>
+    </section>
+
+    <Dialog
+      v-model:visible="displayDialog"
+      :header="selectedStaff ? 'Edit Staff' : 'Add Staff'"
+      modal
+      class="p-dialog-custom"
+      :style="{ width: '760px', maxWidth: '95vw' }"
+    >
+      <form class="admin-form-layout" style="padding: 1.5rem 0.5rem 0;" @submit.prevent="submit">
+        <section class="admin-form-subsection">
+          <h3>Account</h3>
+          <div class="admin-form-grid">
+            <label>
+              <span>Full name</span>
+              <InputText v-model="form.fullName" required />
+            </label>
+            <label>
+              <span>Email</span>
+              <InputText v-model="form.email" type="email" required :disabled="!!selectedStaff" />
+            </label>
+            <label>
+              <span>Mobile</span>
+              <InputText v-model="form.mobileNumber" required />
+            </label>
+            <label>
+              <span>WhatsApp</span>
+              <InputText v-model="form.whatsappNumber" />
+            </label>
+            <label>
+              <span>Role</span>
+              <Select v-model="form.role" :options="['MANAGER', 'SERVICE_STAFF', 'GUARD']" required />
+            </label>
+          </div>
+        </section>
+
+        <section class="admin-form-subsection">
+          <h3>Permissions</h3>
+          <MultiSelect
+            v-model="form.permissions"
+            :options="permissionOptions"
+            option-label="label"
+            option-value="value"
+            display="chip"
+            placeholder="Choose permissions"
+            fluid
+          />
+        </section>
+
+        <div class="admin-toggle-grid">
+          <label class="admin-toggle-card">
+            <span>Login enabled</span>
+            <ToggleSwitch v-model="form.canLogin" />
+          </label>
+          <label class="admin-toggle-card">
+            <span>Active</span>
+            <ToggleSwitch v-model="form.isActive" />
+          </label>
+        </div>
+
+        <div class="admin-inline-actions" style="justify-content: flex-end; margin-top: 1.5rem; gap: 0.75rem;">
+          <Button type="button" label="Cancel" severity="secondary" outlined @click="closeDialog" />
+          <Button type="submit" :label="saving ? 'Saving…' : 'Save staff'" :loading="saving" />
+        </div>
+      </form>
+    </Dialog>
+  </div>
+</template>

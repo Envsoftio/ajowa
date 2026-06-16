@@ -1,3 +1,5 @@
+import type { StaffPermission } from '~/shared/permissions'
+
 export type AppRole = 'ADMIN' | 'MANAGER' | 'SERVICE_STAFF' | 'RESIDENT' | 'GUARD'
 
 export type RelationshipType = 'OWNER' | 'TENANT' | 'FAMILY_MEMBER'
@@ -52,6 +54,7 @@ export type AppUserSummary = {
   mustChangePassword: boolean
   emailVerified: boolean
   isActive: boolean
+  permissions: StaffPermission[]
 }
 
 export type AuthAccessSummary = {

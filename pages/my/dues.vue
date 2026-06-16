@@ -158,7 +158,15 @@ const openBreakdown = (due: MaintenanceDue) => {
             <Column header="Actions" style="width: 150px">
               <template #body="{ data: row }">
                 <div class="admin-inline-actions">
-                  <Button icon="pi pi-list" severity="secondary" text rounded @click="openBreakdown(row)" />
+                  <Button
+                    icon="pi pi-list"
+                    severity="secondary"
+                    text
+                    rounded
+                    aria-label="View charge breakdown"
+                    title="View charge breakdown"
+                    @click="openBreakdown(row)"
+                  />
                   <Button
                     label="Pay"
                     icon="pi pi-credit-card"

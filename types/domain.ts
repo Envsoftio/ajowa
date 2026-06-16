@@ -158,6 +158,21 @@ export type ResidentDetail = ResidentSummary & {
   relationships: FlatResidentRelationship[]
 }
 
+export type StaffSummary = AuditFields & {
+  id: string
+  societyId: string
+  authUserId: string
+  role: 'MANAGER' | 'SERVICE_STAFF' | 'GUARD'
+  fullName: string
+  email: string
+  mobileNumber: string
+  whatsappNumber: string | null
+  canLogin: boolean
+  emailVerified: boolean
+  isActive: boolean
+  permissions: string[]
+}
+
 // --- Phase 6: Billing Types ---
 
 export type BillingFrequency = 'MONTHLY' | 'QUARTERLY' | 'HALF_YEARLY' | 'YEARLY' | 'CUSTOM'

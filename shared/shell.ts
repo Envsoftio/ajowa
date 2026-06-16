@@ -40,6 +40,7 @@ export const shellNavigation: Record<AppShellType, AppNavItem[]> = {
     { label: 'Blocks', to: '/admin/blocks', icon: 'pi pi-th-large' },
     { label: 'Flats', to: '/admin/flats', icon: 'pi pi-home' },
     { label: 'Residents', to: '/admin/residents', icon: 'pi pi-users' },
+    { label: 'Staff', to: '/admin/staff', icon: 'pi pi-id-card' },
     { label: 'Billing Periods', to: '/admin/billing/periods', icon: 'pi pi-calendar' },
     { label: 'Dues', to: '/admin/billing/dues', icon: 'pi pi-wallet' },
     { label: 'Defaulters', to: '/admin/billing/defaulters', icon: 'pi pi-exclamation-triangle' },

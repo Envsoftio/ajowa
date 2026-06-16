@@ -773,6 +773,123 @@ a {
   background: rgba(9, 20, 27, 0.72);
 }
 
+.qr-access-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 420px);
+  gap: 1rem;
+}
+
+.qr-status-card,
+.qr-image-card,
+.guard-scan-shell,
+.scan-result {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-strong);
+  padding: 1.25rem;
+}
+
+.qr-status-card {
+  display: grid;
+  align-content: start;
+  gap: 1rem;
+}
+
+.qr-status-card h2,
+.scan-result h2 {
+  margin: 0;
+  font-size: clamp(2rem, 4vw, 3.4rem);
+}
+
+.qr-status-card--blocked {
+  border-color: rgba(220, 38, 38, 0.35);
+}
+
+.qr-kpis {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.85rem;
+  border-radius: var(--radius-sm);
+  background: rgba(15, 118, 110, 0.08);
+}
+
+.qr-block-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.qr-block-list strong {
+  flex-basis: 100%;
+}
+
+.qr-block-list span {
+  border: 1px solid rgba(220, 38, 38, 0.28);
+  border-radius: 999px;
+  padding: 0.35rem 0.65rem;
+}
+
+.qr-image-card {
+  display: grid;
+  justify-items: center;
+  gap: 0.75rem;
+  text-align: center;
+}
+
+.qr-image {
+  width: min(100%, 360px);
+  aspect-ratio: 1;
+  border-radius: var(--radius-sm);
+  background: #fff;
+}
+
+.guard-scan-page {
+  min-height: calc(100vh - 2rem);
+  place-items: center;
+}
+
+.guard-scan-shell {
+  width: min(100%, 560px);
+  display: grid;
+  gap: 1rem;
+}
+
+.guard-scan-header,
+.guard-manual-form {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.guard-camera-frame {
+  overflow: hidden;
+  min-height: 320px;
+  border: 2px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: #05070a;
+}
+
+.scan-result {
+  display: grid;
+  gap: 1rem;
+  min-height: 380px;
+  align-content: center;
+  text-align: center;
+}
+
+.scan-result--allowed {
+  border-color: rgba(22, 163, 74, 0.4);
+  background: rgba(22, 163, 74, 0.14);
+}
+
+.scan-result--blocked {
+  border-color: rgba(220, 38, 38, 0.42);
+  background: rgba(220, 38, 38, 0.12);
+}
+
 @media (max-width: 768px) {
   .surface-grid {
     grid-template-columns: 1fr;
@@ -811,6 +928,17 @@ a {
   }
 
   .auth-card {
+    width: 100%;
+  }
+
+  .qr-access-grid,
+  .guard-manual-form {
+    grid-template-columns: 1fr;
+    flex-direction: column;
+  }
+
+  .guard-manual-form .p-inputtext,
+  .guard-manual-form .p-button {
     width: 100%;
   }
 }

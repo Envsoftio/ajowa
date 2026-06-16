@@ -173,7 +173,8 @@ const insertInviteIfRequested = async ({
 
 export default defineEventHandler(async (event) => {
   const authMe = await requireRole(event, ['ADMIN', 'MANAGER'])
-  const body = residentSchema.parse(await readJsonBody(event))
+  const rawBody = await readJsonBody<Record<string, unknown>>(event)
+  const body = residentSchema.parse({ ...rawBody, role: 'RESIDENT' })
   ensureResidentRelationshipsAreValid(body)
   const pool = getDatabasePool()
   const client = await pool.connect()

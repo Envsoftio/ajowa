@@ -10,6 +10,7 @@ import { getDatabasePool, queryRows } from './database'
 import { sendTemplatedEmail, buildAppUrl } from './email'
 import { getValidatedRuntimeConfig } from './env'
 import { getRoleLandingRoute } from '~/shared/auth'
+import { adminPermissions, managerDefaultPermissions, staffPermissions, type StaffPermission } from '~/shared/permissions'
 import type {
   AccessScope,
   AppRole,
@@ -36,6 +37,7 @@ type AppUserRow = {
   must_change_password: boolean
   email_verified: boolean
   is_active: boolean
+  staff_permissions: string[]
 }
 
 type FlatAccessRow = {
@@ -164,7 +166,8 @@ const loadAppUserByAuthUserId = async (authUserId: string) => {
           can_login,
           must_change_password,
           email_verified,
-          is_active
+          is_active,
+          staff_permissions
         from users
         where auth_user_id = $1
         limit 1
@@ -238,6 +241,7 @@ const buildAuthMe = (session: NonNullable<AuthSessionResult>, appState: NonNulla
       : appState.user.role === 'SERVICE_STAFF'
         ? hasDepartmentAccess
         : true
+  const permissions = normalizeStaffPermissions(appState.user.role, appState.user.staff_permissions)
 
   return {
     session: {
@@ -263,6 +267,7 @@ const buildAuthMe = (session: NonNullable<AuthSessionResult>, appState: NonNulla
       mustChangePassword: appState.user.must_change_password,
       emailVerified: appState.user.email_verified,
       isActive: appState.user.is_active,
+      permissions,
     },
     flatAccess: appState.flatAccess,
     departmentAssignments: appState.departmentAssignments,
@@ -282,6 +287,18 @@ const buildAuthMe = (session: NonNullable<AuthSessionResult>, appState: NonNulla
   }
 }
 
+const normalizeStaffPermissions = (role: AppRole, permissions: string[] | null | undefined): StaffPermission[] => {
+  if (role === 'ADMIN') {
+    return adminPermissions
+  }
+
+  const fallback = role === 'MANAGER' ? managerDefaultPermissions : []
+  const requested = permissions?.length ? permissions : fallback
+  return requested.filter((permission): permission is StaffPermission =>
+    staffPermissions.includes(permission as StaffPermission),
+  )
+}
+
 const upsertAppUser = async ({
   authUserId,
   email,
@@ -293,6 +310,7 @@ const upsertAppUser = async ({
   mustChangePassword = false,
   emailVerified = false,
   isActive = true,
+  permissions,
 }: {
   authUserId: string
   email: string
@@ -304,6 +322,7 @@ const upsertAppUser = async ({
   mustChangePassword?: boolean
   emailVerified?: boolean
   isActive?: boolean
+  permissions?: StaffPermission[]
 }) => {
   const societyId = await getDefaultSocietyId()
 
@@ -320,9 +339,10 @@ const upsertAppUser = async ({
         can_login,
         must_change_password,
         email_verified,
-        is_active
+        is_active,
+        staff_permissions
       )
-      values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
       on conflict (auth_user_id) do update
         set role = excluded.role,
             full_name = excluded.full_name,
@@ -333,6 +353,7 @@ const upsertAppUser = async ({
             must_change_password = excluded.must_change_password,
             email_verified = excluded.email_verified,
             is_active = excluded.is_active,
+            staff_permissions = excluded.staff_permissions,
             updated_at = now()
     `,
     [
@@ -347,6 +368,7 @@ const upsertAppUser = async ({
       mustChangePassword,
       emailVerified,
       isActive,
+      normalizeStaffPermissions(role, permissions),
     ],
   )
 }
@@ -370,6 +392,7 @@ const syncAuthIdentityToAppUser = async (authUser: {
     mustChangePassword: existing?.user.must_change_password ?? false,
     emailVerified: authUser.emailVerified,
     isActive: existing?.user.is_active ?? true,
+    permissions: normalizeStaffPermissions(existing?.user.role ?? 'RESIDENT', existing?.user.staff_permissions),
   })
 }
 
@@ -463,6 +486,7 @@ export const auth = betterAuth({
         mustChangePassword: false,
         emailVerified: appState.user.email_verified,
         isActive: appState.user.is_active,
+        permissions: normalizeStaffPermissions(appState.user.role, appState.user.staff_permissions),
       })
     },
   },
@@ -570,6 +594,20 @@ export const requireRole = async (event: H3Event, roles: AppRole[]) => {
   const authMe = await requireAuth(event)
 
   if (!roles.includes(authMe.user.role)) {
+    throw new AppError({
+      code: 'FORBIDDEN',
+      statusCode: 403,
+      message: 'You do not have permission to access this resource.',
+    })
+  }
+
+  return authMe
+}
+
+export const requirePermission = async (event: H3Event, permission: StaffPermission) => {
+  const authMe = await requireRole(event, ['ADMIN', 'MANAGER'])
+
+  if (!authMe.user.permissions.includes(permission)) {
     throw new AppError({
       code: 'FORBIDDEN',
       statusCode: 403,

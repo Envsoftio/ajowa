@@ -430,13 +430,32 @@ const saveCharges = async () => {
         <Column header="Actions" style="width: 210px">
           <template #body="{ data: row }">
             <div class="admin-inline-actions">
-              <Button icon="pi pi-bolt" text rounded severity="secondary" @click="openGenerationDialog(row)" />
-              <Button icon="pi pi-pencil" text rounded severity="secondary" :disabled="row.isLocked" @click="editPeriod(row)" />
+              <Button
+                icon="pi pi-bolt"
+                text
+                rounded
+                severity="secondary"
+                aria-label="Generate preview for period"
+                title="Generate preview for period"
+                @click="openGenerationDialog(row)"
+              />
+              <Button
+                icon="pi pi-pencil"
+                text
+                rounded
+                severity="secondary"
+                :disabled="row.isLocked"
+                aria-label="Edit billing period"
+                title="Edit billing period"
+                @click="editPeriod(row)"
+              />
               <Button
                 :icon="row.isLocked ? 'pi pi-lock-open' : 'pi pi-lock'"
                 text
                 rounded
                 severity="secondary"
+                :aria-label="row.isLocked ? 'Unlock period' : 'Lock period'"
+                :title="row.isLocked ? 'Unlock period' : 'Lock period'"
                 @click="openLockDialog(row)"
               />
             </div>
@@ -497,7 +516,16 @@ const saveCharges = async () => {
           <div v-for="(charge, index) in chargeForm.defaultCharges" :key="index" class="admin-charge-row">
             <InputText v-model="charge.label" placeholder="Charge label" />
             <InputNumber v-model="charge.amount" :min="0" fluid />
-            <Button type="button" icon="pi pi-trash" severity="danger" text rounded @click="removeCharge(chargeForm.defaultCharges, index)" />
+              <Button
+                type="button"
+                icon="pi pi-trash"
+                severity="danger"
+                text
+                rounded
+                :aria-label="`Remove default charge ${charge.label || 'item'}`"
+                :title="`Remove default charge ${charge.label || 'item'}`"
+                @click="removeCharge(chargeForm.defaultCharges, index)"
+              />
           </div>
         </div>
 
@@ -518,6 +546,8 @@ const saveCharges = async () => {
                 severity="danger"
                 text
                 rounded
+                :aria-label="`Remove ${config.flatType || 'unit type'} charge template`"
+                :title="`Remove ${config.flatType || 'unit type'} charge template`"
                 @click="chargeForm.flatTypeCharges.splice(configIndex, 1)"
               />
             </div>
@@ -555,13 +585,24 @@ const saveCharges = async () => {
                 severity="danger"
                 text
                 rounded
+                :aria-label="`Remove flat override for ${config.flatNumber || 'selected flat'} charge template`"
+                :title="`Remove flat override for ${config.flatNumber || 'selected flat'} charge template`"
                 @click="chargeForm.flatOverrideCharges.splice(configIndex, 1)"
               />
             </div>
             <div v-for="(charge, chargeIndex) in config.charges" :key="chargeIndex" class="admin-charge-row">
               <InputText v-model="charge.label" placeholder="Charge label" />
               <InputNumber v-model="charge.amount" :min="0" fluid />
-              <Button type="button" icon="pi pi-trash" severity="danger" text rounded @click="removeCharge(config.charges, chargeIndex)" />
+              <Button
+                type="button"
+                icon="pi pi-trash"
+                severity="danger"
+                text
+                rounded
+                :aria-label="`Remove charge ${charge.label || 'item'}`"
+                :title="`Remove charge ${charge.label || 'item'}`"
+                @click="removeCharge(config.charges, chargeIndex)"
+              />
             </div>
             <Button type="button" label="Add charge" icon="pi pi-plus" severity="secondary" outlined @click="addCharge(config.charges)" />
           </div>

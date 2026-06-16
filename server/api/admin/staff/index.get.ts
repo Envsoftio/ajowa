@@ -1,29 +1,25 @@
 import { createPaginatedSuccess } from '~/server/utils/api'
-import { requireRole } from '~/server/utils/auth'
+import { requirePermission } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
 import { parseListQuery } from '~/server/utils/master-data'
-import type { ResidentSummary } from '~/types/domain'
+import { staffPermissions, type StaffPermission } from '~/shared/permissions'
+import type { StaffSummary } from '~/types/domain'
 
-type ResidentRow = {
+type StaffRow = {
   id: string
   society_id: string
   auth_user_id: string
-  role: string
+  role: 'MANAGER' | 'SERVICE_STAFF' | 'GUARD'
   full_name: string
   email: string
   mobile_number: string
   whatsapp_number: string | null
-  is_whatsapp_same_as_mobile: boolean
-  profile_image_path: string | null
   can_login: boolean
   email_verified: boolean
   is_active: boolean
-  kyc_status: string
-  police_verification_status: string
+  staff_permissions: string[]
   created_at: string
   updated_at: string
-  flat_count: string
-  active_relationship_count: string
 }
 
 const sortColumns: Record<string, string> = {
@@ -31,21 +27,30 @@ const sortColumns: Record<string, string> = {
   email: 'u.email',
   role: 'u.role',
   canLogin: 'u.can_login',
-  kycStatus: 'u.kyc_status',
+  isActive: 'u.is_active',
 }
 
+const normalizePermissions = (permissions: string[] | null): StaffPermission[] =>
+  (permissions ?? []).filter((permission): permission is StaffPermission =>
+    staffPermissions.includes(permission as StaffPermission),
+  )
+
 export default defineEventHandler(async (event) => {
-  const authMe = await requireRole(event, ['ADMIN', 'MANAGER'])
+  const authMe = await requirePermission(event, 'staff.manage')
   const query = parseListQuery(event)
   const pool = getDatabasePool()
-  const where: string[] = ['u.society_id = $1', `u.role = 'RESIDENT'`]
+  const where: string[] = ['u.society_id = $1', `u.role in ('MANAGER', 'SERVICE_STAFF', 'GUARD')`]
   const values: unknown[] = [authMe.user.societyId]
 
   if (query.search) {
     values.push(`%${query.search}%`)
-    where.push(
-      `(u.full_name ilike $${values.length} or u.email ilike $${values.length} or u.mobile_number ilike $${values.length})`,
-    )
+    where.push(`(u.full_name ilike $${values.length} or u.email ilike $${values.length} or u.mobile_number ilike $${values.length})`)
+  }
+
+  const roleFilter = query.filters.role?.[0]
+  if (['MANAGER', 'SERVICE_STAFF', 'GUARD'].includes(roleFilter ?? '')) {
+    values.push(roleFilter)
+    where.push(`u.role::text = $${values.length}`)
   }
 
   const activeFilter = query.filters.isActive?.[0]
@@ -66,32 +71,25 @@ export default defineEventHandler(async (event) => {
   values.push(query.pageSize, (query.page - 1) * query.pageSize)
 
   const [dataResult, countResult] = await Promise.all([
-    pool.query<ResidentRow>(
+    pool.query<StaffRow>(
       `
         select
           u.id,
           u.society_id,
           u.auth_user_id,
-          u.role::text,
+          u.role::text as role,
           u.full_name,
           u.email::text,
           u.mobile_number,
           u.whatsapp_number,
-          u.is_whatsapp_same_as_mobile,
-          u.profile_image_path,
           u.can_login,
           u.email_verified,
           u.is_active,
-          u.kyc_status::text,
-          u.police_verification_status::text,
+          u.staff_permissions,
           u.created_at::text,
-          u.updated_at::text,
-          count(distinct fr.flat_id)::text as flat_count,
-          count(fr.id) filter (where fr.is_active = true)::text as active_relationship_count
+          u.updated_at::text
         from users u
-        left join flat_residents fr on fr.user_id = u.id
         where ${whereSql}
-        group by u.id
         order by ${orderBy} ${direction}, u.full_name asc
         limit $${values.length - 1}
         offset $${values.length}
@@ -108,7 +106,7 @@ export default defineEventHandler(async (event) => {
     ),
   ])
 
-  const items: ResidentSummary[] = dataResult.rows.map((row) => ({
+  const items: StaffSummary[] = dataResult.rows.map((row) => ({
     id: row.id,
     societyId: row.society_id,
     authUserId: row.auth_user_id,
@@ -117,15 +115,10 @@ export default defineEventHandler(async (event) => {
     email: row.email,
     mobileNumber: row.mobile_number,
     whatsappNumber: row.whatsapp_number,
-    isWhatsappSameAsMobile: row.is_whatsapp_same_as_mobile,
-    profileImagePath: row.profile_image_path,
     canLogin: row.can_login,
     emailVerified: row.email_verified,
     isActive: row.is_active,
-    kycStatus: row.kyc_status,
-    policeVerificationStatus: row.police_verification_status,
-    flatCount: Number(row.flat_count),
-    activeRelationshipCount: Number(row.active_relationship_count),
+    permissions: normalizePermissions(row.staff_permissions),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }))

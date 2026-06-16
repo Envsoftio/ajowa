@@ -316,12 +316,22 @@ const resetFilters = () => {
         <Column header="Actions" style="width: 150px">
           <template #body="{ data: row }">
             <div class="admin-inline-actions">
-              <Button icon="pi pi-list" severity="secondary" text rounded @click="openBreakdown(row)" />
+              <Button
+                icon="pi pi-list"
+                severity="secondary"
+                text
+                rounded
+                aria-label="View charge breakdown"
+                title="View charge breakdown"
+                @click="openBreakdown(row)"
+              />
               <Button
                 icon="pi pi-send"
                 severity="secondary"
                 text
                 rounded
+                :aria-label="`Send reminder for ${row.flatNumber || 'flat'} ${row.billingPeriodLabel || ''}`"
+                :title="`Send reminder for ${row.flatNumber || 'flat'} ${row.billingPeriodLabel || ''}`"
                 :disabled="row.balanceAmount <= 0 || ['PAID', 'WAIVED', 'CANCELLED'].includes(row.status)"
                 @click="sendReminders([row.id])"
               />
@@ -330,6 +340,8 @@ const resetFilters = () => {
                 severity="secondary"
                 text
                 rounded
+                :aria-label="row.status === 'WAIVED' ? 'Remove waiver' : 'Waive due'"
+                :title="row.status === 'WAIVED' ? 'Remove waiver' : 'Waive due'"
                 :disabled="row.status === 'PAID' || row.status === 'CANCELLED'"
                 @click="openWaiver(row)"
               />

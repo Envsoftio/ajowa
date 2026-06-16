@@ -15,7 +15,7 @@ const loading = useLoadingIndicator()
 const menu = ref()
 
 const shellLabel = computed(() => shellLabels[props.shell])
-const pageTitle = computed(() => String(route.meta.title ?? 'Delivery Foundation'))
+const pageTitle = computed(() => String(route.meta.title ?? 'AJOWA'))
 const isLoading = computed(() => loading.isLoading.value)
 const userInitial = computed(() => authStore.me?.user.fullName?.charAt(0).toUpperCase() || 'A')
 

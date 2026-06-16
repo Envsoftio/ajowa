@@ -159,6 +159,40 @@ begin
 end;
 $$;
 
+create or replace function validate_owner_percentages_complete()
+returns trigger
+language plpgsql
+as $$
+declare
+  v_flat_id uuid;
+  v_sum numeric(7,2);
+  v_count integer;
+  v_percent_count integer;
+begin
+  v_flat_id = coalesce(new.flat_id, old.flat_id);
+
+  if v_flat_id is null then
+    return coalesce(new, old);
+  end if;
+
+  select
+    coalesce(sum(ownership_percent), 0),
+    count(*),
+    count(ownership_percent)
+  into v_sum, v_count, v_percent_count
+  from flat_residents
+  where flat_id = v_flat_id
+    and relationship_type = 'OWNER'
+    and is_active = true;
+
+  if v_count > 0 and v_percent_count = v_count and v_sum <> 100.00 then
+    raise exception 'active owner ownership percentages must total exactly 100 for flat %', v_flat_id;
+  end if;
+
+  return coalesce(new, old);
+end;
+$$;
+
 create or replace function assert_open_billing_period()
 returns trigger
 language plpgsql

@@ -90,7 +90,6 @@ const loadResidents = () =>
       search: query.value.search,
       sortBy: query.value.sortBy,
       sortDirection: query.value.sortDirection,
-      role: query.value.filters.role?.[0],
       canLogin: query.value.filters.canLogin?.[0],
       isActive: query.value.filters.isActive?.[0],
     },
@@ -318,20 +317,6 @@ const onSearch = () => {
   })
 }
 
-const roleFilter = computed({
-  get: () => query.value.filters.role?.[0] ?? '',
-  set: (val) => {
-    updateQuery({
-      ...query.value,
-      page: 1,
-      filters: {
-        ...query.value.filters,
-        role: val ? [val] : [],
-      },
-    })
-  },
-})
-
 const activeFilter = computed({
   get: () => query.value.filters.isActive?.[0] ?? '',
   set: (val) => {
@@ -370,7 +355,7 @@ const loginFilter = computed({
         <header class="list-page__header">
           <div>
             <h1>Resident registry</h1>
-            <p>Resident CRUD with server-driven search, role filters, and account-state visibility.</p>
+            <p>Resident CRUD with server-driven search and account-state visibility.</p>
           </div>
           <div class="list-page__exports">
             <Button label="Create resident" icon="pi pi-plus" @click="openCreateDialog" />
@@ -387,20 +372,6 @@ const loginFilter = computed({
             />
           </IconField>
           <div class="list-page__filters">
-            <Select
-              v-model="roleFilter"
-              :options="[
-                { label: 'All roles', value: '' },
-                { label: 'Resident', value: 'RESIDENT' },
-                { label: 'Admin', value: 'ADMIN' },
-                { label: 'Manager', value: 'MANAGER' },
-                { label: 'Service Staff', value: 'SERVICE_STAFF' },
-                { label: 'Guard', value: 'GUARD' }
-              ]"
-              option-label="label"
-              option-value="value"
-              placeholder="Role"
-            />
             <Select
               v-model="loginFilter"
               :options="[
@@ -503,10 +474,6 @@ const loginFilter = computed({
             <label>
               <span>Email</span>
               <InputText v-model="form.email" type="email" required />
-            </label>
-            <label>
-              <span>Role</span>
-              <Select v-model="form.role" :options="['RESIDENT', 'ADMIN', 'MANAGER', 'SERVICE_STAFF', 'GUARD']" required />
             </label>
             <label>
               <span>Notification preset</span>

@@ -4,6 +4,7 @@ import { getDatabasePool } from '~/server/utils/database'
 import { AppError } from '~/server/utils/errors'
 import { normalizeSocietySettings, readUuidParam, validatePayload, writeMasterAudit } from '~/server/utils/master-data'
 import { computeDueAmounts, dueWaiveSchema, todayDate, type DueWaiveInput } from '~/server/utils/billing'
+import { recomputeUserAccess } from '~/server/utils/qr-access'
 
 type DueWaiveRow = {
   id: string
@@ -164,6 +165,19 @@ export default defineEventHandler(async (event) => {
         },
       ],
     })
+
+    const affectedUsers = await client.query<{ user_id: string }>(
+      `
+        select distinct user_id
+        from flat_residents
+        where flat_id = $1 and is_active = true
+      `,
+      [due.flat_id],
+    )
+
+    for (const user of affectedUsers.rows) {
+      await recomputeUserAccess(user.user_id, due.billing_period_id, client)
+    }
 
     await client.query('commit')
 

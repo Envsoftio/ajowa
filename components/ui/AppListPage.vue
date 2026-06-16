@@ -162,12 +162,14 @@ const resolveCellValue = (row: TRow, field: string) => {
         <InputText
           v-model="searchTerm"
           :placeholder="searchPlaceholder"
+          :disabled="loading"
+          aria-label="Search records"
           @keydown.enter="onSearch"
         />
       </IconField>
       <div class="list-page__filters">
         <slot name="filters" />
-        <Button label="Search" @click="onSearch" />
+        <Button :label="loading ? 'Searching…' : 'Search'" :disabled="loading" @click="onSearch" />
       </div>
     </div>
 
