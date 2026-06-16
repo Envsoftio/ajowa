@@ -24,6 +24,9 @@ type GateLogResponse = {
 const api = useApi()
 const filters = reactive({
   result: '',
+  guardId: '',
+  residentId: '',
+  flatId: '',
   from: '',
   to: '',
   reason: '',
@@ -44,7 +47,8 @@ const { data, pending, refresh } = await useAsyncData(
 )
 
 const rows = computed(() => data.value?.data.items ?? [])
-const exportUrl = computed(() => `/api/admin/gate-log?${queryString.value ? `${queryString.value}&` : ''}export=csv`)
+const exportUrl = (format: 'csv' | 'excel' | 'pdf') =>
+  `/api/admin/gate-log?${queryString.value ? `${queryString.value}&` : ''}export=${format}`
 </script>
 
 <template>
@@ -57,8 +61,14 @@ const exportUrl = computed(() => `/api/admin/gate-log?${queryString.value ? `${q
           <p>Every allowed, blocked, invalid, expired, and revoked scan is recorded here.</p>
         </div>
         <div class="list-page__exports">
-          <a :href="exportUrl" target="_blank" rel="noopener">
-            <Button label="Export" icon="pi pi-file-excel" severity="secondary" outlined />
+          <a :href="exportUrl('excel')" target="_blank" rel="noopener">
+            <Button label="Excel" icon="pi pi-file-excel" severity="secondary" outlined />
+          </a>
+          <a :href="exportUrl('pdf')" target="_blank" rel="noopener">
+            <Button label="PDF" icon="pi pi-file-pdf" severity="secondary" outlined />
+          </a>
+          <a :href="exportUrl('csv')" target="_blank" rel="noopener">
+            <Button label="CSV" icon="pi pi-download" severity="secondary" outlined />
           </a>
           <Button label="Refresh" icon="pi pi-refresh" severity="secondary" outlined @click="() => refresh()" />
         </div>
@@ -72,6 +82,9 @@ const exportUrl = computed(() => `/api/admin/gate-log?${queryString.value ? `${q
         />
         <InputText v-model="filters.from" type="date" />
         <InputText v-model="filters.to" type="date" />
+        <InputText v-model="filters.guardId" placeholder="Guard user ID" />
+        <InputText v-model="filters.residentId" placeholder="Resident user ID" />
+        <InputText v-model="filters.flatId" placeholder="Flat ID" />
         <InputText v-model="filters.reason" placeholder="Reason contains" />
       </div>
 

@@ -5,6 +5,7 @@ import { z } from 'zod'
 import { getDatabasePool } from './database'
 import { getValidatedRuntimeConfig } from './env'
 import { AppError } from './errors'
+import { normalizeSocietySettings } from './master-data'
 import { enqueueNotificationForUsers } from './notifications'
 
 type AccessScope = 'OWNERSHIP' | 'TENANCY' | 'HOUSEHOLD'
@@ -99,6 +100,7 @@ export const parseQrPayload = (token: string) => {
   return JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')) as {
     userId: string
     billingPeriodId: string
+    societyId?: string
     validUntil: string
   }
 }
@@ -166,6 +168,14 @@ const deriveBasis = (rows: RelatedFlatRow[]): AccessScope | null => {
   return null
 }
 
+const uniqueAccessRows = (rows: RelatedFlatRow[]) => {
+  const byFlat = new Map<string, RelatedFlatRow>()
+  for (const row of rows) {
+    if (!byFlat.has(row.flat_id)) byFlat.set(row.flat_id, row)
+  }
+  return [...byFlat.values()]
+}
+
 export const recomputeUserAccess = async (
   userId: string,
   billingPeriodId: string,
@@ -186,8 +196,23 @@ export const recomputeUserAccess = async (
       throw new AppError({ code: 'NOT_FOUND', statusCode: 404, message: 'User not found.' })
     }
 
+    const settingsResult = await client.query<{ settings: Record<string, unknown> }>(
+      `select settings from society_profile where id = $1 limit 1`,
+      [societyId],
+    )
+    const societySettings = normalizeSocietySettings(settingsResult.rows[0]?.settings)
     const relatedFlats = await getAccessRows(client, userId)
-    const flatIds = relatedFlats.map((row) => row.flat_id)
+    const accessRows = uniqueAccessRows(
+      relatedFlats.filter((row) => {
+        if (['OWNER', 'CO_OWNER', 'SHOP_OWNER'].includes(row.relationship_type)) return true
+        if (['TENANT', 'SHOP_TENANT', 'COMMERCIAL_OCCUPANT'].includes(row.relationship_type)) return true
+        if (row.relationship_type === 'FAMILY_MEMBER') {
+          return societySettings.familyAccessEnabled && (row.access_scope ?? 'HOUSEHOLD') === 'HOUSEHOLD'
+        }
+        return false
+      }),
+    )
+    const flatIds = accessRows.map((row) => row.flat_id)
     const dues = flatIds.length
       ? await client.query<DueAccessRow>(
           `
@@ -208,7 +233,7 @@ export const recomputeUserAccess = async (
       : { rows: [] as DueAccessRow[] }
 
     const dueByFlat = new Map(dues.rows.map((row) => [row.flat_id, row]))
-    const unpaidLabels = relatedFlats
+    const unpaidLabels = accessRows
       .filter((flat) => {
         const due = dueByFlat.get(flat.flat_id)
         return !due || !['PAID', 'WAIVED'].includes(due.status)
@@ -218,7 +243,7 @@ export const recomputeUserAccess = async (
     const totalDue = dues.rows.reduce((sum, due) => sum + Number(due.total_amount), 0)
     const totalPaid = dues.rows.reduce((sum, due) => sum + Number(due.paid_amount), 0)
     const totalBalance = dues.rows.reduce((sum, due) => sum + Number(due.balance_amount), 0)
-    const grantedByPolicy = relatedFlats.length > 0 && unpaidLabels.length === 0
+    const grantedByPolicy = accessRows.length > 0 && unpaidLabels.length === 0
 
     const previous = await client.query<{ is_access_granted: boolean }>(
       `select is_access_granted from user_access_status where user_id = $1 and billing_period_id = $2`,
@@ -269,10 +294,10 @@ export const recomputeUserAccess = async (
         userId,
         billingPeriodId,
         grantedByPolicy,
-        deriveBasis(relatedFlats),
+        deriveBasis(accessRows),
         unpaidLabels,
-        relatedFlats.length,
-        relatedFlats.length - unpaidLabels.length,
+        accessRows.length,
+        accessRows.length - unpaidLabels.length,
         unpaidLabels.length,
         totalDue,
         totalPaid,
@@ -300,6 +325,32 @@ export const recomputeUserAccess = async (
     throw error
   } finally {
     if (ownedClient) client.release()
+  }
+}
+
+export const recomputeUserAccessForActiveBillingPeriods = async (
+  client: PoolClient,
+  societyId: string,
+  userIds: string[],
+) => {
+  const uniqueUserIds = [...new Set(userIds)].filter(Boolean)
+  if (uniqueUserIds.length === 0) return
+
+  const periods = await client.query<{ id: string }>(
+    `
+      select id
+      from billing_periods
+      where society_id = $1
+        and start_date <= current_date
+        and end_date >= current_date
+    `,
+    [societyId],
+  )
+
+  for (const period of periods.rows) {
+    for (const userId of uniqueUserIds) {
+      await recomputeUserAccess(userId, period.id, client)
+    }
   }
 }
 
@@ -398,6 +449,7 @@ export const ensureQrForAccess = async (userId: string, billingPeriodId: string)
     const payload = {
       userId,
       billingPeriodId,
+      societyId: grantedAccess.society_id,
       validUntil: validUntil.toISOString(),
     }
     const signedToken = signQrPayload(payload)
@@ -466,20 +518,21 @@ export const verifyQrToken = async (
         is_valid: boolean
         expires_at: string | null
         user_id: string
+        society_id: string
         billing_period_id: string
       }>(
         `
-          select id, status, is_valid, expires_at::text, user_id, billing_period_id
+          select id, status, is_valid, expires_at::text, user_id, society_id, billing_period_id
           from access_tokens
-          where token_hash = $1
+          where token_hash = $1 and society_id = $2
           limit 1
         `,
-        [tokenHash],
+        [tokenHash, societyId],
       )
       const row = token.rows[0]
       tokenId = row?.id ?? null
 
-      if (!row || row.user_id !== parsed.userId || row.billing_period_id !== parsed.billingPeriodId) {
+      if (!row || row.user_id !== parsed.userId || row.billing_period_id !== parsed.billingPeriodId || row.society_id !== societyId) {
         scanResult = 'INVALID'
         denialReason = 'QR code is not recognized.'
       } else if (new Date(parsed.validUntil).getTime() <= Date.now() || (row.expires_at && new Date(row.expires_at).getTime() <= Date.now())) {
@@ -519,7 +572,7 @@ export const verifyQrToken = async (
     }
 
     await client.query(
-      `
+        `
         insert into gate_scan_logs (
           society_id,
           billing_period_id,
@@ -536,8 +589,8 @@ export const verifyQrToken = async (
       `,
       [
         societyId,
-        parsed?.billingPeriodId ?? null,
-        parsed?.userId ?? null,
+        tokenId ? parsed?.billingPeriodId ?? null : null,
+        tokenId ? parsed?.userId ?? null : null,
         tokenId,
         guardUserId,
         scanResult,

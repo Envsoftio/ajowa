@@ -1,0 +1,19 @@
+{
+  "name": "AJOWA Guard",
+  "short_name": "AJOWA",
+  "description": "Mobile-first guard scanning and resident society access.",
+  "start_url": "/guard/scan",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f4efe6",
+  "theme_color": "#0f5f4d",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/ajowa-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

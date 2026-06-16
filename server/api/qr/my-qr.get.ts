@@ -39,7 +39,7 @@ export default defineEventHandler(async (event) => {
       qr: token
         ? {
             id: token.id,
-            imageDataUrl: token.qr_image_path,
+            imageDataUrl: `/api/qr/image/${token.id}`,
             validUntil: token.valid_until ?? token.expires_at,
             generatedAt: token.generated_at,
           }

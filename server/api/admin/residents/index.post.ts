@@ -10,6 +10,7 @@ import {
   residentSchema,
   writeMasterAudit,
 } from '~/server/utils/master-data'
+import { recomputeUserAccessForActiveBillingPeriods } from '~/server/utils/qr-access'
 
 type ExistingUserRow = {
   auth_user_id: string
@@ -324,6 +325,8 @@ export default defineEventHandler(async (event) => {
         ],
       )
     }
+
+    await recomputeUserAccessForActiveBillingPeriods(client, authMe.user.societyId, [userId])
 
     await seedPasswordCredential(client, authUserId, body.email)
 
