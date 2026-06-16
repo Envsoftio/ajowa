@@ -10,6 +10,8 @@ export const staffPermissions = [
   'finance.view',
   'finance.manage',
   'staff.manage',
+  'notifications.view',
+  'notifications.manage',
 ] as const
 
 export type StaffPermission = (typeof staffPermissions)[number]
@@ -26,6 +28,8 @@ export const staffPermissionLabels: Record<StaffPermission, string> = {
   'finance.view': 'Finance view',
   'finance.manage': 'Finance accounts',
   'staff.manage': 'Staff administration',
+  'notifications.view': 'Notification history',
+  'notifications.manage': 'Notification settings and broadcasts',
 }
 
 export const adminPermissions: StaffPermission[] = [...staffPermissions]
@@ -40,4 +44,6 @@ export const managerDefaultPermissions: StaffPermission[] = [
   'defaulters.view',
   'finance.view',
   'finance.manage',
+  'notifications.view',
+  'notifications.manage',
 ]

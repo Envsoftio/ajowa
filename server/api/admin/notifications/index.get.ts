@@ -1,0 +1,96 @@
+import { createApiSuccess, getListQueryParams } from '~/server/utils/api'
+import { requireRole } from '~/server/utils/auth'
+import { queryRows } from '~/server/utils/database'
+
+type EventRow = {
+  id: string
+  event_key: string
+  category: string
+  priority: string
+  status: string
+  title: string | null
+  body: string | null
+  triggered_by_user_id: string | null
+  created_at: string
+  scheduled_for: string | null
+  job_count: string
+  sent_count: string
+  failed_count: string
+  read_count: string
+}
+
+export default defineEventHandler(async (event) => {
+  const authMe = await requireRole(event, ['ADMIN', 'MANAGER'])
+  const query = getListQueryParams(getQuery(event))
+  const params: unknown[] = [authMe.user.societyId]
+  const where = ['ne.society_id = $1']
+
+  if (query.search) {
+    params.push(`%${query.search}%`)
+    where.push(`(ne.event_key ilike $${params.length} or ne.title ilike $${params.length})`)
+  }
+  const statusFilter = query.filters.status?.[0]
+  if (statusFilter) {
+    params.push(statusFilter)
+    where.push(`ne.status = $${params.length}`)
+  }
+
+  const [items, total] = await Promise.all([
+    queryRows<EventRow>(
+      `
+        select
+          ne.id,
+          ne.event_key,
+          ne.category::text,
+          ne.priority::text,
+          ne.status::text,
+          ne.title,
+          ne.body,
+          ne.triggered_by_user_id,
+          ne.created_at::text,
+          ne.scheduled_for::text,
+          count(nj.id)::text as job_count,
+          count(nj.id) filter (where nj.status in ('SENT', 'DELIVERED', 'READ'))::text as sent_count,
+          count(nj.id) filter (where nj.status = 'FAILED')::text as failed_count,
+          count(nj.id) filter (where nj.status = 'READ')::text as read_count
+        from notification_events ne
+        left join notification_jobs nj on nj.notification_event_id = ne.id
+        where ${where.join(' and ')}
+        group by ne.id
+        order by ne.created_at desc
+        limit $${params.length + 1} offset $${params.length + 2}
+      `,
+      [...params, query.pageSize, (query.page - 1) * query.pageSize],
+    ),
+    queryRows<{ total: string }>(
+      `
+        select count(*)::text as total
+        from notification_events ne
+        where ${where.join(' and ')}
+      `,
+      params,
+    ),
+  ])
+
+  return createApiSuccess(event, {
+    items: items.rows.map((row) => ({
+      id: row.id,
+      eventKey: row.event_key,
+      category: row.category,
+      priority: row.priority,
+      status: row.status,
+      title: row.title,
+      body: row.body,
+      triggeredByUserId: row.triggered_by_user_id,
+      createdAt: row.created_at,
+      scheduledFor: row.scheduled_for,
+      jobCount: Number(row.job_count),
+      sentCount: Number(row.sent_count),
+      failedCount: Number(row.failed_count),
+      readCount: Number(row.read_count),
+    })),
+    total: Number(total.rows[0]?.total ?? 0),
+    page: query.page,
+    pageSize: query.pageSize,
+  })
+})

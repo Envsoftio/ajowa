@@ -1,7 +1,11 @@
+import { randomUUID } from 'node:crypto'
 import type { PoolClient } from 'pg'
+import webpush from 'web-push'
+import { sendEmail, sendNotificationEmail } from './email'
+import { getPushIntegrationStatus, getValidatedRuntimeConfig, getWhatsAppIntegrationStatus } from './env'
 
-type NotificationChannel = 'PUSH' | 'EMAIL' | 'WHATSAPP' | 'IN_APP'
-type NotificationPreset =
+export type NotificationChannel = 'PUSH' | 'EMAIL' | 'WHATSAPP' | 'IN_APP'
+export type NotificationPreset =
   | 'PUSH'
   | 'EMAIL'
   | 'WHATSAPP'
@@ -11,8 +15,17 @@ type NotificationPreset =
   | 'EMAIL_AND_WHATSAPP'
   | 'PUSH_EMAIL_WHATSAPP'
   | 'ALL_CHANNELS'
+export type NotificationCategory =
+  | 'BILLING'
+  | 'PAYMENTS'
+  | 'ACCESS_QR'
+  | 'SERVICE_REQUESTS'
+  | 'NOTICES_ANNOUNCEMENTS'
+  | 'ACCOUNT_ONBOARDING'
+  | 'EMERGENCY_ALERTS'
+export type NotificationPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'EMERGENCY'
 
-type NotificationUser = {
+export type NotificationUser = {
   id: string
   email: string | null
   mobileNumber: string | null
@@ -22,21 +35,44 @@ type NotificationUser = {
   emailEnabled: boolean
   whatsappEnabled: boolean
   inAppEnabled: boolean
+  isActive?: boolean
 }
 
-type NotificationPayload = {
+export type NotificationPayload = {
   societyId: string
   eventKey: string
-  category: 'BILLING' | 'PAYMENTS' | 'ACCESS_QR' | 'SERVICE_REQUESTS' | 'NOTICES_ANNOUNCEMENTS' | 'ACCOUNT_ONBOARDING' | 'EMERGENCY_ALERTS'
+  category: NotificationCategory
   sourceTable?: string
   sourceId?: string
-  priority?: 'LOW' | 'MEDIUM' | 'HIGH' | 'EMERGENCY'
+  priority?: NotificationPriority
   title: string
   body: string
   payload?: Record<string, unknown>
   idempotencyKey: string
+  idempotencyWindowSeconds?: number
   triggeredByUserId?: string
   users: NotificationUser[]
+  channels?: NotificationChannel[]
+  audienceLabel?: string
+  audienceSnapshot?: Record<string, unknown>
+  templateSnapshot?: Record<string, unknown>
+  scheduledFor?: string | null
+}
+
+export type NotificationAudienceFilter = {
+  scope:
+    | 'ALL_ACTIVE_RESIDENTS'
+    | 'ACTIVE_PUSH_SUBSCRIBERS'
+    | 'BLOCKS'
+    | 'FLATS'
+    | 'USERS'
+    | 'OWNERS'
+    | 'TENANTS'
+    | 'DEFAULTERS'
+    | 'BILLING_CONTACTS'
+  userIds?: string[] | undefined
+  blockIds?: string[] | undefined
+  flatIds?: string[] | undefined
 }
 
 type DueNotificationRow = {
@@ -59,6 +95,45 @@ type DueNotificationRow = {
   notification_in_app_enabled: boolean
 }
 
+type AudienceUserRow = {
+  id: string
+  email: string | null
+  mobile_number: string | null
+  whatsapp_number: string | null
+  preferred_notification_channels: NotificationPreset
+  notification_push_enabled: boolean
+  notification_email_enabled: boolean
+  notification_whatsapp_enabled: boolean
+  notification_in_app_enabled: boolean
+}
+
+type ClaimedJobRow = {
+  id: string
+  notification_event_id: string
+  audience_id: string | null
+  target_user_id: string | null
+  channel: NotificationChannel
+  attempt_count: number
+  max_attempts: number
+  provider_message_id: string | null
+  resolved_address: string | null
+  payload: Record<string, unknown>
+  event_key: string
+  category: NotificationCategory
+  title: string | null
+  body: string | null
+  priority: NotificationPriority
+}
+
+type ProviderSendResult = {
+  ok: boolean
+  providerName: string
+  providerMessageId?: string | null | undefined
+  responseBody?: Record<string, unknown> | undefined
+  failureReason?: string | undefined
+  permanentFailure?: boolean | undefined
+}
+
 const presetChannels: Record<NotificationPreset, NotificationChannel[]> = {
   PUSH: ['PUSH'],
   EMAIL: ['EMAIL'],
@@ -71,7 +146,64 @@ const presetChannels: Record<NotificationPreset, NotificationChannel[]> = {
   ALL_CHANNELS: ['PUSH', 'EMAIL', 'WHATSAPP', 'IN_APP'],
 }
 
+const emailTemplateByEventKey = new Map<string, Parameters<typeof sendNotificationEmail>[0]['template']>([
+  ['maintenance_due.created', 'due-created'],
+  ['maintenance_due.reminder', 'due-reminder'],
+  ['maintenance_due.overdue', 'due-overdue'],
+  ['payment.received', 'payment-received'],
+  ['receipt.ready', 'receipt-ready'],
+  ['access_qr.generated', 'qr-generated'],
+  ['access_qr.revoked', 'qr-revoked'],
+  ['service_request.updated', 'ticket-update'],
+  ['notice.published', 'notice'],
+  ['emergency.alert', 'emergency-alert'],
+])
+
+const priorityRank: Record<NotificationPriority, number> = {
+  EMERGENCY: 0,
+  HIGH: 1,
+  MEDIUM: 2,
+  LOW: 3,
+}
+
+const mapUserRow = (row: AudienceUserRow): NotificationUser => ({
+  id: row.id,
+  email: row.email,
+  mobileNumber: row.mobile_number,
+  whatsappNumber: row.whatsapp_number,
+  preferredNotificationChannels: row.preferred_notification_channels,
+  pushEnabled: row.notification_push_enabled,
+  emailEnabled: row.notification_email_enabled,
+  whatsappEnabled: row.notification_whatsapp_enabled,
+  inAppEnabled: row.notification_in_app_enabled,
+  isActive: true,
+})
+
+export const normalizeWhatsAppNumber = (value: string | null | undefined) => {
+  if (!value) {
+    return null
+  }
+
+  const trimmed = value.trim()
+  const digits = trimmed.replace(/[^\d+]/g, '')
+
+  if (digits.startsWith('+') && /^\+\d{8,15}$/.test(digits)) {
+    return digits
+  }
+
+  const numeric = digits.replace(/\D/g, '')
+  if (numeric.length === 10) {
+    return `+91${numeric}`
+  }
+  if (numeric.length >= 8 && numeric.length <= 15) {
+    return `+${numeric}`
+  }
+
+  return null
+}
+
 const enabledForChannel = (user: NotificationUser, channel: NotificationChannel) => {
+  if (user.isActive === false) return false
   if (channel === 'PUSH') return user.pushEnabled
   if (channel === 'EMAIL') return user.emailEnabled && Boolean(user.email)
   if (channel === 'WHATSAPP') return user.whatsappEnabled && Boolean(user.whatsappNumber ?? user.mobileNumber)
@@ -80,22 +212,106 @@ const enabledForChannel = (user: NotificationUser, channel: NotificationChannel)
 
 const channelAddress = (user: NotificationUser, channel: NotificationChannel) => {
   if (channel === 'EMAIL') return user.email
-  if (channel === 'WHATSAPP') return user.whatsappNumber ?? user.mobileNumber
+  if (channel === 'WHATSAPP') return normalizeWhatsAppNumber(user.whatsappNumber ?? user.mobileNumber)
   return null
 }
 
-const getUserChannels = (user: NotificationUser) =>
-  presetChannels[user.preferredNotificationChannels]
+const getUserChannels = (user: NotificationUser, explicitChannels?: NotificationChannel[]) => {
+  const allowed = explicitChannels?.length ? explicitChannels : presetChannels[user.preferredNotificationChannels]
+
+  return allowed
     .filter((channel) => enabledForChannel(user, channel))
     .filter((channel, index, channels) => channels.indexOf(channel) === index)
+}
+
+const createDedupeKey = (input: NotificationPayload, userId: string, channel: NotificationChannel) => {
+  const windowSeconds = input.idempotencyWindowSeconds ?? 86400
+  const bucket = Math.floor(Date.now() / (windowSeconds * 1000))
+  return `${input.idempotencyKey}:${bucket}:${userId}:${channel}`
+}
+
+const getBackoffMinutes = (attemptCount: number) => Math.min(60, 2 ** Math.max(0, attemptCount - 1))
+
+export const resolveNotificationAudience = async (
+  client: PoolClient,
+  societyId: string,
+  filter: NotificationAudienceFilter,
+) => {
+  const params: unknown[] = [societyId]
+  const where: string[] = ['u.society_id = $1', 'u.is_active = true', "u.role = 'RESIDENT'"]
+  let joins = ''
+
+  if (filter.scope === 'ACTIVE_PUSH_SUBSCRIBERS') {
+    joins += " inner join push_subscriptions ps on ps.user_id = u.id and ps.status = 'ACTIVE'"
+  }
+
+  if (['BLOCKS', 'FLATS', 'OWNERS', 'TENANTS', 'DEFAULTERS', 'BILLING_CONTACTS'].includes(filter.scope)) {
+    joins += ' inner join flat_residents fr on fr.user_id = u.id and fr.is_active = true'
+    joins += ' inner join flats f on f.id = fr.flat_id and f.is_active = true'
+  }
+
+  if (filter.scope === 'DEFAULTERS') {
+    joins += ' inner join maintenance_dues md on md.flat_id = f.id and md.balance_amount > 0'
+  }
+
+  if (filter.scope === 'BLOCKS') {
+    params.push(filter.blockIds ?? [])
+    where.push(`f.block_id = any($${params.length}::uuid[])`)
+  }
+  if (filter.scope === 'FLATS') {
+    params.push(filter.flatIds ?? [])
+    where.push(`f.id = any($${params.length}::uuid[])`)
+  }
+  if (filter.scope === 'USERS') {
+    params.push(filter.userIds ?? [])
+    where.push(`u.id = any($${params.length}::uuid[])`)
+  }
+  if (filter.scope === 'OWNERS') {
+    where.push("fr.relationship_type = 'OWNER'")
+  }
+  if (filter.scope === 'TENANTS') {
+    where.push("fr.relationship_type = 'TENANT'")
+  }
+  if (filter.scope === 'BILLING_CONTACTS') {
+    where.push('fr.is_billing_contact = true')
+  }
+
+  const result = await client.query<AudienceUserRow>(
+    `
+      select distinct
+        u.id,
+        u.email::text,
+        u.mobile_number,
+        u.whatsapp_number,
+        u.preferred_notification_channels::text,
+        u.notification_push_enabled,
+        u.notification_email_enabled,
+        u.notification_whatsapp_enabled,
+        u.notification_in_app_enabled
+      from users u
+      ${joins}
+      where ${where.join(' and ')}
+      order by u.id
+    `,
+    params,
+  )
+
+  return result.rows.map(mapUserRow)
+}
 
 export const enqueueNotificationForUsers = async (
   client: PoolClient,
   input: NotificationPayload,
 ) => {
-  if (input.users.length === 0) {
+  const activeUsers = input.users.filter((user) => user.isActive !== false)
+
+  if (activeUsers.length === 0) {
     return { eventId: null, audienceCount: 0, jobCount: 0 }
   }
+
+  const scheduledFor = input.scheduledFor ?? null
+  const eventStatus = scheduledFor ? 'SCHEDULED' : 'QUEUED'
+  const channelSnapshot = input.channels?.length ? input.channels : ['PUSH', 'EMAIL', 'WHATSAPP', 'IN_APP']
 
   const eventResult = await client.query<{ id: string }>(
     `
@@ -110,9 +326,15 @@ export const enqueueNotificationForUsers = async (
         body,
         payload,
         idempotency_key,
-        triggered_by_user_id
+        idempotency_window_seconds,
+        triggered_by_user_id,
+        scheduled_for,
+        audience_snapshot,
+        channel_snapshot,
+        template_snapshot,
+        status
       )
-      values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11)
+      values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14::jsonb, $15::jsonb, $16::jsonb, $17)
       on conflict (idempotency_key)
       do update set updated_at = notification_events.updated_at
       returning id
@@ -128,7 +350,13 @@ export const enqueueNotificationForUsers = async (
       input.body,
       JSON.stringify(input.payload ?? {}),
       input.idempotencyKey,
+      input.idempotencyWindowSeconds ?? 86400,
       input.triggeredByUserId ?? null,
+      scheduledFor,
+      JSON.stringify(input.audienceSnapshot ?? {}),
+      JSON.stringify(channelSnapshot),
+      JSON.stringify(input.templateSnapshot ?? {}),
+      eventStatus,
     ],
   )
 
@@ -140,8 +368,13 @@ export const enqueueNotificationForUsers = async (
   let audienceCount = 0
   let jobCount = 0
 
-  for (const user of input.users) {
-    for (const channel of getUserChannels(user)) {
+  for (const user of activeUsers) {
+    for (const channel of getUserChannels(user, input.channels)) {
+      const address = channelAddress(user, channel)
+      if ((channel === 'EMAIL' || channel === 'WHATSAPP') && !address) {
+        continue
+      }
+
       const audienceResult = await client.query<{ id: string }>(
         `
           insert into notification_audiences (
@@ -150,18 +383,28 @@ export const enqueueNotificationForUsers = async (
             channel,
             resolved_address,
             audience_label,
-            filters_snapshot
+            filters_snapshot,
+            target_user_status,
+            preference_snapshot
           )
-          values ($1, $2, $3, $4, $5, $6::jsonb)
+          values ($1, $2, $3, $4, $5, $6::jsonb, $7, $8::jsonb)
           returning id
         `,
         [
           eventId,
           user.id,
           channel,
-          channelAddress(user, channel),
-          'Billing contact',
-          JSON.stringify({ eventKey: input.eventKey }),
+          address,
+          input.audienceLabel ?? 'Resolved recipient',
+          JSON.stringify(input.audienceSnapshot ?? { eventKey: input.eventKey }),
+          user.isActive === false ? 'INACTIVE' : 'ACTIVE',
+          JSON.stringify({
+            preset: user.preferredNotificationChannels,
+            pushEnabled: user.pushEnabled,
+            emailEnabled: user.emailEnabled,
+            whatsappEnabled: user.whatsappEnabled,
+            inAppEnabled: user.inAppEnabled,
+          }),
         ],
       )
 
@@ -176,9 +419,11 @@ export const enqueueNotificationForUsers = async (
             channel,
             dedupe_key,
             priority,
-            payload
+            payload,
+            scheduled_for,
+            next_attempt_at
           )
-          values ($1, $2, $3, $4, $5, $6::jsonb)
+          values ($1, $2, $3, $4, $5, $6::jsonb, $7, coalesce($7, now()))
           on conflict (dedupe_key) do nothing
           returning id
         `,
@@ -186,9 +431,10 @@ export const enqueueNotificationForUsers = async (
           eventId,
           audienceId ?? null,
           channel,
-          `${input.idempotencyKey}:${user.id}:${channel}`,
+          createDedupeKey(input, user.id, channel),
           input.priority ?? 'MEDIUM',
           JSON.stringify(input.payload ?? {}),
+          scheduledFor,
         ],
       )
       jobCount += jobResult.rowCount ?? 0
@@ -196,6 +442,586 @@ export const enqueueNotificationForUsers = async (
   }
 
   return { eventId, audienceCount, jobCount }
+}
+
+export const enqueueNotificationForAudience = async (
+  client: PoolClient,
+  input: Omit<NotificationPayload, 'users'> & { audience: NotificationAudienceFilter },
+) => {
+  const users = await resolveNotificationAudience(client, input.societyId, input.audience)
+
+  return enqueueNotificationForUsers(client, {
+    ...input,
+    users,
+    audienceSnapshot: input.audienceSnapshot ?? input.audience,
+  })
+}
+
+export const claimNotificationJobs = async (
+  client: PoolClient,
+  input: {
+    limit?: number
+    workerId?: string
+  } = {},
+) => {
+  const workerId = input.workerId ?? `worker-${randomUUID()}`
+  const limit = Math.min(Math.max(input.limit ?? 50, 1), 250)
+
+  const result = await client.query<ClaimedJobRow>(
+    `
+      with claimable as (
+        select nj.id
+        from notification_jobs nj
+        inner join notification_events ne on ne.id = nj.notification_event_id
+        where nj.status in ('QUEUED', 'RETRYING')
+          and coalesce(nj.scheduled_for, ne.scheduled_for, now()) <= now()
+          and coalesce(nj.next_attempt_at, now()) <= now()
+          and (nj.locked_at is null or nj.locked_at < now() - interval '10 minutes')
+          and ne.status not in ('CANCELLED', 'FAILED')
+        order by
+          case nj.priority
+            when 'EMERGENCY' then 0
+            when 'HIGH' then 1
+            when 'MEDIUM' then 2
+            else 3
+          end,
+          nj.created_at
+        limit $1
+        for update skip locked
+      )
+      , claimed as (
+        update notification_jobs nj
+        set status = 'PROCESSING',
+            locked_at = now(),
+            locked_by = $2,
+            updated_at = now()
+        from claimable
+        where nj.id = claimable.id
+        returning nj.*
+      )
+      select
+        claimed.id,
+        claimed.notification_event_id,
+        claimed.audience_id,
+        na.target_user_id,
+        claimed.channel::text,
+        claimed.attempt_count,
+        claimed.max_attempts,
+        claimed.provider_message_id,
+        na.resolved_address,
+        claimed.payload,
+        ne.event_key,
+        ne.category::text,
+        ne.title,
+        ne.body,
+        ne.priority::text
+      from claimed
+      inner join notification_events ne on ne.id = claimed.notification_event_id
+      left join notification_audiences na on na.id = claimed.audience_id
+    `,
+    [limit, workerId],
+  )
+
+  return result.rows
+}
+
+const sendWhatsAppMessage = async (input: {
+  to: string
+  title: string
+  body: string
+  eventKey: string
+  payload: Record<string, unknown>
+}): Promise<ProviderSendResult> => {
+  const status = getWhatsAppIntegrationStatus()
+
+  if (!status.enabled) {
+    return {
+      ok: false,
+      providerName: 'WHATSAPP',
+      failureReason: status.reason,
+      permanentFailure: true,
+    }
+  }
+
+  const templateName =
+    typeof input.payload.whatsappTemplateName === 'string'
+      ? input.payload.whatsappTemplateName
+      : input.eventKey.replaceAll('.', '_')
+
+  try {
+    const response = await $fetch<Record<string, unknown>>(status.config.apiUrl, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${status.config.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: {
+        provider: status.config.provider,
+        senderId: status.config.senderId,
+        to: input.to,
+        templateName,
+        text: `${input.title}\n${input.body}`.slice(0, 1000),
+        deepLink: input.payload.deepLinkUrl ?? input.payload.link ?? null,
+      },
+    })
+
+    return {
+      ok: true,
+      providerName: status.config.provider,
+      providerMessageId:
+        typeof response.messageId === 'string'
+          ? response.messageId
+          : typeof response.id === 'string'
+            ? response.id
+            : null,
+      responseBody: response,
+    }
+  } catch (error) {
+    const fetchError = error as { statusCode?: number; data?: Record<string, unknown>; message?: string }
+
+    return {
+      ok: false,
+      providerName: status.config.provider,
+      failureReason: fetchError.message ?? 'WhatsApp provider request failed.',
+      ...(fetchError.data ? { responseBody: fetchError.data } : {}),
+      permanentFailure: Boolean(fetchError.statusCode && fetchError.statusCode >= 400 && fetchError.statusCode < 500),
+    }
+  }
+}
+
+const sendPushForJob = async (
+  client: PoolClient,
+  job: ClaimedJobRow,
+): Promise<ProviderSendResult> => {
+  const status = getPushIntegrationStatus()
+
+  if (!status.enabled) {
+    return {
+      ok: false,
+      providerName: 'WEB_PUSH',
+      failureReason: status.reason,
+      permanentFailure: true,
+    }
+  }
+
+  if (!job.target_user_id) {
+    return {
+      ok: false,
+      providerName: 'WEB_PUSH',
+      failureReason: 'Push notification has no target user.',
+      permanentFailure: true,
+    }
+  }
+
+  const subscriptions = await client.query<{
+    id: string
+    endpoint: string
+    p256dh_key: string
+    auth_key: string
+  }>(
+    `
+      select id, endpoint, p256dh_key, auth_key
+      from push_subscriptions
+      where user_id = $1
+        and status = 'ACTIVE'
+    `,
+    [job.target_user_id],
+  )
+
+  if (subscriptions.rows.length === 0) {
+    return {
+      ok: false,
+      providerName: 'WEB_PUSH',
+      failureReason: 'No active push subscriptions for the user.',
+      permanentFailure: true,
+    }
+  }
+
+  webpush.setVapidDetails(status.config.subject, status.config.publicKey, status.config.privateKey)
+  const runtimeConfig = getValidatedRuntimeConfig(useRuntimeConfig())
+  const link = typeof job.payload.deepLinkUrl === 'string' ? job.payload.deepLinkUrl : '/my/notifications'
+  const payload = JSON.stringify({
+    title: job.title ?? 'AJOWA',
+    body: job.body ?? '',
+    icon: '/ajowa-icon.svg',
+    badge: '/ajowa-icon.svg',
+    link: new URL(link, runtimeConfig.appUrl).toString(),
+    tag: typeof job.payload.tag === 'string' ? job.payload.tag : job.event_key,
+    priority: job.priority,
+    image: typeof job.payload.image === 'string' ? job.payload.image : undefined,
+    actions: Array.isArray(job.payload.actions) ? job.payload.actions : undefined,
+  })
+
+  const responses: Record<string, unknown>[] = []
+  let successCount = 0
+  let lastFailure = ''
+
+  for (const subscription of subscriptions.rows) {
+    try {
+      const response = await webpush.sendNotification(
+        {
+          endpoint: subscription.endpoint,
+          keys: {
+            p256dh: subscription.p256dh_key,
+            auth: subscription.auth_key,
+          },
+        },
+        payload,
+      )
+      successCount += 1
+      responses.push({
+        subscriptionId: subscription.id,
+        statusCode: response.statusCode,
+      })
+      await client.query(
+        `
+          update push_subscriptions
+          set last_seen_at = now(), last_error = null, updated_at = now()
+          where id = $1
+        `,
+        [subscription.id],
+      )
+    } catch (error) {
+      const pushError = error as { statusCode?: number; body?: string; message?: string }
+      lastFailure = pushError.message ?? 'Push provider request failed.'
+      responses.push({
+        subscriptionId: subscription.id,
+        statusCode: pushError.statusCode,
+        error: lastFailure,
+      })
+
+      if (pushError.statusCode === 404 || pushError.statusCode === 410) {
+        await client.query(
+          `
+            update push_subscriptions
+            set status = 'EXPIRED', revoked_at = now(), last_error = $2, updated_at = now()
+            where id = $1
+          `,
+          [subscription.id, lastFailure],
+        )
+      }
+    }
+  }
+
+  return {
+    ok: successCount > 0,
+    providerName: 'WEB_PUSH',
+    responseBody: { responses, successCount },
+    ...(successCount > 0 ? {} : { failureReason: lastFailure || 'Push delivery failed for all subscriptions.' }),
+    permanentFailure: successCount === 0,
+  }
+}
+
+const sendInAppForJob = async (
+  client: PoolClient,
+  job: ClaimedJobRow,
+): Promise<ProviderSendResult> => {
+  if (!job.target_user_id) {
+    return {
+      ok: false,
+      providerName: 'IN_APP',
+      failureReason: 'In-app notification has no target user.',
+      permanentFailure: true,
+    }
+  }
+
+  const eventResult = await client.query<{ society_id: string }>(
+    'select society_id from notification_events where id = $1',
+    [job.notification_event_id],
+  )
+  const societyId = eventResult.rows[0]?.society_id
+
+  if (!societyId) {
+    return {
+      ok: false,
+      providerName: 'IN_APP',
+      failureReason: 'Notification event was not found.',
+      permanentFailure: true,
+    }
+  }
+
+  await client.query(
+    `
+      insert into in_app_notifications (
+        society_id,
+        user_id,
+        notification_event_id,
+        title,
+        body,
+        deep_link_url,
+        priority
+      )
+      values ($1, $2, $3, $4, $5, $6, $7)
+    `,
+    [
+      societyId,
+      job.target_user_id,
+      job.notification_event_id,
+      job.title ?? 'AJOWA notification',
+      job.body ?? '',
+      typeof job.payload.deepLinkUrl === 'string' ? job.payload.deepLinkUrl : null,
+      job.priority,
+    ],
+  )
+
+  return {
+    ok: true,
+    providerName: 'IN_APP',
+    providerMessageId: job.id,
+    responseBody: { stored: true },
+  }
+}
+
+const dispatchJob = async (
+  client: PoolClient,
+  job: ClaimedJobRow,
+): Promise<ProviderSendResult> => {
+  const title = job.title ?? 'AJOWA notification'
+  const body = job.body ?? ''
+
+  if (job.channel === 'IN_APP') {
+    return sendInAppForJob(client, job)
+  }
+
+  if (job.channel === 'EMAIL') {
+    if (!job.resolved_address) {
+      return {
+        ok: false,
+        providerName: 'SMTP',
+        failureReason: 'Email address is missing.',
+        permanentFailure: true,
+      }
+    }
+
+    const template = emailTemplateByEventKey.get(job.event_key) ?? 'notice'
+    const result = await sendNotificationEmail({
+      to: job.resolved_address,
+      subject: title,
+      template,
+      context: {
+        title,
+        body,
+        actionUrl: typeof job.payload.deepLinkUrl === 'string' ? job.payload.deepLinkUrl : undefined,
+        actionLabel: 'Open in AJOWA',
+        ...job.payload,
+      },
+    })
+
+    return {
+      ok: result.delivered,
+      providerName: 'SMTP',
+      providerMessageId: result.delivered ? result.providerMessageId : null,
+      responseBody: result.delivered ? { response: result.response } : {},
+      ...(result.delivered ? {} : { failureReason: result.reason }),
+      permanentFailure: !result.delivered,
+    }
+  }
+
+  if (job.channel === 'WHATSAPP') {
+    if (!job.resolved_address) {
+      return {
+        ok: false,
+        providerName: 'WHATSAPP',
+        failureReason: 'WhatsApp number is missing or invalid.',
+        permanentFailure: true,
+      }
+    }
+
+    return sendWhatsAppMessage({
+      to: job.resolved_address,
+      title,
+      body,
+      eventKey: job.event_key,
+      payload: job.payload,
+    })
+  }
+
+  return sendPushForJob(client, job)
+}
+
+export const dispatchNotificationJobs = async (
+  client: PoolClient,
+  input: {
+    limit?: number
+    workerId?: string
+  } = {},
+) => {
+  const jobs = await claimNotificationJobs(client, input)
+  let sent = 0
+  let failed = 0
+  let retried = 0
+
+  for (const job of jobs) {
+    const attemptNumber = job.attempt_count + 1
+    const result = await dispatchJob(client, job)
+    const nextStatus = result.ok ? (job.channel === 'IN_APP' ? 'DELIVERED' : 'SENT') : 'FAILED'
+    const shouldRetry = !result.ok && !result.permanentFailure && attemptNumber < job.max_attempts
+    const finalStatus = shouldRetry ? 'RETRYING' : nextStatus
+    const nextAttemptAt = shouldRetry
+      ? `now() + interval '${getBackoffMinutes(attemptNumber)} minutes'`
+      : 'null'
+
+    await client.query(
+      `
+        update notification_jobs
+        set status = $2,
+            attempt_count = $3,
+            last_attempt_at = now(),
+            next_attempt_at = ${nextAttemptAt},
+            locked_at = null,
+            locked_by = null,
+            provider_name = $4,
+            provider_message_id = coalesce($5, provider_message_id),
+            response_body = $6::jsonb,
+            failure_reason = $7,
+            permanent_failure = $8,
+            sent_at = case when $2 in ('SENT', 'DELIVERED') then coalesce(sent_at, now()) else sent_at end,
+            delivered_at = case when $2 = 'DELIVERED' then coalesce(delivered_at, now()) else delivered_at end,
+            updated_at = now()
+        where id = $1
+      `,
+      [
+        job.id,
+        finalStatus,
+        attemptNumber,
+        result.providerName,
+        result.providerMessageId ?? null,
+        JSON.stringify(result.responseBody ?? {}),
+        result.failureReason ?? null,
+        Boolean(result.permanentFailure),
+      ],
+    )
+
+    await client.query(
+      `
+        insert into notification_delivery_logs (
+          notification_job_id,
+          provider_name,
+          provider_message_id,
+          channel,
+          status,
+          attempt_number,
+          response_body,
+          failure_reason,
+          delivered_at
+        )
+        values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, case when $5 = 'DELIVERED' then now() else null end)
+      `,
+      [
+        job.id,
+        result.providerName,
+        result.providerMessageId ?? null,
+        job.channel,
+        result.ok ? (job.channel === 'IN_APP' ? 'DELIVERED' : 'SENT') : 'FAILED',
+        attemptNumber,
+        JSON.stringify(result.responseBody ?? {}),
+        result.failureReason ?? null,
+      ],
+    )
+
+    if (result.ok) {
+      sent += 1
+    } else if (shouldRetry) {
+      retried += 1
+    } else {
+      failed += 1
+    }
+  }
+
+  await client.query(
+    `
+      update notification_events ne
+      set status = case
+            when stats.failed_count > 0 and stats.pending_count = 0 then 'FAILED'
+            when stats.pending_count = 0 then 'PROCESSED'
+            else ne.status
+          end,
+          processed_at = case when stats.pending_count = 0 then now() else ne.processed_at end,
+          completed_at = case when stats.pending_count = 0 then now() else ne.completed_at end,
+          updated_at = now()
+      from (
+        select
+          notification_event_id,
+          count(*) filter (where status in ('QUEUED', 'RETRYING', 'PROCESSING')) as pending_count,
+          count(*) filter (where status = 'FAILED') as failed_count
+        from notification_jobs
+        where notification_event_id = any($1::uuid[])
+        group by notification_event_id
+      ) stats
+      where ne.id = stats.notification_event_id
+    `,
+    [jobs.map((job) => job.notification_event_id)],
+  )
+
+  return {
+    claimed: jobs.length,
+    sent,
+    failed,
+    retried,
+  }
+}
+
+export const sendProviderVerification = async (
+  client: PoolClient,
+  input: {
+    channel: Exclude<NotificationChannel, 'IN_APP'>
+    societyId: string
+    target: string
+    triggeredByUserId: string
+    pushSubscriptionId?: string
+  },
+) => {
+  if (input.channel === 'EMAIL') {
+    const result = await sendEmail({
+      to: input.target,
+      subject: 'AJOWA email verification',
+      html: '<h1>AJOWA email verification</h1><p>This confirms SMTP notification delivery is configured.</p>',
+      text: 'AJOWA email verification\n\nThis confirms SMTP notification delivery is configured.',
+    })
+
+    return {
+      ok: result.delivered,
+      providerMessageId: result.delivered ? result.providerMessageId : null,
+      reason: result.delivered ? null : result.reason,
+    }
+  }
+
+  if (input.channel === 'WHATSAPP') {
+    const to = normalizeWhatsAppNumber(input.target)
+    if (!to) {
+      return { ok: false, providerMessageId: null, reason: 'WhatsApp number is not E.164-compatible.' }
+    }
+    const result = await sendWhatsAppMessage({
+      to,
+      title: 'AJOWA WhatsApp verification',
+      body: 'This confirms WhatsApp notification delivery is configured.',
+      eventKey: 'provider.whatsapp.verify',
+      payload: {},
+    })
+
+    return { ok: result.ok, providerMessageId: result.providerMessageId ?? null, reason: result.failureReason ?? null }
+  }
+
+  const job: ClaimedJobRow = {
+    id: input.pushSubscriptionId ?? randomUUID(),
+    notification_event_id: randomUUID(),
+    audience_id: null,
+    target_user_id: input.triggeredByUserId,
+    channel: 'PUSH',
+    attempt_count: 0,
+    max_attempts: 1,
+    provider_message_id: null,
+    resolved_address: null,
+    payload: { deepLinkUrl: '/admin/settings/notifications', tag: 'provider-push-verify' },
+    event_key: 'provider.push.verify',
+    category: 'ACCOUNT_ONBOARDING',
+    title: 'AJOWA push verification',
+    body: 'This confirms browser push delivery is configured.',
+    priority: 'LOW',
+  }
+  const result = await sendPushForJob(client, job)
+
+  return { ok: result.ok, providerMessageId: result.providerMessageId ?? null, reason: result.failureReason ?? null }
 }
 
 export const enqueueDueBillingContactNotifications = async (
@@ -280,8 +1106,10 @@ export const enqueueDueBillingContactNotifications = async (
         flatId: due.flat_id,
         flatLabel: `${due.block_name} ${due.flat_number}`,
         balanceAmount: Number(due.balance_amount),
+        deepLinkUrl: '/my/dues',
       },
       idempotencyKey: `${input.eventKey}:${idempotencyScope}`,
+      idempotencyWindowSeconds: input.eventKey === 'maintenance_due.reminder' ? 86400 : 31536000,
       ...(input.triggeredByUserId ? { triggeredByUserId: input.triggeredByUserId } : {}),
       users: rows.map((row) => ({
         id: row.user_id,
@@ -294,6 +1122,8 @@ export const enqueueDueBillingContactNotifications = async (
         whatsappEnabled: row.notification_whatsapp_enabled,
         inAppEnabled: row.notification_in_app_enabled,
       })),
+      audienceLabel: 'Billing contact',
+      audienceSnapshot: { eventKey: input.eventKey, dueId },
     })
 
     eventCount += queued.eventId ? 1 : 0
@@ -303,3 +1133,8 @@ export const enqueueDueBillingContactNotifications = async (
 
   return { eventCount, audienceCount, jobCount }
 }
+
+export const sortChannelsByPriority = (channels: NotificationChannel[]) =>
+  channels.filter((channel, index) => channels.indexOf(channel) === index)
+
+export const sortPriority = (priority: NotificationPriority) => priorityRank[priority]

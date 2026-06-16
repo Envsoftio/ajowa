@@ -30,3 +30,40 @@ self.addEventListener('fetch', (event) => {
       .catch(() => caches.match(request).then((response) => response || caches.match('/guard/scan'))),
   )
 })
+
+self.addEventListener('push', (event) => {
+  const payload = event.data?.json?.() ?? {}
+  const title = payload.title || 'AJOWA'
+  const options = {
+    body: payload.body || '',
+    icon: payload.icon || '/ajowa-icon.svg',
+    badge: payload.badge || '/ajowa-icon.svg',
+    image: payload.image,
+    tag: payload.tag,
+    renotify: payload.priority === 'EMERGENCY',
+    data: {
+      link: payload.link || '/my/notifications',
+    },
+    actions: Array.isArray(payload.actions) ? payload.actions : [],
+  }
+
+  event.waitUntil(self.registration.showNotification(title, options))
+})
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close()
+  const link = event.notification.data?.link || '/my/notifications'
+
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+      for (const client of clients) {
+        if ('focus' in client) {
+          client.navigate(link)
+          return client.focus()
+        }
+      }
+
+      return self.clients.openWindow(link)
+    }),
+  )
+})

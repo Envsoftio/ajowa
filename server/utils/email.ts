@@ -5,6 +5,17 @@ import nodemailer from 'nodemailer'
 import { getEmailIntegrationStatus, getValidatedRuntimeConfig } from './env'
 
 type AuthTemplateName = 'verify-email' | 'reset-password' | 'invite-onboarding'
+type NotificationTemplateName =
+  | 'due-created'
+  | 'due-reminder'
+  | 'due-overdue'
+  | 'payment-received'
+  | 'receipt-ready'
+  | 'qr-generated'
+  | 'qr-revoked'
+  | 'ticket-update'
+  | 'notice'
+  | 'emergency-alert'
 
 type EmailTemplateContext = {
   title: string
@@ -14,6 +25,14 @@ type EmailTemplateContext = {
   inviterName?: string
   roleLabel?: string
   details?: string
+}
+
+type NotificationEmailContext = {
+  title: string
+  body: string
+  actionUrl?: string | undefined
+  actionLabel?: string | undefined
+  [key: string]: unknown
 }
 
 const templateCache = new Map<string, Handlebars.TemplateDelegate>()
@@ -57,6 +76,14 @@ const renderIntoBaseLayout = async (contentHtml: string) => {
   return compiled({})
 }
 
+const tryReadTemplate = async (relativePath: string) => {
+  try {
+    return await fs.readFile(path.join(templateRoot, relativePath), 'utf8')
+  } catch {
+    return null
+  }
+}
+
 const getTransporter = () => {
   const runtimeConfig = getValidatedRuntimeConfig(useRuntimeConfig())
 
@@ -96,6 +123,97 @@ export const renderAuthEmailTemplate = async (
   return renderIntoBaseLayout(content)
 }
 
+export const renderNotificationEmailTemplate = async (
+  name: NotificationTemplateName,
+  context: NotificationEmailContext,
+) => {
+  await registerPartials()
+
+  const htmlSource =
+    (await tryReadTemplate(`notifications/${name}.html.hbs`)) ??
+    '<h1>{{title}}</h1><p>{{body}}</p>{{#if actionUrl}}<p><a href="{{actionUrl}}">{{actionLabel}}</a></p>{{/if}}'
+  const textSource =
+    (await tryReadTemplate(`notifications/${name}.txt.hbs`)) ??
+    '{{title}}\n\n{{body}}\n{{#if actionUrl}}\n{{actionLabel}}: {{actionUrl}}\n{{/if}}'
+
+  const htmlContent = Handlebars.compile(htmlSource)(context)
+  const text = Handlebars.compile(textSource)(context)
+  const html = await renderIntoBaseLayout(htmlContent)
+
+  return { html, text }
+}
+
+export const sendEmail = async ({
+  to,
+  subject,
+  html,
+  text,
+  attachments,
+}: {
+  to: string
+  subject: string
+  html: string
+  text?: string
+  attachments?: Array<{
+    filename: string
+    content?: string | Buffer
+    path?: string
+    contentType?: string
+  }>
+}) => {
+  const status = getEmailIntegrationStatus()
+
+  if (!status.enabled) {
+    return { delivered: false, reason: status.reason }
+  }
+
+  const runtimeConfig = getValidatedRuntimeConfig(useRuntimeConfig())
+  const transporter = getTransporter()
+  const response = await transporter.sendMail({
+    from: `"${runtimeConfig.emailFromName}" <${runtimeConfig.emailFrom}>`,
+    to,
+    subject,
+    html,
+    ...(text ? { text } : {}),
+    ...(attachments?.length ? { attachments } : {}),
+  })
+
+  return {
+    delivered: true,
+    providerMessageId: response.messageId,
+    response,
+  }
+}
+
+export const sendNotificationEmail = async ({
+  to,
+  subject,
+  template,
+  context,
+  attachments,
+}: {
+  to: string
+  subject: string
+  template: NotificationTemplateName
+  context: NotificationEmailContext
+  attachments?: Array<{
+    filename: string
+    content?: string | Buffer
+    path?: string
+    contentType?: string
+  }>
+}) => {
+  const rendered = await renderNotificationEmailTemplate(template, context)
+
+  return sendEmail({
+    to,
+    subject,
+    html: rendered.html,
+    text: rendered.text,
+    ...(attachments ? { attachments } : {}),
+  })
+}
+
 export const sendTemplatedEmail = async ({
   to,
   subject,
@@ -113,16 +231,12 @@ export const sendTemplatedEmail = async ({
     return { delivered: false, reason: status.reason }
   }
 
-  const runtimeConfig = getValidatedRuntimeConfig(useRuntimeConfig())
   const html = await renderAuthEmailTemplate(template, context)
-  const transporter = getTransporter()
-
-  await transporter.sendMail({
-    from: `"${runtimeConfig.emailFromName}" <${runtimeConfig.emailFrom}>`,
+  const sent = await sendEmail({
     to,
     subject,
     html,
   })
 
-  return { delivered: true }
+  return sent.delivered ? { delivered: true } : sent
 }

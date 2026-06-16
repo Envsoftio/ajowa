@@ -125,6 +125,7 @@ export default defineNuxtConfig({
         'ProgressSpinner',
         'Skeleton',
         'Select',
+        'SelectButton',
         'Message',
         'MultiSelect',
         'Tag',
