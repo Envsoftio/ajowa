@@ -27,9 +27,7 @@ export const useTheme = () => {
   if (import.meta.client) {
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
 
-    if (mode.value === 'system') {
-      isDark.value = mediaQuery.matches
-    }
+    apply(mode.value)
 
     mediaQuery.addEventListener('change', (event) => {
       if (mode.value === 'system') {

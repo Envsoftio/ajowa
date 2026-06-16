@@ -44,6 +44,7 @@ export const shellNavigation: Record<AppShellType, AppNavItem[]> = {
     { label: 'Billing Periods', to: '/admin/billing/periods', icon: 'pi pi-calendar' },
     { label: 'Dues', to: '/admin/billing/dues', icon: 'pi pi-wallet' },
     { label: 'Defaulters', to: '/admin/billing/defaulters', icon: 'pi pi-exclamation-triangle' },
+    { label: 'Finance Accounts', to: '/admin/finance/accounts', icon: 'pi pi-sitemap' },
     { label: 'Setup', to: '/setup', icon: 'pi pi-wrench' },
     { label: 'Password Change', to: '/change-password', icon: 'pi pi-key' },
   ],

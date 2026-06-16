@@ -84,6 +84,16 @@ const filteredFlats = computed(() => {
   return list
 })
 
+const unitTypeOptions = computed(() => {
+  const values = new Set(['1RK', '1BHK', '2BHK', '3BHK', '4BHK', '5BHK', 'Studio', 'Shop'])
+  for (const flat of flats.value) {
+    if (flat.unitType) {
+      values.add(flat.unitType)
+    }
+  }
+  return Array.from(values).sort()
+})
+
 const resetForm = () => {
   selectedFlat.value = null
   form.blockId = ''
@@ -308,7 +318,12 @@ const submit = async () => {
           </label>
           <label>
             <span>Unit type</span>
-            <InputText v-model="form.unitType" required />
+            <Select
+              v-model="form.unitType"
+              :options="unitTypeOptions"
+              placeholder="Select unit type"
+              required
+            />
           </label>
           <label>
             <span>Area (sq ft)</span>

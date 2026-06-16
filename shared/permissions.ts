@@ -7,6 +7,8 @@ export const staffPermissions = [
   'billing.manage',
   'dues.manage',
   'defaulters.view',
+  'finance.view',
+  'finance.manage',
   'staff.manage',
 ] as const
 
@@ -21,6 +23,8 @@ export const staffPermissionLabels: Record<StaffPermission, string> = {
   'billing.manage': 'Billing setup',
   'dues.manage': 'Dues and waivers',
   'defaulters.view': 'Defaulters',
+  'finance.view': 'Finance view',
+  'finance.manage': 'Finance accounts',
   'staff.manage': 'Staff administration',
 }
 
@@ -34,4 +38,6 @@ export const managerDefaultPermissions: StaffPermission[] = [
   'billing.view',
   'billing.manage',
   'defaulters.view',
+  'finance.view',
+  'finance.manage',
 ]

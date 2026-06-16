@@ -12,6 +12,7 @@ const toast = useToast()
 
 const selectedBlock = ref<BlockSummary | null>(null)
 const displayDialog = ref(false)
+const selectedBlockFlatCount = ref(0)
 
 const globalSearch = ref('')
 const activeFilter = ref('')
@@ -66,6 +67,7 @@ const resetForm = () => {
   form.description = ''
   form.sortOrder = 0
   form.isActive = true
+  selectedBlockFlatCount.value = 0
 }
 
 const openCreateDialog = () => {
@@ -80,6 +82,7 @@ const editBlock = (block: BlockSummary) => {
   form.description = block.description ?? ''
   form.sortOrder = block.sortOrder
   form.isActive = block.isActive
+  selectedBlockFlatCount.value = block.flatCount ?? 0
   displayDialog.value = true
 }
 
@@ -234,6 +237,13 @@ const submit = async () => {
           <label class="admin-form-grid__full">
             <span>Description</span>
             <Textarea v-model="form.description" rows="3" auto-resize />
+          </label>
+          <label>
+            <span>Flats in block</span>
+            <InputNumber :model-value="selectedBlockFlatCount" disabled fluid />
+            <small class="table-muted">
+              Flat count is auto-calculated from linked flats in <strong>Flats</strong>.
+            </small>
           </label>
           <label>
             <span>Sort order</span>

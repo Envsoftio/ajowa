@@ -312,3 +312,44 @@ export type DefaulterSummary = {
   totalBalance: number
   maxDaysOverdue: number
 }
+
+// --- Phase 9: Finance Types ---
+
+export type AccountHeadType = 'ASSET' | 'LIABILITY' | 'INCOME' | 'EXPENSE' | 'EQUITY'
+
+export type BankAccountType = 'SAVINGS' | 'CURRENT' | 'CASH_CREDIT' | 'OVERDRAFT' | 'OTHER'
+
+export type AccountHead = AuditFields & {
+  id: string
+  societyId: string | null
+  parentId: string | null
+  parentName: string | null
+  code: string
+  name: string
+  headType: AccountHeadType
+  isSystem: boolean
+  isActive: boolean
+  allowsManualEntries: boolean
+  level: number
+  hasChildren: boolean
+  mappedBankAccountCount: number
+  balance: number
+}
+
+export type BankAccount = AuditFields & {
+  id: string
+  societyId: string
+  accountHeadId: string
+  accountHeadCode: string
+  accountHeadName: string
+  bankName: string
+  accountName: string
+  accountNumberMasked: string
+  ifscCode: string
+  accountType: BankAccountType
+  branchName: string | null
+  upiId: string | null
+  isDefault: boolean
+  isActive: boolean
+  balance: number
+}
