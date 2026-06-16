@@ -7,17 +7,33 @@ definePageMeta({
   title: 'Billing Dues',
 })
 
-type DueResponse = { ok: true; data: { items: MaintenanceDue[]; total: number; page: number; pageSize: number } }
+type DueResponse = {
+  ok: true
+  data: {
+    items: MaintenanceDue[]
+    total: number
+    page: number
+    pageSize: number
+  }
+}
 type PeriodResponse = { ok: true; data: { items: BillingPeriod[] } }
 
 const api = useApi()
 const toast = useToast()
 
 const formatMoney = (value: number) =>
-  new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(value)
+  new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    maximumFractionDigits: 0,
+  }).format(value)
 
 const formatDate = (value: string | null | undefined) =>
-  value ? new Date(`${value}T00:00:00`).toLocaleDateString('en-IN', { dateStyle: 'medium' }) : '-'
+  value
+    ? new Date(`${value}T00:00:00`).toLocaleDateString('en-IN', {
+        dateStyle: 'medium',
+      })
+    : '-'
 
 const query = reactive({
   page: 1,
@@ -46,11 +62,20 @@ const loadDues = () =>
     },
   })
 
-const { data, pending, refresh } = await useAsyncData('admin-billing-dues', loadDues, { watch: [query] })
+const { data, pending, refresh } = await useAsyncData(
+  'admin-billing-dues',
+  loadDues,
+  { watch: [query] },
+)
 
 const { data: periodsData } = await useAsyncData('due-period-options', () =>
   api<PeriodResponse>('/api/admin/billing/periods', {
-    query: { page: 1, pageSize: 2000, sortBy: 'startDate', sortDirection: 'desc' },
+    query: {
+      page: 1,
+      pageSize: 2000,
+      sortBy: 'startDate',
+      sortDirection: 'desc',
+    },
   }),
 )
 
@@ -75,7 +100,8 @@ const summary = computed(() => {
     totalPaid,
     totalBalance,
     overdue,
-    collectionPercent: totalDue > 0 ? Math.round((totalPaid / totalDue) * 100) : 0,
+    collectionPercent:
+      totalDue > 0 ? Math.round((totalPaid / totalDue) * 100) : 0,
   }
 })
 
@@ -130,13 +156,13 @@ const sendReminders = async (dueIds: string[]) => {
   sendingReminder.value = true
 
   try {
-    const response = await api<{ ok: true; data: { eligible: number; jobCount: number } }>(
-      '/api/admin/billing/dues/reminders',
-      {
-        method: 'POST',
-        body: { dueIds },
-      },
-    )
+    const response = await api<{
+      ok: true
+      data: { eligible: number; jobCount: number }
+    }>('/api/admin/billing/dues/reminders', {
+      method: 'POST',
+      body: { dueIds },
+    })
     toast.add({
       severity: 'success',
       summary: 'Reminders queued',
@@ -151,7 +177,11 @@ const sendReminders = async (dueIds: string[]) => {
 const sendSelectedReminders = () =>
   sendReminders(
     selectedDues.value
-      .filter((due) => due.balanceAmount > 0 && !['PAID', 'WAIVED', 'CANCELLED'].includes(due.status))
+      .filter(
+        (due) =>
+          due.balanceAmount > 0 &&
+          !['PAID', 'WAIVED', 'CANCELLED'].includes(due.status),
+      )
       .map((due) => due.id),
   )
 
@@ -189,10 +219,19 @@ const resetFilters = () => {
       <header class="list-page__header">
         <div>
           <h1>Maintenance dues</h1>
-          <p>Review period-wise dues with computed late fees, paid amounts, balances, and statuses.</p>
+          <p>
+            Review period-wise dues with computed late fees, paid amounts,
+            balances, and statuses.
+          </p>
         </div>
         <div class="list-page__exports">
-          <Button label="Refresh" icon="pi pi-refresh" severity="secondary" outlined @click="() => refresh()" />
+          <Button
+            label="Refresh"
+            icon="pi pi-refresh"
+            severity="secondary"
+            outlined
+            @click="() => refresh()"
+          />
           <Button
             label="Remind selected"
             icon="pi pi-send"
@@ -202,58 +241,141 @@ const resetFilters = () => {
             :disabled="selectedDues.length === 0"
             @click="sendSelectedReminders"
           />
-          <Button label="Clear filters" icon="pi pi-filter-slash" severity="secondary" outlined @click="resetFilters" />
+          <Button
+            label="Clear filters"
+            icon="pi pi-filter-slash"
+            severity="secondary"
+            outlined
+            @click="resetFilters"
+          />
         </div>
       </header>
 
+      <div class="admin-page-guide">
+        <h2>How to use this page</h2>
+        <p>
+          Use the filters to narrow dues, review balances, send reminders, or
+          waive dues with an audit reason.
+        </p>
+        <ol>
+          <li>
+            Select a period or status to find the dues you want to act on.
+          </li>
+          <li>
+            Open the breakdown action to verify how the base amount was
+            calculated.
+          </li>
+          <li>
+            Select rows and send reminders only for balances that are still
+            outstanding.
+          </li>
+          <li>
+            Use waiver only when the society has approved removing the due.
+          </li>
+        </ol>
+      </div>
+
       <div class="list-page__toolbar">
-        <IconField class="list-page__search">
-          <InputIcon class="pi pi-search" />
-          <InputText v-model="query.search" placeholder="Search by flat or block" />
-        </IconField>
+        <label class="list-page__search">
+          <span class="field-label">
+            Search
+            <i
+              class="pi pi-info-circle"
+              title="Find dues by flat number or block name."
+              aria-label="Find dues by flat number or block name."
+            />
+          </span>
+          <IconField>
+            <InputIcon class="pi pi-search" />
+            <InputText
+              v-model="query.search"
+              placeholder="Search by flat or block"
+            />
+          </IconField>
+        </label>
         <div class="list-page__filters">
-          <Select
-            v-model="query.billingPeriodId"
-            :options="[{ label: 'All periods', value: '' }, ...periodOptions]"
-            option-label="label"
-            option-value="value"
-            placeholder="Period"
-          />
-          <Select
-            v-model="query.status"
-            :options="[
-              { label: 'All statuses', value: '' },
-              { label: 'Open', value: 'OPEN' },
-              { label: 'Partially paid', value: 'PARTIALLY_PAID' },
-              { label: 'Paid', value: 'PAID' },
-              { label: 'Overdue', value: 'OVERDUE' },
-              { label: 'Waived', value: 'WAIVED' },
-            ]"
-            option-label="label"
-            option-value="value"
-            placeholder="Status"
-          />
-          <Select
-            v-model="query.balance"
-            :options="[
-              { label: 'All balances', value: '' },
-              { label: 'Outstanding', value: 'outstanding' },
-              { label: 'Paid off', value: 'paid' },
-            ]"
-            option-label="label"
-            option-value="value"
-            placeholder="Balance"
-          />
-          <Select
-            v-model="query.overdue"
-            :options="[
-              { label: 'Any due date', value: '' },
-              { label: 'Overdue only', value: 'true' },
-            ]"
-            option-label="label"
-            option-value="value"
-            placeholder="Overdue"
-          />
+          <label>
+            <span class="field-label">
+              Period
+              <i
+                class="pi pi-info-circle"
+                title="Limit the table to dues generated for one billing period."
+                aria-label="Limit the table to dues generated for one billing period."
+              />
+            </span>
+            <Select
+              v-model="query.billingPeriodId"
+              :options="[{ label: 'All periods', value: '' }, ...periodOptions]"
+              option-label="label"
+              option-value="value"
+              placeholder="Period"
+            />
+          </label>
+          <label>
+            <span class="field-label">
+              Status
+              <i
+                class="pi pi-info-circle"
+                title="Filter by due lifecycle, such as open, paid, overdue, or waived."
+                aria-label="Filter by due lifecycle, such as open, paid, overdue, or waived."
+              />
+            </span>
+            <Select
+              v-model="query.status"
+              :options="[
+                { label: 'All statuses', value: '' },
+                { label: 'Open', value: 'OPEN' },
+                { label: 'Partially paid', value: 'PARTIALLY_PAID' },
+                { label: 'Paid', value: 'PAID' },
+                { label: 'Overdue', value: 'OVERDUE' },
+                { label: 'Waived', value: 'WAIVED' },
+              ]"
+              option-label="label"
+              option-value="value"
+              placeholder="Status"
+            />
+          </label>
+          <label>
+            <span class="field-label">
+              Balance
+              <i
+                class="pi pi-info-circle"
+                title="Show dues that still have money pending or dues that are fully paid."
+                aria-label="Show dues that still have money pending or dues that are fully paid."
+              />
+            </span>
+            <Select
+              v-model="query.balance"
+              :options="[
+                { label: 'All balances', value: '' },
+                { label: 'Outstanding', value: 'outstanding' },
+                { label: 'Paid off', value: 'paid' },
+              ]"
+              option-label="label"
+              option-value="value"
+              placeholder="Balance"
+            />
+          </label>
+          <label>
+            <span class="field-label">
+              Overdue
+              <i
+                class="pi pi-info-circle"
+                title="Show only dues past their due date and still unpaid."
+                aria-label="Show only dues past their due date and still unpaid."
+              />
+            </span>
+            <Select
+              v-model="query.overdue"
+              :options="[
+                { label: 'Any due date', value: '' },
+                { label: 'Overdue only', value: 'true' },
+              ]"
+              option-label="label"
+              option-value="value"
+              placeholder="Overdue"
+            />
+          </label>
         </div>
       </div>
 
@@ -268,7 +390,12 @@ const resetFilters = () => {
         responsive-layout="scroll"
         class="list-page__table"
         data-key="id"
-        @page="(event) => { query.page = Math.floor(event.first / event.rows) + 1; query.pageSize = event.rows }"
+        @page="
+          (event) => {
+            query.page = Math.floor(event.first / event.rows) + 1
+            query.pageSize = event.rows
+          }
+        "
       >
         <Column selection-mode="multiple" header-style="width: 3rem" />
         <Column field="flatNumber" header="Flat">
@@ -332,7 +459,10 @@ const resetFilters = () => {
                 rounded
                 :aria-label="`Send reminder for ${row.flatNumber || 'flat'} ${row.billingPeriodLabel || ''}`"
                 :title="`Send reminder for ${row.flatNumber || 'flat'} ${row.billingPeriodLabel || ''}`"
-                :disabled="row.balanceAmount <= 0 || ['PAID', 'WAIVED', 'CANCELLED'].includes(row.status)"
+                :disabled="
+                  row.balanceAmount <= 0 ||
+                  ['PAID', 'WAIVED', 'CANCELLED'].includes(row.status)
+                "
                 @click="sendReminders([row.id])"
               />
               <Button
@@ -340,7 +470,9 @@ const resetFilters = () => {
                 severity="secondary"
                 text
                 rounded
-                :aria-label="row.status === 'WAIVED' ? 'Remove waiver' : 'Waive due'"
+                :aria-label="
+                  row.status === 'WAIVED' ? 'Remove waiver' : 'Waive due'
+                "
                 :title="row.status === 'WAIVED' ? 'Remove waiver' : 'Waive due'"
                 :disabled="row.status === 'PAID' || row.status === 'CANCELLED'"
                 @click="openWaiver(row)"
@@ -351,13 +483,24 @@ const resetFilters = () => {
       </DataTable>
     </section>
 
-    <Dialog v-model:visible="breakdownVisible" header="Charge breakdown" modal :style="{ width: '520px' }">
+    <Dialog
+      v-model:visible="breakdownVisible"
+      header="Charge breakdown"
+      modal
+      :style="{ width: '520px' }"
+    >
       <div v-if="selectedDue" class="admin-form-layout">
         <div>
           <h3>{{ selectedDue.blockName }} {{ selectedDue.flatNumber }}</h3>
-          <p>{{ selectedDue.billingPeriodLabel }} · {{ formatDate(selectedDue.dueDate) }}</p>
+          <p>
+            {{ selectedDue.billingPeriodLabel }} ·
+            {{ formatDate(selectedDue.dueDate) }}
+          </p>
         </div>
-        <DataTable :value="selectedDue.chargeBreakdown" responsive-layout="scroll">
+        <DataTable
+          :value="selectedDue.chargeBreakdown"
+          responsive-layout="scroll"
+        >
           <Column field="label" header="Charge" />
           <Column field="amount" header="Amount">
             <template #body="{ data: row }">
@@ -372,18 +515,52 @@ const resetFilters = () => {
       </div>
     </Dialog>
 
-    <Dialog v-model:visible="waiverDialogVisible" :header="waiverTarget?.status === 'WAIVED' ? 'Remove waiver' : 'Waive due'" modal :style="{ width: '480px' }">
+    <Dialog
+      v-model:visible="waiverDialogVisible"
+      :header="
+        waiverTarget?.status === 'WAIVED' ? 'Remove waiver' : 'Waive due'
+      "
+      modal
+      :style="{ width: '480px' }"
+    >
       <form class="admin-form-layout" @submit.prevent="submitWaiver">
+        <div class="admin-page-guide">
+          <h2>Waiver note</h2>
+          <p>
+            This action changes the due status and records the reason for audit
+            review.
+          </p>
+        </div>
         <p v-if="waiverTarget">
-          {{ waiverTarget.blockName }} {{ waiverTarget.flatNumber }} · {{ waiverTarget.billingPeriodLabel }}
+          {{ waiverTarget.blockName }} {{ waiverTarget.flatNumber }} ·
+          {{ waiverTarget.billingPeriodLabel }}
         </p>
         <label>
-          <span>Reason</span>
+          <span class="field-label">
+            Reason
+            <i
+              class="pi pi-info-circle"
+              title="Explain why this due is being waived or why an existing waiver is being removed."
+              aria-label="Explain why this due is being waived or why an existing waiver is being removed."
+            />
+          </span>
           <Textarea v-model="waiverReason" rows="3" auto-resize required />
         </label>
         <div class="admin-inline-actions dialog-actions">
-          <Button type="button" label="Cancel" severity="secondary" outlined @click="waiverDialogVisible = false" />
-          <Button type="submit" :label="waiverTarget?.status === 'WAIVED' ? 'Remove waiver' : 'Waive due'" :loading="savingWaiver" />
+          <Button
+            type="button"
+            label="Cancel"
+            severity="secondary"
+            outlined
+            @click="waiverDialogVisible = false"
+          />
+          <Button
+            type="submit"
+            :label="
+              waiverTarget?.status === 'WAIVED' ? 'Remove waiver' : 'Waive due'
+            "
+            :loading="savingWaiver"
+          />
         </div>
       </form>
     </Dialog>

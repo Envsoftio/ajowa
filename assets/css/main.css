@@ -217,6 +217,29 @@ a {
   padding: 1.5rem;
 }
 
+.landing-page > .surface-grid:first-child > .surface-card {
+  position: relative;
+  display: grid;
+  align-content: start;
+  gap: 0.35rem;
+  min-height: 8.25rem;
+  overflow: hidden;
+  border-top: 3px solid var(--color-brand);
+}
+
+.landing-page > .surface-grid:first-child > .surface-card:nth-child(2) {
+  border-top-color: var(--color-accent);
+}
+
+.landing-page > .surface-grid:first-child > .surface-card:nth-child(3) {
+  border-top-color: var(--color-info);
+}
+
+.landing-page > .surface-grid:first-child > .surface-card h3 {
+  font-size: clamp(1.55rem, 2vw, 2rem);
+  line-height: 1.05;
+}
+
 .surface-card p,
 .app-state p {
   color: var(--color-muted);
@@ -386,7 +409,7 @@ a {
 
 .list-page {
   display: grid;
-  gap: 1rem;
+  gap: 1.15rem;
 }
 
 .list-page__header {
@@ -395,6 +418,12 @@ a {
   justify-content: space-between;
   gap: 1rem;
   flex-wrap: wrap;
+}
+
+.list-page__header > div:first-child {
+  display: grid;
+  gap: 0.25rem;
+  max-width: 48rem;
 }
 
 .list-page__header h1 {
@@ -418,17 +447,34 @@ a {
 
 .list-page__toolbar {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: space-between;
   gap: 1rem;
   flex-wrap: wrap;
+  padding: 0.9rem;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
 }
 
 .list-page__search {
-  min-width: min(100%, 22rem);
+  min-width: min(100%, 24rem);
+  flex: 1 1 24rem;
 }
 
 .list-page__search .p-inputtext {
+  width: 100%;
+}
+
+.list-page__filters label,
+.list-page__toolbar > label {
+  display: grid;
+  gap: 0.45rem;
+  min-width: 11rem;
+}
+
+.list-page__filters .p-select,
+.list-page__toolbar > label .p-select,
+.list-page__search .p-iconfield {
   width: 100%;
 }
 
@@ -548,6 +594,28 @@ a {
   color: var(--color-info);
 }
 
+.staff-login-details {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.staff-login-details label {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.75rem;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+}
+
+.staff-login-details span {
+  color: var(--color-muted);
+  font-size: 0.82rem;
+}
+
+.staff-login-details strong {
+  overflow-wrap: anywhere;
+}
+
 .auth-links,
 .auth-actions {
   display: flex;
@@ -628,6 +696,12 @@ a {
   justify-content: space-between;
 }
 
+.admin-form-section__header label {
+  display: grid;
+  gap: 0.5rem;
+  min-width: min(100%, 18rem);
+}
+
 .admin-form-section__header h2,
 .admin-form-subsection h3,
 .admin-detail-card h3,
@@ -639,6 +713,7 @@ a {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1rem;
+  align-items: start;
 }
 
 .admin-form-grid label,
@@ -647,10 +722,100 @@ a {
   gap: 0.5rem;
 }
 
-.admin-form-grid label span,
-.admin-toggle-card span {
+.admin-form-grid label > span,
+.admin-toggle-card > span,
+.field-label {
   font-size: 0.95rem;
   font-weight: 700;
+}
+
+.field-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--color-text);
+}
+
+.field-label .pi-info-circle,
+.field-help-icon {
+  color: var(--color-info);
+  font-size: 0.85rem;
+  cursor: help;
+}
+
+.admin-page-guide {
+  display: grid;
+  gap: 0.75rem;
+  align-items: start;
+  padding: 1rem;
+  border: 1px solid rgba(29, 78, 216, 0.2);
+  border-left: 4px solid var(--color-info);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(
+    90deg,
+    rgba(29, 78, 216, 0.12),
+    rgba(255, 255, 255, 0.72)
+  );
+  color: var(--color-text);
+}
+
+.admin-page-guide:has(ol) {
+  grid-template-columns: minmax(14rem, 0.75fr) minmax(0, 1.25fr);
+  gap: 1rem;
+}
+
+.admin-page-guide:has(ol) h2,
+.admin-page-guide:has(ol) p {
+  grid-column: 1;
+}
+
+.admin-page-guide:has(ol) ol {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+
+.admin-page-guide h2,
+.admin-page-guide p {
+  margin: 0;
+}
+
+.admin-page-guide h2 {
+  font-size: 1.05rem;
+}
+
+.admin-page-guide ol {
+  counter-reset: admin-guide-step;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: 0.65rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--color-muted);
+}
+
+.admin-page-guide li {
+  counter-increment: admin-guide-step;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.55rem;
+  align-items: start;
+  padding: 0.7rem;
+  border: 1px solid rgba(47, 64, 80, 0.1);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.admin-page-guide li::before {
+  content: counter(admin-guide-step);
+  display: inline-grid;
+  place-items: center;
+  width: 1.45rem;
+  height: 1.45rem;
+  border-radius: 50%;
+  background: var(--color-info);
+  color: #fff;
+  font-size: 0.78rem;
+  font-weight: 800;
 }
 
 .admin-form-grid__full {
@@ -667,7 +832,7 @@ a {
   padding: 1rem;
   border-radius: var(--radius-md);
   border: 1px solid var(--color-border);
-  background: var(--color-surface-strong);
+  background: var(--color-bg);
 }
 
 .admin-relationship-card,
@@ -714,13 +879,18 @@ a {
   gap: 1rem;
 }
 
+.admin-charge-section {
+  padding-top: 1rem;
+  border-top: 1px solid var(--color-border);
+}
+
 .admin-charge-card,
 .resident-due-group,
 .defaulter-flat-pill {
   padding: 1rem;
   border-radius: var(--radius-md);
   border: 1px solid var(--color-border);
-  background: var(--color-surface-strong);
+  background: var(--color-bg);
 }
 
 .admin-charge-row {
@@ -728,6 +898,15 @@ a {
   grid-template-columns: minmax(12rem, 1fr) minmax(9rem, 12rem) auto;
   gap: 0.75rem;
   align-items: center;
+}
+
+.admin-charge-row label {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.admin-charge-row .p-button {
+  align-self: end;
 }
 
 .dialog-actions {
@@ -801,6 +980,13 @@ a {
 .p-datatable-thead > tr > th,
 .p-datatable-tbody > tr > td {
   border-color: var(--color-border);
+}
+
+.p-datatable-thead > tr > th {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 0.82rem;
+  text-transform: uppercase;
 }
 
 .p-datatable-tbody > tr:hover > td {
@@ -970,6 +1156,15 @@ a {
 @media (max-width: 768px) {
   .surface-grid {
     grid-template-columns: 1fr;
+  }
+
+  .admin-page-guide {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-page-guide:has(ol) ol {
+    grid-column: 1;
+    grid-row: auto;
   }
 
   .admin-two-column,

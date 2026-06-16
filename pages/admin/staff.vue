@@ -25,7 +25,17 @@ const query = ref<ListQueryParams>({
 const selectedStaff = ref<StaffSummary | null>(null)
 const displayDialog = ref(false)
 const saving = ref(false)
+const resettingLoginId = ref<string | null>(null)
 const globalSearch = ref('')
+const loginDetails = ref<StaffLoginDetails | null>(null)
+const loginDialogVisible = ref(false)
+
+type StaffLoginDetails = {
+  email: string
+  temporaryPassword: string
+  loginUrl: string
+  requiresPasswordChange: boolean
+}
 
 const form = reactive({
   role: 'MANAGER' as StaffSummary['role'],
@@ -33,6 +43,7 @@ const form = reactive({
   email: '',
   mobileNumber: '',
   whatsappNumber: '',
+  temporaryPassword: '',
   canLogin: true,
   isActive: true,
   permissions: [] as StaffPermission[],
@@ -68,6 +79,7 @@ const resetForm = () => {
   form.email = ''
   form.mobileNumber = ''
   form.whatsappNumber = ''
+  form.temporaryPassword = generateTemporaryPassword()
   form.canLogin = true
   form.isActive = true
   form.permissions = []
@@ -85,6 +97,7 @@ const editStaff = (staff: StaffSummary) => {
   form.email = staff.email
   form.mobileNumber = staff.mobileNumber
   form.whatsappNumber = staff.whatsappNumber ?? ''
+  form.temporaryPassword = ''
   form.canLogin = staff.canLogin
   form.isActive = staff.isActive
   form.permissions = staff.permissions.filter((permission): permission is StaffPermission =>
@@ -110,7 +123,12 @@ const submit = async () => {
       canLogin: form.canLogin,
       isActive: form.isActive,
       permissions: form.permissions,
-      ...(selectedStaff.value ? {} : { email: form.email }),
+      ...(selectedStaff.value
+        ? {}
+        : {
+            email: form.email,
+            temporaryPassword: form.temporaryPassword,
+          }),
     }
 
     if (selectedStaff.value) {
@@ -119,10 +137,12 @@ const submit = async () => {
         body: payload,
       })
     } else {
-      await api('/api/admin/staff', {
+      const response = await api<{ ok: true; data: StaffLoginDetails }>('/api/admin/staff', {
         method: 'POST',
         body: payload,
       })
+      loginDetails.value = response.data
+      loginDialogVisible.value = true
     }
 
     toast.add({
@@ -136,6 +156,70 @@ const submit = async () => {
   } finally {
     saving.value = false
   }
+}
+
+const generateTemporaryPassword = () => {
+  const bytes = new Uint8Array(4)
+  crypto.getRandomValues(bytes)
+  return `Ajowa@${Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('').toUpperCase()}2026`
+}
+
+const regenerateTemporaryPassword = () => {
+  form.temporaryPassword = generateTemporaryPassword()
+}
+
+const resetStaffLogin = async (staff: StaffSummary) => {
+  resettingLoginId.value = staff.id
+
+  try {
+    const response = await api<{ ok: true; data: StaffLoginDetails }>(`/api/admin/staff/${staff.id}/login-reset`, {
+      method: 'POST',
+      body: {
+        temporaryPassword: generateTemporaryPassword(),
+      },
+    })
+
+    loginDetails.value = response.data
+    loginDialogVisible.value = true
+
+    toast.add({
+      severity: 'success',
+      summary: 'Login reset',
+      detail: 'Temporary login details are ready.',
+      life: 3000,
+    })
+
+    await refresh()
+  } finally {
+    resettingLoginId.value = null
+  }
+}
+
+const loginInstructions = computed(() => {
+  if (!loginDetails.value) {
+    return ''
+  }
+
+  return [
+    `Login URL: ${loginDetails.value.loginUrl}`,
+    `Email: ${loginDetails.value.email}`,
+    `Temporary password: ${loginDetails.value.temporaryPassword}`,
+    'They must change this password after signing in.',
+  ].join('\n')
+})
+
+const copyLoginInstructions = async () => {
+  if (!loginInstructions.value) {
+    return
+  }
+
+  await navigator.clipboard?.writeText(loginInstructions.value)
+  toast.add({
+    severity: 'success',
+    summary: 'Copied',
+    detail: 'Login details copied.',
+    life: 2500,
+  })
 }
 
 const updateQuery = (value: ListQueryParams) => {
@@ -299,9 +383,12 @@ const permissionLabel = (permission: string) =>
             <AppStatusBadge :status="row.canLogin ? 'active' : 'inactive'" />
           </template>
         </Column>
-        <Column header="Actions" class="text-right" style="width: 100px">
+        <Column header="Actions" class="text-right" style="width: 130px">
           <template #body="{ data: row }">
-            <Button icon="pi pi-pencil" severity="secondary" text rounded aria-label="Edit staff" @click="editStaff(row)" />
+            <div class="admin-inline-actions" style="justify-content: flex-end; gap: 0.25rem;">
+              <Button icon="pi pi-key" severity="secondary" text rounded aria-label="Reset staff login" :loading="resettingLoginId === row.id" @click="resetStaffLogin(row)" />
+              <Button icon="pi pi-pencil" severity="secondary" text rounded aria-label="Edit staff" @click="editStaff(row)" />
+            </div>
           </template>
         </Column>
       </DataTable>
@@ -338,6 +425,16 @@ const permissionLabel = (permission: string) =>
               <span>Role</span>
               <Select v-model="form.role" :options="['MANAGER', 'SERVICE_STAFF', 'GUARD']" required />
             </label>
+            <label v-if="!selectedStaff" class="admin-form-grid__full">
+              <span>Temporary password</span>
+              <InputGroup>
+                <InputText v-model="form.temporaryPassword" required autocomplete="new-password" />
+                <Button type="button" icon="pi pi-refresh" severity="secondary" outlined aria-label="Generate temporary password" @click="regenerateTemporaryPassword" />
+              </InputGroup>
+            </label>
+          </div>
+          <div v-if="!selectedStaff" class="auth-banner auth-banner-info">
+            Staff sign in at /login with this temporary password, then AJOWA forces a password change before protected access.
           </div>
         </section>
 
@@ -370,6 +467,38 @@ const permissionLabel = (permission: string) =>
           <Button type="submit" :label="saving ? 'Saving…' : 'Save staff'" :loading="saving" />
         </div>
       </form>
+    </Dialog>
+
+    <Dialog
+      v-model:visible="loginDialogVisible"
+      header="Staff Login Details"
+      modal
+      class="p-dialog-custom"
+      :style="{ width: '560px', maxWidth: '95vw' }"
+    >
+      <div v-if="loginDetails" class="admin-form-layout" style="padding-top: 1rem;">
+        <div class="auth-banner auth-banner-warning">
+          Share these details directly with the staff member. The password is only shown here.
+        </div>
+        <div class="staff-login-details">
+          <label>
+            <span>Login URL</span>
+            <strong>{{ loginDetails.loginUrl }}</strong>
+          </label>
+          <label>
+            <span>Email</span>
+            <strong>{{ loginDetails.email }}</strong>
+          </label>
+          <label>
+            <span>Temporary password</span>
+            <strong>{{ loginDetails.temporaryPassword }}</strong>
+          </label>
+        </div>
+        <div class="admin-inline-actions" style="justify-content: flex-end; gap: 0.75rem;">
+          <Button type="button" label="Copy details" icon="pi pi-copy" severity="secondary" outlined @click="copyLoginInstructions" />
+          <Button type="button" label="Done" @click="loginDialogVisible = false" />
+        </div>
+      </div>
     </Dialog>
   </div>
 </template>

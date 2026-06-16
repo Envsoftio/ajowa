@@ -353,3 +353,100 @@ export type BankAccount = AuditFields & {
   isActive: boolean
   balance: number
 }
+
+export type FinanceTransactionType = 'INCOME' | 'EXPENSE'
+
+export type FinanceLifecycleStatus = 'DRAFT' | 'PENDING_REVIEW' | 'POSTED' | 'REJECTED' | 'RETURNED' | 'REVERSED' | 'CANCELLED'
+
+export type FinanceCategory = AuditFields & {
+  id: string
+  societyId: string | null
+  code: string
+  name: string
+  transactionType: FinanceTransactionType
+  categoryGroup: string
+  accountHeadId: string | null
+  accountHeadCode: string | null
+  accountHeadName: string | null
+  accountHeadType: AccountHeadType | null
+  requiresAttachment: boolean
+  isSystem: boolean
+  isActive: boolean
+}
+
+export type FinanceTransaction = AuditFields & {
+  id: string
+  societyId: string
+  transactionType: FinanceTransactionType
+  categoryId: string
+  categoryName: string
+  categoryGroup: string
+  bankAccountId: string | null
+  bankAccountName: string | null
+  billingPeriodId: string | null
+  billingPeriodLabel: string | null
+  title: string
+  description: string | null
+  counterpartyName: string | null
+  voucherNumber: string | null
+  transactionDate: string
+  amount: number
+  status: FinanceLifecycleStatus
+  journalVoucherNumber: string | null
+  createdByName: string | null
+  approvedByName: string | null
+  approvedAt: string | null
+  postedAt: string | null
+  reversedAt: string | null
+}
+
+export type FinanceJournalEntry = AuditFields & {
+  id: string
+  societyId: string
+  voucherNumber: string
+  transactionId: string | null
+  paymentId: string | null
+  billingPeriodId: string | null
+  billingPeriodLabel: string | null
+  entryDate: string
+  description: string | null
+  status: FinanceLifecycleStatus
+  postedByUserId: string | null
+  postedByName: string | null
+  postedAt: string | null
+  reversalOfEntryId: string | null
+  debitTotal: number
+  creditTotal: number
+  lineCount: number
+}
+
+export type FinancialPeriodClose = AuditFields & {
+  id: string
+  societyId: string
+  startDate: string
+  endDate: string
+  notes: string | null
+  openingBalance: number
+  incomeTotal: number
+  expenseTotal: number
+  closingBalance: number
+  validationSnapshot: Record<string, unknown>
+  closedAt: string
+  closedByUserId: string | null
+  closedByName: string | null
+  isReopened: boolean
+  reopenedAt: string | null
+  reopenedByUserId: string | null
+  reopenedByName: string | null
+  reopenReason: string | null
+}
+
+export type ReconciliationAccount = {
+  accountHeadId: string
+  code: string
+  name: string
+  headType: AccountHeadType
+  debitTotal: number
+  creditTotal: number
+  balance: number
+}

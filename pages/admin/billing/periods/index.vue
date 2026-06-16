@@ -14,7 +14,10 @@ definePageMeta({
   title: 'Billing Periods',
 })
 
-type PeriodResponse = { ok: true; data: { items: BillingPeriod[]; total: number } }
+type PeriodResponse = {
+  ok: true
+  data: { items: BillingPeriod[]; total: number }
+}
 type ChargeResponse = { ok: true; data: BillingChargeConfig }
 type FlatsResponse = { ok: true; data: { items: FlatSummary[] } }
 type PreviewResponse = {
@@ -26,10 +29,18 @@ const api = useApi()
 const toast = useToast()
 
 const formatMoney = (value: number) =>
-  new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(value)
+  new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    maximumFractionDigits: 0,
+  }).format(value)
 
 const formatDate = (value: string | null | undefined) =>
-  value ? new Date(`${value}T00:00:00`).toLocaleDateString('en-IN', { dateStyle: 'medium' }) : '-'
+  value
+    ? new Date(`${value}T00:00:00`).toLocaleDateString('en-IN', {
+        dateStyle: 'medium',
+      })
+    : '-'
 
 const periodQuery = reactive({
   page: 1,
@@ -52,20 +63,30 @@ const loadPeriods = () =>
     },
   })
 
-const { data: periodsData, pending: periodsPending, refresh: refreshPeriods } = await useAsyncData(
-  'admin-billing-periods',
-  loadPeriods,
-  { watch: [periodQuery] },
-)
+const {
+  data: periodsData,
+  pending: periodsPending,
+  refresh: refreshPeriods,
+} = await useAsyncData('admin-billing-periods', loadPeriods, {
+  watch: [periodQuery],
+})
 
-const { data: chargeData, pending: chargePending, refresh: refreshCharges } = await useAsyncData(
-  'admin-billing-charges',
-  () => api<ChargeResponse>('/api/admin/billing/charges'),
+const {
+  data: chargeData,
+  pending: chargePending,
+  refresh: refreshCharges,
+} = await useAsyncData('admin-billing-charges', () =>
+  api<ChargeResponse>('/api/admin/billing/charges'),
 )
 
 const { data: flatsData } = await useAsyncData('billing-flat-options', () =>
   api<FlatsResponse>('/api/admin/flats', {
-    query: { page: 1, pageSize: 2000, sortBy: 'flatNumber', sortDirection: 'asc' },
+    query: {
+      page: 1,
+      pageSize: 2000,
+      sortBy: 'flatNumber',
+      sortDirection: 'asc',
+    },
   }),
 )
 
@@ -83,7 +104,10 @@ const flatOptions = computed(() =>
 const summary = computed(() => {
   const items = periods.value
   const dueCount = items.reduce((sum, item) => sum + (item.dueCount ?? 0), 0)
-  const unpaidDueCount = items.reduce((sum, item) => sum + (item.unpaidDueCount ?? 0), 0)
+  const unpaidDueCount = items.reduce(
+    (sum, item) => sum + (item.unpaidDueCount ?? 0),
+    0,
+  )
 
   return {
     total: periodsData.value?.data.total ?? 0,
@@ -153,7 +177,12 @@ const savePeriod = async () => {
       })
     }
 
-    toast.add({ severity: 'success', summary: 'Saved', detail: 'Billing period saved.', life: 3000 })
+    toast.add({
+      severity: 'success',
+      summary: 'Saved',
+      detail: 'Billing period saved.',
+      life: 3000,
+    })
     periodDialogVisible.value = false
     resetPeriodForm()
     await refreshPeriods()
@@ -185,7 +214,12 @@ const toggleLock = async () => {
         lockReason: !lockTarget.value.isLocked ? lockReason.value : null,
       },
     })
-    toast.add({ severity: 'success', summary: 'Updated', detail: 'Lock state changed.', life: 3000 })
+    toast.add({
+      severity: 'success',
+      summary: 'Updated',
+      detail: 'Lock state changed.',
+      life: 3000,
+    })
     lockDialogVisible.value = false
     await refreshPeriods()
   } finally {
@@ -212,12 +246,17 @@ const loadGenerationPreview = async () => {
   previewLoading.value = true
 
   try {
-    const response = await api<PreviewResponse>('/api/admin/billing/dues/preview', {
-      query: {
-        billingPeriodId: generationTarget.value.id,
-        flatIds: selectedFlatIds.value.length ? selectedFlatIds.value.join(',') : undefined,
+    const response = await api<PreviewResponse>(
+      '/api/admin/billing/dues/preview',
+      {
+        query: {
+          billingPeriodId: generationTarget.value.id,
+          flatIds: selectedFlatIds.value.length
+            ? selectedFlatIds.value.join(',')
+            : undefined,
+        },
       },
-    })
+    )
     generationPreview.value = response.data
   } finally {
     previewLoading.value = false
@@ -231,16 +270,18 @@ const generateDues = async () => {
   generating.value = true
 
   try {
-    const response = await api<{ ok: true; data: { generated: number; skipped: number } }>(
-      '/api/admin/billing/dues',
-      {
-        method: 'POST',
-        body: {
-          billingPeriodId: generationTarget.value.id,
-          flatIds: selectedFlatIds.value.length ? selectedFlatIds.value : undefined,
-        },
+    const response = await api<{
+      ok: true
+      data: { generated: number; skipped: number }
+    }>('/api/admin/billing/dues', {
+      method: 'POST',
+      body: {
+        billingPeriodId: generationTarget.value.id,
+        flatIds: selectedFlatIds.value.length
+          ? selectedFlatIds.value
+          : undefined,
       },
-    )
+    })
     toast.add({
       severity: 'success',
       summary: 'Dues generated',
@@ -258,7 +299,8 @@ const chargeForm = reactive({
   graceDays: 0,
   lateFeePerDay: 50,
   billingTenure: 'MONTHLY' as BillingFrequency,
-  excessPaymentHandling: 'KEEP_AS_ADVANCE' as BillingChargeConfig['excessPaymentHandling'],
+  excessPaymentHandling:
+    'KEEP_AS_ADVANCE' as BillingChargeConfig['excessPaymentHandling'],
   defaultCharges: [] as ChargeBreakdownItem[],
   flatTypeCharges: [] as BillingChargeConfig['flatTypeCharges'],
   flatOverrideCharges: [] as BillingChargeConfig['flatOverrideCharges'],
@@ -272,7 +314,9 @@ watch(
     chargeForm.lateFeePerDay = config.lateFeePerDay
     chargeForm.billingTenure = config.billingTenure
     chargeForm.excessPaymentHandling = config.excessPaymentHandling
-    chargeForm.defaultCharges = config.defaultCharges.map((item) => ({ ...item }))
+    chargeForm.defaultCharges = config.defaultCharges.map((item) => ({
+      ...item,
+    }))
     chargeForm.flatTypeCharges = config.flatTypeCharges.map((item) => ({
       flatType: item.flatType,
       label: item.label,
@@ -331,7 +375,12 @@ const saveCharges = async () => {
       method: 'PUT',
       body: chargeForm,
     })
-    toast.add({ severity: 'success', summary: 'Saved', detail: 'Charge configuration updated.', life: 3000 })
+    toast.add({
+      severity: 'success',
+      summary: 'Saved',
+      detail: 'Charge configuration updated.',
+      life: 3000,
+    })
     await refreshCharges()
   } finally {
     savingCharges.value = false
@@ -363,37 +412,105 @@ const saveCharges = async () => {
       <header class="list-page__header">
         <div>
           <h1>Billing periods</h1>
-          <p>Create periods, lock completed cycles, and generate flat-wise dues.</p>
+          <p>
+            Create periods, lock completed cycles, and generate flat-wise dues.
+          </p>
         </div>
         <div class="list-page__exports">
-          <Button label="Create period" icon="pi pi-plus" @click="openCreatePeriod" />
+          <Button
+            label="Create period"
+            icon="pi pi-plus"
+            @click="openCreatePeriod"
+          />
         </div>
       </header>
 
+      <div class="admin-page-guide">
+        <h2>How to use this page</h2>
+        <p>
+          Use this page to define the society billing cycle before dues are
+          created for flats.
+        </p>
+        <ol>
+          <li>
+            Confirm the charge configuration first, because generated dues use
+            the active charge rules.
+          </li>
+          <li>
+            Create a billing period with start, end, and due dates for the
+            cycle.
+          </li>
+          <li>
+            Use the lightning action to preview and generate dues for all active
+            flats or selected flats.
+          </li>
+          <li>
+            Lock the period after review so later corrections are intentional
+            and audited.
+          </li>
+        </ol>
+      </div>
+
       <div class="list-page__toolbar">
-        <IconField class="list-page__search">
-          <InputIcon class="pi pi-search" />
-          <InputText v-model="periodQuery.search" placeholder="Search by period label" />
-        </IconField>
+        <label class="list-page__search">
+          <span class="field-label">
+            Search
+            <i
+              class="pi pi-info-circle"
+              title="Find billing periods by their visible label."
+              aria-label="Find billing periods by their visible label."
+            />
+          </span>
+          <IconField>
+            <InputIcon class="pi pi-search" />
+            <InputText
+              v-model="periodQuery.search"
+              placeholder="Search by period label"
+            />
+          </IconField>
+        </label>
         <div class="list-page__filters">
-          <Select
-            v-model="periodQuery.status"
-            :options="[
-              { label: 'All states', value: '' },
-              { label: 'Open', value: 'open' },
-              { label: 'Locked', value: 'locked' },
-            ]"
-            option-label="label"
-            option-value="value"
-            placeholder="State"
-          />
-          <Select
-            v-model="periodQuery.frequency"
-            :options="[{ label: 'All tenures', value: '' }, ...frequencyOptions]"
-            option-label="label"
-            option-value="value"
-            placeholder="Tenure"
-          />
+          <label>
+            <span class="field-label">
+              State
+              <i
+                class="pi pi-info-circle"
+                title="Show all periods, only editable open periods, or locked periods."
+                aria-label="Show all periods, only editable open periods, or locked periods."
+              />
+            </span>
+            <Select
+              v-model="periodQuery.status"
+              :options="[
+                { label: 'All states', value: '' },
+                { label: 'Open', value: 'open' },
+                { label: 'Locked', value: 'locked' },
+              ]"
+              option-label="label"
+              option-value="value"
+              placeholder="State"
+            />
+          </label>
+          <label>
+            <span class="field-label">
+              Tenure
+              <i
+                class="pi pi-info-circle"
+                title="Filter periods by billing frequency, such as monthly or quarterly."
+                aria-label="Filter periods by billing frequency, such as monthly or quarterly."
+              />
+            </span>
+            <Select
+              v-model="periodQuery.frequency"
+              :options="[
+                { label: 'All tenures', value: '' },
+                ...frequencyOptions,
+              ]"
+              option-label="label"
+              option-value="value"
+              placeholder="Tenure"
+            />
+          </label>
         </div>
       </div>
 
@@ -407,12 +524,18 @@ const saveCharges = async () => {
         <Column field="label" header="Period" />
         <Column field="frequency" header="Tenure">
           <template #body="{ data: row }">
-            <span>{{ frequencyOptions.find((item) => item.value === row.frequency)?.label ?? row.frequency }}</span>
+            <span>{{
+              frequencyOptions.find((item) => item.value === row.frequency)
+                ?.label ?? row.frequency
+            }}</span>
           </template>
         </Column>
         <Column header="Dates">
           <template #body="{ data: row }">
-            <span>{{ formatDate(row.startDate) }} - {{ formatDate(row.endDate) }}</span>
+            <span
+              >{{ formatDate(row.startDate) }} -
+              {{ formatDate(row.endDate) }}</span
+            >
           </template>
         </Column>
         <Column field="dueDate" header="Due date">
@@ -468,22 +591,62 @@ const saveCharges = async () => {
       <header class="list-page__header">
         <div>
           <h1>Charge configuration</h1>
-          <p>Set default charges, unit-type templates, flat overrides, grace days, and late fee rules.</p>
+          <p>
+            Set default charges, unit-type templates, flat overrides, grace
+            days, and late fee rules.
+          </p>
         </div>
         <div class="list-page__exports">
-          <Button label="Save charges" icon="pi pi-save" :loading="savingCharges" @click="saveCharges" />
+          <Button
+            label="Save charges"
+            icon="pi pi-save"
+            :loading="savingCharges"
+            @click="saveCharges"
+          />
         </div>
       </header>
+
+      <div class="admin-page-guide">
+        <h2>How charge rules are applied</h2>
+        <p>
+          When dues are generated, the system chooses the most specific matching
+          charge rule.
+        </p>
+        <ol>
+          <li>Flat overrides are used first for selected flats.</li>
+          <li>Unit-type charges are used next for matching flat types.</li>
+          <li>Default charges are used when no specific rule exists.</li>
+        </ol>
+      </div>
 
       <AppSkeletonState v-if="chargePending" />
       <form v-else class="admin-form-layout" @submit.prevent="saveCharges">
         <div class="admin-form-grid">
           <label>
-            <span>Billing tenure pack</span>
-            <Select v-model="chargeForm.billingTenure" :options="frequencyOptions" option-label="label" option-value="value" />
+            <span class="field-label">
+              Billing tenure pack
+              <i
+                class="pi pi-info-circle"
+                title="Default billing frequency used when preparing maintenance cycles."
+                aria-label="Default billing frequency used when preparing maintenance cycles."
+              />
+            </span>
+            <Select
+              v-model="chargeForm.billingTenure"
+              :options="frequencyOptions"
+              option-label="label"
+              option-value="value"
+            />
           </label>
           <label>
-            <span>Excess payment policy</span>
+            <span class="field-label">
+              Excess payment policy
+              <i
+                class="pi pi-info-circle"
+                title="Decides what to do when a resident pays more than the balance amount."
+                aria-label="Decides what to do when a resident pays more than the balance amount."
+              />
+            </span>
             <Select
               v-model="chargeForm.excessPaymentHandling"
               :options="[
@@ -496,11 +659,25 @@ const saveCharges = async () => {
             />
           </label>
           <label>
-            <span>Grace days</span>
+            <span class="field-label">
+              Grace days
+              <i
+                class="pi pi-info-circle"
+                title="Number of days after the due date before late fee calculation starts."
+                aria-label="Number of days after the due date before late fee calculation starts."
+              />
+            </span>
             <InputNumber v-model="chargeForm.graceDays" :min="0" fluid />
           </label>
           <label>
-            <span>Late fee per day</span>
+            <span class="field-label">
+              Late fee per day
+              <i
+                class="pi pi-info-circle"
+                title="Daily late fee added after grace days expire for unpaid balances."
+                aria-label="Daily late fee added after grace days expire for unpaid balances."
+              />
+            </span>
             <InputNumber v-model="chargeForm.lateFeePerDay" :min="0" fluid />
           </label>
         </div>
@@ -511,21 +688,52 @@ const saveCharges = async () => {
               <h2>Default charges</h2>
               <p>Used when no unit-type or flat override exists.</p>
             </div>
-            <Button type="button" label="Add charge" icon="pi pi-plus" severity="secondary" outlined @click="addCharge(chargeForm.defaultCharges)" />
+            <Button
+              type="button"
+              label="Add charge"
+              icon="pi pi-plus"
+              severity="secondary"
+              outlined
+              @click="addCharge(chargeForm.defaultCharges)"
+            />
           </div>
-          <div v-for="(charge, index) in chargeForm.defaultCharges" :key="index" class="admin-charge-row">
-            <InputText v-model="charge.label" placeholder="Charge label" />
-            <InputNumber v-model="charge.amount" :min="0" fluid />
-              <Button
-                type="button"
-                icon="pi pi-trash"
-                severity="danger"
-                text
-                rounded
-                :aria-label="`Remove default charge ${charge.label || 'item'}`"
-                :title="`Remove default charge ${charge.label || 'item'}`"
-                @click="removeCharge(chargeForm.defaultCharges, index)"
-              />
+          <div
+            v-for="(charge, index) in chargeForm.defaultCharges"
+            :key="index"
+            class="admin-charge-row"
+          >
+            <label>
+              <span class="field-label">
+                Charge label
+                <i
+                  class="pi pi-info-circle"
+                  title="Name shown in the resident charge breakdown, such as Maintenance Charges."
+                  aria-label="Name shown in the resident charge breakdown, such as Maintenance Charges."
+                />
+              </span>
+              <InputText v-model="charge.label" placeholder="Charge label" />
+            </label>
+            <label>
+              <span class="field-label">
+                Amount
+                <i
+                  class="pi pi-info-circle"
+                  title="Amount charged for this line item in the billing period."
+                  aria-label="Amount charged for this line item in the billing period."
+                />
+              </span>
+              <InputNumber v-model="charge.amount" :min="0" fluid />
+            </label>
+            <Button
+              type="button"
+              icon="pi pi-trash"
+              severity="danger"
+              text
+              rounded
+              :aria-label="`Remove default charge ${charge.label || 'item'}`"
+              :title="`Remove default charge ${charge.label || 'item'}`"
+              @click="removeCharge(chargeForm.defaultCharges, index)"
+            />
           </div>
         </div>
 
@@ -535,11 +743,35 @@ const saveCharges = async () => {
               <h2>Unit-type charges</h2>
               <p>Overrides default charges for matching flat unit types.</p>
             </div>
-            <Button type="button" label="Add unit type" icon="pi pi-plus" severity="secondary" outlined @click="addFlatTypeConfig" />
+            <Button
+              type="button"
+              label="Add unit type"
+              icon="pi pi-plus"
+              severity="secondary"
+              outlined
+              @click="addFlatTypeConfig"
+            />
           </div>
-          <div v-for="(config, configIndex) in chargeForm.flatTypeCharges" :key="configIndex" class="admin-charge-card">
+          <div
+            v-for="(config, configIndex) in chargeForm.flatTypeCharges"
+            :key="configIndex"
+            class="admin-charge-card"
+          >
             <div class="admin-form-section__header">
-              <InputText v-model="config.flatType" placeholder="Unit type, e.g. 2BHK" />
+              <label>
+                <span class="field-label">
+                  Unit type
+                  <i
+                    class="pi pi-info-circle"
+                    title="Flat unit type this charge template applies to, for example 2BHK."
+                    aria-label="Flat unit type this charge template applies to, for example 2BHK."
+                  />
+                </span>
+                <InputText
+                  v-model="config.flatType"
+                  placeholder="Unit type, e.g. 2BHK"
+                />
+              </label>
               <Button
                 type="button"
                 icon="pi pi-trash"
@@ -551,48 +783,33 @@ const saveCharges = async () => {
                 @click="chargeForm.flatTypeCharges.splice(configIndex, 1)"
               />
             </div>
-            <div v-for="(charge, chargeIndex) in config.charges" :key="chargeIndex" class="admin-charge-row">
-              <InputText v-model="charge.label" placeholder="Charge label" />
-              <InputNumber v-model="charge.amount" :min="0" fluid />
-              <Button type="button" icon="pi pi-trash" severity="danger" text rounded @click="removeCharge(config.charges, chargeIndex)" />
-            </div>
-            <Button type="button" label="Add charge" icon="pi pi-plus" severity="secondary" outlined @click="addCharge(config.charges)" />
-          </div>
-        </div>
-
-        <div class="admin-charge-section">
-          <div class="admin-form-section__header">
-            <div>
-              <h2>Flat overrides</h2>
-              <p>Highest-priority charge template for selected flats.</p>
-            </div>
-            <Button type="button" label="Add flat override" icon="pi pi-plus" severity="secondary" outlined @click="addFlatOverride" />
-          </div>
-          <div v-for="(config, configIndex) in chargeForm.flatOverrideCharges" :key="configIndex" class="admin-charge-card">
-            <div class="admin-form-section__header">
-              <Select
-                v-model="config.flatId"
-                :options="flatOptions"
-                option-label="label"
-                option-value="value"
-                filter
-                placeholder="Select flat"
-                @change="syncFlatOverrideLabel(configIndex)"
-              />
-              <Button
-                type="button"
-                icon="pi pi-trash"
-                severity="danger"
-                text
-                rounded
-                :aria-label="`Remove flat override for ${config.flatNumber || 'selected flat'} charge template`"
-                :title="`Remove flat override for ${config.flatNumber || 'selected flat'} charge template`"
-                @click="chargeForm.flatOverrideCharges.splice(configIndex, 1)"
-              />
-            </div>
-            <div v-for="(charge, chargeIndex) in config.charges" :key="chargeIndex" class="admin-charge-row">
-              <InputText v-model="charge.label" placeholder="Charge label" />
-              <InputNumber v-model="charge.amount" :min="0" fluid />
+            <div
+              v-for="(charge, chargeIndex) in config.charges"
+              :key="chargeIndex"
+              class="admin-charge-row"
+            >
+              <label>
+                <span class="field-label">
+                  Charge label
+                  <i
+                    class="pi pi-info-circle"
+                    title="Name shown in the resident charge breakdown for this unit type."
+                    aria-label="Name shown in the resident charge breakdown for this unit type."
+                  />
+                </span>
+                <InputText v-model="charge.label" placeholder="Charge label" />
+              </label>
+              <label>
+                <span class="field-label">
+                  Amount
+                  <i
+                    class="pi pi-info-circle"
+                    title="Amount charged to flats matching this unit type."
+                    aria-label="Amount charged to flats matching this unit type."
+                  />
+                </span>
+                <InputNumber v-model="charge.amount" :min="0" fluid />
+              </label>
               <Button
                 type="button"
                 icon="pi pi-trash"
@@ -604,63 +821,265 @@ const saveCharges = async () => {
                 @click="removeCharge(config.charges, chargeIndex)"
               />
             </div>
-            <Button type="button" label="Add charge" icon="pi pi-plus" severity="secondary" outlined @click="addCharge(config.charges)" />
+            <Button
+              type="button"
+              label="Add charge"
+              icon="pi pi-plus"
+              severity="secondary"
+              outlined
+              @click="addCharge(config.charges)"
+            />
+          </div>
+        </div>
+
+        <div class="admin-charge-section">
+          <div class="admin-form-section__header">
+            <div>
+              <h2>Flat overrides</h2>
+              <p>Highest-priority charge template for selected flats.</p>
+            </div>
+            <Button
+              type="button"
+              label="Add flat override"
+              icon="pi pi-plus"
+              severity="secondary"
+              outlined
+              @click="addFlatOverride"
+            />
+          </div>
+          <div
+            v-for="(config, configIndex) in chargeForm.flatOverrideCharges"
+            :key="configIndex"
+            class="admin-charge-card"
+          >
+            <div class="admin-form-section__header">
+              <label>
+                <span class="field-label">
+                  Flat
+                  <i
+                    class="pi pi-info-circle"
+                    title="Specific flat that should use this override instead of default or unit-type charges."
+                    aria-label="Specific flat that should use this override instead of default or unit-type charges."
+                  />
+                </span>
+                <Select
+                  v-model="config.flatId"
+                  :options="flatOptions"
+                  option-label="label"
+                  option-value="value"
+                  filter
+                  placeholder="Select flat"
+                  @change="syncFlatOverrideLabel(configIndex)"
+                />
+              </label>
+              <Button
+                type="button"
+                icon="pi pi-trash"
+                severity="danger"
+                text
+                rounded
+                :aria-label="`Remove flat override for ${config.flatNumber || 'selected flat'} charge template`"
+                :title="`Remove flat override for ${config.flatNumber || 'selected flat'} charge template`"
+                @click="chargeForm.flatOverrideCharges.splice(configIndex, 1)"
+              />
+            </div>
+            <div
+              v-for="(charge, chargeIndex) in config.charges"
+              :key="chargeIndex"
+              class="admin-charge-row"
+            >
+              <label>
+                <span class="field-label">
+                  Charge label
+                  <i
+                    class="pi pi-info-circle"
+                    title="Name shown in the resident charge breakdown for this flat."
+                    aria-label="Name shown in the resident charge breakdown for this flat."
+                  />
+                </span>
+                <InputText v-model="charge.label" placeholder="Charge label" />
+              </label>
+              <label>
+                <span class="field-label">
+                  Amount
+                  <i
+                    class="pi pi-info-circle"
+                    title="Amount charged to this selected flat for the line item."
+                    aria-label="Amount charged to this selected flat for the line item."
+                  />
+                </span>
+                <InputNumber v-model="charge.amount" :min="0" fluid />
+              </label>
+              <Button
+                type="button"
+                icon="pi pi-trash"
+                severity="danger"
+                text
+                rounded
+                :aria-label="`Remove charge ${charge.label || 'item'}`"
+                :title="`Remove charge ${charge.label || 'item'}`"
+                @click="removeCharge(config.charges, chargeIndex)"
+              />
+            </div>
+            <Button
+              type="button"
+              label="Add charge"
+              icon="pi pi-plus"
+              severity="secondary"
+              outlined
+              @click="addCharge(config.charges)"
+            />
           </div>
         </div>
       </form>
     </section>
 
-    <Dialog v-model:visible="periodDialogVisible" :header="selectedPeriod ? 'Edit billing period' : 'Create billing period'" modal :style="{ width: '520px' }">
+    <Dialog
+      v-model:visible="periodDialogVisible"
+      :header="selectedPeriod ? 'Edit billing period' : 'Create billing period'"
+      modal
+      :style="{ width: '520px' }"
+    >
       <form class="admin-form-layout" @submit.prevent="savePeriod">
+        <div class="admin-page-guide">
+          <h2>Billing period form</h2>
+          <p>
+            Create one row for each maintenance cycle. Dues are generated
+            separately after the period is saved.
+          </p>
+        </div>
         <div class="admin-form-grid">
           <label class="admin-form-grid__full">
-            <span>Label</span>
+            <span class="field-label">
+              Label
+              <i
+                class="pi pi-info-circle"
+                title="Readable period name shown to admins and residents, such as June 2026."
+                aria-label="Readable period name shown to admins and residents, such as June 2026."
+              />
+            </span>
             <InputText v-model="periodForm.label" required />
           </label>
           <label>
-            <span>Tenure</span>
-            <Select v-model="periodForm.frequency" :options="frequencyOptions" option-label="label" option-value="value" />
+            <span class="field-label">
+              Tenure
+              <i
+                class="pi pi-info-circle"
+                title="Billing frequency for this period. It helps categorize monthly, quarterly, and custom cycles."
+                aria-label="Billing frequency for this period. It helps categorize monthly, quarterly, and custom cycles."
+              />
+            </span>
+            <Select
+              v-model="periodForm.frequency"
+              :options="frequencyOptions"
+              option-label="label"
+              option-value="value"
+            />
           </label>
           <label>
-            <span>Start date</span>
+            <span class="field-label">
+              Start date
+              <i
+                class="pi pi-info-circle"
+                title="First calendar date covered by this billing period."
+                aria-label="First calendar date covered by this billing period."
+              />
+            </span>
             <InputText v-model="periodForm.startDate" type="date" required />
           </label>
           <label>
-            <span>End date</span>
+            <span class="field-label">
+              End date
+              <i
+                class="pi pi-info-circle"
+                title="Last calendar date covered by this billing period."
+                aria-label="Last calendar date covered by this billing period."
+              />
+            </span>
             <InputText v-model="periodForm.endDate" type="date" required />
           </label>
           <label>
-            <span>Due date</span>
+            <span class="field-label">
+              Due date
+              <i
+                class="pi pi-info-circle"
+                title="Payment deadline shown to residents. Late fees start after this date plus grace days."
+                aria-label="Payment deadline shown to residents. Late fees start after this date plus grace days."
+              />
+            </span>
             <InputText v-model="periodForm.dueDate" type="date" required />
           </label>
         </div>
         <div class="admin-inline-actions dialog-actions">
-          <Button type="button" label="Cancel" severity="secondary" outlined @click="periodDialogVisible = false" />
+          <Button
+            type="button"
+            label="Cancel"
+            severity="secondary"
+            outlined
+            @click="periodDialogVisible = false"
+          />
           <Button type="submit" label="Save period" :loading="savingPeriod" />
         </div>
       </form>
     </Dialog>
 
-    <Dialog v-model:visible="lockDialogVisible" header="Billing period lock" modal :style="{ width: '480px' }">
+    <Dialog
+      v-model:visible="lockDialogVisible"
+      header="Billing period lock"
+      modal
+      :style="{ width: '480px' }"
+    >
       <div class="admin-form-layout">
         <p>
-          {{ lockTarget?.isLocked ? 'Unlock this period for corrections.' : 'Lock this period to block later dues, payments, and journal writes.' }}
+          {{
+            lockTarget?.isLocked
+              ? 'Unlock this period for corrections.'
+              : 'Lock this period to block later dues, payments, and journal writes.'
+          }}
         </p>
         <label v-if="!lockTarget?.isLocked" class="admin-form-grid__full">
-          <span>Lock reason</span>
+          <span class="field-label">
+            Lock reason
+            <i
+              class="pi pi-info-circle"
+              title="Short audit note explaining why the period is being locked."
+              aria-label="Short audit note explaining why the period is being locked."
+            />
+          </span>
           <Textarea v-model="lockReason" rows="3" auto-resize />
         </label>
         <div class="admin-inline-actions dialog-actions">
-          <Button label="Cancel" severity="secondary" outlined @click="lockDialogVisible = false" />
-          <Button :label="lockTarget?.isLocked ? 'Unlock period' : 'Lock period'" :loading="locking" @click="toggleLock" />
+          <Button
+            label="Cancel"
+            severity="secondary"
+            outlined
+            @click="lockDialogVisible = false"
+          />
+          <Button
+            :label="lockTarget?.isLocked ? 'Unlock period' : 'Lock period'"
+            :loading="locking"
+            @click="toggleLock"
+          />
         </div>
       </div>
     </Dialog>
 
-    <Dialog v-model:visible="generationDialogVisible" header="Generate dues" modal :style="{ width: '720px' }">
+    <Dialog
+      v-model:visible="generationDialogVisible"
+      header="Generate dues"
+      modal
+      :style="{ width: '720px' }"
+    >
       <div class="admin-form-layout">
         <label>
-          <span>Flats</span>
+          <span class="field-label">
+            Flats
+            <i
+              class="pi pi-info-circle"
+              title="Leave empty to generate dues for all active flats, or select specific flats for a limited run."
+              aria-label="Leave empty to generate dues for all active flats, or select specific flats for a limited run."
+            />
+          </span>
           <MultiSelect
             v-model="selectedFlatIds"
             :options="flatOptions"
@@ -688,10 +1107,17 @@ const saveCharges = async () => {
               <h3>{{ generationPreview.skippedExisting }}</h3>
             </section>
           </div>
-          <Message v-for="warning in generationPreview.warnings" :key="warning" severity="warn">
+          <Message
+            v-for="warning in generationPreview.warnings"
+            :key="warning"
+            severity="warn"
+          >
             {{ warning }}
           </Message>
-          <DataTable :value="generationPreview.flatTypeBreakdown" responsive-layout="scroll">
+          <DataTable
+            :value="generationPreview.flatTypeBreakdown"
+            responsive-layout="scroll"
+          >
             <Column field="flatType" header="Unit type" />
             <Column field="flatCount" header="Flats" />
             <Column header="Amount">
@@ -703,12 +1129,21 @@ const saveCharges = async () => {
         </template>
 
         <div class="admin-inline-actions dialog-actions">
-          <Button label="Cancel" severity="secondary" outlined @click="generationDialogVisible = false" />
+          <Button
+            label="Cancel"
+            severity="secondary"
+            outlined
+            @click="generationDialogVisible = false"
+          />
           <Button
             label="Generate dues"
             icon="pi pi-bolt"
             :loading="generating"
-            :disabled="!generationPreview || generationPreview.isLocked || generationPreview.totalFlats === 0"
+            :disabled="
+              !generationPreview ||
+              generationPreview.isLocked ||
+              generationPreview.totalFlats === 0
+            "
             @click="generateDues"
           />
         </div>

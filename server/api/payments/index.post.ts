@@ -9,6 +9,7 @@ import {
   previewPaymentAllocation,
 } from '~/server/utils/payments'
 import { AppError } from '~/server/utils/errors'
+import { postMaintenanceReceiptJournal } from '~/server/utils/finance'
 
 const transferModes = new Set(['BANK_TRANSFER', 'UPI'])
 
@@ -172,6 +173,21 @@ export default defineEventHandler(async (event) => {
     }
     await allocateMaintenancePayment(paymentId)
     const receiptNumber = await generateReceiptForPayment(paymentId)
+    const journalClient = await getDatabasePool().connect()
+    try {
+      await journalClient.query('begin')
+      await postMaintenanceReceiptJournal(journalClient, {
+        paymentId,
+        societyId: flatRow.society_id,
+        postedByUserId: authMe.user.id,
+      })
+      await journalClient.query('commit')
+    } catch (error) {
+      await journalClient.query('rollback')
+      throw error
+    } finally {
+      journalClient.release()
+    }
 
     return createApiSuccess(event, { id: paymentId, receiptNumber })
   } catch (error) {

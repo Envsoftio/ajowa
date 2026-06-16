@@ -13,13 +13,18 @@ const api = useApi()
 const toast = useToast()
 
 const formatMoney = (value: number) =>
-  new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(value)
+  new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    maximumFractionDigits: 0,
+  }).format(value)
 
 const search = ref('')
 const sendingReminder = ref(false)
 
-const { data, pending, refresh } = await useAsyncData('admin-billing-defaulters', () =>
-  api<DefaulterResponse>('/api/admin/billing/defaulters'),
+const { data, pending, refresh } = await useAsyncData(
+  'admin-billing-defaulters',
+  () => api<DefaulterResponse>('/api/admin/billing/defaulters'),
 )
 
 const defaulters = computed(() => data.value?.data ?? [])
@@ -29,8 +34,15 @@ const filteredDefaulters = computed(() => {
   if (!term) return defaulters.value
 
   return defaulters.value.filter((row) => {
-    const flatText = row.flats.map((flat) => `${flat.blockName} ${flat.flatNumber}`).join(' ')
-    return [row.residentName, row.residentEmail, row.residentMobileNumber, flatText]
+    const flatText = row.flats
+      .map((flat) => `${flat.blockName} ${flat.flatNumber}`)
+      .join(' ')
+    return [
+      row.residentName,
+      row.residentEmail,
+      row.residentMobileNumber,
+      flatText,
+    ]
       .join(' ')
       .toLowerCase()
       .includes(term)
@@ -42,7 +54,10 @@ const summary = computed(() => {
   const balance = rows.reduce((sum, row) => sum + row.totalBalance, 0)
   const paid = rows.reduce((sum, row) => sum + row.totalPaid, 0)
   const flats = rows.reduce((sum, row) => sum + row.flatCount, 0)
-  const maxDays = rows.reduce((max, row) => Math.max(max, row.maxDaysOverdue), 0)
+  const maxDays = rows.reduce(
+    (max, row) => Math.max(max, row.maxDaysOverdue),
+    0,
+  )
 
   return { balance, paid, flats, maxDays }
 })
@@ -52,13 +67,13 @@ const sendReminders = async (dueIds: string[]) => {
   sendingReminder.value = true
 
   try {
-    const response = await api<{ ok: true; data: { eligible: number; jobCount: number } }>(
-      '/api/admin/billing/dues/reminders',
-      {
-        method: 'POST',
-        body: { dueIds },
-      },
-    )
+    const response = await api<{
+      ok: true
+      data: { eligible: number; jobCount: number }
+    }>('/api/admin/billing/dues/reminders', {
+      method: 'POST',
+      body: { dueIds },
+    })
     toast.add({
       severity: 'success',
       summary: 'Reminders queued',
@@ -74,7 +89,11 @@ const sendResidentReminder = (row: DefaulterSummary) =>
   sendReminders(row.flats.map((flat) => flat.dueId))
 
 const sendFilteredReminders = () =>
-  sendReminders(filteredDefaulters.value.flatMap((row) => row.flats.map((flat) => flat.dueId)))
+  sendReminders(
+    filteredDefaulters.value.flatMap((row) =>
+      row.flats.map((flat) => flat.dueId),
+    ),
+  )
 </script>
 
 <template>
@@ -88,7 +107,9 @@ const sendFilteredReminders = () =>
       <section class="surface-card">
         <p class="eyebrow">Outstanding</p>
         <h3>{{ formatMoney(summary.balance) }}</h3>
-        <p>{{ formatMoney(summary.paid) }} already collected from these dues.</p>
+        <p>
+          {{ formatMoney(summary.paid) }} already collected from these dues.
+        </p>
       </section>
       <section class="surface-card">
         <p class="eyebrow">Oldest overdue</p>
@@ -101,10 +122,19 @@ const sendFilteredReminders = () =>
       <header class="list-page__header">
         <div>
           <h1>Defaulters</h1>
-          <p>Residents with unpaid maintenance dues, sorted by outstanding balance.</p>
+          <p>
+            Residents with unpaid maintenance dues, sorted by outstanding
+            balance.
+          </p>
         </div>
         <div class="list-page__exports">
-          <Button label="Refresh" icon="pi pi-refresh" severity="secondary" outlined @click="() => refresh()" />
+          <Button
+            label="Refresh"
+            icon="pi pi-refresh"
+            severity="secondary"
+            outlined
+            @click="() => refresh()"
+          />
           <Button
             label="Remind filtered"
             icon="pi pi-send"
@@ -117,11 +147,43 @@ const sendFilteredReminders = () =>
         </div>
       </header>
 
+      <div class="admin-page-guide">
+        <h2>How to use this page</h2>
+        <p>
+          This page groups unpaid dues by resident so the admin can follow up on
+          total outstanding balances.
+        </p>
+        <ol>
+          <li>
+            Search by resident, email, mobile number, block, or flat to narrow
+            the list.
+          </li>
+          <li>Review the flat dues column to see which periods are pending.</li>
+          <li>
+            Use Remind filtered only after checking the filtered list, because
+            it sends reminders for all visible residents.
+          </li>
+        </ol>
+      </div>
+
       <div class="list-page__toolbar">
-        <IconField class="list-page__search">
-          <InputIcon class="pi pi-search" />
-          <InputText v-model="search" placeholder="Search resident, email, mobile, or flat" />
-        </IconField>
+        <label class="list-page__search">
+          <span class="field-label">
+            Search
+            <i
+              class="pi pi-info-circle"
+              title="Filter residents by name, email, mobile number, block, or flat before sending reminders."
+              aria-label="Filter residents by name, email, mobile number, block, or flat before sending reminders."
+            />
+          </span>
+          <IconField>
+            <InputIcon class="pi pi-search" />
+            <InputText
+              v-model="search"
+              placeholder="Search resident, email, mobile, or flat"
+            />
+          </IconField>
+        </label>
       </div>
 
       <DataTable
@@ -137,7 +199,9 @@ const sendFilteredReminders = () =>
         <Column field="residentName" header="Resident">
           <template #body="{ data: row }">
             <strong>{{ row.residentName }}</strong>
-            <p class="table-muted">{{ row.residentEmail }} · {{ row.residentMobileNumber }}</p>
+            <p class="table-muted">
+              {{ row.residentEmail }} · {{ row.residentMobileNumber }}
+            </p>
           </template>
         </Column>
         <Column field="flatCount" header="Flats" />
@@ -164,10 +228,17 @@ const sendFilteredReminders = () =>
         <Column header="Flat dues">
           <template #body="{ data: row }">
             <div class="defaulter-flat-list">
-              <div v-for="flat in row.flats" :key="flat.dueId" class="defaulter-flat-pill">
+              <div
+                v-for="flat in row.flats"
+                :key="flat.dueId"
+                class="defaulter-flat-pill"
+              >
                 <span>{{ flat.blockName }} {{ flat.flatNumber }}</span>
                 <strong>{{ formatMoney(flat.balanceAmount) }}</strong>
-                <small>{{ flat.billingPeriodLabel }} · {{ flat.daysOverdue }} days</small>
+                <small
+                  >{{ flat.billingPeriodLabel }} ·
+                  {{ flat.daysOverdue }} days</small
+                >
               </div>
             </div>
           </template>
@@ -179,6 +250,8 @@ const sendFilteredReminders = () =>
               severity="secondary"
               text
               rounded
+              :aria-label="`Send reminder to ${row.residentName}`"
+              :title="`Send reminder to ${row.residentName}`"
               :loading="sendingReminder"
               @click="sendResidentReminder(row)"
             />

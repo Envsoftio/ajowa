@@ -1,9 +1,11 @@
+import { randomBytes } from 'node:crypto'
 import { hashPassword } from 'better-auth/crypto'
 import { z } from 'zod'
 import { createApiSuccess, readJsonBody, validateInput } from '~/server/utils/api'
 import { requirePermission } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
 import { AppError } from '~/server/utils/errors'
+import { buildAppUrl } from '~/server/utils/email'
 import { staffPermissions } from '~/shared/permissions'
 
 const staffSchema = z.object({
@@ -12,14 +14,18 @@ const staffSchema = z.object({
   email: z.string().trim().email(),
   mobileNumber: z.string().trim().min(8).max(20),
   whatsappNumber: z.string().trim().min(8).max(20).nullable().optional(),
+  temporaryPassword: z.string().trim().min(8).max(128).optional(),
   canLogin: z.boolean().default(true),
   isActive: z.boolean().default(true),
   permissions: z.array(z.enum(staffPermissions)).default([]),
 })
 
+const generateTemporaryPassword = () => `Ajowa@${randomBytes(4).toString('hex').toUpperCase()}2026`
+
 export default defineEventHandler(async (event) => {
   const authMe = await requirePermission(event, 'staff.manage')
   const body = validateInput(staffSchema, await readJsonBody(event))
+  const temporaryPassword = body.temporaryPassword ?? generateTemporaryPassword()
   const pool = getDatabasePool()
   const client = await pool.connect()
 
@@ -109,7 +115,7 @@ export default defineEventHandler(async (event) => {
     )
 
     if (!credential.rows[0]?.id) {
-      const passwordHash = await hashPassword(`Ajowa@${body.email.slice(0, 4)}2026`)
+      const passwordHash = await hashPassword(temporaryPassword)
       await client.query(
         `
           insert into auth_accounts (account_id, provider_id, user_id, password)
@@ -120,7 +126,14 @@ export default defineEventHandler(async (event) => {
     }
 
     await client.query('commit')
-    return createApiSuccess(event, { id: user.rows[0]?.id, authUserId })
+    return createApiSuccess(event, {
+      id: user.rows[0]?.id,
+      authUserId,
+      email: body.email,
+      temporaryPassword,
+      loginUrl: buildAppUrl('/login'),
+      requiresPasswordChange: true,
+    })
   } catch (error) {
     await client.query('rollback')
     throw error
