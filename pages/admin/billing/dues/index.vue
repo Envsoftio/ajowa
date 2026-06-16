@@ -169,6 +169,7 @@ const waiverTarget = ref<MaintenanceDue | null>(null)
 const waiverReason = ref('')
 const savingWaiver = ref(false)
 const sendingReminder = ref(false)
+const confirmAction = useAppConfirm()
 
 const openBreakdown = (due: MaintenanceDue) => {
   selectedDue.value = due
@@ -198,7 +199,7 @@ const submitWaiver = async () => {
       severity: 'success',
       summary: waived ? 'Due waived' : 'Waiver removed',
       detail: 'The due has been updated and audited.',
-      life: 3000,
+      life: 10000,
     })
     waiverDialogVisible.value = false
     await refresh()
@@ -209,6 +210,18 @@ const submitWaiver = async () => {
 
 const sendReminders = async (dueIds: string[]) => {
   if (dueIds.length === 0) return
+  const confirmed = await confirmAction({
+    header: 'Send payment reminders?',
+    message: `Queue reminders for ${dueIds.length} due${dueIds.length === 1 ? '' : 's'}?`,
+    icon: 'pi pi-send',
+    acceptLabel: 'Send reminders',
+    acceptSeverity: 'warn',
+  })
+
+  if (!confirmed) {
+    return
+  }
+
   sendingReminder.value = true
 
   try {
@@ -223,7 +236,7 @@ const sendReminders = async (dueIds: string[]) => {
       severity: 'success',
       summary: 'Reminders queued',
       detail: `${response.data.eligible} dues matched and ${response.data.jobCount} delivery jobs were queued.`,
-      life: 4000,
+      life: 10000,
     })
   } finally {
     sendingReminder.value = false

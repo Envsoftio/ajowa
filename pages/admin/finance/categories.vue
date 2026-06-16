@@ -16,6 +16,7 @@ type AccountsResponse = { ok: true; data: { items: AccountHead[] } }
 
 const api = useApi()
 const toast = useToast()
+const confirmAction = useAppConfirm()
 
 const search = ref('')
 const typeFilter = ref('')
@@ -162,7 +163,7 @@ const submitCategory = async () => {
       severity: 'success',
       summary: 'Saved',
       detail: 'Finance category saved.',
-      life: 3000,
+      life: 10000,
     })
     dialog.value = false
     resetForm()
@@ -173,12 +174,16 @@ const submitCategory = async () => {
 }
 
 const deleteCategory = async (category: FinanceCategory) => {
-  if (
-    !window.confirm(
-      `Delete ${category.name}? Used categories should be marked inactive instead.`,
-    )
-  )
+  const confirmed = await confirmAction({
+    header: 'Delete category?',
+    message: `Delete ${category.name}? Used categories should be marked inactive instead.`,
+    acceptLabel: 'Delete',
+  })
+
+  if (!confirmed) {
     return
+  }
+
   await api(`/api/admin/finance/categories/${category.id}`, {
     method: 'DELETE',
   })
@@ -186,7 +191,7 @@ const deleteCategory = async (category: FinanceCategory) => {
     severity: 'success',
     summary: 'Deleted',
     detail: 'Finance category deleted.',
-    life: 3000,
+    life: 10000,
   })
   await refresh()
 }

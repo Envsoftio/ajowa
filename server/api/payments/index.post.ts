@@ -16,6 +16,7 @@ const transferModes = new Set(['BANK_TRANSFER', 'UPI'])
 export default defineEventHandler(async (event) => {
   const authMe = await requireRole(event, ['ADMIN', 'MANAGER'])
   const input = validateInput(manualPaymentSchema, await readJsonBody(event))
+  const bankAccountId = input.account && z.string().uuid().safeParse(input.account).success ? input.account : null
 
   if (transferModes.has(input.mode) && !input.utrReference && !input.bankReference) {
     throw new AppError({
@@ -180,6 +181,7 @@ export default defineEventHandler(async (event) => {
         paymentId,
         societyId: flatRow.society_id,
         postedByUserId: authMe.user.id,
+        bankAccountId,
       })
       await journalClient.query('commit')
     } catch (error) {

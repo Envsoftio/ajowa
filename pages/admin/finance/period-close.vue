@@ -11,6 +11,8 @@ type PeriodsResponse = { ok: true; data: { items: FinancialPeriodClose[] } }
 
 const api = useApi()
 const toast = useToast()
+const confirmAction = useAppConfirm()
+const { reasonDialog, requestReason, acceptReason, cancelReason } = useAppReasonDialog()
 
 const saving = ref(false)
 const form = reactive({
@@ -55,12 +57,17 @@ const summary = computed(() => {
 })
 
 const closePeriod = async () => {
-  if (
-    !window.confirm(
-      `Close financial period ${form.startDate} to ${form.endDate}?`,
-    )
-  )
+  const confirmed = await confirmAction({
+    header: 'Close financial period?',
+    message: `Close financial period ${form.startDate} to ${form.endDate}?`,
+    acceptLabel: 'Close period',
+    acceptSeverity: 'warn',
+  })
+
+  if (!confirmed) {
     return
+  }
+
   saving.value = true
   try {
     await api('/api/admin/finance/period-close', {
@@ -75,7 +82,7 @@ const closePeriod = async () => {
       severity: 'success',
       summary: 'Closed',
       detail: 'Financial period closed and locked.',
-      life: 3000,
+      life: 10000,
     })
     form.notes = ''
     await refresh()
@@ -85,9 +92,13 @@ const closePeriod = async () => {
 }
 
 const reopen = async (period: FinancialPeriodClose) => {
-  const reason = window.prompt(
-    `Reason for reopening ${period.startDate} to ${period.endDate}?`,
-  )
+  const reason = await requestReason({
+    header: 'Reopen financial period?',
+    message: `Add a reason for reopening ${period.startDate} to ${period.endDate}.`,
+    acceptLabel: 'Reopen',
+    acceptSeverity: 'danger',
+  })
+
   if (!reason) return
   await api(`/api/admin/finance/period-close/${period.id}/reopen`, {
     method: 'POST',
@@ -97,7 +108,7 @@ const reopen = async (period: FinancialPeriodClose) => {
     severity: 'success',
     summary: 'Reopened',
     detail: 'Financial period reopened.',
-    life: 3000,
+    life: 10000,
   })
   await refresh()
 }
@@ -271,5 +282,17 @@ const reopen = async (period: FinancialPeriodClose) => {
         </Column>
       </DataTable>
     </section>
+
+    <AppReasonDialog
+      v-model:visible="reasonDialog.visible"
+      v-model:reason="reasonDialog.reason"
+      :header="reasonDialog.header"
+      :message="reasonDialog.message"
+      :accept-label="reasonDialog.acceptLabel"
+      :accept-severity="reasonDialog.acceptSeverity"
+      :placeholder="reasonDialog.placeholder"
+      @accept="acceptReason"
+      @cancel="cancelReason"
+    />
   </div>
 </template>

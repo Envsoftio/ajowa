@@ -259,7 +259,7 @@ const submit = async () => {
       severity: 'success',
       summary: 'Saved',
       detail: selectedResident.value ? 'Resident updated.' : 'Resident created.',
-      life: 3000,
+      life: 10000,
     })
     closeDialog()
     await refresh()

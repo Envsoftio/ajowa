@@ -60,12 +60,12 @@ export default defineEventHandler(async (event) => {
     await client.query(
       `
         insert into auth_accounts (account_id, provider_id, user_id, password)
-        values ($1, 'credential', $1, $2)
+        values ($1, 'credential', $2, $3)
         on conflict (provider_id, account_id) do update
           set password = excluded.password,
               updated_at = now()
       `,
-      [staffUser.auth_user_id, passwordHash],
+      [staffUser.auth_user_id, staffUser.auth_user_id, passwordHash],
     )
 
     await client.query(

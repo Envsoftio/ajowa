@@ -65,7 +65,7 @@ const markAllRead = async () => {
     severity: 'success',
     summary: 'Notifications updated',
     detail: `${response.data.updated} unread notifications were marked as read.`,
-    life: 3000,
+    life: 10000,
   })
   await refresh()
 }

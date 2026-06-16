@@ -25,7 +25,7 @@ const addComment = async (payload: { visibility: 'RESIDENT_VISIBLE' | 'INTERNAL_
   saving.value = true
   try {
     await serviceRequests.addComment(String(route.params.id), payload)
-    toast.add({ severity: 'success', summary: 'Update added', life: 2500 })
+    toast.add({ severity: 'success', summary: 'Update added', life: 10000 })
     await refresh()
   } finally {
     saving.value = false
@@ -36,7 +36,7 @@ const updateStatus = async (payload: { status: ServiceRequestStatus; comment?: s
   saving.value = true
   try {
     await serviceRequests.updateStatus(String(route.params.id), payload)
-    toast.add({ severity: 'success', summary: 'Ticket reopened', life: 2500 })
+    toast.add({ severity: 'success', summary: 'Ticket reopened', life: 10000 })
     await refresh()
   } finally {
     saving.value = false

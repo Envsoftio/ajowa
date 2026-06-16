@@ -110,7 +110,7 @@ const assignTicket = async (payload: { departmentId: string; assigneeUserId?: st
   saving.value = true
   try {
     await serviceRequests.assignTicket(selectedTicket.value.id, payload)
-    toast.add({ severity: 'success', summary: 'Assigned', detail: 'Ticket assignment updated.', life: 2500 })
+    toast.add({ severity: 'success', summary: 'Assigned', detail: 'Ticket assignment updated.', life: 10000 })
     assignDialogVisible.value = false
     await refresh()
   } finally {
@@ -122,7 +122,7 @@ const createTicket = async (payload: ServiceRequestCreatePayload) => {
   saving.value = true
   try {
     const response = await serviceRequests.createTicket(payload)
-    toast.add({ severity: 'success', summary: 'Ticket created', detail: response.data.requestNumber, life: 3000 })
+    toast.add({ severity: 'success', summary: 'Ticket created', detail: response.data.requestNumber, life: 10000 })
     createDialogVisible.value = false
     await refresh()
   } finally {

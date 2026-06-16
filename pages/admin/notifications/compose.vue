@@ -7,6 +7,7 @@ definePageMeta({
 
 const api = useApi()
 const toast = useToast()
+const confirmAction = useAppConfirm()
 const saving = ref(false)
 const form = reactive({
   title: '',
@@ -28,6 +29,20 @@ const channelOptions = [
 ]
 
 const submit = async () => {
+  if (!form.draft) {
+    const confirmed = await confirmAction({
+      header: 'Queue notification?',
+      message: 'Queue this notification for the selected audience and channels?',
+      icon: 'pi pi-send',
+      acceptLabel: 'Queue notification',
+      acceptSeverity: 'warn',
+    })
+
+    if (!confirmed) {
+      return
+    }
+  }
+
   saving.value = true
   try {
     const response = await api<{ ok: true; data: { eventId: string | null; audienceCount: number; jobCount: number } }>('/api/admin/notifications/compose', {
@@ -48,7 +63,7 @@ const submit = async () => {
       severity: 'success',
       summary: form.draft ? 'Draft saved' : 'Notification queued',
       detail: `${response.data.audienceCount} recipients resolved and ${response.data.jobCount} jobs queued.`,
-      life: 4000,
+      life: 10000,
     })
     await navigateTo('/admin/notifications')
   } finally {

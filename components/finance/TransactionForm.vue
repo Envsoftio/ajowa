@@ -166,23 +166,23 @@ watch(duplicateKey, async () => {
 
 const validate = (submitForPosting: boolean) => {
   if (!form.categoryId || !selectedCategory.value?.isActive) {
-    toast.add({ severity: 'warn', summary: 'Category required', life: 3000 })
+    toast.add({ severity: 'warn', summary: 'Category required', life: 10000 })
     return false
   }
   if (!form.bankAccountId || !selectedAccount.value?.isActive) {
-    toast.add({ severity: 'warn', summary: 'Active account required', life: 3000 })
+    toast.add({ severity: 'warn', summary: 'Active account required', life: 10000 })
     return false
   }
   if (!form.title.trim()) {
-    toast.add({ severity: 'warn', summary: 'Title required', life: 3000 })
+    toast.add({ severity: 'warn', summary: 'Title required', life: 10000 })
     return false
   }
   if (!form.transactionDate) {
-    toast.add({ severity: 'warn', summary: 'Date required', life: 3000 })
+    toast.add({ severity: 'warn', summary: 'Date required', life: 10000 })
     return false
   }
   if (Number(form.amount) <= 0) {
-    toast.add({ severity: 'warn', summary: 'Enter a positive amount', life: 3000 })
+    toast.add({ severity: 'warn', summary: 'Enter a positive amount', life: 10000 })
     return false
   }
   if (periodLocked.value) {
@@ -190,7 +190,7 @@ const validate = (submitForPosting: boolean) => {
       severity: 'error',
       summary: 'Period locked',
       detail: 'Choose an open billing period before saving this transaction.',
-      life: 4000,
+      life: 10000,
     })
     return false
   }
@@ -201,7 +201,7 @@ const validate = (submitForPosting: boolean) => {
       detail: submitForPosting
         ? 'This expense requires an invoice before posting or review.'
         : 'Draft saved without an invoice will remain visibly incomplete.',
-      life: 4500,
+      life: 10000,
     })
     if (submitForPosting) return false
   }
@@ -216,7 +216,7 @@ const validate = (submitForPosting: boolean) => {
       severity: 'warn',
       summary: 'High value confirmation',
       detail: 'Review the amount and click Post / Submit again to confirm.',
-      life: 5000,
+      life: 10000,
     })
     return false
   }

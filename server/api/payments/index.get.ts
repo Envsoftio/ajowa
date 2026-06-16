@@ -9,8 +9,8 @@ export default defineEventHandler(async (event) => {
   const offset = (pagination.page - 1) * pagination.pageSize
   const isStaff = ['ADMIN', 'MANAGER'].includes(authMe.user.role)
 
-  const conditions = []
-  const params: unknown[] = []
+  const conditions = [`p.society_id = $1`]
+  const params: unknown[] = [authMe.user.societyId]
 
   if (!isStaff) {
     params.push(authMe.user.id)
@@ -28,10 +28,51 @@ export default defineEventHandler(async (event) => {
     }
   }
 
+  const payerUserId = String(query.payerUserId ?? query.residentId ?? '')
+  if (isStaff && payerUserId) {
+    params.push(payerUserId)
+    conditions.push(`p.payer_user_id = $${params.length}`)
+  }
+
+  const billingPeriodId = String(query.billingPeriodId ?? query.periodId ?? '')
+  if (billingPeriodId) {
+    params.push(billingPeriodId)
+    conditions.push(`
+      exists (
+        select 1
+        from payment_allocations pa_filter
+        join maintenance_dues md_filter on md_filter.id = pa_filter.maintenance_due_id
+        where pa_filter.payment_id = p.id
+          and md_filter.billing_period_id = $${params.length}
+      )
+    `)
+  }
+
+  const receiptState = String(query.receipt ?? query.receiptState ?? '')
+  if (receiptState === 'with') {
+    conditions.push(`p.receipt_number is not null`)
+  } else if (receiptState === 'missing') {
+    conditions.push(`p.receipt_number is null`)
+  }
+
+  const proofState = String(query.proof ?? query.proofState ?? '')
+  if (proofState === 'with') {
+    conditions.push(`p.proof_file_path is not null`)
+  } else if (proofState === 'missing') {
+    conditions.push(`p.proof_file_path is null`)
+  }
+
   if (query.reference) {
     params.push(`%${String(query.reference).toLowerCase()}%`)
     conditions.push(
       `(lower(coalesce(p.utr_reference, '')) like $${params.length} or lower(coalesce(p.bank_reference, '')) like $${params.length} or lower(coalesce(p.receipt_number, '')) like $${params.length})`,
+    )
+  }
+
+  if (query.search) {
+    params.push(`%${String(query.search).toLowerCase()}%`)
+    conditions.push(
+      `(lower(coalesce(u.full_name, '')) like $${params.length} or lower(coalesce(f.flat_number, '')) like $${params.length} or lower(coalesce(b.name, '')) like $${params.length} or lower(coalesce(p.utr_reference, '')) like $${params.length} or lower(coalesce(p.bank_reference, '')) like $${params.length} or lower(coalesce(p.receipt_number, '')) like $${params.length})`,
     )
   }
 
@@ -45,9 +86,26 @@ export default defineEventHandler(async (event) => {
     conditions.push(`p.payment_date <= $${params.length}`)
   }
 
+  if (query.minAmount) {
+    params.push(String(query.minAmount))
+    conditions.push(`p.amount >= $${params.length}`)
+  }
+
+  if (query.maxAmount) {
+    params.push(String(query.maxAmount))
+    conditions.push(`p.amount <= $${params.length}`)
+  }
+
   const where = conditions.length ? `where ${conditions.join(' and ')}` : ''
   const totalResult = await queryRows<{ count: string }>(
-    `select count(*)::text as count from payments p ${where}`,
+    `
+      select count(*)::text as count
+      from payments p
+      left join flats f on f.id = p.received_for_flat_id
+      left join blocks b on b.id = f.block_id
+      left join users u on u.id = p.payer_user_id
+      ${where}
+    `,
     params,
   )
   params.push(pagination.pageSize, offset)
@@ -60,6 +118,8 @@ export default defineEventHandler(async (event) => {
         p.mode,
         p.transfer_kind as "transferKind",
         p.status,
+        p.payer_user_id as "payerUserId",
+        p.received_for_flat_id as "flatId",
         p.utr_reference as "utrReference",
         p.bank_reference as "bankReference",
         p.proof_file_path as "proofFilePath",

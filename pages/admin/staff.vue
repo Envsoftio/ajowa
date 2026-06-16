@@ -12,6 +12,7 @@ definePageMeta({
 
 const api = useApi()
 const toast = useToast()
+const confirmAction = useAppConfirm()
 
 const query = ref<ListQueryParams>({
   page: 1,
@@ -149,7 +150,7 @@ const submit = async () => {
       severity: 'success',
       summary: 'Saved',
       detail: selectedStaff.value ? 'Staff member updated.' : 'Staff member created.',
-      life: 3000,
+      life: 10000,
     })
     closeDialog()
     await refresh()
@@ -169,6 +170,17 @@ const regenerateTemporaryPassword = () => {
 }
 
 const resetStaffLogin = async (staff: StaffSummary) => {
+  const confirmed = await confirmAction({
+    header: 'Reset staff login?',
+    message: `Reset login for ${staff.fullName}? This creates a new temporary password and requires a password change at next sign-in.`,
+    acceptLabel: 'Reset login',
+    acceptSeverity: 'warn',
+  })
+
+  if (!confirmed) {
+    return
+  }
+
   resettingLoginId.value = staff.id
 
   try {
@@ -186,7 +198,7 @@ const resetStaffLogin = async (staff: StaffSummary) => {
       severity: 'success',
       summary: 'Login reset',
       detail: 'Temporary login details are ready.',
-      life: 3000,
+      life: 10000,
     })
 
     await refresh()
@@ -218,7 +230,7 @@ const copyLoginInstructions = async () => {
     severity: 'success',
     summary: 'Copied',
     detail: 'Login details copied.',
-    life: 2500,
+    life: 10000,
   })
 }
 

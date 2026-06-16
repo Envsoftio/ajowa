@@ -43,7 +43,7 @@ const save = async () => {
     method: 'POST',
     body: { ...form, whatsappTemplateName: form.whatsappTemplateName || null, sampleData },
   })
-  toast.add({ severity: 'success', summary: `Template v${response.data.version} saved`, life: 3000 })
+  toast.add({ severity: 'success', summary: `Template v${response.data.version} saved`, life: 10000 })
   await refresh()
 }
 </script>

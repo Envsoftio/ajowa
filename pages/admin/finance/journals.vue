@@ -31,6 +31,8 @@ type BillingPeriodsResponse = { ok: true; data: { items: BillingPeriod[] } }
 
 const api = useApi()
 const toast = useToast()
+const confirmAction = useAppConfirm()
+const { reasonDialog, requestReason, acceptReason, cancelReason } = useAppReasonDialog()
 
 const search = ref('')
 const statusFilter = ref('')
@@ -272,7 +274,7 @@ const submitCategory = async () => {
       severity: 'success',
       summary: 'Category added',
       detail: 'New category is selected for this transaction.',
-      life: 3000,
+      life: 10000,
     })
   } finally {
     categorySaving.value = false
@@ -296,7 +298,7 @@ const submitTransaction = async () => {
       severity: 'success',
       summary: 'Saved',
       detail: 'Finance transaction saved.',
-      life: 3000,
+      life: 10000,
     })
     dialog.value = false
     await refresh()
@@ -306,6 +308,18 @@ const submitTransaction = async () => {
 }
 
 const approve = async (transaction: FinanceTransaction) => {
+  const confirmed = await confirmAction({
+    header: 'Approve transaction?',
+    message: `Approve and post ${transaction.title}? This will create journal entries.`,
+    icon: 'pi pi-check-circle',
+    acceptLabel: 'Approve',
+    acceptSeverity: 'success',
+  })
+
+  if (!confirmed) {
+    return
+  }
+
   await api(`/api/admin/finance/transactions/${transaction.id}/approve`, {
     method: 'POST',
   })
@@ -313,7 +327,7 @@ const approve = async (transaction: FinanceTransaction) => {
     severity: 'success',
     summary: 'Posted',
     detail: 'Transaction approved and journal posted.',
-    life: 3000,
+    life: 10000,
   })
   await refresh()
 }
@@ -322,11 +336,15 @@ const reject = async (
   transaction: FinanceTransaction,
   returnForCorrection = false,
 ) => {
-  const reason = window.prompt(
-    returnForCorrection
-      ? 'Reason for returning this transaction?'
-      : 'Reason for rejection?',
-  )
+  const reason = await requestReason({
+    header: returnForCorrection ? 'Return transaction?' : 'Reject transaction?',
+    message: returnForCorrection
+      ? `Add a reason for returning ${transaction.title}.`
+      : `Add a reason for rejecting ${transaction.title}.`,
+    acceptLabel: returnForCorrection ? 'Return' : 'Reject',
+    acceptSeverity: returnForCorrection ? 'warn' : 'danger',
+  })
+
   if (!reason) return
   await api(`/api/admin/finance/transactions/${transaction.id}/reject`, {
     method: 'POST',
@@ -338,13 +356,19 @@ const reject = async (
     detail: returnForCorrection
       ? 'Transaction returned.'
       : 'Transaction rejected.',
-    life: 3000,
+    life: 10000,
   })
   await refresh()
 }
 
 const reverse = async (transaction: FinanceTransaction) => {
-  const reason = window.prompt(`Reason for reversing ${transaction.title}?`)
+  const reason = await requestReason({
+    header: 'Reverse transaction?',
+    message: `Add a reason for reversing ${transaction.title}. A counter-entry journal will be posted.`,
+    acceptLabel: 'Reverse',
+    acceptSeverity: 'danger',
+  })
+
   if (!reason) return
   await api(`/api/admin/finance/transactions/${transaction.id}/reverse`, {
     method: 'POST',
@@ -354,7 +378,7 @@ const reverse = async (transaction: FinanceTransaction) => {
     severity: 'success',
     summary: 'Reversed',
     detail: 'Counter-entry journal posted.',
-    life: 3000,
+    life: 10000,
   })
   await refresh()
 }
@@ -894,5 +918,17 @@ const onPage = (event: { page: number; rows: number }) => {
         </div>
       </form>
     </Dialog>
+
+    <AppReasonDialog
+      v-model:visible="reasonDialog.visible"
+      v-model:reason="reasonDialog.reason"
+      :header="reasonDialog.header"
+      :message="reasonDialog.message"
+      :accept-label="reasonDialog.acceptLabel"
+      :accept-severity="reasonDialog.acceptSeverity"
+      :placeholder="reasonDialog.placeholder"
+      @accept="acceptReason"
+      @cancel="cancelReason"
+    />
   </div>
 </template>

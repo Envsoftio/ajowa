@@ -91,7 +91,7 @@ const createShare = async () => {
       severity: response.data.deliveryFailure ? 'warn' : 'success',
       summary: response.data.similarActiveShareId ? 'Created with warning' : 'Shared',
       detail: response.data.deliveryFailure ?? undefined,
-      life: 4500,
+      life: 10000,
     })
     emit('created')
   } finally {
@@ -102,7 +102,7 @@ const createShare = async () => {
 const copyLink = async () => {
   if (!createdLink.value) return
   await navigator.clipboard?.writeText(createdLink.value)
-  toast.add({ severity: 'success', summary: 'Link copied', life: 2500 })
+  toast.add({ severity: 'success', summary: 'Link copied', life: 10000 })
 }
 </script>
 

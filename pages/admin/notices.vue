@@ -19,6 +19,7 @@ type NoticeRow = {
 
 const api = useApi()
 const toast = useToast()
+const confirmAction = useAppConfirm()
 const form = reactive({
   title: '',
   summary: '',
@@ -38,6 +39,20 @@ const { data, pending, refresh } = await useAsyncData('admin-notices', () =>
 const rows = computed(() => data.value?.data.items ?? [])
 
 const save = async () => {
+  if (form.publish) {
+    const confirmed = await confirmAction({
+      header: 'Publish notice?',
+      message: 'Save and publish this notice to the selected audience now?',
+      icon: 'pi pi-send',
+      acceptLabel: 'Publish',
+      acceptSeverity: 'warn',
+    })
+
+    if (!confirmed) {
+      return
+    }
+  }
+
   const response = await api<{ ok: true; data: { id: string; jobCount: number } }>('/api/admin/notices', {
     method: 'POST',
     body: {
@@ -55,7 +70,7 @@ const save = async () => {
     severity: 'success',
     summary: form.publish ? 'Notice published' : 'Notice saved',
     detail: `${response.data.jobCount ?? 0} notification jobs queued.`,
-    life: 4000,
+    life: 10000,
   })
   form.title = ''
   form.summary = ''
@@ -64,11 +79,23 @@ const save = async () => {
 }
 
 const publish = async (notice: NoticeRow) => {
+  const confirmed = await confirmAction({
+    header: 'Publish notice?',
+    message: `Publish ${notice.title} to all notification channels?`,
+    icon: 'pi pi-send',
+    acceptLabel: 'Publish',
+    acceptSeverity: 'warn',
+  })
+
+  if (!confirmed) {
+    return
+  }
+
   const response = await api<{ ok: true; data: { jobCount: number } }>(`/api/admin/notices/${notice.id}/publish`, {
     method: 'POST',
     body: { channels: ['PUSH', 'EMAIL', 'WHATSAPP', 'IN_APP'] },
   })
-  toast.add({ severity: 'success', summary: 'Notice published', detail: `${response.data.jobCount} jobs queued.`, life: 4000 })
+  toast.add({ severity: 'success', summary: 'Notice published', detail: `${response.data.jobCount} jobs queued.`, life: 10000 })
   await refresh()
 }
 </script>

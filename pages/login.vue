@@ -42,7 +42,7 @@ const submit = async () => {
       severity: 'error',
       summary: 'Login failed',
       detail: 'Check your credentials and try again.',
-      life: 5000,
+      life: 10000,
     })
   } finally {
     loading.value = false

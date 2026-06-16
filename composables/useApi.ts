@@ -31,7 +31,7 @@ export const useApi = () => {
         severity: 'error',
         summary: 'Request failed',
         detail: fetchError.data?.message ?? 'Something went wrong. Please try again.',
-        life: 5000,
+        life: 10000,
       })
 
       return Promise.reject(error)

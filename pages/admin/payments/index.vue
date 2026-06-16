@@ -1,0 +1,512 @@
+<script setup lang="ts">
+import type { BillingPeriod, FlatSummary, ResidentSummary } from '~/types/domain'
+
+definePageMeta({
+  layout: 'admin',
+  middleware: ['protected'],
+  title: 'Payments',
+})
+
+type Paginated<T> = {
+  items: T[]
+  total: number
+  page: number
+  pageSize: number
+}
+
+type PaymentSummary = {
+  id: string
+  paymentDate: string
+  amount: string
+  mode: string
+  transferKind: string | null
+  status: string
+  payerUserId: string
+  flatId: string
+  utrReference: string | null
+  bankReference: string | null
+  proofFilePath: string | null
+  receiptNumber: string | null
+  receiptFilePath: string | null
+  createdAt: string
+  flatNumber: string | null
+  blockName: string | null
+  payerName: string | null
+}
+
+type PaymentAllocation = {
+  id: string
+  billingPeriodLabel: string
+  dueAmount: string
+  lateFeeComponent: string
+  allocatedAmount: string
+  remainingBalance: string
+  allocationOrder: number
+}
+
+type PaymentDetail = {
+  id: string
+  payment_date: string
+  amount: string
+  mode: string
+  transfer_kind: string | null
+  status: string
+  utr_reference: string | null
+  bank_reference: string | null
+  receipt_number: string | null
+  proof_file_path: string | null
+  flat_number: string | null
+  block_name: string | null
+  payer_name: string | null
+  allocations: PaymentAllocation[]
+}
+
+type PaymentsResponse = { ok: true; data: Paginated<PaymentSummary> }
+type DetailResponse = { ok: true; data: PaymentDetail }
+type FlatsResponse = { ok: true; data: Paginated<FlatSummary> }
+type ResidentsResponse = { ok: true; data: Paginated<ResidentSummary> }
+type PeriodsResponse = { ok: true; data: Paginated<BillingPeriod> }
+
+const api = useApi()
+const toast = useToast()
+
+const query = reactive({
+  page: 1,
+  pageSize: 25,
+  search: '',
+  fromDate: '',
+  toDate: '',
+  flatId: '',
+  payerUserId: '',
+  billingPeriodId: '',
+  mode: '',
+  status: '',
+  receipt: '',
+  proof: '',
+  minAmount: '',
+  maxAmount: '',
+})
+
+const paymentModes = [
+  { label: 'All modes', value: '' },
+  { label: 'Cash', value: 'CASH' },
+  { label: 'UPI', value: 'UPI' },
+  { label: 'Bank transfer', value: 'BANK_TRANSFER' },
+  { label: 'Cheque', value: 'CHEQUE' },
+  { label: 'Online gateway', value: 'ONLINE_GATEWAY' },
+  { label: 'Advance credit', value: 'ADVANCE_CREDIT' },
+]
+
+const statusOptions = [
+  { label: 'All statuses', value: '' },
+  { label: 'Pending', value: 'PENDING' },
+  { label: 'Verified', value: 'VERIFIED' },
+  { label: 'Failed', value: 'FAILED' },
+  { label: 'Cancelled', value: 'CANCELLED' },
+]
+
+const stateOptions = [
+  { label: 'Any', value: '' },
+  { label: 'Available', value: 'with' },
+  { label: 'Missing', value: 'missing' },
+]
+
+const formatMoney = (value: number | string | null | undefined) =>
+  new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    maximumFractionDigits: 0,
+  }).format(Number(value ?? 0))
+
+const formatDate = (value: string | null | undefined) =>
+  value
+    ? new Date(value.length === 10 ? `${value}T00:00:00` : value).toLocaleDateString('en-IN', {
+        dateStyle: 'medium',
+      })
+    : '-'
+
+const flatLabel = (payment: Pick<PaymentSummary, 'blockName' | 'flatNumber'>) =>
+  [payment.blockName, payment.flatNumber].filter(Boolean).join(' ') || '-'
+
+const referenceLabel = (payment: Pick<PaymentSummary, 'utrReference' | 'bankReference'>) =>
+  payment.utrReference || payment.bankReference || '-'
+
+const loadPayments = () =>
+  api<PaymentsResponse>('/api/payments', {
+    query: {
+      page: query.page,
+      pageSize: query.pageSize,
+      search: query.search || undefined,
+      fromDate: query.fromDate || undefined,
+      toDate: query.toDate || undefined,
+      flatId: query.flatId || undefined,
+      payerUserId: query.payerUserId || undefined,
+      billingPeriodId: query.billingPeriodId || undefined,
+      mode: query.mode || undefined,
+      status: query.status || undefined,
+      receipt: query.receipt || undefined,
+      proof: query.proof || undefined,
+      minAmount: query.minAmount || undefined,
+      maxAmount: query.maxAmount || undefined,
+    },
+  })
+
+const { data, pending, refresh } = await useAsyncData('admin-payments', loadPayments, {
+  watch: [query],
+})
+
+const { data: flatsData } = await useAsyncData('payment-flat-options', () =>
+  api<FlatsResponse>('/api/admin/flats', {
+    query: { page: 1, pageSize: 2000, sortBy: 'flatNumber', sortDirection: 'asc' },
+  }),
+)
+const { data: residentsData } = await useAsyncData('payment-resident-options', () =>
+  api<ResidentsResponse>('/api/admin/residents', {
+    query: { page: 1, pageSize: 2000, sortBy: 'fullName', sortDirection: 'asc' },
+  }),
+)
+const { data: periodsData } = await useAsyncData('payment-period-options', () =>
+  api<PeriodsResponse>('/api/admin/billing/periods', {
+    query: { page: 1, pageSize: 2000, sortBy: 'startDate', sortDirection: 'desc' },
+  }),
+)
+
+const payments = computed(() => data.value?.data.items ?? [])
+const totalRecords = computed(() => data.value?.data.total ?? 0)
+
+const flatOptions = computed(() => [
+  { label: 'All flats', value: '' },
+  ...(flatsData.value?.data.items ?? []).map((flat) => ({
+    label: `${flat.blockName} ${flat.flatNumber}`,
+    value: flat.id,
+  })),
+])
+
+const residentOptions = computed(() => [
+  { label: 'All residents', value: '' },
+  ...(residentsData.value?.data.items ?? []).map((resident) => ({
+    label: resident.fullName,
+    value: resident.id,
+  })),
+])
+
+const periodOptions = computed(() => [
+  { label: 'All periods', value: '' },
+  ...(periodsData.value?.data.items ?? []).map((period) => ({
+    label: period.label,
+    value: period.id,
+  })),
+])
+
+const kpis = computed(() => ({
+  totalAmount: payments.value.reduce((sum, payment) => sum + Number(payment.amount), 0),
+  verified: payments.value.filter((payment) => payment.status === 'VERIFIED').length,
+  missingReceipts: payments.value.filter((payment) => !payment.receiptNumber).length,
+  missingProof: payments.value.filter((payment) => !payment.proofFilePath).length,
+}))
+
+const hasActiveFilters = computed(() =>
+  Object.entries(query).some(([key, value]) => !['page', 'pageSize'].includes(key) && Boolean(value)),
+)
+
+watch(
+  () => [
+    query.search,
+    query.fromDate,
+    query.toDate,
+    query.flatId,
+    query.payerUserId,
+    query.billingPeriodId,
+    query.mode,
+    query.status,
+    query.receipt,
+    query.proof,
+    query.minAmount,
+    query.maxAmount,
+  ],
+  () => {
+    query.page = 1
+  },
+)
+
+const selectedPayment = ref<PaymentDetail | null>(null)
+const detailVisible = ref(false)
+const detailPending = ref(false)
+
+const openDetail = async (payment: PaymentSummary) => {
+  detailPending.value = true
+  detailVisible.value = true
+
+  try {
+    const response = await api<DetailResponse>(`/api/payments/${payment.id}`)
+    selectedPayment.value = response.data
+  } finally {
+    detailPending.value = false
+  }
+}
+
+const resetFilters = () => {
+  query.search = ''
+  query.fromDate = ''
+  query.toDate = ''
+  query.flatId = ''
+  query.payerUserId = ''
+  query.billingPeriodId = ''
+  query.mode = ''
+  query.status = ''
+  query.receipt = ''
+  query.proof = ''
+  query.minAmount = ''
+  query.maxAmount = ''
+}
+
+const copyReceipt = async (payment: PaymentSummary) => {
+  if (!payment.receiptNumber) return
+  await navigator.clipboard.writeText(payment.receiptNumber)
+  toast.add({ severity: 'success', summary: 'Receipt copied', life: 10000 })
+}
+</script>
+
+<template>
+  <div class="landing-page">
+    <div class="surface-grid">
+      <section class="surface-card">
+        <p class="eyebrow">Visible collected</p>
+        <h3>{{ formatMoney(kpis.totalAmount) }}</h3>
+        <p>{{ totalRecords }} payment records match the current filters.</p>
+      </section>
+      <section class="surface-card">
+        <p class="eyebrow">Verified</p>
+        <h3>{{ kpis.verified }}</h3>
+        <p>Payments on this page ready for allocation or already allocated.</p>
+      </section>
+      <section class="surface-card">
+        <p class="eyebrow">Exceptions</p>
+        <h3>{{ kpis.missingReceipts + kpis.missingProof }}</h3>
+        <p>{{ kpis.missingReceipts }} missing receipts, {{ kpis.missingProof }} missing proof files.</p>
+      </section>
+    </div>
+
+    <section class="list-page surface-card">
+      <header class="list-page__header">
+        <div>
+          <h1>Payments</h1>
+          <p>Review maintenance collections, references, receipts, proof files, and period allocations.</p>
+        </div>
+        <div class="list-page__exports">
+          <Button as="router-link" to="/admin/payments/new" label="Record payment" icon="pi pi-plus" />
+          <Button label="Refresh" icon="pi pi-refresh" severity="secondary" outlined :loading="pending" @click="() => refresh()" />
+          <Button label="Clear filters" icon="pi pi-filter-slash" severity="secondary" outlined :disabled="!hasActiveFilters" @click="resetFilters" />
+        </div>
+      </header>
+
+      <div class="list-page__toolbar">
+        <label class="list-page__search">
+          <span class="field-label">Search</span>
+          <IconField>
+            <InputIcon class="pi pi-search" />
+            <InputText v-model="query.search" placeholder="Receipt, UTR, payer, flat" />
+          </IconField>
+        </label>
+        <div class="list-page__filters">
+          <label>
+            <span class="field-label">From</span>
+            <InputText v-model="query.fromDate" type="date" />
+          </label>
+          <label>
+            <span class="field-label">To</span>
+            <InputText v-model="query.toDate" type="date" />
+          </label>
+          <label>
+            <span class="field-label">Flat</span>
+            <Select v-model="query.flatId" :options="flatOptions" option-label="label" option-value="value" />
+          </label>
+          <label>
+            <span class="field-label">Resident</span>
+            <Select v-model="query.payerUserId" :options="residentOptions" option-label="label" option-value="value" filter />
+          </label>
+          <label>
+            <span class="field-label">Period</span>
+            <Select v-model="query.billingPeriodId" :options="periodOptions" option-label="label" option-value="value" />
+          </label>
+          <label>
+            <span class="field-label">Mode</span>
+            <Select v-model="query.mode" :options="paymentModes" option-label="label" option-value="value" />
+          </label>
+          <label>
+            <span class="field-label">Status</span>
+            <Select v-model="query.status" :options="statusOptions" option-label="label" option-value="value" />
+          </label>
+          <label>
+            <span class="field-label">Receipt</span>
+            <Select v-model="query.receipt" :options="stateOptions" option-label="label" option-value="value" />
+          </label>
+          <label>
+            <span class="field-label">Proof</span>
+            <Select v-model="query.proof" :options="stateOptions" option-label="label" option-value="value" />
+          </label>
+          <label>
+            <span class="field-label">Min amount</span>
+            <InputText v-model="query.minAmount" inputmode="decimal" />
+          </label>
+          <label>
+            <span class="field-label">Max amount</span>
+            <InputText v-model="query.maxAmount" inputmode="decimal" />
+          </label>
+        </div>
+      </div>
+
+      <DataTable
+        :value="payments"
+        :loading="pending"
+        paginator
+        :rows="query.pageSize"
+        :total-records="totalRecords"
+        :lazy="true"
+        responsive-layout="scroll"
+        class="list-page__table"
+        data-key="id"
+        @page="
+          (event) => {
+            query.page = Math.floor(event.first / event.rows) + 1
+            query.pageSize = event.rows
+          }
+        "
+      >
+        <Column field="paymentDate" header="Date">
+          <template #body="{ data: row }">
+            {{ formatDate(row.paymentDate) }}
+          </template>
+        </Column>
+        <Column field="flatNumber" header="Flat">
+          <template #body="{ data: row }">
+            <strong>{{ flatLabel(row) }}</strong>
+            <p class="table-muted">{{ row.payerName || '-' }}</p>
+          </template>
+        </Column>
+        <Column field="amount" header="Amount">
+          <template #body="{ data: row }">
+            <strong>{{ formatMoney(row.amount) }}</strong>
+          </template>
+        </Column>
+        <Column field="mode" header="Mode">
+          <template #body="{ data: row }">
+            <span>{{ row.transferKind || row.mode }}</span>
+            <p class="table-muted">{{ referenceLabel(row) }}</p>
+          </template>
+        </Column>
+        <Column field="status" header="Status">
+          <template #body="{ data: row }">
+            <AppStatusBadge :status="row.status" />
+          </template>
+        </Column>
+        <Column field="receiptNumber" header="Receipt">
+          <template #body="{ data: row }">
+            <button v-if="row.receiptNumber" class="text-button" type="button" @click="copyReceipt(row)">
+              {{ row.receiptNumber }}
+            </button>
+            <span v-else>-</span>
+          </template>
+        </Column>
+        <Column header="Files">
+          <template #body="{ data: row }">
+            <div class="admin-inline-actions">
+              <Tag :severity="row.proofFilePath ? 'success' : 'warn'" :value="row.proofFilePath ? 'Proof' : 'No proof'" rounded />
+              <Tag :severity="row.receiptNumber ? 'success' : 'warn'" :value="row.receiptNumber ? 'Receipt' : 'No receipt'" rounded />
+            </div>
+          </template>
+        </Column>
+        <Column header="Actions" style="width: 150px">
+          <template #body="{ data: row }">
+            <div class="admin-inline-actions">
+              <Button icon="pi pi-eye" severity="secondary" text rounded aria-label="View payment" title="View payment" @click="openDetail(row)" />
+              <Button
+                as="a"
+                :href="`/api/payments/${row.id}/receipt`"
+                target="_blank"
+                icon="pi pi-download"
+                severity="secondary"
+                text
+                rounded
+                aria-label="Download receipt"
+                title="Download receipt"
+                :disabled="!row.receiptNumber"
+              />
+            </div>
+          </template>
+        </Column>
+      </DataTable>
+
+      <div class="list-page__cards">
+        <article v-for="payment in payments" :key="payment.id" class="list-card">
+          <div class="list-card__header">
+            <div>
+              <h3>{{ formatMoney(payment.amount) }}</h3>
+              <p>{{ flatLabel(payment) }} · {{ formatDate(payment.paymentDate) }}</p>
+            </div>
+            <AppStatusBadge :status="payment.status" />
+          </div>
+          <div class="list-card__row">
+            <span>Payer</span>
+            <strong>{{ payment.payerName || '-' }}</strong>
+          </div>
+          <div class="list-card__row">
+            <span>Reference</span>
+            <strong>{{ referenceLabel(payment) }}</strong>
+          </div>
+          <div class="list-card__row">
+            <span>Receipt</span>
+            <strong>{{ payment.receiptNumber || '-' }}</strong>
+          </div>
+          <div class="admin-inline-actions">
+            <Button label="View" icon="pi pi-eye" size="small" severity="secondary" outlined @click="openDetail(payment)" />
+            <Button
+              as="a"
+              :href="`/api/payments/${payment.id}/receipt`"
+              target="_blank"
+              label="Receipt"
+              icon="pi pi-download"
+              size="small"
+              severity="secondary"
+              outlined
+              :disabled="!payment.receiptNumber"
+            />
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <Dialog v-model:visible="detailVisible" header="Payment detail" modal :style="{ width: '720px' }">
+      <AppSkeletonState v-if="detailPending" />
+      <div v-else-if="selectedPayment" class="admin-form-layout">
+        <div class="surface-grid">
+          <section class="surface-card">
+            <p class="eyebrow">Amount</p>
+            <h3>{{ formatMoney(selectedPayment.amount) }}</h3>
+            <p>{{ selectedPayment.transfer_kind || selectedPayment.mode }} · {{ referenceLabel({ utrReference: selectedPayment.utr_reference, bankReference: selectedPayment.bank_reference }) }}</p>
+          </section>
+          <section class="surface-card">
+            <p class="eyebrow">Receipt</p>
+            <h3>{{ selectedPayment.receipt_number || '-' }}</h3>
+            <p>{{ formatDate(selectedPayment.payment_date) }}</p>
+          </section>
+        </div>
+        <DataTable :value="selectedPayment.allocations" responsive-layout="scroll">
+          <Column field="billingPeriodLabel" header="Period" />
+          <Column field="dueAmount" header="Due">
+            <template #body="{ data: row }">{{ formatMoney(row.dueAmount) }}</template>
+          </Column>
+          <Column field="lateFeeComponent" header="Late fee">
+            <template #body="{ data: row }">{{ formatMoney(row.lateFeeComponent) }}</template>
+          </Column>
+          <Column field="allocatedAmount" header="Allocated">
+            <template #body="{ data: row }">{{ formatMoney(row.allocatedAmount) }}</template>
+          </Column>
+          <Column field="remainingBalance" header="Balance">
+            <template #body="{ data: row }">{{ formatMoney(row.remainingBalance) }}</template>
+          </Column>
+        </DataTable>
+      </div>
+    </Dialog>
+  </div>
+</template>

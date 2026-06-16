@@ -21,7 +21,7 @@ export const useFinanceAttachments = () => {
         severity: 'warn',
         summary: 'Unsupported file',
         detail: 'Upload a PDF, JPG, JPEG, or PNG invoice/document.',
-        life: 3500,
+        life: 10000,
       })
       return false
     }
@@ -31,7 +31,7 @@ export const useFinanceAttachments = () => {
         severity: 'warn',
         summary: 'File too large',
         detail: 'Finance attachments must be 10 MB or smaller.',
-        life: 3500,
+        life: 10000,
       })
       return false
     }

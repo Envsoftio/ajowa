@@ -50,14 +50,14 @@ const resend = async () => {
       severity: 'success',
       summary: 'Email sent',
       detail: 'A fresh verification link is on the way.',
-      life: 5000,
+      life: 10000,
     })
   } catch {
     toast.add({
       severity: 'error',
       summary: 'Unable to resend',
       detail: 'Try again in a moment.',
-      life: 5000,
+      life: 10000,
     })
   } finally {
     sending.value = false

@@ -40,11 +40,12 @@ export default defineEventHandler(async (event) => {
       left join maintenance_dues md on md.id = pa.maintenance_due_id
       left join billing_periods bp on bp.id = md.billing_period_id
       where p.id = $1
-        and ($2::boolean = true or p.payer_user_id = $3)
+        and p.society_id = $2
+        and ($3::boolean = true or p.payer_user_id = $4)
       group by p.id, f.flat_number, b.name, u.full_name
       limit 1
     `,
-    [id, isStaff, authMe.user.id],
+    [id, authMe.user.societyId, isStaff, authMe.user.id],
   )
   const payment = result.rows[0]
   if (!payment) {

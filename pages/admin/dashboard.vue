@@ -168,8 +168,8 @@ const hasWelcomeName = computed(() => authStore.me?.user?.fullName || authStore.
       <div class="hero-actions">
         <Button label="Refresh" icon="pi pi-refresh" severity="secondary" outlined :loading="pending" @click="refresh()" />
         <Button label="Manage dues" icon="pi pi-wallet" as="a" href="/admin/billing/dues" />
+        <Button label="Record payment" icon="pi pi-credit-card" as="a" href="/admin/payments/new" severity="secondary" outlined />
         <Button label="View defaulters" icon="pi pi-exclamation-triangle" severity="secondary" as="a" href="/admin/billing/defaulters" outlined />
-        <Button label="New period setup" icon="pi pi-calendar" severity="secondary" outlined as="a" href="/admin/billing/periods" />
       </div>
     </section>
 
@@ -239,8 +239,10 @@ const hasWelcomeName = computed(() => authStore.me?.user?.fullName || authStore.
           <Button label="Flats" icon="pi pi-home" as="a" href="/admin/flats" outlined />
           <Button label="Blocks" icon="pi pi-th-large" as="a" href="/admin/blocks" outlined />
           <Button label="Staff" icon="pi pi-id-card" as="a" href="/admin/staff" outlined />
-          <Button label="Billing periods" icon="pi pi-calendar" as="a" href="/admin/billing/periods" outlined />
-          <Button label="Defaulter export" icon="pi pi-send" as="a" href="/admin/billing/defaulters" severity="secondary" outlined />
+          <Button label="Generate dues" icon="pi pi-calendar" as="a" href="/admin/billing/periods" outlined />
+          <Button label="Record payment" icon="pi pi-credit-card" as="a" href="/admin/payments/new" severity="secondary" outlined />
+          <Button label="Add expense" icon="pi pi-minus-circle" as="a" href="/admin/finance/transactions/new?type=expense" severity="secondary" outlined />
+          <Button label="Send notice" icon="pi pi-send" as="a" href="/admin/notices" severity="secondary" outlined />
         </div>
       </section>
     </section>

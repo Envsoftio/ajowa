@@ -32,7 +32,7 @@ const submit = async (payload: ServiceRequestCreatePayload) => {
   try {
     const response = await serviceRequests.createTicket(payload)
     createdTicket.value = response.data
-    toast.add({ severity: 'success', summary: 'Ticket created', detail: response.data.requestNumber, life: 3000 })
+    toast.add({ severity: 'success', summary: 'Ticket created', detail: response.data.requestNumber, life: 10000 })
   } finally {
     saving.value = false
   }

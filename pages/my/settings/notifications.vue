@@ -38,7 +38,7 @@ const save = async () => {
   saving.value = true
   try {
     await api('/api/my/settings/notifications', { method: 'PUT', body: { preferences: preferences.value } })
-    toast.add({ severity: 'success', summary: 'Settings saved', life: 3000 })
+    toast.add({ severity: 'success', summary: 'Settings saved', life: 10000 })
   } finally {
     saving.value = false
   }

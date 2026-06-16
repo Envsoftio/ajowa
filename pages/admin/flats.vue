@@ -9,9 +9,11 @@ definePageMeta({
 
 const api = useApi()
 const toast = useToast()
+const confirmAction = useAppConfirm()
 
 const selectedFlat = ref<FlatSummary | null>(null)
 const displayDialog = ref(false)
+const deletingFlatId = ref<string | null>(null)
 
 const globalSearch = ref('')
 const blockFilter = ref('')
@@ -154,12 +156,43 @@ const submit = async () => {
       severity: 'success',
       summary: 'Saved',
       detail: selectedFlat.value ? 'Flat updated.' : 'Flat created.',
-      life: 3000,
+      life: 10000,
     })
     closeDialog()
     await refresh()
   } finally {
     saving.value = false
+  }
+}
+
+const deleteFlat = async (flat: FlatSummary) => {
+  const label = `${flat.blockName} ${flat.flatNumber}`
+
+  const confirmed = await confirmAction({
+    header: 'Delete flat?',
+    message: `Delete ${label}? Flats with linked records should be marked inactive instead.`,
+    acceptLabel: 'Delete',
+  })
+
+  if (!confirmed) {
+    return
+  }
+
+  deletingFlatId.value = flat.id
+
+  try {
+    await api(`/api/admin/flats/${flat.id}`, {
+      method: 'DELETE',
+    })
+    toast.add({
+      severity: 'success',
+      summary: 'Deleted',
+      detail: 'Flat deleted.',
+      life: 10000,
+    })
+    await refresh()
+  } finally {
+    deletingFlatId.value = null
   }
 }
 </script>
@@ -265,7 +298,7 @@ const submit = async () => {
               <AppStatusBadge :status="row.isActive ? 'active' : 'inactive'" />
             </template>
           </Column>
-          <Column header="Actions" class="text-right" style="width: 150px">
+          <Column header="Actions" class="text-right" style="width: 190px">
             <template #body="{ data: row }">
               <div class="admin-inline-actions" style="justify-content: flex-end; gap: 0.5rem;">
                 <NuxtLink :to="`/admin/flats/${row.id}`">
@@ -284,6 +317,15 @@ const submit = async () => {
                   rounded
                   aria-label="Edit flat"
                   @click="editFlat(row)"
+                />
+                <Button
+                  icon="pi pi-trash"
+                  severity="danger"
+                  text
+                  rounded
+                  aria-label="Delete flat"
+                  :loading="deletingFlatId === row.id"
+                  @click="deleteFlat(row)"
                 />
               </div>
             </template>

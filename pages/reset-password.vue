@@ -22,7 +22,7 @@ const submit = async () => {
       severity: 'error',
       summary: 'Invalid link',
       detail: 'The reset token is missing.',
-      life: 5000,
+      life: 10000,
     })
     return
   }
@@ -32,7 +32,7 @@ const submit = async () => {
       severity: 'error',
       summary: 'Password mismatch',
       detail: 'Confirm the same password before continuing.',
-      life: 5000,
+      life: 10000,
     })
     return
   }
@@ -53,7 +53,7 @@ const submit = async () => {
       severity: 'error',
       summary: 'Reset failed',
       detail: 'This reset link is invalid or expired.',
-      life: 5000,
+      life: 10000,
     })
   } finally {
     loading.value = false

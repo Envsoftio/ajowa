@@ -27,7 +27,7 @@ const submit = async () => {
       severity: 'error',
       summary: 'Request failed',
       detail: 'We could not start the reset flow right now.',
-      life: 5000,
+      life: 10000,
     })
   } finally {
     loading.value = false

@@ -92,7 +92,7 @@ const formatDateTime = (value: string | null | undefined) =>
 
         <div class="qr-image-card">
           <template v-if="access.isGranted && qr">
-            <img :src="qr.imageDataUrl" alt="Gate access QR code" class="qr-image" />
+            <img :src="qr.imageDataUrl" alt="Gate access QR code" class="qr-image">
             <p>Valid until {{ formatDateTime(qr.validUntil) }}</p>
             <a :href="qr.imageDataUrl" download="ajowa-gate-qr.png">
               <Button label="Download" icon="pi pi-download" />

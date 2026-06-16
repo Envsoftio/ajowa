@@ -11,6 +11,7 @@ type DefaulterResponse = { ok: true; data: DefaulterSummary[] }
 
 const api = useApi()
 const toast = useToast()
+const confirmAction = useAppConfirm()
 
 const formatMoney = (value: number) =>
   new Intl.NumberFormat('en-IN', {
@@ -64,6 +65,18 @@ const summary = computed(() => {
 
 const sendReminders = async (dueIds: string[]) => {
   if (dueIds.length === 0) return
+  const confirmed = await confirmAction({
+    header: 'Send payment reminders?',
+    message: `Queue reminders for ${dueIds.length} due${dueIds.length === 1 ? '' : 's'}?`,
+    icon: 'pi pi-send',
+    acceptLabel: 'Send reminders',
+    acceptSeverity: 'warn',
+  })
+
+  if (!confirmed) {
+    return
+  }
+
   sendingReminder.value = true
 
   try {
@@ -78,7 +91,7 @@ const sendReminders = async (dueIds: string[]) => {
       severity: 'success',
       summary: 'Reminders queued',
       detail: `${response.data.eligible} dues matched and ${response.data.jobCount} delivery jobs were queued.`,
-      life: 4000,
+      life: 10000,
     })
   } finally {
     sendingReminder.value = false

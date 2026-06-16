@@ -215,7 +215,7 @@ const savePeriod = async () => {
       severity: 'success',
       summary: 'Saved',
       detail: 'Billing period saved.',
-      life: 3000,
+      life: 10000,
     })
     periodDialogVisible.value = false
     resetPeriodForm()
@@ -252,7 +252,7 @@ const toggleLock = async () => {
       severity: 'success',
       summary: 'Updated',
       detail: 'Lock state changed.',
-      life: 3000,
+      life: 10000,
     })
     lockDialogVisible.value = false
     await refreshPeriods()
@@ -320,7 +320,7 @@ const generateDues = async () => {
       severity: 'success',
       summary: 'Dues generated',
       detail: `${response.data.generated} created, ${response.data.skipped} skipped.`,
-      life: 4000,
+      life: 10000,
     })
     generationDialogVisible.value = false
     await refreshPeriods()
@@ -448,7 +448,7 @@ const saveCharges = async () => {
       severity: 'success',
       summary: 'Saved',
       detail: 'Charge configuration updated.',
-      life: 3000,
+      life: 10000,
     })
     await refreshCharges()
     chargeDialogVisible.value = false

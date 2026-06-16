@@ -30,7 +30,7 @@ const runAction = async (action: string) => {
       severity: 'success',
       summary: 'Action completed',
       detail: action.replaceAll('_', ' '),
-      life: 3000,
+      life: 10000,
     })
     await refresh()
   } finally {

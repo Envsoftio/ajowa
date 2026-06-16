@@ -21,6 +21,7 @@ type NotificationEvent = {
 
 const api = useApi()
 const toast = useToast()
+const confirmAction = useAppConfirm()
 const query = reactive({ status: '', search: '' })
 
 const { data, pending, refresh } = await useAsyncData('admin-notifications', () =>
@@ -38,6 +39,18 @@ const { data, pending, refresh } = await useAsyncData('admin-notifications', () 
 const rows = computed(() => data.value?.data.items ?? [])
 
 const processQueue = async () => {
+  const confirmed = await confirmAction({
+    header: 'Process notification queue?',
+    message: 'Claim queued notification jobs and send eligible messages now?',
+    icon: 'pi pi-play',
+    acceptLabel: 'Process queue',
+    acceptSeverity: 'warn',
+  })
+
+  if (!confirmed) {
+    return
+  }
+
   const response = await api<{ ok: true; data: { claimed: number; sent: number; failed: number; retried: number } }>('/api/admin/notifications/process', {
     method: 'POST',
   })
@@ -45,7 +58,7 @@ const processQueue = async () => {
     severity: 'success',
     summary: 'Queue processed',
     detail: `${response.data.claimed} claimed, ${response.data.sent} sent, ${response.data.retried} retried, ${response.data.failed} failed.`,
-    life: 4000,
+    life: 10000,
   })
   await refresh()
 }

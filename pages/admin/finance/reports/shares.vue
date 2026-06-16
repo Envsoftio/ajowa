@@ -31,6 +31,7 @@ type RegenerateResponse = { ok: true; data: { link: string; deliveryFailure: str
 
 const api = useApi()
 const toast = useToast()
+const { reasonDialog, requestReason, acceptReason, cancelReason } = useAppReasonDialog()
 const { formatDate, formatDateTime } = useFinanceFormatters()
 
 const statusFilter = ref('')
@@ -67,12 +68,23 @@ const statusSeverity = (status: SharedReport['status']) => {
 }
 
 const revoke = async (share: SharedReport) => {
-  const reason = window.prompt(`Reason for revoking ${share.reportTypeLabel}?`)
+  const reason = await requestReason({
+    header: 'Revoke shared report?',
+    message: `Revoke the ${share.reportTypeLabel} link for ${share.ownerName}? The current link will stop working.`,
+    acceptLabel: 'Revoke',
+    acceptSeverity: 'danger',
+    placeholder: 'Reason for revocation',
+  })
+
+  if (!reason) {
+    return
+  }
+
   await api(`/api/reports/shares/${share.id}`, {
     method: 'DELETE',
-    body: { reason: reason || null },
+    body: { reason },
   })
-  toast.add({ severity: 'success', summary: 'Revoked', life: 3000 })
+  toast.add({ severity: 'success', summary: 'Revoked', life: 10000 })
   await refresh()
 }
 
@@ -85,7 +97,7 @@ const regenerate = async (share: SharedReport) => {
     severity: response.data.deliveryFailure ? 'warn' : 'success',
     summary: 'New link created',
     detail: response.data.deliveryFailure ?? 'Copied to clipboard',
-    life: 4500,
+    life: 10000,
   })
   await refresh()
 }
@@ -162,5 +174,17 @@ const regenerate = async (share: SharedReport) => {
     </section>
 
     <SharedReportLinkPanel :owners="owners" :flats="flats" :start-date="new Date().toISOString().slice(0, 10)" :end-date="new Date().toISOString().slice(0, 10)" @created="refresh" />
+
+    <AppReasonDialog
+      v-model:visible="reasonDialog.visible"
+      v-model:reason="reasonDialog.reason"
+      :header="reasonDialog.header"
+      :message="reasonDialog.message"
+      :accept-label="reasonDialog.acceptLabel"
+      :accept-severity="reasonDialog.acceptSeverity"
+      :placeholder="reasonDialog.placeholder"
+      @accept="acceptReason"
+      @cancel="cancelReason"
+    />
   </div>
 </template>

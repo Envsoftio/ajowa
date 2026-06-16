@@ -81,7 +81,7 @@ const submit = async () => {
       severity: 'success',
       summary: 'Saved',
       detail: 'Society profile and policies were updated.',
-      life: 3000,
+      life: 10000,
     })
     await refresh()
   } finally {

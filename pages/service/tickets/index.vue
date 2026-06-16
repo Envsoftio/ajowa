@@ -56,7 +56,7 @@ const updateTicketStatus = async (ticket: ServiceRequestSummary, status: Service
       status,
       comment: status === 'RESOLVED' ? 'Work completed.' : null,
     })
-    toast.add({ severity: 'success', summary: 'Ticket updated', detail: ticket.requestNumber, life: 2500 })
+    toast.add({ severity: 'success', summary: 'Ticket updated', detail: ticket.requestNumber, life: 10000 })
     await refresh()
   } finally {
     savingId.value = null

@@ -51,7 +51,7 @@ const save = async () => {
   saving.value = true
   try {
     await api('/api/admin/settings/notifications', { method: 'PUT', body: { settings: settings.value } })
-    toast.add({ severity: 'success', summary: 'Settings saved', life: 3000 })
+    toast.add({ severity: 'success', summary: 'Settings saved', life: 10000 })
     await load()
   } finally {
     saving.value = false
@@ -67,7 +67,7 @@ const verify = async () => {
     severity: response.data.ok ? 'success' : 'warn',
     summary: response.data.ok ? 'Verification sent' : 'Verification failed',
     detail: response.data.reason ?? undefined,
-    life: 5000,
+    life: 10000,
   })
 }
 </script>

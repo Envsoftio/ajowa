@@ -103,7 +103,7 @@ const saveTask = async () => {
       severity: 'success',
       summary: 'Saved',
       detail: isEditing ? 'Task updated.' : 'Task created.',
-      life: 3000,
+      life: 10000,
     })
   } finally {
     saving.value = false

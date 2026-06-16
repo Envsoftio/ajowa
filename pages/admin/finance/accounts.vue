@@ -17,6 +17,7 @@ type BankAccountsResponse = { ok: true; data: { items: BankAccount[] } }
 
 const api = useApi()
 const toast = useToast()
+const confirmAction = useAppConfirm()
 
 const accountTypes: { label: string; value: AccountHeadType }[] = [
   { label: 'Assets', value: 'ASSET' },
@@ -222,7 +223,7 @@ const submitAccount = async () => {
       detail: selectedAccount.value
         ? 'Account head updated.'
         : 'Account head created.',
-      life: 3000,
+      life: 10000,
     })
     closeAccountDialog()
     await refreshAccounts()
@@ -232,11 +233,13 @@ const submitAccount = async () => {
 }
 
 const deleteAccount = async (account: AccountHead) => {
-  if (
-    !window.confirm(
-      `Delete ${account.name}? This only works for unused custom account heads.`,
-    )
-  ) {
+  const confirmed = await confirmAction({
+    header: 'Delete account head?',
+    message: `Delete ${account.name}? This only works for unused custom account heads.`,
+    acceptLabel: 'Delete',
+  })
+
+  if (!confirmed) {
     return
   }
 
@@ -245,7 +248,7 @@ const deleteAccount = async (account: AccountHead) => {
     severity: 'success',
     summary: 'Deleted',
     detail: 'Account head deleted.',
-    life: 3000,
+    life: 10000,
   })
   await refreshAccounts()
 }
@@ -324,7 +327,7 @@ const submitBankAccount = async () => {
       detail: selectedBankAccount.value
         ? 'Bank account updated.'
         : 'Bank account created.',
-      life: 3000,
+      life: 10000,
     })
     closeBankDialog()
     await refreshBankAccounts()
@@ -334,11 +337,13 @@ const submitBankAccount = async () => {
 }
 
 const deleteBankAccount = async (account: BankAccount) => {
-  if (
-    !window.confirm(
-      `Delete ${account.accountName}? Bank accounts with linked transactions should be marked inactive instead.`,
-    )
-  ) {
+  const confirmed = await confirmAction({
+    header: 'Delete bank account?',
+    message: `Delete ${account.accountName}? Bank accounts with linked transactions should be marked inactive instead.`,
+    acceptLabel: 'Delete',
+  })
+
+  if (!confirmed) {
     return
   }
 
@@ -349,7 +354,7 @@ const deleteBankAccount = async (account: BankAccount) => {
     severity: 'success',
     summary: 'Deleted',
     detail: 'Bank account deleted.',
-    life: 3000,
+    life: 10000,
   })
   await refreshBankAccounts()
 }

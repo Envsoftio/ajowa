@@ -43,7 +43,7 @@ const assignTicket = async (payload: { departmentId: string; assigneeUserId?: st
   saving.value = true
   try {
     await serviceRequests.assignTicket(ticket.value.id, payload)
-    toast.add({ severity: 'success', summary: 'Assigned', life: 2500 })
+    toast.add({ severity: 'success', summary: 'Assigned', life: 10000 })
     assignDialogVisible.value = false
     await refresh()
   } finally {
@@ -55,7 +55,7 @@ const addComment = async (payload: { visibility: 'INTERNAL_NOTE' | 'RESIDENT_VIS
   saving.value = true
   try {
     await serviceRequests.addComment(String(route.params.id), payload)
-    toast.add({ severity: 'success', summary: 'Comment added', life: 2500 })
+    toast.add({ severity: 'success', summary: 'Comment added', life: 10000 })
     await refresh()
   } finally {
     saving.value = false
@@ -66,7 +66,7 @@ const updateStatus = async (payload: { status: ServiceRequestStatus; comment?: s
   saving.value = true
   try {
     await serviceRequests.updateStatus(String(route.params.id), payload)
-    toast.add({ severity: 'success', summary: 'Status updated', life: 2500 })
+    toast.add({ severity: 'success', summary: 'Status updated', life: 10000 })
     await refresh()
   } finally {
     saving.value = false

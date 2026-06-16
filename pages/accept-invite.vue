@@ -58,7 +58,7 @@ const submit = async () => {
       severity: 'error',
       summary: 'Password mismatch',
       detail: 'Confirm the same password before continuing.',
-      life: 5000,
+      life: 10000,
     })
     return
   }
@@ -81,7 +81,7 @@ const submit = async () => {
       severity: 'success',
       summary: 'Invite accepted',
       detail: 'Your account is ready. Verify your email after you sign in.',
-      life: 5000,
+      life: 10000,
     })
     await navigateTo('/login')
   } catch (error) {
@@ -90,7 +90,7 @@ const submit = async () => {
       severity: 'error',
       summary: 'Invite failed',
       detail: fetchError.data?.message ?? 'This invite could not be accepted.',
-      life: 5000,
+      life: 10000,
     })
   } finally {
     submitting.value = false

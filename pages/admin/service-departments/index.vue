@@ -11,6 +11,7 @@ type StaffOption = { id: string; fullName: string; email: string }
 
 const api = useApi()
 const toast = useToast()
+const confirmAction = useAppConfirm()
 const dialogVisible = ref(false)
 const saving = ref(false)
 const selectedDepartment = ref<ServiceDepartment | null>(null)
@@ -89,7 +90,7 @@ const submit = async () => {
       })
     }
 
-    toast.add({ severity: 'success', summary: 'Saved', detail: 'Service department updated.', life: 2500 })
+    toast.add({ severity: 'success', summary: 'Saved', detail: 'Service department updated.', life: 10000 })
     dialogVisible.value = false
     await refresh()
   } finally {
@@ -98,8 +99,18 @@ const submit = async () => {
 }
 
 const deactivate = async (department: ServiceDepartment) => {
+  const confirmed = await confirmAction({
+    header: 'Deactivate department?',
+    message: `Deactivate ${department.name}? New requests will no longer route to this department.`,
+    acceptLabel: 'Deactivate',
+  })
+
+  if (!confirmed) {
+    return
+  }
+
   await api(`/api/admin/service-departments/${department.id}`, { method: 'DELETE' })
-  toast.add({ severity: 'success', summary: 'Department inactive', detail: 'Department was deactivated.', life: 2500 })
+  toast.add({ severity: 'success', summary: 'Department inactive', detail: 'Department was deactivated.', life: 10000 })
   await refresh()
 }
 </script>

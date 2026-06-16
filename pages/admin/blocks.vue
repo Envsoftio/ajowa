@@ -118,7 +118,7 @@ const submit = async () => {
       severity: 'success',
       summary: 'Saved',
       detail: selectedBlock.value ? 'Block updated.' : 'Block created.',
-      life: 3000,
+      life: 10000,
     })
     closeDialog()
     await refresh()

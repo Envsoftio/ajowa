@@ -1,4 +1,5 @@
 import { createHmac } from 'node:crypto'
+import { createRequire } from 'node:module'
 import type { PoolClient } from 'pg'
 import { z } from 'zod'
 import { AppError } from './errors'
@@ -6,6 +7,12 @@ import { getDatabasePool, queryRows } from './database'
 import { computeDueAmounts, todayDate } from './billing'
 import { getValidatedRuntimeConfig } from './env'
 import { recomputeUserAccess } from './qr-access'
+import { uploadPrivateFile } from './storage'
+
+const require = createRequire(import.meta.url)
+const pdfMake = require('pdfmake/build/pdfmake')
+const pdfFonts = require('pdfmake/build/vfs_fonts')
+pdfMake.vfs = pdfFonts?.pdfMake?.vfs ?? pdfFonts?.vfs
 
 export const allocationModeSchema = z.enum(['OLDEST_UNPAID_FIRST', 'SELECTED_PERIODS', 'TENURE_PACK'])
 
@@ -77,7 +84,58 @@ type PaymentRow = {
   allocation_mode: string
 }
 
+type PaymentReceiptRow = {
+  id: string
+  society_id: string
+  payer_user_id: string
+  received_for_flat_id: string
+  amount: string
+  payment_date: string
+  mode: string
+  transfer_kind: string | null
+  status: string
+  utr_reference: string | null
+  bank_reference: string | null
+  receipt_number: string | null
+  receipt_file_path: string | null
+  receipt_generated_at: string | null
+  notes: string | null
+  payer_name: string | null
+  payer_email: string | null
+  payer_mobile_number: string | null
+  flat_number: string | null
+  block_name: string | null
+  society_name: string
+  society_code: string
+  society_address: string
+}
+
+type PaymentReceiptAllocationRow = {
+  due_id: string
+  billing_period_label: string | null
+  due_date: string | null
+  due_amount: string
+  late_fee_component: string
+  allocated_amount: string
+  remaining_balance: string
+  allocation_order: number
+}
+
 const roundMoney = (value: number) => Math.round(value * 100) / 100
+
+const formatReceiptMoney = (value: number) =>
+  new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    maximumFractionDigits: 2,
+  }).format(value)
+
+const formatReceiptDate = (value: string | null | undefined) =>
+  value
+    ? new Date(value.length === 10 ? `${value}T00:00:00` : value).toLocaleDateString('en-IN', {
+        dateStyle: 'medium',
+      })
+    : '-'
 
 const getPaymentPolicy = async (client: PoolClient, societyId: string) => {
   const result = await client.query<{ settings: Record<string, unknown> }>(
@@ -605,8 +663,234 @@ export const consumeAdvanceCreditsForDue = async (dueId: string) => {
   }
 }
 
+export const getPaymentReceiptData = async (
+  paymentId: string,
+  access?: { societyId?: string; userId?: string; isStaff?: boolean },
+) => {
+  const params: unknown[] = [paymentId]
+  const filters = ['p.id = $1']
+
+  if (access?.societyId) {
+    params.push(access.societyId)
+    filters.push(`p.society_id = $${params.length}`)
+  }
+
+  if (access?.userId && !access.isStaff) {
+    params.push(access.userId)
+    filters.push(`p.payer_user_id = $${params.length}`)
+  }
+
+  const paymentResult = await queryRows<PaymentReceiptRow>(
+    `
+      select
+        p.id,
+        p.society_id,
+        p.payer_user_id,
+        p.received_for_flat_id,
+        p.amount::text,
+        p.payment_date::text,
+        p.mode::text,
+        p.transfer_kind::text,
+        p.status::text,
+        p.utr_reference,
+        p.bank_reference,
+        p.receipt_number,
+        p.receipt_file_path,
+        p.receipt_generated_at::text,
+        p.notes,
+        u.full_name as payer_name,
+        u.email::text as payer_email,
+        u.mobile_number as payer_mobile_number,
+        f.flat_number,
+        b.name as block_name,
+        sp.name as society_name,
+        sp.code as society_code,
+        concat_ws(', ', sp.address_line_1, sp.address_line_2, sp.city, sp.state, sp.pincode) as society_address
+      from payments p
+      join society_profile sp on sp.id = p.society_id
+      left join users u on u.id = p.payer_user_id
+      left join flats f on f.id = p.received_for_flat_id
+      left join blocks b on b.id = f.block_id
+      where ${filters.join(' and ')}
+      limit 1
+    `,
+    params,
+  )
+  const payment = paymentResult.rows[0]
+  if (!payment) {
+    throw new AppError({ code: 'NOT_FOUND', statusCode: 404, message: 'Payment not found.' })
+  }
+
+  const allocationsResult = await queryRows<PaymentReceiptAllocationRow>(
+    `
+      select
+        pa.maintenance_due_id as due_id,
+        bp.label as billing_period_label,
+        md.due_date::text,
+        pa.due_amount::text,
+        pa.late_fee_component::text,
+        pa.allocated_amount::text,
+        pa.remaining_balance::text,
+        pa.allocation_order
+      from payment_allocations pa
+      left join maintenance_dues md on md.id = pa.maintenance_due_id
+      left join billing_periods bp on bp.id = md.billing_period_id
+      where pa.payment_id = $1
+      order by pa.allocation_order asc, bp.start_date asc
+    `,
+    [paymentId],
+  )
+
+  return {
+    payment,
+    allocations: allocationsResult.rows,
+  }
+}
+
+export const generatePaymentReceiptPdf = async (
+  paymentId: string,
+  access?: { societyId?: string; userId?: string; isStaff?: boolean },
+) => {
+  const { payment, allocations } = await getPaymentReceiptData(paymentId, access)
+
+  if (!payment.receipt_number) {
+    throw new AppError({
+      code: 'CONFLICT',
+      statusCode: 409,
+      message: 'A receipt has not been generated for this payment yet.',
+    })
+  }
+
+  const reference = payment.utr_reference || payment.bank_reference || '-'
+  const flatLabel = [payment.block_name, payment.flat_number].filter(Boolean).join(' ') || '-'
+  const allocationBody: unknown[][] = [
+    [
+      { text: 'Period', style: 'tableHeader' },
+      { text: 'Due Date', style: 'tableHeader' },
+      { text: 'Due', style: 'tableHeader' },
+      { text: 'Late Fee', style: 'tableHeader' },
+      { text: 'Allocated', style: 'tableHeader' },
+      { text: 'Balance', style: 'tableHeader' },
+    ],
+    ...allocations.map((allocation) => [
+      { text: allocation.billing_period_label ?? '-', style: 'tableCell' },
+      { text: formatReceiptDate(allocation.due_date), style: 'tableCell' },
+      { text: formatReceiptMoney(Number(allocation.due_amount)), style: 'tableCellRight' },
+      { text: formatReceiptMoney(Number(allocation.late_fee_component)), style: 'tableCellRight' },
+      { text: formatReceiptMoney(Number(allocation.allocated_amount)), style: 'tableCellRight' },
+      { text: formatReceiptMoney(Number(allocation.remaining_balance)), style: 'tableCellRight' },
+    ]),
+  ]
+
+  if (allocationBody.length === 1) {
+    allocationBody.push([
+      { text: 'No allocation lines were recorded for this payment.', colSpan: 6, style: 'tableCell' },
+      '',
+      '',
+      '',
+      '',
+      '',
+    ])
+  }
+
+  const docDefinition = {
+    pageMargins: [36, 42, 36, 36],
+    content: [
+      { text: payment.society_name, style: 'brand' },
+      { text: payment.society_address, style: 'subtle' },
+      {
+        columns: [
+          [
+            { text: 'Payment Receipt', style: 'title' },
+            { text: `Receipt No: ${payment.receipt_number}`, style: 'receiptNumber' },
+          ],
+          [
+            { text: `Payment Date: ${formatReceiptDate(payment.payment_date)}`, style: 'rightMeta' },
+            { text: `Generated: ${formatReceiptDate(payment.receipt_generated_at)}`, style: 'rightMeta' },
+          ],
+        ],
+        columnGap: 16,
+        margin: [0, 14, 0, 16],
+      },
+      {
+        columns: [
+          {
+            table: {
+              widths: ['38%', '*'],
+              body: [
+                [{ text: 'Received From', style: 'labelCell' }, { text: payment.payer_name ?? '-', style: 'valueCell' }],
+                [{ text: 'Flat', style: 'labelCell' }, { text: flatLabel, style: 'valueCell' }],
+                [{ text: 'Contact', style: 'labelCell' }, { text: payment.payer_mobile_number ?? payment.payer_email ?? '-', style: 'valueCell' }],
+              ],
+            },
+            layout: 'noBorders',
+          },
+          {
+            table: {
+              widths: ['38%', '*'],
+              body: [
+                [{ text: 'Amount', style: 'labelCell' }, { text: formatReceiptMoney(Number(payment.amount)), style: 'valueCell' }],
+                [{ text: 'Mode', style: 'labelCell' }, { text: payment.transfer_kind ?? payment.mode, style: 'valueCell' }],
+                [{ text: 'Reference', style: 'labelCell' }, { text: reference, style: 'valueCell' }],
+              ],
+            },
+            layout: 'noBorders',
+          },
+        ],
+        columnGap: 16,
+        margin: [0, 0, 0, 18],
+      },
+      {
+        table: {
+          headerRows: 1,
+          widths: ['*', '16%', '15%', '15%', '15%', '15%'],
+          body: allocationBody,
+        },
+        layout: 'lightHorizontalLines',
+      },
+      {
+        text: 'This is a system-generated receipt for society maintenance records.',
+        style: 'footerNote',
+      },
+    ],
+    styles: {
+      brand: { fontSize: 14, color: '#0f766e', bold: true },
+      title: { fontSize: 20, bold: true, color: '#2f4050' },
+      receiptNumber: { fontSize: 10, bold: true, color: '#2f4050', margin: [0, 4, 0, 0] },
+      subtle: { fontSize: 8, color: '#6b7280', margin: [0, 3, 0, 0] },
+      rightMeta: { alignment: 'right', fontSize: 9, color: '#4b5563' },
+      labelCell: { bold: true, fontSize: 9, color: '#4b5563', margin: [0, 2, 0, 2] },
+      valueCell: { fontSize: 9, color: '#111827', margin: [0, 2, 0, 2] },
+      tableHeader: { bold: true, fontSize: 8, color: '#ffffff', fillColor: '#2a3f54' },
+      tableCell: { fontSize: 8, color: '#2f4050' },
+      tableCellRight: { fontSize: 8, color: '#2f4050', alignment: 'right' },
+      footerNote: { fontSize: 8, color: '#6b7280', margin: [0, 16, 0, 0] },
+    },
+    defaultStyle: { font: 'Roboto' },
+  }
+
+  const buffer = await new Promise<Buffer>((resolve, reject) => {
+    pdfMake.createPdf(docDefinition).getBuffer((pdfBuffer: Buffer) => {
+      try {
+        resolve(Buffer.from(pdfBuffer))
+      } catch (error) {
+        reject(error)
+      }
+    })
+  })
+
+  return {
+    buffer,
+    fileName: `${payment.receipt_number}.pdf`.replace(/[^a-z0-9._-]/gi, '-'),
+    receiptNumber: payment.receipt_number,
+    storageObjectKey: payment.receipt_file_path ?? `receipts/${payment.receipt_number}.pdf`,
+    uploadedBy: payment.payer_user_id,
+  }
+}
+
 export const generateReceiptForPayment = async (paymentId: string) => {
   const client = await getDatabasePool().connect()
+  let receiptNumber: string
 
   try {
     await client.query('begin')
@@ -628,7 +912,7 @@ export const generateReceiptForPayment = async (paymentId: string) => {
       `select next_yearly_sequence('RECEIPT', $1)::text as value`,
       [year],
     )
-    const receiptNumber = `${runtimeConfig.societyCode}-${year}-${String(seq.rows[0]?.value ?? '1').padStart(6, '0')}`
+    receiptNumber = `${runtimeConfig.societyCode}-${year}-${String(seq.rows[0]?.value ?? '1').padStart(6, '0')}`
     await client.query(
       `
         update payments
@@ -640,13 +924,29 @@ export const generateReceiptForPayment = async (paymentId: string) => {
       [paymentId, receiptNumber, `receipts/${receiptNumber}.pdf`],
     )
     await client.query('commit')
-    return receiptNumber
   } catch (error) {
     await client.query('rollback')
     throw error
   } finally {
     client.release()
   }
+
+  const receipt = await generatePaymentReceiptPdf(paymentId)
+  await uploadPrivateFile({
+    storageTargetKey: 'receipts',
+    storageObjectKey: receipt.storageObjectKey,
+    originalFileName: receipt.fileName,
+    mimeType: 'application/pdf',
+    sizeBytes: receipt.buffer.length,
+    body: receipt.buffer,
+    uploadedBy: receipt.uploadedBy,
+    relation: {
+      recordType: 'payments',
+      recordId: paymentId,
+    },
+  })
+
+  return receiptNumber
 }
 
 export const verifyRazorpayWebhookSignature = (rawBody: string, signature: string) => {
