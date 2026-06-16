@@ -62,6 +62,7 @@ export const shellNavigation: Record<AppShellType, AppNavItem[]> = {
     { label: 'Finance Journals', to: '/admin/finance/journals', icon: 'pi pi-book' },
     { label: 'Period Close', to: '/admin/finance/period-close', icon: 'pi pi-lock' },
     { label: 'Reconciliation', to: '/admin/finance/reconciliation', icon: 'pi pi-verified' },
+    { label: 'Reports', to: '/admin/finance/reports', icon: 'pi pi-chart-bar' },
     { label: 'Setup', to: '/setup', icon: 'pi pi-wrench' },
     { label: 'Password Change', to: '/change-password', icon: 'pi pi-key' },
   ],

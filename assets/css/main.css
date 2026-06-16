@@ -919,6 +919,69 @@ a {
   grid-column: 1 / -1;
 }
 
+.report-chart {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.report-chart__row {
+  display: grid;
+  grid-template-columns: minmax(8rem, 0.3fr) minmax(10rem, 1fr) minmax(7rem, auto);
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.report-chart__row span,
+.report-chart__row strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.report-chart__track {
+  height: 0.8rem;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+}
+
+.report-chart__bar {
+  height: 100%;
+  min-width: 0.2rem;
+}
+
+.shared-report-panel {
+  display: grid;
+  gap: 1rem;
+}
+
+.report-checkboxes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: center;
+}
+
+.report-checkboxes label,
+.report-owner-cell {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.report-checkboxes label {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+}
+
+.report-owner-cell span {
+  color: var(--color-muted);
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+.shared-report-page > .surface-card:first-child {
+  display: grid;
+  gap: 0.75rem;
+}
+
 .finance-entry-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(22rem, 0.42fr);
