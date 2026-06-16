@@ -23,6 +23,8 @@ type TransactionRow = {
   amount: string
   status: FinanceTransaction['status']
   journal_voucher_number: string | null
+  attachment_count: string
+  attachment_required: boolean
   created_by_name: string | null
   approved_by_name: string | null
   approved_at: string | null
@@ -51,6 +53,9 @@ const mapTransaction = (row: TransactionRow): FinanceTransaction => ({
   amount: Number(row.amount),
   status: row.status,
   journalVoucherNumber: row.journal_voucher_number,
+  attachmentCount: Number(row.attachment_count ?? 0),
+  hasAttachments: Number(row.attachment_count ?? 0) > 0,
+  attachmentRequired: row.attachment_required,
   createdByName: row.created_by_name,
   approvedByName: row.approved_by_name,
   approvedAt: row.approved_at,
@@ -68,6 +73,30 @@ export default defineEventHandler(async (event) => {
   const search = String(query.search ?? '').trim().toLowerCase()
   const transactionType = String(query.transactionType ?? '')
   const status = String(query.status ?? '')
+  const categoryId = String(query.categoryId ?? '')
+  const bankAccountId = String(query.bankAccountId ?? '')
+  const billingPeriodId = String(query.billingPeriodId ?? '')
+  const dateFrom = String(query.dateFrom ?? '')
+  const dateTo = String(query.dateTo ?? '')
+  const counterparty = String(query.counterparty ?? '').trim().toLowerCase()
+  const voucherNumber = String(query.voucherNumber ?? '').trim().toLowerCase()
+  const attachment = String(query.attachment ?? '')
+  const mode = String(query.mode ?? '').trim().toLowerCase()
+  const minAmount = query.minAmount === undefined ? null : Number(query.minAmount)
+  const maxAmount = query.maxAmount === undefined ? null : Number(query.maxAmount)
+  const highValueOnly = String(query.highValueOnly ?? '') === 'true'
+  const sortBy = String(query.sortBy ?? 'transactionDate')
+  const sortDirection = String(query.sortDirection ?? 'desc') === 'asc' ? 'asc' : 'desc'
+  const sortColumns: Record<string, string> = {
+    transactionDate: 't.transaction_date',
+    title: 't.title',
+    transactionType: 't.transaction_type',
+    categoryName: 'tc.name',
+    amount: 't.amount',
+    status: 't.status',
+    createdAt: 't.created_at',
+  }
+  const orderBy = sortColumns[sortBy] ?? sortColumns.transactionDate
 
   const params: unknown[] = [authMe.user.societyId]
   const filters = ['t.society_id = $1']
@@ -83,6 +112,58 @@ export default defineEventHandler(async (event) => {
     params.push(status)
     filters.push(`t.status::text = $${params.length}`)
   }
+  if (categoryId) {
+    params.push(categoryId)
+    filters.push(`t.category_id = $${params.length}`)
+  }
+  if (bankAccountId) {
+    params.push(bankAccountId)
+    filters.push(`t.bank_account_id = $${params.length}`)
+  }
+  if (billingPeriodId) {
+    params.push(billingPeriodId)
+    filters.push(`t.billing_period_id = $${params.length}`)
+  }
+  if (dateFrom) {
+    params.push(dateFrom)
+    filters.push(`t.transaction_date >= $${params.length}`)
+  }
+  if (dateTo) {
+    params.push(dateTo)
+    filters.push(`t.transaction_date <= $${params.length}`)
+  }
+  if (counterparty) {
+    params.push(`%${counterparty}%`)
+    filters.push(`lower(coalesce(t.counterparty_name, '')) like $${params.length}`)
+  }
+  if (voucherNumber) {
+    params.push(`%${voucherNumber}%`)
+    filters.push(`lower(coalesce(t.voucher_number, '')) like $${params.length}`)
+  }
+  if (mode) {
+    params.push(`%mode: ${mode}%`)
+    filters.push(`lower(coalesce(t.description, '')) like $${params.length}`)
+  }
+  if (Number.isFinite(minAmount)) {
+    params.push(minAmount)
+    filters.push(`t.amount >= $${params.length}`)
+  }
+  if (Number.isFinite(maxAmount)) {
+    params.push(maxAmount)
+    filters.push(`t.amount <= $${params.length}`)
+  }
+  if (highValueOnly) {
+    const threshold = Number(query.highValueThreshold ?? 0)
+    if (threshold > 0) {
+      params.push(threshold)
+      filters.push(`t.amount >= $${params.length}`)
+    }
+  }
+  if (attachment === 'present') {
+    filters.push('coalesce(ta_counts.attachment_count, 0) > 0')
+  } else if (attachment === 'missing') {
+    filters.push('coalesce(ta_counts.attachment_count, 0) = 0')
+  }
 
   const pool = getDatabasePool()
   const total = await pool.query<{ count: string }>(
@@ -90,6 +171,12 @@ export default defineEventHandler(async (event) => {
       select count(*)::text as count
       from transactions t
       join transaction_categories tc on tc.id = t.category_id
+      left join (
+        select transaction_id, count(*)::int as attachment_count
+        from transaction_attachments
+        where replaced_at is null
+        group by transaction_id
+      ) ta_counts on ta_counts.transaction_id = t.id
       where ${filters.join(' and ')}
     `,
     params,
@@ -116,6 +203,8 @@ export default defineEventHandler(async (event) => {
         t.amount::text,
         t.status::text,
         je.voucher_number as journal_voucher_number,
+        coalesce(ta_counts.attachment_count, 0)::text as attachment_count,
+        tc.requires_attachment as attachment_required,
         creator.full_name as created_by_name,
         approver.full_name as approved_by_name,
         t.approved_at::text,
@@ -128,10 +217,16 @@ export default defineEventHandler(async (event) => {
       left join society_bank_accounts ba on ba.id = t.bank_account_id
       left join billing_periods bp on bp.id = t.billing_period_id
       left join journal_entries je on je.transaction_id = t.id and je.status = 'POSTED'
+      left join (
+        select transaction_id, count(*)::int as attachment_count
+        from transaction_attachments
+        where replaced_at is null
+        group by transaction_id
+      ) ta_counts on ta_counts.transaction_id = t.id
       left join users creator on creator.id = t.created_by_user_id
       left join users approver on approver.id = t.approved_by_user_id
       where ${filters.join(' and ')}
-      order by t.transaction_date desc, t.created_at desc
+      order by ${orderBy} ${sortDirection}, t.created_at desc
       limit $${params.length - 1} offset $${params.length}
     `,
     params,

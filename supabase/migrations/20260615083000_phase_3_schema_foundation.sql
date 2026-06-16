@@ -4,7 +4,6 @@ create extension if not exists pg_trgm;
 
 create type app_role as enum ('ADMIN', 'MANAGER', 'SERVICE_STAFF', 'RESIDENT', 'GUARD');
 create type relationship_type as enum ('OWNER', 'TENANT', 'FAMILY_MEMBER');
-create type owner_type as enum ('PRIMARY_OWNER', 'CO_OWNER');
 create type occupancy_status as enum ('SELF_OCCUPIED', 'TENANTED', 'VACANT');
 create type access_scope as enum ('OWNERSHIP', 'TENANCY', 'HOUSEHOLD');
 create type notification_channel_preset as enum (
@@ -156,40 +155,6 @@ begin
   end if;
 
   return new;
-end;
-$$;
-
-create or replace function validate_owner_percentages_complete()
-returns trigger
-language plpgsql
-as $$
-declare
-  v_flat_id uuid;
-  v_sum numeric(7,2);
-  v_count integer;
-  v_percent_count integer;
-begin
-  v_flat_id = coalesce(new.flat_id, old.flat_id);
-
-  if v_flat_id is null then
-    return coalesce(new, old);
-  end if;
-
-  select
-    coalesce(sum(ownership_percent), 0),
-    count(*),
-    count(ownership_percent)
-  into v_sum, v_count, v_percent_count
-  from flat_residents
-  where flat_id = v_flat_id
-    and relationship_type = 'OWNER'
-    and is_active = true;
-
-  if v_count > 0 and v_percent_count = v_count and v_sum <> 100.00 then
-    raise exception 'active owner ownership percentages must total exactly 100 for flat %', v_flat_id;
-  end if;
-
-  return coalesce(new, old);
 end;
 $$;
 
@@ -460,9 +425,6 @@ create table flat_residents (
   is_billing_contact boolean not null default false,
   can_login boolean not null default true,
   is_active boolean not null default true,
-  owner_type owner_type,
-  ownership_percent numeric(5,2),
-  ownership_label text,
   ownership_start_date date,
   lease_start_date date,
   lease_end_date date,
@@ -471,12 +433,9 @@ create table flat_residents (
   occupancy_status occupancy_status,
   access_scope access_scope,
   relationship_note text,
-  security_deposit_amount numeric(10,2),
   ended_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  check (ownership_percent is null or (ownership_percent > 0 and ownership_percent <= 100)),
-  check (security_deposit_amount is null or security_deposit_amount >= 0),
   check (lease_end_date is null or lease_start_date is null or lease_end_date >= lease_start_date),
   check (contract_end_date is null or contract_start_date is null or contract_end_date >= contract_start_date)
 );
@@ -1332,11 +1291,6 @@ create trigger flats_set_updated_at before update on flats for each row execute 
 create trigger users_set_updated_at before update on users for each row execute function set_updated_at();
 create trigger flat_residents_set_updated_at before update on flat_residents for each row execute function set_updated_at();
 create trigger flat_residents_validate before insert or update on flat_residents for each row execute function ensure_valid_flat_resident();
-create constraint trigger flat_residents_owner_percentages_complete
-  after insert or update or delete on flat_residents
-  deferrable initially deferred
-  for each row
-  execute function validate_owner_percentages_complete();
 create trigger billing_periods_set_updated_at before update on billing_periods for each row execute function set_updated_at();
 create trigger maintenance_charges_set_updated_at before update on maintenance_charges for each row execute function set_updated_at();
 create trigger maintenance_dues_set_updated_at before update on maintenance_dues for each row execute function set_updated_at();

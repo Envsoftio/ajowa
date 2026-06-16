@@ -46,6 +46,7 @@ export const shellNavigation: Record<AppShellType, AppNavItem[]> = {
     { label: 'Defaulters', to: '/admin/billing/defaulters', icon: 'pi pi-exclamation-triangle' },
     { label: 'Finance Accounts', to: '/admin/finance/accounts', icon: 'pi pi-sitemap' },
     { label: 'Finance Categories', to: '/admin/finance/categories', icon: 'pi pi-tags' },
+    { label: 'Transactions', to: '/admin/finance/transactions', icon: 'pi pi-receipt' },
     { label: 'Finance Journals', to: '/admin/finance/journals', icon: 'pi pi-book' },
     { label: 'Period Close', to: '/admin/finance/period-close', icon: 'pi pi-lock' },
     { label: 'Reconciliation', to: '/admin/finance/reconciliation', icon: 'pi pi-verified' },

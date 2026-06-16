@@ -9,12 +9,8 @@ import type { SocietyPolicySettings } from '~/types/domain'
 
 export const relationshipTypes = [
   'OWNER',
-  'CO_OWNER',
   'TENANT',
   'FAMILY_MEMBER',
-  'SHOP_OWNER',
-  'SHOP_TENANT',
-  'COMMERCIAL_OCCUPANT',
 ] as const
 
 export const occupancyStatuses = [
@@ -112,8 +108,6 @@ export const residentRelationshipSchema = z.object({
   isBillingContact: z.boolean().default(false),
   canLogin: z.boolean().default(true),
   isActive: z.boolean().default(true),
-  ownershipPercent: z.coerce.number().positive().max(100).nullable().optional(),
-  ownershipLabel: z.string().trim().max(100).nullable().optional(),
   ownershipStartDate: z.string().date().nullable().optional(),
   leaseStartDate: z.string().date().nullable().optional(),
   leaseEndDate: z.string().date().nullable().optional(),
@@ -122,8 +116,6 @@ export const residentRelationshipSchema = z.object({
   occupancyStatus: z.enum(occupancyStatuses).nullable().optional(),
   accessScope: z.enum(accessScopes).nullable().optional(),
   relationshipNote: z.string().trim().max(300).nullable().optional(),
-  securityDepositAmount: z.coerce.number().nonnegative().nullable().optional(),
-  securityDepositNote: z.string().trim().max(300).nullable().optional(),
 })
 
 export const residentSchema = z.object({
@@ -265,51 +257,54 @@ export const normalizeSocietySettings = (
 }
 
 export const ensureResidentRelationshipsAreValid = (input: ResidentInput) => {
-  let primaryCount = 0
-  let billingCount = 0
-  const activeRelationshipCounts = new Map<string, number>()
+  const primaryContactCounts = new Map<string, number>()
+  const billingContactCounts = new Map<string, number>()
+  const activeTenantCounts = new Map<string, number>()
 
   for (const relationship of input.relationships) {
     if (relationship.isPrimaryContact && relationship.isActive) {
-      primaryCount += 1
+      primaryContactCounts.set(
+        relationship.flatId,
+        (primaryContactCounts.get(relationship.flatId) ?? 0) + 1,
+      )
     }
 
     if (relationship.isBillingContact && relationship.isActive) {
-      billingCount += 1
-    }
-
-    if (
-      relationship.isActive &&
-      ['TENANT', 'SHOP_TENANT', 'COMMERCIAL_OCCUPANT'].includes(
-        relationship.relationshipType,
-      )
-    ) {
-      activeRelationshipCounts.set(
+      billingContactCounts.set(
         relationship.flatId,
-        (activeRelationshipCounts.get(relationship.flatId) ?? 0) + 1,
+        (billingContactCounts.get(relationship.flatId) ?? 0) + 1,
+      )
+    }
+
+    if (relationship.isActive && relationship.relationshipType === 'TENANT') {
+      activeTenantCounts.set(
+        relationship.flatId,
+        (activeTenantCounts.get(relationship.flatId) ?? 0) + 1,
       )
     }
   }
 
-  if (primaryCount > 1) {
-    throw new AppError({
-      code: 'VALIDATION_ERROR',
-      statusCode: 400,
-      message:
-        'Only one active primary contact is allowed per resident submission.',
-    })
+  for (const [flatId, count] of primaryContactCounts.entries()) {
+    if (count > 1) {
+      throw new AppError({
+        code: 'VALIDATION_ERROR',
+        statusCode: 400,
+        message: `Only one active primary contact is allowed for flat ${flatId}.`,
+      })
+    }
   }
 
-  if (billingCount > 1) {
-    throw new AppError({
-      code: 'VALIDATION_ERROR',
-      statusCode: 400,
-      message:
-        'Only one active billing contact is allowed per resident submission.',
-    })
+  for (const [flatId, count] of billingContactCounts.entries()) {
+    if (count > 1) {
+      throw new AppError({
+        code: 'VALIDATION_ERROR',
+        statusCode: 400,
+        message: `Only one active billing contact is allowed for flat ${flatId}.`,
+      })
+    }
   }
 
-  for (const [flatId, count] of activeRelationshipCounts.entries()) {
+  for (const [flatId, count] of activeTenantCounts.entries()) {
     if (count > 1) {
       throw new AppError({
         code: 'VALIDATION_ERROR',

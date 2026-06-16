@@ -95,7 +95,6 @@ const runAction = async (action: string) => {
             <span>Primary: {{ relationship.isPrimaryContact ? 'Yes' : 'No' }}</span>
             <span>Billing: {{ relationship.isBillingContact ? 'Yes' : 'No' }}</span>
             <span>Lease: {{ relationship.leaseStartDate ?? '—' }} to {{ relationship.leaseEndDate ?? '—' }}</span>
-            <span>Deposit: {{ relationship.securityDepositAmount ?? '—' }}</span>
           </div>
         </article>
       </section>

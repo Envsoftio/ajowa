@@ -88,8 +88,8 @@ export default defineEventHandler(async (event) => {
           f.is_active,
           f.created_at::text,
           f.updated_at::text,
-          count(*) filter (where fr.relationship_type in ('OWNER', 'CO_OWNER', 'SHOP_OWNER') and fr.is_active = true)::text as owner_count,
-          count(*) filter (where fr.relationship_type in ('TENANT', 'SHOP_TENANT', 'COMMERCIAL_OCCUPANT') and fr.is_active = true)::text as tenant_count
+          count(*) filter (where fr.relationship_type = 'OWNER' and fr.is_active = true)::text as owner_count,
+          count(*) filter (where fr.relationship_type = 'TENANT' and fr.is_active = true)::text as tenant_count
         from flats f
         inner join blocks b on b.id = f.block_id
         left join flat_residents fr on fr.flat_id = f.id

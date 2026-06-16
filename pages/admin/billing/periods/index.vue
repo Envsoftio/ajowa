@@ -118,6 +118,40 @@ const summary = computed(() => {
   }
 })
 
+const nextOpenPeriod = computed(
+  () => periods.value.find((period) => !period.isLocked) ?? null,
+)
+
+const periodsWithoutDues = computed(() =>
+  periods.value.filter(
+    (period) => !period.isLocked && (period.dueCount ?? 0) === 0,
+  ),
+)
+
+const chargeCoverageLabel = computed(() => {
+  if (chargeRuleSummary.value.overrideCount > 0) {
+    return 'Flat-specific rates are active'
+  }
+
+  if (chargeRuleSummary.value.unitTypeCount > 0) {
+    return 'Unit-type rates are active'
+  }
+
+  return 'Default rates apply to every flat'
+})
+
+const excessPolicyLabel = computed(() =>
+  chargeForm.excessPaymentHandling
+    .split('_')
+    .map((part) => part.charAt(0) + part.slice(1).toLowerCase())
+    .join(' '),
+)
+
+const getFrequencyLabel = (frequency: BillingFrequency) =>
+  frequencyOptions.find((item) => item.value === frequency)?.label ?? frequency
+
+const canGenerateForPeriod = (period: BillingPeriod) => !period.isLocked
+
 const frequencyOptions = [
   { label: 'Monthly', value: 'MONTHLY' },
   { label: 'Quarterly', value: 'QUARTERLY' },
@@ -477,6 +511,7 @@ const saveCharges = async () => {
               <p class="eyebrow">Active charge rules</p>
               <h2>{{ formatMoney(chargeRuleSummary.defaultTotal) }}</h2>
               <p>
+                {{ chargeCoverageLabel }} ·
                 {{ chargeRuleSummary.defaultCount }} default line item{{
                   chargeRuleSummary.defaultCount === 1 ? '' : 's'
                 }}
@@ -509,6 +544,53 @@ const saveCharges = async () => {
           <span><i class="pi pi-bolt" /> Generate</span>
           <span><i class="pi pi-lock" /> Lock</span>
         </div>
+      </div>
+
+      <div class="billing-workflow-panel">
+        <div>
+          <p class="eyebrow">Next action</p>
+          <h2 v-if="periodsWithoutDues.length > 0">
+            Generate dues for {{ periodsWithoutDues[0]?.label }}
+          </h2>
+          <h2 v-else-if="nextOpenPeriod">
+            Review and lock {{ nextOpenPeriod.label }}
+          </h2>
+          <h2 v-else>Create the next billing period</h2>
+          <p>
+            Open periods can still be edited. Once a period is checked and
+            closed, lock it so dues, payments, and journals stay auditable.
+          </p>
+        </div>
+        <dl>
+          <div>
+            <dt>Needs dues</dt>
+            <dd>{{ periodsWithoutDues.length }}</dd>
+          </div>
+          <div>
+            <dt>Open period</dt>
+            <dd>{{ nextOpenPeriod?.label ?? 'None' }}</dd>
+          </div>
+          <div>
+            <dt>Charge policy</dt>
+            <dd>{{ excessPolicyLabel }}</dd>
+          </div>
+        </dl>
+      </div>
+
+      <div class="admin-page-guide">
+        <h2>Recommended flow</h2>
+        <p>
+          Period setup works best as a short checklist before residents see any
+          payment request.
+        </p>
+        <ol>
+          <li>Confirm charge rules and late-fee policy.</li>
+          <li>Create the period with start, end, and due dates.</li>
+          <li>Preview dues, then generate them for all active flats.</li>
+          <li>
+            Lock the period only after collections and corrections are done.
+          </li>
+        </ol>
       </div>
 
       <div class="list-page__toolbar">
@@ -576,10 +658,7 @@ const saveCharges = async () => {
         <Column field="label" header="Period" />
         <Column field="frequency" header="Tenure">
           <template #body="{ data: row }">
-            <span>{{
-              frequencyOptions.find((item) => item.value === row.frequency)
-                ?.label ?? row.frequency
-            }}</span>
+            <span>{{ getFrequencyLabel(row.frequency) }}</span>
           </template>
         </Column>
         <Column header="Dates">
@@ -610,6 +689,7 @@ const saveCharges = async () => {
                 text
                 rounded
                 severity="secondary"
+                :disabled="row.isLocked"
                 aria-label="Generate preview for period"
                 title="Generate preview for period"
                 @click="openGenerationDialog(row)"
@@ -637,6 +717,65 @@ const saveCharges = async () => {
           </template>
         </Column>
       </DataTable>
+
+      <div class="list-page__cards">
+        <article v-for="period in periods" :key="period.id" class="list-card">
+          <div class="list-card__header">
+            <div>
+              <h3>{{ period.label }}</h3>
+              <p>{{ getFrequencyLabel(period.frequency) }}</p>
+            </div>
+            <AppStatusBadge :status="period.isLocked ? 'locked' : 'open'" />
+          </div>
+          <div class="list-card__row">
+            <span>Coverage</span>
+            <strong>
+              {{ formatDate(period.startDate) }} -
+              {{ formatDate(period.endDate) }}
+            </strong>
+          </div>
+          <div class="list-card__row">
+            <span>Due date</span>
+            <strong>{{ formatDate(period.dueDate) }}</strong>
+          </div>
+          <div class="list-card__row">
+            <span>Dues generated</span>
+            <strong>{{ period.dueCount ?? 0 }}</strong>
+          </div>
+          <div class="list-card__row">
+            <span>Still unpaid</span>
+            <strong>{{ period.unpaidDueCount ?? 0 }}</strong>
+          </div>
+          <div class="admin-inline-actions">
+            <Button
+              label="Generate"
+              icon="pi pi-bolt"
+              size="small"
+              severity="secondary"
+              outlined
+              :disabled="!canGenerateForPeriod(period)"
+              @click="openGenerationDialog(period)"
+            />
+            <Button
+              label="Edit"
+              icon="pi pi-pencil"
+              size="small"
+              severity="secondary"
+              outlined
+              :disabled="period.isLocked"
+              @click="editPeriod(period)"
+            />
+            <Button
+              :label="period.isLocked ? 'Unlock' : 'Lock'"
+              :icon="period.isLocked ? 'pi pi-lock-open' : 'pi pi-lock'"
+              size="small"
+              severity="secondary"
+              outlined
+              @click="openLockDialog(period)"
+            />
+          </div>
+        </article>
+      </div>
     </section>
 
     <Dialog

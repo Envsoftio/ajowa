@@ -491,6 +491,25 @@ a {
   box-shadow: var(--shadow-sm);
 }
 
+.list-card__header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.list-card__header h3,
+.list-card__header p {
+  margin: 0;
+}
+
+.list-card__header p {
+  color: var(--color-muted);
+  font-size: 0.9rem;
+}
+
 .list-card__row {
   display: flex;
   justify-content: space-between;
@@ -822,6 +841,186 @@ a {
   grid-column: 1 / -1;
 }
 
+.finance-entry-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(22rem, 0.42fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.finance-entry-side {
+  position: sticky;
+  top: 4.75rem;
+  display: grid;
+  gap: 1rem;
+}
+
+.finance-upload-card,
+.finance-summary-card,
+.transaction-action-bar,
+.finance-attachment-preview {
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.finance-upload-card,
+.finance-summary-card {
+  padding: 1rem;
+  display: grid;
+  gap: 1rem;
+}
+
+.finance-upload-card__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.finance-upload-card__header h3,
+.finance-success h1 {
+  margin: 0.25rem 0;
+}
+
+.finance-upload-card__input {
+  display: none;
+}
+
+.finance-attachment-preview {
+  display: grid;
+  gap: 0.85rem;
+  padding: 0.85rem;
+}
+
+.finance-attachment-preview__frame {
+  min-height: 18rem;
+  max-height: 28rem;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  overflow: auto;
+  display: grid;
+  place-items: center;
+}
+
+.finance-attachment-preview__frame img,
+.finance-attachment-preview__frame object {
+  width: 100%;
+  height: 100%;
+  min-height: 18rem;
+  object-fit: contain;
+}
+
+.finance-attachment-preview__empty {
+  min-height: 12rem;
+  display: grid;
+  place-items: center;
+  gap: 0.5rem;
+  color: var(--color-muted);
+  text-align: center;
+}
+
+.finance-attachment-preview__empty .pi {
+  font-size: 2rem;
+}
+
+.finance-attachment-preview__meta {
+  display: grid;
+  gap: 0.2rem;
+  overflow-wrap: anywhere;
+}
+
+.finance-attachment-preview__meta span,
+.muted-line {
+  color: var(--color-muted);
+  font-size: 0.82rem;
+}
+
+.finance-summary-card__amount {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.finance-summary-card__amount span,
+.finance-summary-card dt,
+.finance-detail-grid dt,
+.finance-success dt {
+  color: var(--color-muted);
+  font-size: 0.82rem;
+}
+
+.finance-summary-card__amount strong {
+  font-size: 1.55rem;
+  line-height: 1.1;
+}
+
+.finance-summary-card dl,
+.finance-detail-grid,
+.finance-success dl {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0;
+}
+
+.finance-summary-card dd,
+.finance-detail-grid dd,
+.finance-success dd {
+  margin: 0.15rem 0 0;
+  font-weight: 700;
+}
+
+.transaction-action-bar,
+.finance-quick-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: center;
+}
+
+.transaction-action-bar {
+  padding: 1rem;
+  justify-content: flex-end;
+}
+
+.finance-filter-toolbar {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.finance-filter-toolbar__grid {
+  align-items: end;
+}
+
+.finance-audit-timeline {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.finance-audit-timeline__item {
+  display: grid;
+  grid-template-columns: 0.75rem minmax(0, 1fr);
+  gap: 0.75rem;
+  align-items: start;
+}
+
+.finance-audit-timeline__item > span {
+  width: 0.75rem;
+  height: 0.75rem;
+  margin-top: 0.25rem;
+  border-radius: 50%;
+  background: var(--color-brand);
+}
+
+.finance-audit-timeline__item p {
+  margin: 0.25rem 0;
+  color: var(--color-muted);
+}
+
+.finance-audit-timeline__item small,
+.finance-audit-timeline__empty {
+  color: var(--color-muted);
+}
+
 .admin-toggle-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
@@ -1004,6 +1203,95 @@ a {
 
 .billing-flow .pi {
   color: var(--color-brand);
+}
+
+.billing-workflow-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(22rem, 0.7fr);
+  gap: 1rem;
+  align-items: stretch;
+  padding: 1rem;
+  border: 1px solid rgba(15, 118, 110, 0.22);
+  border-left: 4px solid var(--color-brand);
+  background: rgba(15, 118, 110, 0.08);
+}
+
+.billing-workflow-panel h2,
+.billing-workflow-panel p {
+  margin: 0;
+}
+
+.billing-workflow-panel h2 {
+  margin-top: 0.25rem;
+  font-size: 1.1rem;
+}
+
+.billing-workflow-panel p {
+  max-width: 48rem;
+  color: var(--color-muted);
+}
+
+.billing-workflow-panel dl {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.65rem;
+  margin: 0;
+}
+
+.billing-workflow-panel dl > div {
+  min-width: 0;
+  padding: 0.75rem;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-strong);
+}
+
+.billing-workflow-panel dt {
+  color: var(--color-muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.billing-workflow-panel dd {
+  margin: 0.25rem 0 0;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.billing-workflow-panel--dues {
+  border-color: rgba(245, 158, 11, 0.28);
+  border-left-color: var(--color-accent);
+  background: rgba(245, 158, 11, 0.08);
+}
+
+.billing-balance-cell {
+  display: grid;
+  gap: 0.25rem;
+  min-width: 7rem;
+}
+
+.billing-balance-cell span {
+  color: var(--color-muted);
+  font-size: 0.82rem;
+}
+
+.billing-balance-cell--card {
+  padding: 0.85rem 0;
+}
+
+.billing-progress-track {
+  width: 100%;
+  height: 0.45rem;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+}
+
+.billing-progress-track span {
+  display: block;
+  height: 100%;
+  background: var(--color-brand);
 }
 
 .billing-dialog-intro {
@@ -1295,13 +1583,21 @@ a {
 
   .admin-two-column,
   .admin-two-column--wide,
+  .finance-entry-layout,
   .admin-form-grid,
   .admin-charge-row,
   .billing-setup-strip,
   .billing-rule-summary,
   .billing-rule-summary dl,
+  .billing-workflow-panel,
+  .billing-workflow-panel dl,
   .billing-dialog-intro {
     grid-template-columns: 1fr;
+  }
+
+  .finance-entry-side {
+    position: static;
+    order: -1;
   }
 
   .billing-dialog-intro {

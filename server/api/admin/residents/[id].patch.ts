@@ -154,21 +154,17 @@ export default defineEventHandler(async (event) => {
               is_billing_contact = $5,
               can_login = $6,
               is_active = $7,
-              ownership_percent = $8,
-              ownership_label = $9,
-              ownership_start_date = $10,
-              lease_start_date = $11,
-              lease_end_date = $12,
-              contract_start_date = $13,
-              contract_end_date = $14,
-              occupancy_status = $15::occupancy_status,
-              access_scope = $16::access_scope,
-              relationship_note = $17,
-              security_deposit_amount = $18,
-              security_deposit_note = $19,
+              ownership_start_date = $8,
+              lease_start_date = $9,
+              lease_end_date = $10,
+              contract_start_date = $11,
+              contract_end_date = $12,
+              occupancy_status = $13::occupancy_status,
+              access_scope = $14::access_scope,
+              relationship_note = $15,
               ended_at = case when $7 = false then coalesce(ended_at, now()) else null end,
               updated_at = now()
-            where id = $1 and user_id = $20
+            where id = $1 and user_id = $16
           `,
           [
             relationship.id,
@@ -178,8 +174,6 @@ export default defineEventHandler(async (event) => {
             relationship.isBillingContact,
             relationship.canLogin,
             relationship.isActive,
-            relationship.ownershipPercent ?? null,
-            relationship.ownershipLabel ?? null,
             relationship.ownershipStartDate ?? null,
             relationship.leaseStartDate ?? null,
             relationship.leaseEndDate ?? null,
@@ -188,8 +182,6 @@ export default defineEventHandler(async (event) => {
             relationship.occupancyStatus ?? null,
             relationship.accessScope ?? null,
             relationship.relationshipNote ?? null,
-            relationship.securityDepositAmount ?? null,
-            relationship.securityDepositNote ?? null,
             id,
           ],
         )
@@ -204,8 +196,6 @@ export default defineEventHandler(async (event) => {
               is_billing_contact,
               can_login,
               is_active,
-              ownership_percent,
-              ownership_label,
               ownership_start_date,
               lease_start_date,
               lease_end_date,
@@ -213,12 +203,10 @@ export default defineEventHandler(async (event) => {
               contract_end_date,
               occupancy_status,
               access_scope,
-              relationship_note,
-              security_deposit_amount,
-              security_deposit_note
+              relationship_note
             )
             values (
-              $1, $2, $3::relationship_type, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::occupancy_status, $16::access_scope, $17, $18, $19
+              $1, $2, $3::relationship_type, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::occupancy_status, $14::access_scope, $15
             )
           `,
           [
@@ -229,8 +217,6 @@ export default defineEventHandler(async (event) => {
             relationship.isBillingContact,
             relationship.canLogin,
             relationship.isActive,
-            relationship.ownershipPercent ?? null,
-            relationship.ownershipLabel ?? null,
             relationship.ownershipStartDate ?? null,
             relationship.leaseStartDate ?? null,
             relationship.leaseEndDate ?? null,
@@ -239,8 +225,6 @@ export default defineEventHandler(async (event) => {
             relationship.occupancyStatus ?? null,
             relationship.accessScope ?? null,
             relationship.relationshipNote ?? null,
-            relationship.securityDepositAmount ?? null,
-            relationship.securityDepositNote ?? null,
           ],
         )
       }

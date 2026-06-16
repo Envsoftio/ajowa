@@ -131,9 +131,8 @@ export default defineEventHandler(async (event) => {
       isBillingContact: row.is_billing_contact,
       canPayNow:
         row.is_billing_contact &&
-        (['OWNER', 'CO_OWNER', 'SHOP_OWNER'].includes(row.relationship_type) ||
-          (['TENANT', 'SHOP_TENANT', 'COMMERCIAL_OCCUPANT'].includes(row.relationship_type) &&
-            settings.tenantPaymentsEnabled)),
+        (row.relationship_type === 'OWNER' ||
+          (row.relationship_type === 'TENANT' && settings.tenantPaymentsEnabled)),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }

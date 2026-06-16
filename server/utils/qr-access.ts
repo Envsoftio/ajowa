@@ -146,9 +146,9 @@ const getAccessRows = async (client: PoolClient, userId: string) => {
         and fr.is_active = true
         and (fr.ended_at is null or fr.ended_at > now())
         and (
-          fr.relationship_type in ('OWNER', 'CO_OWNER', 'SHOP_OWNER')
+          fr.relationship_type = 'OWNER'
           or (
-            fr.relationship_type in ('TENANT', 'SHOP_TENANT', 'COMMERCIAL_OCCUPANT')
+            fr.relationship_type = 'TENANT'
             and (fr.lease_start_date is null or fr.lease_start_date <= current_date)
             and (fr.lease_end_date is null or fr.lease_end_date >= current_date)
           )
@@ -162,8 +162,8 @@ const getAccessRows = async (client: PoolClient, userId: string) => {
 }
 
 const deriveBasis = (rows: RelatedFlatRow[]): AccessScope | null => {
-  if (rows.some((row) => ['OWNER', 'CO_OWNER', 'SHOP_OWNER'].includes(row.relationship_type))) return 'OWNERSHIP'
-  if (rows.some((row) => ['TENANT', 'SHOP_TENANT', 'COMMERCIAL_OCCUPANT'].includes(row.relationship_type))) return 'TENANCY'
+  if (rows.some((row) => row.relationship_type === 'OWNER')) return 'OWNERSHIP'
+  if (rows.some((row) => row.relationship_type === 'TENANT')) return 'TENANCY'
   if (rows.some((row) => row.relationship_type === 'FAMILY_MEMBER')) return 'HOUSEHOLD'
   return null
 }
@@ -204,8 +204,8 @@ export const recomputeUserAccess = async (
     const relatedFlats = await getAccessRows(client, userId)
     const accessRows = uniqueAccessRows(
       relatedFlats.filter((row) => {
-        if (['OWNER', 'CO_OWNER', 'SHOP_OWNER'].includes(row.relationship_type)) return true
-        if (['TENANT', 'SHOP_TENANT', 'COMMERCIAL_OCCUPANT'].includes(row.relationship_type)) return true
+        if (row.relationship_type === 'OWNER') return true
+        if (row.relationship_type === 'TENANT') return true
         if (row.relationship_type === 'FAMILY_MEMBER') {
           return societySettings.familyAccessEnabled && (row.access_scope ?? 'HOUSEHOLD') === 'HOUSEHOLD'
         }
@@ -498,7 +498,7 @@ export const verifyQrToken = async (
   const client = await getDatabasePool().connect()
   let scanResult: ScanResult = 'INVALID'
   let denialReason = 'Invalid QR code.'
-  let parsed: ReturnType<typeof parseQrPayload> | null = null
+  let parsed: ReturnType<typeof parseQrPayload> | null
   let tokenId: string | null = null
   let residentName: string | null = null
   let flatLabels: string[] = []

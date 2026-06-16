@@ -45,8 +45,6 @@ type RelationshipRow = {
   is_billing_contact: boolean
   can_login: boolean
   is_active: boolean
-  ownership_percent: string | null
-  ownership_label: string | null
   ownership_start_date: string | null
   lease_start_date: string | null
   lease_end_date: string | null
@@ -55,8 +53,6 @@ type RelationshipRow = {
   occupancy_status: string | null
   access_scope: string | null
   relationship_note: string | null
-  security_deposit_amount: string | null
-  security_deposit_note: string | null
   created_at: string
   updated_at: string
 }
@@ -73,8 +69,6 @@ const mapRelationship = (row: RelationshipRow): FlatResidentRelationship => ({
   isBillingContact: row.is_billing_contact,
   canLogin: row.can_login,
   isActive: row.is_active,
-  ownershipPercent: row.ownership_percent ? Number(row.ownership_percent) : null,
-  ownershipLabel: row.ownership_label,
   ownershipStartDate: row.ownership_start_date,
   leaseStartDate: row.lease_start_date,
   leaseEndDate: row.lease_end_date,
@@ -83,8 +77,6 @@ const mapRelationship = (row: RelationshipRow): FlatResidentRelationship => ({
   occupancyStatus: row.occupancy_status,
   accessScope: row.access_scope,
   relationshipNote: row.relationship_note,
-  securityDepositAmount: row.security_deposit_amount ? Number(row.security_deposit_amount) : null,
-  securityDepositNote: row.security_deposit_note,
   createdAt: row.created_at,
   updatedAt: row.updated_at,
 })
@@ -143,8 +135,6 @@ export default defineEventHandler(async (event) => {
           fr.is_billing_contact,
           fr.can_login,
           fr.is_active,
-          fr.ownership_percent::text,
-          fr.ownership_label,
           fr.ownership_start_date::text,
           fr.lease_start_date::text,
           fr.lease_end_date::text,
@@ -153,8 +143,6 @@ export default defineEventHandler(async (event) => {
           fr.occupancy_status::text,
           fr.access_scope::text,
           fr.relationship_note,
-          fr.security_deposit_amount::text,
-          fr.security_deposit_note,
           fr.created_at::text,
           fr.updated_at::text
         from flat_residents fr

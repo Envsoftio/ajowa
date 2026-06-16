@@ -53,8 +53,6 @@ const form = reactive({
       isBillingContact: true,
       canLogin: true,
       isActive: true,
-      ownershipPercent: null as number | null,
-      ownershipLabel: '',
       ownershipStartDate: '',
       leaseStartDate: '',
       leaseEndDate: '',
@@ -63,8 +61,6 @@ const form = reactive({
       occupancyStatus: 'SELF_OCCUPIED',
       accessScope: 'OWNERSHIP',
       relationshipNote: '',
-      securityDepositAmount: null as number | null,
-      securityDepositNote: '',
     },
   ],
 })
@@ -108,8 +104,6 @@ const addRelationship = () => {
     isBillingContact: false,
     canLogin: true,
     isActive: true,
-    ownershipPercent: null,
-    ownershipLabel: '',
     ownershipStartDate: '',
     leaseStartDate: '',
     leaseEndDate: '',
@@ -118,8 +112,6 @@ const addRelationship = () => {
     occupancyStatus: 'VACANT',
     accessScope: 'OWNERSHIP',
     relationshipNote: '',
-    securityDepositAmount: null,
-    securityDepositNote: '',
   })
 }
 
@@ -158,8 +150,6 @@ const resetForm = () => {
       isBillingContact: true,
       canLogin: true,
       isActive: true,
-      ownershipPercent: null,
-      ownershipLabel: '',
       ownershipStartDate: '',
       leaseStartDate: '',
       leaseEndDate: '',
@@ -168,8 +158,6 @@ const resetForm = () => {
       occupancyStatus: 'SELF_OCCUPIED',
       accessScope: 'OWNERSHIP',
       relationshipNote: '',
-      securityDepositAmount: null,
-      securityDepositNote: '',
     },
   ]
 }
@@ -215,8 +203,6 @@ const loadResident = async (resident: ResidentSummary) => {
     isBillingContact: relationship.isBillingContact,
     canLogin: relationship.canLogin,
     isActive: relationship.isActive,
-    ownershipPercent: relationship.ownershipPercent,
-    ownershipLabel: relationship.ownershipLabel ?? '',
     ownershipStartDate: relationship.ownershipStartDate ?? '',
     leaseStartDate: relationship.leaseStartDate ?? '',
     leaseEndDate: relationship.leaseEndDate ?? '',
@@ -225,8 +211,6 @@ const loadResident = async (resident: ResidentSummary) => {
     occupancyStatus: relationship.occupancyStatus ?? 'VACANT',
     accessScope: relationship.accessScope ?? 'OWNERSHIP',
     relationshipNote: relationship.relationshipNote ?? '',
-    securityDepositAmount: relationship.securityDepositAmount,
-    securityDepositNote: relationship.securityDepositNote ?? '',
   }))
   displayDialog.value = true
 }
@@ -250,14 +234,12 @@ const submit = async () => {
       leaseAgreementPath: form.leaseAgreementPath || null,
       relationships: form.relationships.map((relationship) => ({
         ...relationship,
-        ownershipLabel: relationship.ownershipLabel || null,
         ownershipStartDate: relationship.ownershipStartDate || null,
         leaseStartDate: relationship.leaseStartDate || null,
         leaseEndDate: relationship.leaseEndDate || null,
         contractStartDate: relationship.contractStartDate || null,
         contractEndDate: relationship.contractEndDate || null,
         relationshipNote: relationship.relationshipNote || null,
-        securityDepositNote: relationship.securityDepositNote || null,
       })),
     }
 
@@ -526,7 +508,7 @@ const loginFilter = computed({
               </label>
               <label>
                 <span>Relationship type</span>
-                <Select v-model="relationship.relationshipType" :options="['OWNER', 'CO_OWNER', 'TENANT', 'FAMILY_MEMBER', 'SHOP_OWNER', 'SHOP_TENANT', 'COMMERCIAL_OCCUPANT']" required />
+                <Select v-model="relationship.relationshipType" :options="['OWNER', 'TENANT', 'FAMILY_MEMBER']" required />
               </label>
               <label>
                 <span>Occupancy status</span>
@@ -535,18 +517,6 @@ const loginFilter = computed({
               <label>
                 <span>Access scope</span>
                 <Select v-model="relationship.accessScope" :options="['OWNERSHIP', 'TENANCY', 'HOUSEHOLD']" required />
-              </label>
-              <label>
-                <span>Ownership %</span>
-                <InputNumber v-model="relationship.ownershipPercent" :min="0" :max="100" fluid />
-              </label>
-              <label>
-                <span>Security deposit</span>
-                <InputNumber v-model="relationship.securityDepositAmount" :min="0" fluid />
-              </label>
-              <label>
-                <span>Ownership label</span>
-                <InputText v-model="relationship.ownershipLabel" />
               </label>
               <label>
                 <span>Lease start</span>

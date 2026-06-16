@@ -141,7 +141,7 @@ begin
   values
     ('41000000-0000-0000-0000-000000000001', '11111111-1111-1111-1111-111111111111', '40000000-0000-0000-0000-000000000001', 'A-101', '1', '2BHK', 1250.00, 'SELF_OCCUPIED'),
     ('41000000-0000-0000-0000-000000000002', '11111111-1111-1111-1111-111111111111', '40000000-0000-0000-0000-000000000001', 'A-302', '3', '3BHK', 1540.00, 'TENANTED'),
-    ('41000000-0000-0000-0000-000000000003', '11111111-1111-1111-1111-111111111111', '40000000-0000-0000-0000-000000000002', 'B-204', '2', '2BHK', 1180.00, 'VACANT'),
+    ('41000000-0000-0000-0000-000000000003', '11111111-1111-1111-1111-111111111111', '40000000-0000-0000-0000-000000000002', 'B-204', '2', '2BHK', 1180.00, 'SELF_OCCUPIED'),
     ('41000000-0000-0000-0000-000000000004', '11111111-1111-1111-1111-111111111111', '40000000-0000-0000-0000-000000000002', 'B-501', '5', 'Shop', 860.00, 'SELF_OCCUPIED')
   on conflict (id) do update
     set flat_number = excluded.flat_number,
@@ -274,9 +274,6 @@ begin
     is_billing_contact,
     can_login,
     is_active,
-    owner_type,
-    ownership_percent,
-    ownership_label,
     ownership_start_date,
     lease_start_date,
     lease_end_date,
@@ -284,19 +281,16 @@ begin
     access_scope
   )
   values
-    ('42000000-0000-0000-0000-000000000001', '41000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000003', 'OWNER', true, true, true, true, 'PRIMARY_OWNER', 60.00, 'Primary owner', '2024-01-01', null, null, 'SELF_OCCUPIED', 'OWNERSHIP'),
-    ('42000000-0000-0000-0000-000000000002', '41000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000004', 'OWNER', false, false, true, true, 'CO_OWNER', 40.00, 'Co-owner', '2024-01-01', null, null, 'SELF_OCCUPIED', 'OWNERSHIP'),
-    ('42000000-0000-0000-0000-000000000003', '41000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000006', 'FAMILY_MEMBER', false, false, true, true, null, null, null, null, null, null, 'SELF_OCCUPIED', 'HOUSEHOLD'),
-    ('42000000-0000-0000-0000-000000000004', '41000000-0000-0000-0000-000000000002', '30000000-0000-0000-0000-000000000003', 'OWNER', false, true, true, true, 'PRIMARY_OWNER', 100.00, 'Single owner', '2023-06-01', null, null, 'TENANTED', 'OWNERSHIP'),
-    ('42000000-0000-0000-0000-000000000005', '41000000-0000-0000-0000-000000000002', '30000000-0000-0000-0000-000000000005', 'TENANT', true, false, true, true, null, null, 'Tenant household', null, '2026-04-01', '2027-03-31', 'TENANTED', 'TENANCY')
+    ('42000000-0000-0000-0000-000000000001', '41000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000003', 'OWNER', true, true, true, true, '2024-01-01', null, null, 'SELF_OCCUPIED', 'OWNERSHIP'),
+    ('42000000-0000-0000-0000-000000000002', '41000000-0000-0000-0000-000000000003', '30000000-0000-0000-0000-000000000004', 'OWNER', true, true, true, true, '2024-01-01', null, null, 'SELF_OCCUPIED', 'OWNERSHIP'),
+    ('42000000-0000-0000-0000-000000000003', '41000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000006', 'FAMILY_MEMBER', false, false, true, true, null, null, null, 'SELF_OCCUPIED', 'HOUSEHOLD'),
+    ('42000000-0000-0000-0000-000000000004', '41000000-0000-0000-0000-000000000002', '30000000-0000-0000-0000-000000000003', 'OWNER', false, true, true, true, '2023-06-01', null, null, 'TENANTED', 'OWNERSHIP'),
+    ('42000000-0000-0000-0000-000000000005', '41000000-0000-0000-0000-000000000002', '30000000-0000-0000-0000-000000000005', 'TENANT', true, false, true, true, null, '2026-04-01', '2027-03-31', 'TENANTED', 'TENANCY')
   on conflict (id) do update
     set is_primary_contact = excluded.is_primary_contact,
         is_billing_contact = excluded.is_billing_contact,
         can_login = excluded.can_login,
         is_active = excluded.is_active,
-        owner_type = excluded.owner_type,
-        ownership_percent = excluded.ownership_percent,
-        ownership_label = excluded.ownership_label,
         ownership_start_date = excluded.ownership_start_date,
         lease_start_date = excluded.lease_start_date,
         lease_end_date = excluded.lease_end_date,

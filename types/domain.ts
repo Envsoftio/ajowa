@@ -95,8 +95,6 @@ export type FlatResidentRelationship = AuditFields & {
   isBillingContact: boolean
   canLogin: boolean
   isActive: boolean
-  ownershipPercent: number | null
-  ownershipLabel: string | null
   ownershipStartDate: string | null
   leaseStartDate: string | null
   leaseEndDate: string | null
@@ -105,8 +103,6 @@ export type FlatResidentRelationship = AuditFields & {
   occupancyStatus: string | null
   accessScope: string | null
   relationshipNote: string | null
-  securityDepositAmount: number | null
-  securityDepositNote: string | null
 }
 
 export type FlatDetail = FlatSummary & {
@@ -358,6 +354,8 @@ export type FinanceTransactionType = 'INCOME' | 'EXPENSE'
 
 export type FinanceLifecycleStatus = 'DRAFT' | 'PENDING_REVIEW' | 'POSTED' | 'REJECTED' | 'RETURNED' | 'REVERSED' | 'CANCELLED'
 
+export type FinancePaymentMode = 'CASH' | 'BANK_TRANSFER' | 'UPI' | 'CHEQUE' | 'CARD' | 'OTHER'
+
 export type FinanceCategory = AuditFields & {
   id: string
   societyId: string | null
@@ -393,11 +391,64 @@ export type FinanceTransaction = AuditFields & {
   amount: number
   status: FinanceLifecycleStatus
   journalVoucherNumber: string | null
+  attachmentCount?: number
+  hasAttachments?: boolean
+  attachmentRequired?: boolean
   createdByName: string | null
   approvedByName: string | null
   approvedAt: string | null
   postedAt: string | null
   reversedAt: string | null
+}
+
+export type FinanceTransactionAttachment = AuditFields & {
+  id: string
+  transactionId: string
+  fileName: string
+  filePath: string
+  mimeType: string
+  sizeBytes: number
+  checksum: string | null
+  uploadedByUserId: string | null
+  uploadedByName: string | null
+  replacesAttachmentId: string | null
+  replacedAt: string | null
+  downloadUrl: string | null
+}
+
+export type FinanceJournalLine = {
+  id: string
+  journalEntryId: string
+  lineNo: number
+  accountHeadId: string
+  accountHeadCode: string
+  accountHeadName: string
+  lineType: 'DEBIT' | 'CREDIT'
+  amount: number
+  description: string | null
+}
+
+export type FinanceAuditEvent = {
+  id: string
+  eventKey: string
+  action: string
+  severity: string
+  actorName: string | null
+  metadata: Record<string, unknown>
+  beforeState: Record<string, unknown> | null
+  afterState: Record<string, unknown> | null
+  occurredAt: string
+}
+
+export type FinanceTransactionDetail = {
+  transaction: FinanceTransaction
+  attachments: FinanceTransactionAttachment[]
+  journals: Array<FinanceJournalEntry & { lines: FinanceJournalLine[] }>
+  auditEvents: FinanceAuditEvent[]
+  linkedEntries: {
+    originalVoucherNumber: string | null
+    reversingVoucherNumber: string | null
+  }
 }
 
 export type FinanceJournalEntry = AuditFields & {
