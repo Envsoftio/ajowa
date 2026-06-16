@@ -306,28 +306,48 @@ const chargeForm = reactive({
   flatOverrideCharges: [] as BillingChargeConfig['flatOverrideCharges'],
 })
 
+const chargeRuleSummary = computed(() => {
+  const defaultTotal = chargeForm.defaultCharges.reduce(
+    (sum, charge) => sum + Number(charge.amount || 0),
+    0,
+  )
+
+  return {
+    defaultCount: chargeForm.defaultCharges.length,
+    defaultTotal,
+    unitTypeCount: chargeForm.flatTypeCharges.length,
+    overrideCount: chargeForm.flatOverrideCharges.length,
+    graceDays: chargeForm.graceDays,
+    lateFeePerDay: chargeForm.lateFeePerDay,
+  }
+})
+
+const syncChargeForm = (config: BillingChargeConfig) => {
+  chargeForm.graceDays = config.graceDays
+  chargeForm.lateFeePerDay = config.lateFeePerDay
+  chargeForm.billingTenure = config.billingTenure
+  chargeForm.excessPaymentHandling = config.excessPaymentHandling
+  chargeForm.defaultCharges = config.defaultCharges.map((item) => ({
+    ...item,
+  }))
+  chargeForm.flatTypeCharges = config.flatTypeCharges.map((item) => ({
+    flatType: item.flatType,
+    label: item.label,
+    charges: item.charges.map((charge) => ({ ...charge })),
+  }))
+  chargeForm.flatOverrideCharges = config.flatOverrideCharges.map((item) => ({
+    flatId: item.flatId,
+    flatNumber: item.flatNumber,
+    blockName: item.blockName,
+    charges: item.charges.map((charge) => ({ ...charge })),
+  }))
+}
+
 watch(
   chargeConfig,
   (config) => {
     if (!config) return
-    chargeForm.graceDays = config.graceDays
-    chargeForm.lateFeePerDay = config.lateFeePerDay
-    chargeForm.billingTenure = config.billingTenure
-    chargeForm.excessPaymentHandling = config.excessPaymentHandling
-    chargeForm.defaultCharges = config.defaultCharges.map((item) => ({
-      ...item,
-    }))
-    chargeForm.flatTypeCharges = config.flatTypeCharges.map((item) => ({
-      flatType: item.flatType,
-      label: item.label,
-      charges: item.charges.map((charge) => ({ ...charge })),
-    }))
-    chargeForm.flatOverrideCharges = config.flatOverrideCharges.map((item) => ({
-      flatId: item.flatId,
-      flatNumber: item.flatNumber,
-      blockName: item.blockName,
-      charges: item.charges.map((charge) => ({ ...charge })),
-    }))
+    syncChargeForm(config)
   },
   { immediate: true },
 )
@@ -366,6 +386,21 @@ const syncFlatOverrideLabel = (index: number) => {
 }
 
 const savingCharges = ref(false)
+const chargeDialogVisible = ref(false)
+
+const openChargeDialog = () => {
+  if (chargeConfig.value) {
+    syncChargeForm(chargeConfig.value)
+  }
+  chargeDialogVisible.value = true
+}
+
+const closeChargeDialog = () => {
+  if (chargeConfig.value) {
+    syncChargeForm(chargeConfig.value)
+  }
+  chargeDialogVisible.value = false
+}
 
 const saveCharges = async () => {
   savingCharges.value = true
@@ -382,6 +417,7 @@ const saveCharges = async () => {
       life: 3000,
     })
     await refreshCharges()
+    chargeDialogVisible.value = false
   } finally {
     savingCharges.value = false
   }
@@ -418,6 +454,14 @@ const saveCharges = async () => {
         </div>
         <div class="list-page__exports">
           <Button
+            label="Configure charges"
+            icon="pi pi-sliders-h"
+            severity="secondary"
+            outlined
+            :loading="chargePending"
+            @click="openChargeDialog"
+          />
+          <Button
             label="Create period"
             icon="pi pi-plus"
             @click="openCreatePeriod"
@@ -425,41 +469,53 @@ const saveCharges = async () => {
         </div>
       </header>
 
-      <div class="admin-page-guide">
-        <h2>How to use this page</h2>
-        <p>
-          Use this page to define the society billing cycle before dues are
-          created for flats.
-        </p>
-        <ol>
-          <li>
-            Confirm the charge configuration first, because generated dues use
-            the active charge rules.
-          </li>
-          <li>
-            Create a billing period with start, end, and due dates for the
-            cycle.
-          </li>
-          <li>
-            Use the lightning action to preview and generate dues for all active
-            flats or selected flats.
-          </li>
-          <li>
-            Lock the period after review so later corrections are intentional
-            and audited.
-          </li>
-        </ol>
+      <div class="billing-setup-strip">
+        <div class="billing-rule-summary">
+          <div class="billing-rule-summary__header">
+            <span class="billing-rule-summary__icon pi pi-receipt" />
+            <div>
+              <p class="eyebrow">Active charge rules</p>
+              <h2>{{ formatMoney(chargeRuleSummary.defaultTotal) }}</h2>
+              <p>
+                {{ chargeRuleSummary.defaultCount }} default line item{{
+                  chargeRuleSummary.defaultCount === 1 ? '' : 's'
+                }}
+              </p>
+            </div>
+          </div>
+          <dl>
+            <div>
+              <dt>Unit templates</dt>
+              <dd>{{ chargeRuleSummary.unitTypeCount }}</dd>
+            </div>
+            <div>
+              <dt>Flat overrides</dt>
+              <dd>{{ chargeRuleSummary.overrideCount }}</dd>
+            </div>
+            <div>
+              <dt>Late fee</dt>
+              <dd>
+                {{ formatMoney(chargeRuleSummary.lateFeePerDay) }}/day after
+                {{ chargeRuleSummary.graceDays }} grace day{{
+                  chargeRuleSummary.graceDays === 1 ? '' : 's'
+                }}
+              </dd>
+            </div>
+          </dl>
+        </div>
+        <div class="billing-flow">
+          <span><i class="pi pi-sliders-h" /> Charges</span>
+          <span><i class="pi pi-calendar-plus" /> Period</span>
+          <span><i class="pi pi-bolt" /> Generate</span>
+          <span><i class="pi pi-lock" /> Lock</span>
+        </div>
       </div>
 
       <div class="list-page__toolbar">
         <label class="list-page__search">
           <span class="field-label">
             Search
-            <i
-              class="pi pi-info-circle"
-              title="Find billing periods by their visible label."
-              aria-label="Find billing periods by their visible label."
-            />
+            <AppHelpIcon text="Find billing periods by their visible label." />
           </span>
           <IconField>
             <InputIcon class="pi pi-search" />
@@ -473,10 +529,8 @@ const saveCharges = async () => {
           <label>
             <span class="field-label">
               State
-              <i
-                class="pi pi-info-circle"
-                title="Show all periods, only editable open periods, or locked periods."
-                aria-label="Show all periods, only editable open periods, or locked periods."
+              <AppHelpIcon
+                text="Show all periods, only editable open periods, or locked periods."
               />
             </span>
             <Select
@@ -494,10 +548,8 @@ const saveCharges = async () => {
           <label>
             <span class="field-label">
               Tenure
-              <i
-                class="pi pi-info-circle"
-                title="Filter periods by billing frequency, such as monthly or quarterly."
-                aria-label="Filter periods by billing frequency, such as monthly or quarterly."
+              <AppHelpIcon
+                text="Filter periods by billing frequency, such as monthly or quarterly."
               />
             </span>
             <Select
@@ -587,48 +639,33 @@ const saveCharges = async () => {
       </DataTable>
     </section>
 
-    <section class="surface-card admin-form-layout">
-      <header class="list-page__header">
-        <div>
-          <h1>Charge configuration</h1>
-          <p>
-            Set default charges, unit-type templates, flat overrides, grace
-            days, and late fee rules.
-          </p>
-        </div>
-        <div class="list-page__exports">
-          <Button
-            label="Save charges"
-            icon="pi pi-save"
-            :loading="savingCharges"
-            @click="saveCharges"
-          />
-        </div>
-      </header>
-
-      <div class="admin-page-guide">
-        <h2>How charge rules are applied</h2>
-        <p>
-          When dues are generated, the system chooses the most specific matching
-          charge rule.
-        </p>
-        <ol>
-          <li>Flat overrides are used first for selected flats.</li>
-          <li>Unit-type charges are used next for matching flat types.</li>
-          <li>Default charges are used when no specific rule exists.</li>
-        </ol>
-      </div>
-
+    <Dialog
+      v-model:visible="chargeDialogVisible"
+      header="Charge configuration"
+      modal
+      class="billing-charge-dialog"
+      :style="{ width: 'min(1120px, 96vw)' }"
+      @hide="closeChargeDialog"
+    >
       <AppSkeletonState v-if="chargePending" />
       <form v-else class="admin-form-layout" @submit.prevent="saveCharges">
+        <div class="billing-dialog-intro">
+          <div>
+            <p class="eyebrow">Rule priority</p>
+            <h2>Flat overrides, then unit type, then defaults</h2>
+          </div>
+          <p>
+            These values are used when dues are generated for a saved billing
+            period.
+          </p>
+        </div>
+
         <div class="admin-form-grid">
           <label>
             <span class="field-label">
               Billing tenure pack
-              <i
-                class="pi pi-info-circle"
-                title="Default billing frequency used when preparing maintenance cycles."
-                aria-label="Default billing frequency used when preparing maintenance cycles."
+              <AppHelpIcon
+                text="Default billing frequency used when preparing maintenance cycles."
               />
             </span>
             <Select
@@ -641,10 +678,8 @@ const saveCharges = async () => {
           <label>
             <span class="field-label">
               Excess payment policy
-              <i
-                class="pi pi-info-circle"
-                title="Decides what to do when a resident pays more than the balance amount."
-                aria-label="Decides what to do when a resident pays more than the balance amount."
+              <AppHelpIcon
+                text="Decides what to do when a resident pays more than the balance amount."
               />
             </span>
             <Select
@@ -661,10 +696,8 @@ const saveCharges = async () => {
           <label>
             <span class="field-label">
               Grace days
-              <i
-                class="pi pi-info-circle"
-                title="Number of days after the due date before late fee calculation starts."
-                aria-label="Number of days after the due date before late fee calculation starts."
+              <AppHelpIcon
+                text="Number of days after the due date before late fee calculation starts."
               />
             </span>
             <InputNumber v-model="chargeForm.graceDays" :min="0" fluid />
@@ -672,10 +705,8 @@ const saveCharges = async () => {
           <label>
             <span class="field-label">
               Late fee per day
-              <i
-                class="pi pi-info-circle"
-                title="Daily late fee added after grace days expire for unpaid balances."
-                aria-label="Daily late fee added after grace days expire for unpaid balances."
+              <AppHelpIcon
+                text="Daily late fee added after grace days expire for unpaid balances."
               />
             </span>
             <InputNumber v-model="chargeForm.lateFeePerDay" :min="0" fluid />
@@ -705,10 +736,8 @@ const saveCharges = async () => {
             <label>
               <span class="field-label">
                 Charge label
-                <i
-                  class="pi pi-info-circle"
-                  title="Name shown in the resident charge breakdown, such as Maintenance Charges."
-                  aria-label="Name shown in the resident charge breakdown, such as Maintenance Charges."
+                <AppHelpIcon
+                  text="Name shown in the resident charge breakdown, such as Maintenance Charges."
                 />
               </span>
               <InputText v-model="charge.label" placeholder="Charge label" />
@@ -716,10 +745,8 @@ const saveCharges = async () => {
             <label>
               <span class="field-label">
                 Amount
-                <i
-                  class="pi pi-info-circle"
-                  title="Amount charged for this line item in the billing period."
-                  aria-label="Amount charged for this line item in the billing period."
+                <AppHelpIcon
+                  text="Amount charged for this line item in the billing period."
                 />
               </span>
               <InputNumber v-model="charge.amount" :min="0" fluid />
@@ -761,10 +788,8 @@ const saveCharges = async () => {
               <label>
                 <span class="field-label">
                   Unit type
-                  <i
-                    class="pi pi-info-circle"
-                    title="Flat unit type this charge template applies to, for example 2BHK."
-                    aria-label="Flat unit type this charge template applies to, for example 2BHK."
+                  <AppHelpIcon
+                    text="Flat unit type this charge template applies to, for example 2BHK."
                   />
                 </span>
                 <InputText
@@ -791,10 +816,8 @@ const saveCharges = async () => {
               <label>
                 <span class="field-label">
                   Charge label
-                  <i
-                    class="pi pi-info-circle"
-                    title="Name shown in the resident charge breakdown for this unit type."
-                    aria-label="Name shown in the resident charge breakdown for this unit type."
+                  <AppHelpIcon
+                    text="Name shown in the resident charge breakdown for this unit type."
                   />
                 </span>
                 <InputText v-model="charge.label" placeholder="Charge label" />
@@ -802,10 +825,8 @@ const saveCharges = async () => {
               <label>
                 <span class="field-label">
                   Amount
-                  <i
-                    class="pi pi-info-circle"
-                    title="Amount charged to flats matching this unit type."
-                    aria-label="Amount charged to flats matching this unit type."
+                  <AppHelpIcon
+                    text="Amount charged to flats matching this unit type."
                   />
                 </span>
                 <InputNumber v-model="charge.amount" :min="0" fluid />
@@ -856,10 +877,8 @@ const saveCharges = async () => {
               <label>
                 <span class="field-label">
                   Flat
-                  <i
-                    class="pi pi-info-circle"
-                    title="Specific flat that should use this override instead of default or unit-type charges."
-                    aria-label="Specific flat that should use this override instead of default or unit-type charges."
+                  <AppHelpIcon
+                    text="Specific flat that should use this override instead of default or unit-type charges."
                   />
                 </span>
                 <Select
@@ -891,10 +910,8 @@ const saveCharges = async () => {
               <label>
                 <span class="field-label">
                   Charge label
-                  <i
-                    class="pi pi-info-circle"
-                    title="Name shown in the resident charge breakdown for this flat."
-                    aria-label="Name shown in the resident charge breakdown for this flat."
+                  <AppHelpIcon
+                    text="Name shown in the resident charge breakdown for this flat."
                   />
                 </span>
                 <InputText v-model="charge.label" placeholder="Charge label" />
@@ -902,10 +919,8 @@ const saveCharges = async () => {
               <label>
                 <span class="field-label">
                   Amount
-                  <i
-                    class="pi pi-info-circle"
-                    title="Amount charged to this selected flat for the line item."
-                    aria-label="Amount charged to this selected flat for the line item."
+                  <AppHelpIcon
+                    text="Amount charged to this selected flat for the line item."
                   />
                 </span>
                 <InputNumber v-model="charge.amount" :min="0" fluid />
@@ -931,8 +946,24 @@ const saveCharges = async () => {
             />
           </div>
         </div>
+
+        <div class="admin-inline-actions dialog-actions billing-dialog-actions">
+          <Button
+            type="button"
+            label="Cancel"
+            severity="secondary"
+            outlined
+            @click="closeChargeDialog"
+          />
+          <Button
+            type="submit"
+            label="Save configuration"
+            icon="pi pi-save"
+            :loading="savingCharges"
+          />
+        </div>
       </form>
-    </section>
+    </Dialog>
 
     <Dialog
       v-model:visible="periodDialogVisible"
@@ -952,10 +983,8 @@ const saveCharges = async () => {
           <label class="admin-form-grid__full">
             <span class="field-label">
               Label
-              <i
-                class="pi pi-info-circle"
-                title="Readable period name shown to admins and residents, such as June 2026."
-                aria-label="Readable period name shown to admins and residents, such as June 2026."
+              <AppHelpIcon
+                text="Readable period name shown to admins and residents, such as June 2026."
               />
             </span>
             <InputText v-model="periodForm.label" required />
@@ -963,10 +992,8 @@ const saveCharges = async () => {
           <label>
             <span class="field-label">
               Tenure
-              <i
-                class="pi pi-info-circle"
-                title="Billing frequency for this period. It helps categorize monthly, quarterly, and custom cycles."
-                aria-label="Billing frequency for this period. It helps categorize monthly, quarterly, and custom cycles."
+              <AppHelpIcon
+                text="Billing frequency for this period. It helps categorize monthly, quarterly, and custom cycles."
               />
             </span>
             <Select
@@ -979,10 +1006,8 @@ const saveCharges = async () => {
           <label>
             <span class="field-label">
               Start date
-              <i
-                class="pi pi-info-circle"
-                title="First calendar date covered by this billing period."
-                aria-label="First calendar date covered by this billing period."
+              <AppHelpIcon
+                text="First calendar date covered by this billing period."
               />
             </span>
             <InputText v-model="periodForm.startDate" type="date" required />
@@ -990,10 +1015,8 @@ const saveCharges = async () => {
           <label>
             <span class="field-label">
               End date
-              <i
-                class="pi pi-info-circle"
-                title="Last calendar date covered by this billing period."
-                aria-label="Last calendar date covered by this billing period."
+              <AppHelpIcon
+                text="Last calendar date covered by this billing period."
               />
             </span>
             <InputText v-model="periodForm.endDate" type="date" required />
@@ -1001,10 +1024,8 @@ const saveCharges = async () => {
           <label>
             <span class="field-label">
               Due date
-              <i
-                class="pi pi-info-circle"
-                title="Payment deadline shown to residents. Late fees start after this date plus grace days."
-                aria-label="Payment deadline shown to residents. Late fees start after this date plus grace days."
+              <AppHelpIcon
+                text="Payment deadline shown to residents. Late fees start after this date plus grace days."
               />
             </span>
             <InputText v-model="periodForm.dueDate" type="date" required />
@@ -1040,10 +1061,8 @@ const saveCharges = async () => {
         <label v-if="!lockTarget?.isLocked" class="admin-form-grid__full">
           <span class="field-label">
             Lock reason
-            <i
-              class="pi pi-info-circle"
-              title="Short audit note explaining why the period is being locked."
-              aria-label="Short audit note explaining why the period is being locked."
+            <AppHelpIcon
+              text="Short audit note explaining why the period is being locked."
             />
           </span>
           <Textarea v-model="lockReason" rows="3" auto-resize />
@@ -1074,10 +1093,8 @@ const saveCharges = async () => {
         <label>
           <span class="field-label">
             Flats
-            <i
-              class="pi pi-info-circle"
-              title="Leave empty to generate dues for all active flats, or select specific flats for a limited run."
-              aria-label="Leave empty to generate dues for all active flats, or select specific flats for a limited run."
+            <AppHelpIcon
+              text="Leave empty to generate dues for all active flats, or select specific flats for a limited run."
             />
           </span>
           <MultiSelect
