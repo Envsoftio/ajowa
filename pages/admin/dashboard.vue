@@ -174,14 +174,18 @@ const hasWelcomeName = computed(() => authStore.me?.user?.fullName || authStore.
     </section>
 
     <div class="surface-grid dashboard-kpis">
-      <section v-if="pending" v-for="item in 6" :key="`kpi-skeleton-${item}`" class="surface-card">
-        <AppSkeletonState :lines="2" />
-      </section>
-      <section v-else v-for="card in kpiCards" :key="card.title" class="surface-card">
-        <p class="eyebrow">{{ card.title }}</p>
-        <h3>{{ card.value }}</h3>
-        <p>{{ card.note }}</p>
-      </section>
+      <template v-if="pending">
+        <section v-for="item in 6" :key="`kpi-skeleton-${item}`" class="surface-card">
+          <AppSkeletonState :lines="2" />
+        </section>
+      </template>
+      <template v-else>
+        <section v-for="card in kpiCards" :key="card.title" class="surface-card">
+          <p class="eyebrow">{{ card.title }}</p>
+          <h3>{{ card.value }}</h3>
+          <p>{{ card.note }}</p>
+        </section>
+      </template>
     </div>
 
     <section class="admin-two-column--wide">

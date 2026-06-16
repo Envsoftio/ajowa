@@ -31,6 +31,8 @@ export const shellNavigation: Record<AppShellType, AppNavItem[]> = {
   ],
   resident: [
     { label: 'Dues', to: '/my/dues', icon: 'pi pi-wallet' },
+    { label: 'Service Requests', to: '/my/service-requests', icon: 'pi pi-ticket' },
+    { label: 'QR Access', to: '/my/qr', icon: 'pi pi-qrcode' },
     { label: 'Verify Email', to: '/verify-email', icon: 'pi pi-envelope' },
     { label: 'Password Change', to: '/change-password', icon: 'pi pi-key' },
   ],
@@ -41,6 +43,8 @@ export const shellNavigation: Record<AppShellType, AppNavItem[]> = {
     { label: 'Flats', to: '/admin/flats', icon: 'pi pi-home' },
     { label: 'Residents', to: '/admin/residents', icon: 'pi pi-users' },
     { label: 'Staff', to: '/admin/staff', icon: 'pi pi-id-card' },
+    { label: 'Service Departments', to: '/admin/service-departments', icon: 'pi pi-sitemap' },
+    { label: 'Service Requests', to: '/admin/service-requests', icon: 'pi pi-ticket' },
     { label: 'Billing Periods', to: '/admin/billing/periods', icon: 'pi pi-calendar' },
     { label: 'Dues', to: '/admin/billing/dues', icon: 'pi pi-wallet' },
     { label: 'Defaulters', to: '/admin/billing/defaulters', icon: 'pi pi-exclamation-triangle' },
@@ -55,6 +59,7 @@ export const shellNavigation: Record<AppShellType, AppNavItem[]> = {
   ],
   'service-staff': [
     { label: 'Dashboard', to: '/service/dashboard', icon: 'pi pi-list-check' },
+    { label: 'Tickets', to: '/service/tickets', icon: 'pi pi-ticket' },
     { label: 'Password Change', to: '/change-password', icon: 'pi pi-key' },
   ],
   guard: [

@@ -1,4 +1,4 @@
-import { ZodError, type ZodType } from 'zod'
+import { ZodError, type z, type ZodType } from 'zod'
 import type { H3Event } from 'h3'
 import { createPaginatedResult, normalizeListQuery, normalizePaginationParams } from '~/shared/api'
 import type {
@@ -37,7 +37,7 @@ export const createPaginatedSuccess = <T>(
 ): ApiSuccessResponse<PaginatedResult<T>> =>
   createApiSuccess(event, createPaginatedResult(items, total, params))
 
-export const validateInput = <T>(schema: ZodType<T>, input: unknown): T => {
+export const validateInput = <S extends ZodType>(schema: S, input: unknown): z.output<S> => {
   try {
     return schema.parse(input)
   } catch (error) {

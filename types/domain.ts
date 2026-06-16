@@ -169,6 +169,174 @@ export type StaffSummary = AuditFields & {
   permissions: string[]
 }
 
+export type ServicePriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'EMERGENCY'
+
+export type ServiceRequestStatus =
+  | 'OPEN'
+  | 'ASSIGNED'
+  | 'ACKNOWLEDGED'
+  | 'IN_PROGRESS'
+  | 'ON_HOLD'
+  | 'RESOLVED'
+  | 'CLOSED'
+  | 'REOPENED'
+  | 'CANCELLED'
+  | 'NEEDS_REASSIGNMENT'
+
+export type ServiceRequestSource =
+  | 'RESIDENT_REQUEST'
+  | 'COMMON_AREA_REPORT'
+  | 'STAFF_REPORTED'
+  | 'ADMIN_CREATED'
+  | 'SYSTEM_CREATED'
+
+export type ServiceLocationType = 'FLAT' | 'COMMON_AREA' | 'SOCIETY_ASSET'
+
+export type ServiceCommentVisibility = 'INTERNAL_NOTE' | 'RESIDENT_VISIBLE' | 'SYSTEM'
+
+export type ServiceDepartment = AuditFields & {
+  id: string
+  societyId: string
+  code: string
+  name: string
+  description: string | null
+  isActive: boolean
+  allowsQueueVisibility: boolean
+  staffCount?: number
+  openTicketCount?: number
+  staffAssignments?: ServiceStaffDepartmentAssignment[]
+}
+
+export type ServiceStaffDepartmentAssignment = {
+  id: string
+  departmentId: string
+  userId: string
+  fullName: string
+  email: string
+  isPrimary: boolean
+  isActive: boolean
+}
+
+export type ServiceCategoryRoute = AuditFields & {
+  id: string
+  societyId: string
+  categoryKey: string
+  categoryLabel: string
+  locationType: ServiceLocationType | null
+  departmentId: string
+  departmentName: string
+  defaultPriority: ServicePriority | null
+  isActive: boolean
+}
+
+export type ServiceSlaRule = AuditFields & {
+  id: string
+  societyId: string
+  departmentId: string | null
+  departmentName: string | null
+  priority: ServicePriority
+  acknowledgeWithinMinutes: number
+  resolveWithinMinutes: number
+  isActive: boolean
+}
+
+export type ServiceRequestSummary = AuditFields & {
+  id: string
+  societyId: string
+  requestNumber: string
+  requesterUserId: string | null
+  requesterName: string | null
+  requesterMobileNumber: string | null
+  flatId: string | null
+  flatLabel: string | null
+  blockName: string | null
+  departmentId: string | null
+  departmentName: string | null
+  assigneeUserId: string | null
+  assigneeName: string | null
+  category: string
+  title: string
+  description: string
+  sourceType: ServiceRequestSource
+  locationType: ServiceLocationType
+  areaName: string | null
+  assetReference: string | null
+  priority: ServicePriority
+  status: ServiceRequestStatus
+  visibility: 'RESIDENT_VISIBLE' | 'INTERNAL_ONLY'
+  firstResponseDueAt: string | null
+  dueByAt: string | null
+  firstRespondedAt: string | null
+  acknowledgedAt: string | null
+  resolvedAt: string | null
+  closedAt: string | null
+  reopenedAt: string | null
+  escalationLevel: number
+  isSlaBreached: boolean
+  ageMinutes: number
+  isOverdue: boolean
+}
+
+export type ServiceRequestEvent = {
+  id: string
+  serviceRequestId: string
+  eventType: string
+  actorUserId: string | null
+  actorName: string | null
+  visibility: ServiceCommentVisibility
+  fromStatus: ServiceRequestStatus | null
+  toStatus: ServiceRequestStatus | null
+  metadata: Record<string, unknown>
+  occurredAt: string
+}
+
+export type ServiceRequestComment = {
+  id: string
+  serviceRequestId: string
+  authorUserId: string | null
+  authorName: string | null
+  visibility: ServiceCommentVisibility
+  commentBody: string
+  createdAt: string
+}
+
+export type ServiceRequestAttachment = {
+  id: string
+  serviceRequestId: string
+  uploadedByUserId: string | null
+  uploadedByName: string | null
+  fileName: string
+  filePath: string
+  mimeType: string
+  sizeBytes: number
+  checksum: string | null
+  createdAt: string
+}
+
+export type ServiceRequestDetail = ServiceRequestSummary & {
+  events: ServiceRequestEvent[]
+  comments: ServiceRequestComment[]
+  attachments: ServiceRequestAttachment[]
+}
+
+export type ServiceRequestQueueSummary = {
+  open: number
+  unassigned: number
+  overdue: number
+  emergency: number
+  reopened: number
+  assignedToday: number
+  departmentQueue: number
+  inProgress: number
+  resolvedToday: number
+  departmentBacklog: Array<{
+    departmentId: string | null
+    departmentName: string
+    openCount: number
+    overdueCount: number
+  }>
+}
+
 // --- Phase 6: Billing Types ---
 
 export type BillingFrequency = 'MONTHLY' | 'QUARTERLY' | 'HALF_YEARLY' | 'YEARLY' | 'CUSTOM'

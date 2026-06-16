@@ -1,0 +1,13 @@
+import { createApiSuccess, readJsonBody, validateInput } from '~/server/utils/api'
+import { requireRole } from '~/server/utils/auth'
+import { readUuidParam } from '~/server/utils/master-data'
+import { serviceRequestStatusSchema, updateServiceRequestStatus } from '~/server/utils/service-requests'
+
+export default defineEventHandler(async (event) => {
+  const authMe = await requireRole(event, ['ADMIN', 'MANAGER'])
+  const id = readUuidParam(event)
+  const body = validateInput(serviceRequestStatusSchema, await readJsonBody(event))
+  await updateServiceRequestStatus(authMe, id, body, 'admin')
+
+  return createApiSuccess(event, { id })
+})

@@ -16,9 +16,25 @@ type VerifyResponse = {
   }
 }
 
+type ScannerController = {
+  start: (
+    cameraConfig: { facingMode: string },
+    config: { fps: number; qrbox: { width: number; height: number } },
+    onSuccess: (decodedText: string) => void,
+    onError?: (errorMessage: string) => void,
+  ) => Promise<unknown>
+  pause?: () => Promise<void> | void
+  resume?: () => Promise<void> | void
+  stop?: () => Promise<void> | void
+  clear?: () => Promise<void> | void
+}
+
+const getErrorMessage = (error: unknown, fallback: string) =>
+  error instanceof Error ? error.message : fallback
+
 const api = useApi()
 const scannerId = 'guard-qr-reader'
-const scanner = shallowRef<any>(null)
+const scanner = shallowRef<ScannerController | null>(null)
 const isStarting = ref(false)
 const cameraError = ref('')
 const manualToken = ref('')
@@ -36,11 +52,17 @@ const verify = async (token: string) => {
     })
     result.value = response.data
     await scanner.value?.pause?.()
-  } catch (error: any) {
+  } catch (error: unknown) {
     result.value = {
       allowed: false,
       result: 'INVALID',
-      reason: error?.data?.message ?? 'Network or verification error. Try again.',
+      reason:
+        typeof error === 'object' &&
+        error != null &&
+        'data' in error &&
+        typeof (error as { data?: { message?: unknown } }).data?.message === 'string'
+          ? (error as { data: { message: string } }).data.message
+          : 'Network or verification error. Try again.',
       residentName: null,
       flatLabels: [],
     }
@@ -59,14 +81,15 @@ const startScanner = async () => {
       return
     }
     const { Html5Qrcode } = await import('html5-qrcode')
-    scanner.value = new Html5Qrcode(scannerId)
-    await scanner.value.start(
+    const scannerInstance: ScannerController = new Html5Qrcode(scannerId)
+    scanner.value = scannerInstance
+    await scannerInstance.start(
       { facingMode: 'environment' },
       { fps: 10, qrbox: { width: 260, height: 260 } },
       (decodedText: string) => verify(decodedText),
     )
-  } catch (error: any) {
-    cameraError.value = error?.message ?? 'Camera permission is needed to scan QR codes.'
+  } catch (error: unknown) {
+    cameraError.value = getErrorMessage(error, 'Camera permission is needed to scan QR codes.')
   } finally {
     isStarting.value = false
   }
