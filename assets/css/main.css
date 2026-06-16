@@ -989,6 +989,11 @@ a {
   align-items: start;
 }
 
+.finance-entry-notices {
+  display: grid;
+  gap: 0.75rem;
+}
+
 .finance-entry-side {
   position: sticky;
   top: 4.75rem;

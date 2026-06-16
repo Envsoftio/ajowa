@@ -63,7 +63,12 @@ const reverse = async () => {
 
 <template>
   <div class="landing-page">
-    <AppState v-if="pending" variant="loading" title="Loading transaction" />
+    <AppState
+      v-if="pending"
+      variant="loading"
+      title="Loading transaction"
+      message="Preparing the finance entry details."
+    />
     <EmptyFinanceState
       v-else-if="!detail || !transaction"
       title="Transaction not found"

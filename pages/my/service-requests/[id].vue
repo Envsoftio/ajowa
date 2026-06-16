@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { ServiceRequestDetail } from '~/types/domain'
+import type { ServiceRequestDetail, ServiceRequestStatus } from '~/types/domain'
 
 definePageMeta({
   layout: 'resident',
@@ -32,7 +32,7 @@ const addComment = async (payload: { visibility: 'RESIDENT_VISIBLE' | 'INTERNAL_
   }
 }
 
-const updateStatus = async (payload: { status: 'REOPENED'; comment?: string | null; reason?: string | null }) => {
+const updateStatus = async (payload: { status: ServiceRequestStatus; comment?: string | null; reason?: string | null }) => {
   saving.value = true
   try {
     await serviceRequests.updateStatus(String(route.params.id), payload)

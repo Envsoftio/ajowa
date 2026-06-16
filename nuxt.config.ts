@@ -7,6 +7,12 @@ export default defineNuxtConfig({
     enabled: true,
   },
   modules: ['@pinia/nuxt', '@primevue/nuxt-module', '@nuxt/eslint'],
+  components: [
+    {
+      path: '~/components',
+      pathPrefix: false,
+    },
+  ],
   css: ['primeicons/primeicons.css', '~/assets/css/main.css'],
   runtimeConfig: {
     databaseUrl: process.env.DATABASE_URL ?? process.env.SUPABASE_DB_URL ?? '',

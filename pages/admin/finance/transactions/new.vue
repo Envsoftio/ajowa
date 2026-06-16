@@ -18,6 +18,19 @@ type BankAccountsResponse = { ok: true; data: { items: BankAccount[] } }
 type PeriodsResponse = { ok: true; data: { items: BillingPeriod[] } }
 type SocietyResponse = { ok: true; data: SocietyProfile }
 
+const DEFAULT_POLICY = {
+  billingTenure: 'MONTHLY',
+  excessPaymentHandling: 'KEEP_AS_ADVANCE',
+  tenantPaymentsEnabled: true,
+  familyAccessEnabled: true,
+  notificationScope: 'CONFIGURABLE',
+  financeApprovalRequired: true,
+  attachmentsRequired: true,
+  highValueThreshold: 10000,
+  graceDays: 0,
+  lateFeePerDay: 50,
+} satisfies SocietyProfile['settings']
+
 const route = useRoute()
 const api = useApi()
 const { buildTransactionDetailLink, buildTransactionCreateLink } =
@@ -27,22 +40,42 @@ const routeType = computed<FinanceTransactionType>(() =>
   String(route.query.type ?? '').toLowerCase() === 'income' ? 'INCOME' : 'EXPENSE',
 )
 
-const { data: categoriesData } = await useAsyncData(
+const {
+  data: categoriesData,
+  pending: categoriesPending,
+  error: categoriesError,
+  refresh: refreshCategories,
+} = await useAsyncData(
   'new-finance-categories',
   () => api<CategoriesResponse>('/api/categories', { query: { isActive: 'true' } }),
 )
-const { data: bankAccountsData } = await useAsyncData(
+const {
+  data: bankAccountsData,
+  pending: bankAccountsPending,
+  error: bankAccountsError,
+  refresh: refreshBankAccounts,
+} = await useAsyncData(
   'new-finance-bank-accounts',
   () =>
     api<BankAccountsResponse>('/api/admin/finance/bank-accounts', {
       query: { isActive: 'true' },
     }),
 )
-const { data: periodsData } = await useAsyncData(
+const {
+  data: periodsData,
+  pending: periodsPending,
+  error: periodsError,
+  refresh: refreshPeriods,
+} = await useAsyncData(
   'new-finance-periods',
   () => api<PeriodsResponse>('/api/admin/billing/periods', { query: { pageSize: 200 } }),
 )
-const { data: societyData } = await useAsyncData('new-finance-society', () =>
+const {
+  data: societyData,
+  pending: societyPending,
+  error: societyError,
+  refresh: refreshSociety,
+} = await useAsyncData('new-finance-society', () =>
   api<SocietyResponse>('/api/admin/society/profile'),
 )
 
@@ -55,12 +88,51 @@ const success = ref<{
 const categories = computed(() => categoriesData.value?.data.items ?? [])
 const bankAccounts = computed(() => bankAccountsData.value?.data.items ?? [])
 const periods = computed(() => periodsData.value?.data.items ?? [])
-const policy = computed(() => societyData.value?.data.settings)
+const policy = computed(() => societyData.value?.data.settings ?? DEFAULT_POLICY)
+const pending = computed(
+  () =>
+    categoriesPending.value ||
+    bankAccountsPending.value ||
+    periodsPending.value ||
+    societyPending.value,
+)
+const loadError = computed(
+  () =>
+    categoriesError.value ||
+    bankAccountsError.value ||
+    periodsError.value ||
+    societyError.value,
+)
+
+const refresh = async () => {
+  await Promise.all([
+    refreshCategories(),
+    refreshBankAccounts(),
+    refreshPeriods(),
+    refreshSociety(),
+  ])
+}
 </script>
 
 <template>
   <div class="landing-page">
-    <section v-if="success" class="surface-card finance-success">
+    <AppState
+      v-if="pending"
+      variant="loading"
+      title="Loading finance form"
+      message="Preparing categories, accounts, billing periods, and policies."
+    />
+
+    <AppState
+      v-else-if="loadError"
+      variant="error"
+      title="Finance form unavailable"
+      message="The setup data for this transaction could not be loaded."
+      action-label="Retry"
+      @retry="refresh"
+    />
+
+    <section v-else-if="success" class="surface-card finance-success">
       <p class="eyebrow">Saved</p>
       <h1>Transaction recorded</h1>
       <dl>
@@ -96,8 +168,17 @@ const policy = computed(() => societyData.value?.data.settings)
       </div>
     </section>
 
+    <div v-else-if="!success" class="finance-entry-notices">
+      <Message v-if="categories.length === 0" severity="warn" :closable="false">
+        Add active finance categories before saving this transaction.
+      </Message>
+      <Message v-if="bankAccounts.length === 0" severity="warn" :closable="false">
+        Add an active bank or cash account before saving this transaction.
+      </Message>
+    </div>
+
     <TransactionForm
-      v-if="policy && !success"
+      v-if="!pending && !loadError && !success"
       :initial-type="routeType"
       :categories="categories"
       :bank-accounts="bankAccounts"

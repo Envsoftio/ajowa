@@ -9,7 +9,7 @@ alter type notification_job_status add value if not exists 'PROCESSING';
 alter type delivery_status add value if not exists 'CLICKED';
 
 alter table notices
-  add column if not exists attachment_file_id uuid references stored_files(id) on delete set null,
+  add column if not exists attachment_file_id uuid references file_objects(id) on delete set null,
   add column if not exists attachment_label text,
   add column if not exists audience_filter jsonb not null default '{}'::jsonb,
   add column if not exists notification_event_id uuid references notification_events(id) on delete set null;

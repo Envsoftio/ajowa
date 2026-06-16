@@ -253,6 +253,8 @@ export const normalizeSocietySettings = (
           ? 10000
           : defaultSocietyPolicies.highValueThreshold),
     ),
+    graceDays: normalized.graceDays ?? defaultSocietyPolicies.graceDays,
+    lateFeePerDay: normalized.lateFeePerDay ?? defaultSocietyPolicies.lateFeePerDay,
   }
 }
 
