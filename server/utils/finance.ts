@@ -162,6 +162,7 @@ export type CategoryRow = {
   account_head_code: string | null
   account_head_name: string | null
   account_head_type: AccountHead['headType'] | null
+  transaction_count: string
   requires_attachment: boolean
   is_system: boolean
   is_active: boolean
@@ -283,6 +284,7 @@ export const mapCategoryRow = (row: CategoryRow): FinanceCategory => ({
   accountHeadCode: row.account_head_code,
   accountHeadName: row.account_head_name,
   accountHeadType: row.account_head_type,
+  transactionCount: Number(row.transaction_count ?? 0),
   requiresAttachment: row.requires_attachment,
   isSystem: row.is_system,
   isActive: row.is_active,

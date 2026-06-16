@@ -36,11 +36,9 @@ const { data, pending, refresh } = await useAsyncData('my-notifications', () =>
     query: {
       page: 1,
       pageSize: 100,
-      filters: {
-        status: query.status || undefined,
-        priority: query.priority || undefined,
-        category: query.category || undefined,
-      },
+      status: query.status || undefined,
+      priority: query.priority || undefined,
+      category: query.category || undefined,
     },
   }),
   { watch: [query] },

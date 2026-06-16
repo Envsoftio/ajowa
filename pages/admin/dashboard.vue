@@ -362,7 +362,7 @@ const hasWelcomeName = computed(() => authStore.me?.user?.fullName || authStore.
 }
 
 .dashboard-kpis .surface-card {
-  min-height: 7.8rem;
+  min-height: 6rem;
 }
 
 .dashboard-panel__header {

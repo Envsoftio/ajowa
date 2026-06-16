@@ -13,6 +13,15 @@ definePageMeta({
 
 type CategoriesResponse = { ok: true; data: { items: FinanceCategory[] } }
 type AccountsResponse = { ok: true; data: { items: AccountHead[] } }
+type CategoryPayload = {
+  code?: string
+  name?: string
+  transactionType?: FinanceTransactionType
+  categoryGroup?: string
+  accountHeadId?: string
+  requiresAttachment?: boolean
+  isActive?: boolean
+}
 
 const api = useApi()
 const toast = useToast()
@@ -54,7 +63,7 @@ const loadCategories = () =>
 
 const loadAccounts = () =>
   api<AccountsResponse>('/api/admin/finance/accounts', {
-    query: { isActive: 'true' },
+    query: { isActive: '' },
   })
 
 const {
@@ -76,11 +85,11 @@ const accountOptions = computed(() =>
     .filter(
       (account) =>
         account.headType === form.transactionType &&
-        account.isActive &&
-        account.allowsManualEntries,
+        ((account.isActive && account.allowsManualEntries) ||
+          account.id === selected.value?.accountHeadId),
     )
     .map((account) => ({
-      label: `${account.code} - ${account.name}`,
+      label: `${account.code} - ${account.name}${account.isActive ? '' : ' (inactive)'}`,
       value: account.id,
     })),
 )
@@ -134,25 +143,67 @@ const editCategory = (category: FinanceCategory) => {
   dialog.value = true
 }
 
+const buildCreatePayload = (): CategoryPayload => ({
+  code: form.code,
+  name: form.name,
+  transactionType: form.transactionType,
+  categoryGroup: form.categoryGroup,
+  accountHeadId: form.accountHeadId,
+  requiresAttachment: form.requiresAttachment,
+  isActive: form.isActive,
+})
+
+const buildUpdatePayload = (category: FinanceCategory): CategoryPayload => {
+  const payload: CategoryPayload = {}
+
+  if (!category.isSystem && form.code !== category.code) {
+    payload.code = form.code
+  }
+  if (form.name !== category.name) {
+    payload.name = form.name
+  }
+  if (!category.isSystem && form.transactionType !== category.transactionType) {
+    payload.transactionType = form.transactionType
+  }
+  if (form.categoryGroup !== category.categoryGroup) {
+    payload.categoryGroup = form.categoryGroup
+  }
+  if (form.accountHeadId && form.accountHeadId !== category.accountHeadId) {
+    payload.accountHeadId = form.accountHeadId
+  }
+  if (form.requiresAttachment !== category.requiresAttachment) {
+    payload.requiresAttachment = form.requiresAttachment
+  }
+  if (form.isActive !== category.isActive) {
+    payload.isActive = form.isActive
+  }
+
+  return payload
+}
+
 const submitCategory = async () => {
   saving.value = true
   try {
-    const payload = selected.value?.isSystem
-      ? {
-          name: form.name,
-          categoryGroup: form.categoryGroup,
-          accountHeadId: form.accountHeadId,
-          requiresAttachment: form.requiresAttachment,
-          isActive: form.isActive,
-        }
-      : { ...form }
+    if (!selected.value && !form.accountHeadId) {
+      toast.add({
+        severity: 'warn',
+        summary: 'Posting account required',
+        detail: 'Choose an active income or expense account before creating the category.',
+        life: 10000,
+      })
+      return
+    }
 
     if (selected.value) {
+      const payload = buildUpdatePayload(selected.value)
+
       await api(`/api/admin/finance/categories/${selected.value.id}`, {
         method: 'PATCH',
         body: payload,
       })
     } else {
+      const payload = buildCreatePayload()
+
       await api('/api/admin/finance/categories', {
         method: 'POST',
         body: payload,
@@ -173,10 +224,33 @@ const submitCategory = async () => {
   }
 }
 
+const getDeleteBlockedReason = (category: FinanceCategory) => {
+  if (category.isSystem) {
+    return 'System categories cannot be deleted.'
+  }
+
+  if (category.transactionCount > 0) {
+    return `${category.transactionCount} transaction${category.transactionCount === 1 ? '' : 's'} use this category. Mark it inactive instead.`
+  }
+
+  return ''
+}
+
 const deleteCategory = async (category: FinanceCategory) => {
+  const blockedReason = getDeleteBlockedReason(category)
+  if (blockedReason) {
+    toast.add({
+      severity: 'warn',
+      summary: 'Cannot delete category',
+      detail: blockedReason,
+      life: 10000,
+    })
+    return
+  }
+
   const confirmed = await confirmAction({
     header: 'Delete category?',
-    message: `Delete ${category.name}? Used categories should be marked inactive instead.`,
+    message: `Delete ${category.name}? Only unused custom categories can be deleted.`,
     acceptLabel: 'Delete',
   })
 
@@ -339,6 +413,15 @@ const deleteCategory = async (category: FinanceCategory) => {
             <AppStatusBadge :status="row.isActive ? 'active' : 'inactive'" />
           </template>
         </Column>
+        <Column field="transactionCount" header="Used">
+          <template #body="{ data: row }">
+            <Tag
+              :value="row.transactionCount"
+              :severity="row.transactionCount > 0 ? 'info' : 'secondary'"
+              rounded
+            />
+          </template>
+        </Column>
         <Column header="Actions" style="width: 130px">
           <template #body="{ data: row }">
             <div class="admin-inline-actions" style="gap: 0.25rem">
@@ -356,9 +439,9 @@ const deleteCategory = async (category: FinanceCategory) => {
                 severity="danger"
                 text
                 rounded
-                :disabled="row.isSystem"
+                :disabled="Boolean(getDeleteBlockedReason(row))"
                 :aria-label="`Delete ${row.name}`"
-                :title="`Delete ${row.name}`"
+                :title="getDeleteBlockedReason(row) || `Delete ${row.name}`"
                 @click="deleteCategory(row)"
               />
             </div>

@@ -50,11 +50,7 @@ export const normalizeFilters = (
   query: Record<string, unknown>,
   reservedKeys: string[] = ['page', 'pageSize', 'search', 'sortBy', 'sortDirection'],
 ) => {
-  return Object.entries(query).reduce<Record<string, string[]>>((filters, [key, value]) => {
-    if (reservedKeys.includes(key) || value == null) {
-      return filters
-    }
-
+  const addFilter = (filters: Record<string, string[]>, key: string, value: unknown) => {
     const normalized = Array.isArray(value) ? value : [value]
     const items = normalized
       .map((entry) => String(entry).trim())
@@ -63,7 +59,55 @@ export const normalizeFilters = (
     if (items.length > 0) {
       filters[key] = items
     }
+  }
 
+  const readNestedFilters = (value: unknown) => {
+    if (!value) {
+      return null
+    }
+
+    if (typeof value === 'string') {
+      try {
+        const parsed = JSON.parse(value) as unknown
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+          ? (parsed as Record<string, unknown>)
+          : null
+      } catch {
+        return null
+      }
+    }
+
+    return typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : null
+  }
+
+  return Object.entries(query).reduce<Record<string, string[]>>((filters, [key, value]) => {
+    if (key === 'filters') {
+      const nestedFilters = readNestedFilters(value)
+
+      if (nestedFilters) {
+        Object.entries(nestedFilters).forEach(([nestedKey, nestedValue]) => {
+          if (nestedValue != null) {
+            addFilter(filters, nestedKey, nestedValue)
+          }
+        })
+      }
+
+      return filters
+    }
+
+    const nestedKey = key.match(/^filters\[(.+)]$/)?.[1]
+    if (nestedKey) {
+      addFilter(filters, nestedKey, value)
+      return filters
+    }
+
+    if (reservedKeys.includes(key) || value == null) {
+      return filters
+    }
+
+    addFilter(filters, key, value)
     return filters
   }, {})
 }

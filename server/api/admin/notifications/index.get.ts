@@ -1,6 +1,7 @@
-import { createApiSuccess, getListQueryParams } from '~/server/utils/api'
+import { createApiSuccess } from '~/server/utils/api'
 import { requireRole } from '~/server/utils/auth'
 import { queryRows } from '~/server/utils/database'
+import { parseListQuery } from '~/server/utils/master-data'
 
 type EventRow = {
   id: string
@@ -21,7 +22,7 @@ type EventRow = {
 
 export default defineEventHandler(async (event) => {
   const authMe = await requireRole(event, ['ADMIN', 'MANAGER'])
-  const query = getListQueryParams(getQuery(event))
+  const query = parseListQuery(event)
   const params: unknown[] = [authMe.user.societyId]
   const where = ['ne.society_id = $1']
 

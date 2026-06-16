@@ -13,9 +13,28 @@ export default defineEventHandler(async (event) => {
 
   try {
     await client.query('begin')
-    const existing = await client.query<{ id: string; name: string; transaction_type: string; is_system: boolean }>(
+    const existing = await client.query<{
+      id: string
+      code: string
+      name: string
+      transaction_type: string
+      category_group: string
+      account_head_id: string | null
+      requires_attachment: boolean
+      is_system: boolean
+      is_active: boolean
+    }>(
       `
-        select id, name, transaction_type::text, is_system
+        select
+          id,
+          code,
+          name,
+          transaction_type::text,
+          category_group,
+          account_head_id,
+          requires_attachment,
+          is_system,
+          is_active
         from transaction_categories
         where id = $1 and (society_id = $2 or society_id is null)
         for update
@@ -28,7 +47,19 @@ export default defineEventHandler(async (event) => {
     }
 
     const nextType = input.transactionType ?? row.transaction_type
-    if (input.accountHeadId) {
+    const accountHeadChanged = input.accountHeadId !== undefined && input.accountHeadId !== row.account_head_id
+    const transactionTypeChanged = input.transactionType !== undefined && input.transactionType !== row.transaction_type
+    const nextAccountHeadId = input.accountHeadId ?? row.account_head_id
+
+    if ((accountHeadChanged || transactionTypeChanged) && !nextAccountHeadId) {
+      throw new AppError({
+        code: 'VALIDATION_ERROR',
+        statusCode: 400,
+        message: 'Category account head is required.',
+      })
+    }
+
+    if ((accountHeadChanged || transactionTypeChanged) && nextAccountHeadId) {
       const account = await client.query<{ id: string; head_type: string; is_active: boolean }>(
         `
           select id, head_type::text, is_active
@@ -36,7 +67,7 @@ export default defineEventHandler(async (event) => {
           where id = $1 and (society_id = $2 or society_id is null)
           limit 1
         `,
-        [input.accountHeadId, authMe.user.societyId],
+        [nextAccountHeadId, authMe.user.societyId],
       )
       const accountRow = account.rows[0]
       if (!accountRow || accountRow.head_type !== nextType || !accountRow.is_active) {
@@ -48,42 +79,71 @@ export default defineEventHandler(async (event) => {
       }
     }
 
-    await client.query(
-      `
-        update transaction_categories
-        set
-          code = coalesce($2, code),
-          name = coalesce($3, name),
-          transaction_type = coalesce($4::transaction_type, transaction_type),
-          category_group = coalesce($5, category_group),
-          account_head_id = coalesce($6, account_head_id),
-          requires_attachment = coalesce($7, requires_attachment),
-          is_active = coalesce($8, is_active)
-        where id = $1
-      `,
-      [
-        categoryId,
-        row.is_system ? null : input.code ?? null,
-        input.name ?? null,
-        row.is_system ? null : input.transactionType ?? null,
-        input.categoryGroup ?? null,
-        input.accountHeadId ?? null,
-        input.requiresAttachment ?? null,
-        input.isActive ?? null,
-      ],
-    )
+    const updates: string[] = []
+    const values: unknown[] = []
+    let index = 1
 
-    await writeFinanceAudit({
-      client,
-      event,
-      societyId: authMe.user.societyId,
-      actorUserId: authMe.user.id,
-      actorAuthUserId: authMe.authUser.id,
-      action: 'UPDATED',
-      eventKey: 'finance.categories.updated',
-      afterState: input as unknown as Record<string, unknown>,
-      relatedEntities: [{ entityTable: 'transaction_categories', entityId: categoryId, entityLabel: input.name ?? row.name }],
-    })
+    if (!row.is_system && input.code !== undefined) {
+      updates.push(`code = $${index++}`)
+      values.push(input.code)
+    }
+    if (input.name !== undefined) {
+      updates.push(`name = $${index++}`)
+      values.push(input.name)
+    }
+    if (!row.is_system && input.transactionType !== undefined) {
+      updates.push(`transaction_type = $${index++}::transaction_type`)
+      values.push(input.transactionType)
+    }
+    if (input.categoryGroup !== undefined) {
+      updates.push(`category_group = $${index++}`)
+      values.push(input.categoryGroup)
+    }
+    if (input.accountHeadId !== undefined) {
+      updates.push(`account_head_id = $${index++}`)
+      values.push(input.accountHeadId)
+    }
+    if (input.requiresAttachment !== undefined) {
+      updates.push(`requires_attachment = $${index++}`)
+      values.push(input.requiresAttachment)
+    }
+    if (input.isActive !== undefined) {
+      updates.push(`is_active = $${index++}`)
+      values.push(input.isActive)
+    }
+
+    if (updates.length > 0) {
+      values.push(categoryId)
+      await client.query(
+        `
+          update transaction_categories
+          set ${updates.join(', ')}, updated_at = now()
+          where id = $${index}
+        `,
+        values,
+      )
+
+      await writeFinanceAudit({
+        client,
+        event,
+        societyId: authMe.user.societyId,
+        actorUserId: authMe.user.id,
+        actorAuthUserId: authMe.authUser.id,
+        action: 'UPDATED',
+        eventKey: 'finance.categories.updated',
+        beforeState: {
+          code: row.code,
+          name: row.name,
+          transactionType: row.transaction_type,
+          categoryGroup: row.category_group,
+          accountHeadId: row.account_head_id,
+          requiresAttachment: row.requires_attachment,
+          isActive: row.is_active,
+        },
+        afterState: input as unknown as Record<string, unknown>,
+        relatedEntities: [{ entityTable: 'transaction_categories', entityId: categoryId, entityLabel: input.name ?? row.name }],
+      })
+    }
 
     await client.query('commit')
     return createApiSuccess(event, { id: categoryId })

@@ -30,7 +30,7 @@ const { data, pending, refresh } = await useAsyncData('admin-notifications', () 
       page: 1,
       pageSize: 100,
       search: query.search || undefined,
-      filters: { status: query.status || undefined },
+      status: query.status || undefined,
     },
   }),
   { watch: [query] },

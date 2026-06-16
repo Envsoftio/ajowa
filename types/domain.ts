@@ -535,6 +535,7 @@ export type FinanceCategory = AuditFields & {
   accountHeadCode: string | null
   accountHeadName: string | null
   accountHeadType: AccountHeadType | null
+  transactionCount: number
   requiresAttachment: boolean
   isSystem: boolean
   isActive: boolean

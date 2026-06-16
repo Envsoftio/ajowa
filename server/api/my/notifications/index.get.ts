@@ -1,6 +1,7 @@
-import { createApiSuccess, getListQueryParams } from '~/server/utils/api'
+import { createApiSuccess } from '~/server/utils/api'
 import { requireAuth } from '~/server/utils/auth'
 import { queryRows } from '~/server/utils/database'
+import { parseListQuery } from '~/server/utils/master-data'
 
 type NotificationRow = {
   id: string
@@ -16,7 +17,7 @@ type NotificationRow = {
 
 export default defineEventHandler(async (event) => {
   const authMe = await requireAuth(event)
-  const query = getListQueryParams(getQuery(event))
+  const query = parseListQuery(event)
   const params: unknown[] = [authMe.user.id]
   const where = ['ian.user_id = $1']
   const statusFilter = query.filters.status?.[0]

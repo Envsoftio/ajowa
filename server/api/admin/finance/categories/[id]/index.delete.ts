@@ -30,8 +30,8 @@ export default defineEventHandler(async (event) => {
     }
 
     const usage = await client.query<{ count: string }>(
-      'select count(*)::text as count from transactions where category_id = $1',
-      [categoryId],
+      'select count(*)::text as count from transactions where category_id = $1 and society_id = $2',
+      [categoryId, authMe.user.societyId],
     )
     if (Number(usage.rows[0]?.count ?? 0) > 0) {
       throw new AppError({
@@ -57,6 +57,13 @@ export default defineEventHandler(async (event) => {
     return createApiSuccess(event, { id: categoryId })
   } catch (error) {
     await client.query('rollback')
+    if ((error as { code?: string }).code === '23503') {
+      throw new AppError({
+        code: 'CONFLICT',
+        statusCode: 409,
+        message: 'This category is linked to another record and cannot be deleted. Mark it inactive instead.',
+      })
+    }
     throw error
   } finally {
     client.release()
