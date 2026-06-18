@@ -7,10 +7,10 @@ import type { DefaulterSummary } from '~/types/domain'
 
 type DefaulterRow = {
   user_id: string
-  auth_user_id: string
+  auth_user_id: string | null
   resident_name: string
-  resident_email: string
-  resident_mobile_number: string
+  resident_email: string | null
+  resident_mobile_number: string | null
   flat_id: string
   flat_number: string
   block_name: string

@@ -2,7 +2,12 @@ import { createApiSuccess, readJsonBody } from '~/server/utils/api'
 import { requireRole } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
 import { validatePayload, writeMasterAudit } from '~/server/utils/master-data'
-import { dueGenerationSchema, type DueGenerationInput, resolveChargeBreakdown } from '~/server/utils/billing'
+import {
+  dueGenerationSchema,
+  type DueGenerationInput,
+  hasUnresolvedAreaRateCharge,
+  resolveChargeBreakdown,
+} from '~/server/utils/billing'
 import { AppError } from '~/server/utils/errors'
 import { enqueueDueBillingContactNotifications } from '~/server/utils/notifications'
 import type { ChargeBreakdownItem } from '~/types/domain'
@@ -13,6 +18,7 @@ type FlatTarget = {
   blockName: string
   unitType: string
   blockId: string
+  areaSqFt: string | null
 }
 
 type ChargeConfig = {
@@ -21,6 +27,8 @@ type ChargeConfig = {
   flat_id: string | null
   charge_name: string
   amount: string
+  calculation_method: 'FIXED' | 'AREA_RATE'
+  rate_per_sq_ft: string | null
   charge_breakdown: ChargeBreakdownItem[]
 }
 
@@ -65,7 +73,8 @@ export default defineEventHandler(async (event) => {
           f.flat_number as "flatNumber",
           b.name as "blockName",
           f.unit_type as "unitType",
-          b.id as "blockId"
+          b.id as "blockId",
+          f.area_sq_ft::text as "areaSqFt"
         from flats f
         inner join blocks b on b.id = f.block_id
         where f.society_id = $1
@@ -87,7 +96,7 @@ export default defineEventHandler(async (event) => {
     // Fetch charge configuration
     const chargesResult = await client.query<ChargeConfig>(
       `
-        select scope::text, flat_type, flat_id, charge_name, amount::text, charge_breakdown
+        select scope::text, flat_type, flat_id, charge_name, amount::text, calculation_method::text, rate_per_sq_ft::text, charge_breakdown
         from maintenance_charges
         where society_id = $1 and is_active = true
         order by scope, flat_type
@@ -100,7 +109,16 @@ export default defineEventHandler(async (event) => {
     const flatOverrideCharges: { flatId: string; charges: ChargeBreakdownItem[] }[] = []
 
     for (const c of chargesResult.rows) {
-      const items = Array.isArray(c.charge_breakdown) ? c.charge_breakdown : []
+      const fallbackRate = c.rate_per_sq_ft ? Number(c.rate_per_sq_ft) : Number(c.amount)
+      const items = (Array.isArray(c.charge_breakdown) && c.charge_breakdown.length > 0
+        ? c.charge_breakdown
+        : [{ label: c.charge_name, amount: Number(c.amount) }]
+      ).map((item) => ({
+        ...item,
+        calculationMethod: c.calculation_method,
+        amount: c.calculation_method === 'AREA_RATE' ? fallbackRate : Number(item.amount),
+        ...(c.calculation_method === 'AREA_RATE' ? { ratePerSqFt: fallbackRate } : {}),
+      }))
 
       if (c.scope === 'SOCIETY_DEFAULT') {
         defaultCharges.push(...items)
@@ -144,6 +162,7 @@ export default defineEventHandler(async (event) => {
         flatOverrideCharges,
         flat.unitType,
         flat.flatId,
+        flat.areaSqFt ? Number(flat.areaSqFt) : null,
       )
 
       if (breakdown.length === 0) {
@@ -172,6 +191,14 @@ export default defineEventHandler(async (event) => {
           generatedDueIds.push(insertResult.rows[0].id)
         }
       } else {
+        if (hasUnresolvedAreaRateCharge(breakdown)) {
+          throw new AppError({
+            code: 'VALIDATION_ERROR',
+            statusCode: 400,
+            message: `${flat.blockName} ${flat.flatNumber} is missing area, so area-based CAM cannot be generated.`,
+          })
+        }
+
         const totalBase = breakdown.reduce((sum, item) => sum + item.amount, 0)
         const lateFee = 0
         const totalAmount = Math.round((totalBase + lateFee) * 100) / 100

@@ -1,8 +1,9 @@
-import { getQuery, setHeader } from 'h3'
+import { setHeader } from 'h3'
 import * as XLSX from 'xlsx'
 import { createApiSuccess } from '~/server/utils/api'
 import { requireRole } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
+import { getQuerySafe } from '~/server/utils/master-data'
 
 type GateLogRow = {
   id: string
@@ -70,7 +71,7 @@ const buildSimplePdf = (rows: GateLogRow[]) => {
 
 export default defineEventHandler(async (event) => {
   const authMe = await requireRole(event, ['ADMIN', 'MANAGER'])
-  const query = getQuery(event)
+  const query = getQuerySafe(event)
   const params: unknown[] = [authMe.user.societyId]
   const filters = ['gsl.society_id = $1']
 

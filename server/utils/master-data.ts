@@ -75,7 +75,6 @@ export const societyProfileSchema = z.object({
   city: z.string().trim().min(2),
   state: z.string().trim().min(2),
   pincode: z.string().trim().min(4).max(12),
-  logoPath: z.string().trim().max(500).nullable().optional(),
   contactEmail: z.string().trim().email().nullable().optional(),
   contactPhone: z.string().trim().min(8).max(20).nullable().optional(),
   timezone: z.string().trim().min(3),

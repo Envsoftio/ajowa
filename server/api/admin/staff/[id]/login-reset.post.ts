@@ -40,6 +40,9 @@ export default defineEventHandler(async (event) => {
         where id = $1
           and society_id = $2
           and role in ('MANAGER', 'SERVICE_STAFF', 'GUARD')
+          and deleted_at is null
+          and auth_user_id is not null
+          and email is not null
         limit 1
       `,
       [id, authMe.user.societyId],

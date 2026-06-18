@@ -66,6 +66,8 @@ const todayDate = () => {
   return date.toISOString().slice(0, 10)
 }
 
+const formatContact = (value: string | null | undefined) => value || 'No contact'
+
 const form = reactive({
   flatId: '',
   payerUserId: '',
@@ -168,7 +170,7 @@ const residentOptions = computed(() =>
   [
     { label: 'Use billing contact', value: '' },
     ...(residentsData.value?.data.items ?? []).map((resident) => ({
-      label: `${resident.fullName} · ${resident.mobileNumber}`,
+      label: `${resident.fullName} · ${formatContact(resident.mobileNumber)}`,
       value: resident.id,
     })),
   ],

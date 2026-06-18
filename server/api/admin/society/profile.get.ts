@@ -15,7 +15,6 @@ type SocietyProfileRow = {
   city: string
   state: string
   pincode: string
-  logo_path: string | null
   contact_email: string | null
   contact_phone: string | null
   timezone: string
@@ -40,7 +39,6 @@ export default defineEventHandler(async (event) => {
         city,
         state,
         pincode,
-        logo_path,
         contact_email,
         contact_phone,
         timezone,
@@ -75,7 +73,6 @@ export default defineEventHandler(async (event) => {
     city: row.city,
     state: row.state,
     pincode: row.pincode,
-    logoPath: row.logo_path,
     contactEmail: row.contact_email,
     contactPhone: row.contact_phone,
     timezone: row.timezone,

@@ -1,10 +1,11 @@
 import { createPaginatedSuccess, getPaginationParams } from '~/server/utils/api'
 import { requireActiveUser } from '~/server/utils/auth'
 import { queryRows } from '~/server/utils/database'
+import { getQuerySafe } from '~/server/utils/master-data'
 
 export default defineEventHandler(async (event) => {
   const authMe = await requireActiveUser(event)
-  const query = getQuery(event)
+  const query = getQuerySafe(event)
   const pagination = getPaginationParams(query)
   const offset = (pagination.page - 1) * pagination.pageSize
   const isStaff = ['ADMIN', 'MANAGER'].includes(authMe.user.role)

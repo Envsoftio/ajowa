@@ -74,18 +74,41 @@ const exportUrl = (format: 'csv' | 'excel' | 'pdf') =>
         </div>
       </header>
 
-      <div class="filter-toolbar">
-        <Dropdown
-          v-model="filters.result"
-          :options="['', 'GRANTED', 'DENIED', 'EXPIRED', 'REVOKED', 'INVALID']"
-          placeholder="Result"
-        />
-        <InputText v-model="filters.from" type="date" />
-        <InputText v-model="filters.to" type="date" />
-        <InputText v-model="filters.guardId" placeholder="Guard user ID" />
-        <InputText v-model="filters.residentId" placeholder="Resident user ID" />
-        <InputText v-model="filters.flatId" placeholder="Flat ID" />
-        <InputText v-model="filters.reason" placeholder="Reason contains" />
+      <div class="list-page__toolbar list-page__toolbar--filters-only">
+        <div class="list-page__filters">
+          <label>
+            <span class="field-label">Result</span>
+            <Select
+              v-model="filters.result"
+              :options="['', 'GRANTED', 'DENIED', 'EXPIRED', 'REVOKED', 'INVALID']"
+              placeholder="Result"
+            />
+          </label>
+          <label>
+            <span class="field-label">From</span>
+            <InputText v-model="filters.from" type="date" />
+          </label>
+          <label>
+            <span class="field-label">To</span>
+            <InputText v-model="filters.to" type="date" />
+          </label>
+          <label>
+            <span class="field-label">Guard</span>
+            <InputText v-model="filters.guardId" placeholder="Guard user ID" />
+          </label>
+          <label>
+            <span class="field-label">Resident</span>
+            <InputText v-model="filters.residentId" placeholder="Resident user ID" />
+          </label>
+          <label>
+            <span class="field-label">Flat</span>
+            <InputText v-model="filters.flatId" placeholder="Flat ID" />
+          </label>
+          <label>
+            <span class="field-label">Reason</span>
+            <InputText v-model="filters.reason" placeholder="Reason contains" />
+          </label>
+        </div>
       </div>
 
       <AppSkeletonState v-if="pending" />

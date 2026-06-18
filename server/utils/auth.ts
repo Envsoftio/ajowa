@@ -170,6 +170,7 @@ const loadAppUserByAuthUserId = async (authUserId: string) => {
           staff_permissions
         from users
         where auth_user_id = $1
+          and deleted_at is null
         limit 1
       `,
       [authUserId],

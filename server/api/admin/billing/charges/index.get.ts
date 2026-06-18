@@ -15,6 +15,8 @@ type ChargeRow = {
   block_name: string | null
   charge_name: string
   amount: string
+  calculation_method: 'FIXED' | 'AREA_RATE'
+  rate_per_sq_ft: string | null
   effective_start_date: string | null
   effective_end_date: string | null
   charge_breakdown: ChargeBreakdownItem[]
@@ -46,6 +48,8 @@ export default defineEventHandler(async (event) => {
         b.name as block_name,
         mc.charge_name,
         mc.amount::text,
+        mc.calculation_method::text,
+        mc.rate_per_sq_ft::text,
         mc.effective_start_date::text,
         mc.effective_end_date::text,
         mc.charge_breakdown,
@@ -65,7 +69,16 @@ export default defineEventHandler(async (event) => {
   const flatOverrideCharges: BillingChargeConfig['flatOverrideCharges'] = []
 
   for (const row of result.rows) {
-    const breakdown = Array.isArray(row.charge_breakdown) ? row.charge_breakdown : []
+    const fallbackRate = row.rate_per_sq_ft ? Number(row.rate_per_sq_ft) : Number(row.amount)
+    const breakdown = (Array.isArray(row.charge_breakdown) && row.charge_breakdown.length > 0
+      ? row.charge_breakdown
+      : [{ label: row.charge_name, amount: Number(row.amount) }]
+    ).map((item) => ({
+      ...item,
+      calculationMethod: row.calculation_method,
+      amount: row.calculation_method === 'AREA_RATE' ? fallbackRate : Number(item.amount),
+      ...(row.calculation_method === 'AREA_RATE' ? { ratePerSqFt: fallbackRate } : {}),
+    }))
 
     if (row.scope === 'SOCIETY_DEFAULT') {
       defaultCharges.push(...breakdown)

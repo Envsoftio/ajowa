@@ -212,7 +212,11 @@ const hasWelcomeName = computed(() => authStore.me?.user?.fullName || authStore.
         <article v-else class="dashboard-priority">
           <section v-for="person in topDefaulters" :key="person.userId" class="dashboard-priority-item">
             <div class="dashboard-priority-item__copy">
-              <h3>{{ person.residentName }}</h3>
+              <h3>
+                <NuxtLink :to="`/admin/residents/${person.userId}`" class="table-link-button">
+                  {{ person.residentName }}
+                </NuxtLink>
+              </h3>
               <p>{{ formatContact(person.residentEmail) }} · {{ person.residentMobileNumber || 'No phone' }}</p>
               <div class="dashboard-priority-item__meta">
                 <Tag severity="info" :value="`${person.flatCount} flat${person.flatCount === 1 ? '' : 's'}`" rounded />
@@ -308,14 +312,20 @@ const hasWelcomeName = computed(() => authStore.me?.user?.fullName || authStore.
           <Button label="Open residents" as="a" href="/admin/residents" severity="secondary" outlined size="small" />
         </div>
         <div class="dashboard-mini-list">
-          <article v-for="resident in recentResidents" :key="resident.id" class="dashboard-mini-list-item">
+          <NuxtLink
+            v-for="resident in recentResidents"
+            :key="resident.id"
+            :to="`/admin/residents/${resident.id}`"
+            class="dashboard-mini-list-item dashboard-mini-list-item--link"
+            :aria-label="`View ${resident.fullName}`"
+          >
             <div class="dashboard-mini-list-item__copy">
               <h3>{{ resident.fullName }}</h3>
-              <p>{{ resident.email }} · {{ resident.role }}</p>
+              <p>{{ formatContact(resident.email) }} · {{ resident.role }}</p>
               <p>{{ formatContact(resident.mobileNumber) }}</p>
             </div>
             <Tag :severity="statusBadge(resident.isActive)" :value="resident.isActive ? 'Active' : 'Disabled'" />
-          </article>
+          </NuxtLink>
           <AppState
             v-if="recentResidents.length === 0 && !pending"
             variant="empty"
@@ -356,6 +366,10 @@ const hasWelcomeName = computed(() => authStore.me?.user?.fullName || authStore.
 </template>
 
 <style scoped>
+.dashboard-hero {
+  padding: 1rem 1.1rem;
+}
+
 .dashboard-hero__head h1 {
   margin: 0.5rem 0 0.6rem;
   font-family: var(--font-display);
@@ -410,6 +424,10 @@ const hasWelcomeName = computed(() => authStore.me?.user?.fullName || authStore.
   color: var(--color-brand-strong);
 }
 
+:global(.app-theme-dark) .dashboard-priority-item strong {
+  color: #99f6e4;
+}
+
 .dashboard-priority-item__meta,
 .dashboard-action-grid,
 .dashboard-mini-list {
@@ -442,6 +460,19 @@ const hasWelcomeName = computed(() => authStore.me?.user?.fullName || authStore.
   background: var(--color-surface-strong);
 }
 
+.dashboard-mini-list-item--link {
+  color: inherit;
+  text-decoration: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.dashboard-mini-list-item--link:hover,
+.dashboard-mini-list-item--link:focus-visible {
+  border-color: color-mix(in srgb, var(--color-brand) 45%, var(--color-border));
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+
 .dashboard-mini-list-item h3 {
   margin: 0;
 }
@@ -463,6 +494,10 @@ const hasWelcomeName = computed(() => authStore.me?.user?.fullName || authStore.
 }
 
 @media (max-width: 768px) {
+  .dashboard-hero {
+    padding: 0.9rem;
+  }
+
   .dashboard-action-grid,
   .dashboard-priority-item,
   .dashboard-priority-item__meta,

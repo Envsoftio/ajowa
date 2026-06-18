@@ -4,6 +4,17 @@ import type { ChargeBreakdownItem } from '~/types/domain'
 export const chargeBreakdownItemSchema = z.object({
   label: z.string().trim().min(1).max(200),
   amount: z.coerce.number().positive(),
+  calculationMethod: z.enum(['FIXED', 'AREA_RATE']).optional().default('FIXED'),
+  ratePerSqFt: z.coerce.number().positive().optional(),
+  areaSqFt: z.coerce.number().positive().optional(),
+}).superRefine((item, ctx) => {
+  if (item.calculationMethod === 'AREA_RATE' && !item.ratePerSqFt && !item.amount) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['ratePerSqFt'],
+      message: 'Area-rate charges require a rate per sq ft.',
+    })
+  }
 })
 
 export const chargeBreakdownSchema = z.array(chargeBreakdownItemSchema).min(1)
@@ -204,16 +215,47 @@ export const resolveChargeBreakdown = (
   flatOverrideCharges: { flatId: string; charges: ChargeBreakdownItem[] }[],
   flatType: string,
   flatId: string,
+  flatAreaSqFt?: number | null,
 ): ChargeBreakdownItem[] => {
   const override = flatOverrideCharges.find((f) => f.flatId === flatId)
   if (override) {
-    return override.charges
+    return materializeChargeBreakdown(override.charges, flatAreaSqFt)
   }
 
   const typeCharges = flatTypeCharges.find((f) => f.flatType === flatType)
   if (typeCharges) {
-    return typeCharges.charges
+    return materializeChargeBreakdown(typeCharges.charges, flatAreaSqFt)
   }
 
-  return defaultCharges
+  return materializeChargeBreakdown(defaultCharges, flatAreaSqFt)
 }
+
+export const materializeChargeBreakdown = (
+  charges: ChargeBreakdownItem[],
+  flatAreaSqFt?: number | null,
+): ChargeBreakdownItem[] =>
+  charges.map((charge) => {
+    if (charge.calculationMethod !== 'AREA_RATE') {
+      return { ...charge }
+    }
+
+    const ratePerSqFt = charge.ratePerSqFt ?? charge.amount
+    const areaSqFt = flatAreaSqFt ?? charge.areaSqFt
+    const amount = areaSqFt ? Math.round(areaSqFt * ratePerSqFt * 100) / 100 : 0
+
+    const materialized: ChargeBreakdownItem = {
+      ...charge,
+      calculationMethod: 'AREA_RATE',
+      ratePerSqFt,
+      amount,
+    }
+
+    if (areaSqFt) {
+      materialized.areaSqFt = areaSqFt
+    }
+
+    return materialized
+  })
+
+export const hasUnresolvedAreaRateCharge = (charges: ChargeBreakdownItem[]) =>
+  charges.some((charge) => charge.calculationMethod === 'AREA_RATE' && charge.amount <= 0)

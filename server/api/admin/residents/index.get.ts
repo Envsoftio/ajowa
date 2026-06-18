@@ -7,11 +7,13 @@ import type { ResidentSummary } from '~/types/domain'
 type ResidentRow = {
   id: string
   society_id: string
-  auth_user_id: string
+  auth_user_id: string | null
   role: string
   full_name: string
-  email: string
-  mobile_number: string
+  email: string | null
+  source_email: string | null
+  mobile_number: string | null
+  source_contact: string | null
   whatsapp_number: string | null
   is_whatsapp_same_as_mobile: boolean
   profile_image_path: string | null
@@ -22,13 +24,37 @@ type ResidentRow = {
   police_verification_status: string
   created_at: string
   updated_at: string
+  relationship_types: string | null
+  flat_numbers: string | null
   flat_count: string
   active_relationship_count: string
 }
 
+const sourceEmailSql = `
+  max(
+    case
+      when fr.import_metadata->>'relationshipSource' = 'OWNER'
+        and upper(coalesce(btrim(fr.import_metadata #>> '{sourceData,EMAIL ID}'), '')) not in ('', 'NA', 'N/A', '--', 'NIL')
+        then btrim(fr.import_metadata #>> '{sourceData,EMAIL ID}')
+      else null
+    end
+  )::text
+`
+
+const sourceContactSql = `
+  max(
+    case
+      when fr.import_metadata->>'relationshipSource' = 'OWNER'
+        and upper(coalesce(btrim(fr.import_metadata #>> '{sourceData,CONTACT DETAILS}'), '')) not in ('', 'NA', 'N/A', '--', 'NIL')
+        then btrim(fr.import_metadata #>> '{sourceData,CONTACT DETAILS}')
+      else null
+    end
+  )::text
+`
+
 const sortColumns: Record<string, string> = {
   fullName: 'u.full_name',
-  email: 'u.email',
+  email: `coalesce(u.email::text, ${sourceEmailSql})`,
   role: 'u.role',
   canLogin: 'u.can_login',
   kycStatus: 'u.kyc_status',
@@ -44,7 +70,21 @@ export default defineEventHandler(async (event) => {
   if (query.search) {
     values.push(`%${query.search}%`)
     where.push(
-      `(u.full_name ilike $${values.length} or u.email ilike $${values.length} or u.mobile_number ilike $${values.length})`,
+      `(
+        u.full_name ilike $${values.length}
+        or coalesce(u.email::text, '') ilike $${values.length}
+        or coalesce(u.mobile_number, '') ilike $${values.length}
+        or exists (
+          select 1
+          from flat_residents search_fr
+          where search_fr.user_id = u.id
+            and search_fr.import_metadata->>'relationshipSource' = 'OWNER'
+            and (
+              coalesce(search_fr.import_metadata #>> '{sourceData,EMAIL ID}', '') ilike $${values.length}
+              or coalesce(search_fr.import_metadata #>> '{sourceData,CONTACT DETAILS}', '') ilike $${values.length}
+            )
+        )
+      )`,
     )
   }
 
@@ -58,6 +98,21 @@ export default defineEventHandler(async (event) => {
   if (loginFilter === 'true' || loginFilter === 'false') {
     values.push(loginFilter === 'true')
     where.push(`u.can_login = $${values.length}`)
+  }
+
+  const flatFilter = query.filters.flatId?.[0]
+  if (flatFilter) {
+    values.push(flatFilter)
+    where.push(`
+      exists (
+        select 1
+        from flat_residents filter_fr
+        inner join flats filter_f on filter_f.id = filter_fr.flat_id
+        where filter_fr.user_id = u.id
+          and filter_f.society_id = u.society_id
+          and filter_f.id = $${values.length}
+      )
+    `)
   }
 
   const whereSql = where.join(' and ')
@@ -75,7 +130,9 @@ export default defineEventHandler(async (event) => {
           u.role::text,
           u.full_name,
           u.email::text,
+          ${sourceEmailSql} as source_email,
           u.mobile_number,
+          ${sourceContactSql} as source_contact,
           u.whatsapp_number,
           u.is_whatsapp_same_as_mobile,
           u.profile_image_path,
@@ -86,10 +143,13 @@ export default defineEventHandler(async (event) => {
           u.police_verification_status::text,
           u.created_at::text,
           u.updated_at::text,
+          string_agg(distinct fr.relationship_type::text, ', ' order by fr.relationship_type::text) as relationship_types,
+          string_agg(distinct f.flat_number, ', ' order by f.flat_number) as flat_numbers,
           count(distinct fr.flat_id)::text as flat_count,
           count(fr.id) filter (where fr.is_active = true)::text as active_relationship_count
         from users u
         left join flat_residents fr on fr.user_id = u.id
+        left join flats f on f.id = fr.flat_id
         where ${whereSql}
         group by u.id
         order by ${orderBy} ${direction}, u.full_name asc
@@ -115,7 +175,9 @@ export default defineEventHandler(async (event) => {
     role: row.role,
     fullName: row.full_name,
     email: row.email,
+    sourceEmail: row.source_email,
     mobileNumber: row.mobile_number,
+    sourceContact: row.source_contact,
     whatsappNumber: row.whatsapp_number,
     isWhatsappSameAsMobile: row.is_whatsapp_same_as_mobile,
     profileImagePath: row.profile_image_path,
@@ -124,6 +186,8 @@ export default defineEventHandler(async (event) => {
     isActive: row.is_active,
     kycStatus: row.kyc_status,
     policeVerificationStatus: row.police_verification_status,
+    relationshipTypes: row.relationship_types?.split(', ').filter(Boolean) ?? [],
+    flatNumbers: row.flat_numbers?.split(', ').filter(Boolean) ?? [],
     flatCount: Number(row.flat_count),
     activeRelationshipCount: Number(row.active_relationship_count),
     createdAt: row.created_at,

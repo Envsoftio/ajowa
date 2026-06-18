@@ -22,7 +22,6 @@ const form = reactive({
   city: '',
   state: '',
   pincode: '',
-  logoPath: '',
   contactEmail: '',
   contactPhone: '',
   timezone: 'Asia/Kolkata',
@@ -52,7 +51,6 @@ watchEffect(() => {
   form.city = profile.city
   form.state = profile.state
   form.pincode = profile.pincode
-  form.logoPath = profile.logoPath ?? ''
   form.contactEmail = profile.contactEmail ?? ''
   form.contactPhone = profile.contactPhone ?? ''
   form.timezone = profile.timezone
@@ -71,7 +69,6 @@ const submit = async () => {
         ...form,
         registrationNumber: form.registrationNumber || null,
         addressLine2: form.addressLine2 || null,
-        logoPath: form.logoPath || null,
         contactEmail: form.contactEmail || null,
         contactPhone: form.contactPhone || null,
       },
@@ -92,8 +89,6 @@ const submit = async () => {
 
 <template>
   <div class="landing-page">
-
-
     <form class="admin-form-layout" @submit.prevent="submit">
       <section class="surface-card admin-form-section">
         <div class="admin-form-section__header">
@@ -144,10 +139,6 @@ const submit = async () => {
           <label>
             <span>Contact phone</span>
             <InputText v-model="form.contactPhone" />
-          </label>
-          <label class="admin-form-grid__full">
-            <span>Logo path</span>
-            <InputText v-model="form.logoPath" />
           </label>
         </div>
       </section>

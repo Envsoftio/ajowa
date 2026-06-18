@@ -340,7 +340,6 @@ create table society_profile (
   city text,
   state text,
   pincode text,
-  logo_path text,
   contact_email citext,
   contact_phone text,
   timezone text not null default 'Asia/Kolkata',

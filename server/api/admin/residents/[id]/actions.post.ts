@@ -13,10 +13,10 @@ const actionSchema = z.object({
 })
 
 type ResidentActionRow = {
-  auth_user_id: string
+  auth_user_id: string | null
   full_name: string
-  email: string
-  mobile_number: string
+  email: string | null
+  mobile_number: string | null
   role: string
 }
 
@@ -49,8 +49,24 @@ export default defineEventHandler(async (event) => {
       })
     }
 
+    const requireLoginIdentity = () => {
+      if (!resident.auth_user_id || !resident.email) {
+        throw new AppError({
+          code: 'VALIDATION_ERROR',
+          statusCode: 422,
+          message: 'Add a real email and auth account before enabling login actions for this resident.',
+        })
+      }
+
+      return {
+        authUserId: resident.auth_user_id,
+        email: resident.email,
+      }
+    }
+
     if (body.action === 'CREATE_CREDENTIALS') {
-      const passwordHash = await hashPassword(body.password ?? `Ajowa@${resident.email.slice(0, 4)}2026`)
+      const loginIdentity = requireLoginIdentity()
+      const passwordHash = await hashPassword(body.password ?? `Ajowa@${loginIdentity.email.slice(0, 4)}2026`)
 
       await client.query(
         `
@@ -60,7 +76,7 @@ export default defineEventHandler(async (event) => {
             set password = excluded.password,
                 updated_at = now()
         `,
-        [resident.auth_user_id, resident.auth_user_id, passwordHash],
+        [loginIdentity.authUserId, loginIdentity.authUserId, passwordHash],
       )
     }
 
@@ -76,6 +92,8 @@ export default defineEventHandler(async (event) => {
     }
 
     if (body.action === 'RESET_ONBOARDING') {
+      const loginIdentity = requireLoginIdentity()
+
       await client.query(
         `
           update users
@@ -91,11 +109,12 @@ export default defineEventHandler(async (event) => {
           set email_verified = false, updated_at = now()
           where id = $1
         `,
-        [resident.auth_user_id],
+        [loginIdentity.authUserId],
       )
     }
 
     if (body.action === 'SEND_INVITE' || body.action === 'RESEND_INVITE') {
+      const loginIdentity = requireLoginIdentity()
       const { token, tokenHash } = createInviteToken()
       const flatResult = await client.query<{ flat_id: string; label: string; relationship_type: string }>(
         `
@@ -118,7 +137,7 @@ export default defineEventHandler(async (event) => {
             set revoked_at = now(), revoked_by_user_id = $2
             where email = $1 and accepted_at is null and revoked_at is null
           `,
-          [resident.email, authMe.user.id],
+          [loginIdentity.email, authMe.user.id],
         )
       }
 
@@ -142,7 +161,7 @@ export default defineEventHandler(async (event) => {
         `,
         [
           authMe.user.societyId,
-          resident.email,
+          loginIdentity.email,
           resident.role,
           resident.full_name,
           resident.mobile_number,
@@ -156,7 +175,7 @@ export default defineEventHandler(async (event) => {
       )
 
       await sendTemplatedEmail({
-        to: resident.email,
+        to: loginIdentity.email,
         subject: 'Your AJOWA invite is ready',
         template: 'invite-onboarding',
         context: {

@@ -13,7 +13,6 @@ type SocietyProfileRow = {
   city: string
   state: string
   pincode: string
-  logo_path: string | null
   contact_email: string | null
   contact_phone: string | null
   timezone: string
@@ -41,7 +40,6 @@ export default defineEventHandler(async (event) => {
           city,
           state,
           pincode,
-          logo_path,
           contact_email,
           contact_phone,
           timezone,
@@ -67,11 +65,10 @@ export default defineEventHandler(async (event) => {
           city = $6,
           state = $7,
           pincode = $8,
-          logo_path = $9,
-          contact_email = $10,
-          contact_phone = $11,
-          timezone = $12,
-          settings = $13::jsonb,
+          contact_email = $9,
+          contact_phone = $10,
+          timezone = $11,
+          settings = $12::jsonb,
           updated_at = now()
         where id = $1
       `,
@@ -84,7 +81,6 @@ export default defineEventHandler(async (event) => {
         body.city,
         body.state,
         body.pincode,
-        body.logoPath ?? null,
         body.contactEmail ?? null,
         body.contactPhone ?? null,
         body.timezone,
@@ -108,7 +104,6 @@ export default defineEventHandler(async (event) => {
             city: before.city,
             state: before.state,
             pincode: before.pincode,
-            logoPath: before.logo_path,
             contactEmail: before.contact_email,
             contactPhone: before.contact_phone,
             timezone: before.timezone,

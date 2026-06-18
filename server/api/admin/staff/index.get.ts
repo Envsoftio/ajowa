@@ -39,7 +39,11 @@ export default defineEventHandler(async (event) => {
   const authMe = await requirePermission(event, 'staff.manage')
   const query = parseListQuery(event)
   const pool = getDatabasePool()
-  const where: string[] = ['u.society_id = $1', `u.role in ('MANAGER', 'SERVICE_STAFF', 'GUARD')`]
+  const where: string[] = [
+    'u.society_id = $1',
+    `u.role in ('MANAGER', 'SERVICE_STAFF', 'GUARD')`,
+    'u.deleted_at is null',
+  ]
   const values: unknown[] = [authMe.user.societyId]
 
   if (query.search) {

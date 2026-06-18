@@ -48,7 +48,6 @@ export type SocietyProfile = AuditFields & {
   city: string
   state: string
   pincode: string
-  logoPath: string | null
   contactEmail: string | null
   contactPhone: string | null
   timezone: string
@@ -86,10 +85,12 @@ export type FlatSummary = AuditFields & {
 export type FlatResidentRelationship = AuditFields & {
   id: string
   flatId: string
+  blockName?: string | null
+  flatNumber?: string | null
   userId: string
   residentName: string
-  residentEmail: string
-  residentMobileNumber: string
+  residentEmail: string | null
+  residentMobileNumber: string | null
   relationshipType: string
   isPrimaryContact: boolean
   isBillingContact: boolean
@@ -125,11 +126,13 @@ export type FlatDetail = FlatSummary & {
 export type ResidentSummary = AuditFields & {
   id: string
   societyId: string
-  authUserId: string
+  authUserId: string | null
   role: string
   fullName: string
-  email: string
-  mobileNumber: string
+  email: string | null
+  sourceEmail?: string | null
+  mobileNumber: string | null
+  sourceContact?: string | null
   whatsappNumber: string | null
   isWhatsappSameAsMobile: boolean
   profileImagePath: string | null
@@ -138,8 +141,67 @@ export type ResidentSummary = AuditFields & {
   isActive: boolean
   kycStatus: string
   policeVerificationStatus: string
+  relationshipTypes?: string[]
+  flatNumbers?: string[]
   flatCount?: number
   activeRelationshipCount?: number
+}
+
+export type ResidentPaymentSummary = AuditFields & {
+  id: string
+  payerUserId: string
+  payerName: string | null
+  flatId: string | null
+  flatNumber: string | null
+  blockName: string | null
+  paymentDate: string
+  amount: number
+  mode: string
+  status: string
+  utrReference: string | null
+  bankReference: string | null
+  receiptNumber: string | null
+}
+
+export type ResidentDueSummary = AuditFields & {
+  id: string
+  billingPeriodLabel: string
+  flatId: string
+  flatNumber: string
+  blockName: string
+  dueDate: string
+  totalAmount: number
+  paidAmount: number
+  balanceAmount: number
+  status: string
+}
+
+export type ResidentServiceRequestSummary = AuditFields & {
+  id: string
+  requestNumber: string
+  requesterUserId: string | null
+  requesterName: string | null
+  flatId: string | null
+  flatLabel: string | null
+  category: string
+  title: string
+  priority: string
+  status: string
+  dueByAt: string | null
+  isSlaBreached: boolean
+}
+
+export type ResidentAccessLogSummary = {
+  id: string
+  userId: string | null
+  userName: string | null
+  flatId: string | null
+  flatNumber: string | null
+  blockName: string | null
+  scanResult: string
+  denialReason: string | null
+  gateName: string | null
+  scannedAt: string
 }
 
 export type ResidentDetail = ResidentSummary & {
@@ -152,6 +214,11 @@ export type ResidentDetail = ResidentSummary & {
   leaseAgreementPath: string | null
   preferredNotificationChannels: string
   relationships: FlatResidentRelationship[]
+  flatOccupants: FlatResidentRelationship[]
+  dues: ResidentDueSummary[]
+  payments: ResidentPaymentSummary[]
+  serviceRequests: ResidentServiceRequestSummary[]
+  accessLogs: ResidentAccessLogSummary[]
 }
 
 export type StaffSummary = AuditFields & {
@@ -363,9 +430,13 @@ export type BillingPeriod = AuditFields & {
 export type ChargeBreakdownItem = {
   label: string
   amount: number
+  calculationMethod?: 'FIXED' | 'AREA_RATE'
+  ratePerSqFt?: number
+  areaSqFt?: number
 }
 
 export type MaintenanceChargeScope = 'SOCIETY_DEFAULT' | 'FLAT_TYPE' | 'FLAT'
+export type MaintenanceChargeCalculationMethod = 'FIXED' | 'AREA_RATE'
 
 export type MaintenanceCharge = AuditFields & {
   id: string
@@ -377,6 +448,8 @@ export type MaintenanceCharge = AuditFields & {
   flatNumber: string | null
   chargeName: string
   amount: number
+  calculationMethod: MaintenanceChargeCalculationMethod
+  ratePerSqFt: number | null
   effectiveStartDate: string | null
   effectiveEndDate: string | null
   chargeBreakdown: ChargeBreakdownItem[]
@@ -453,10 +526,10 @@ export type BillingChargeConfig = {
 
 export type DefaulterSummary = {
   userId: string
-  authUserId: string
+  authUserId: string | null
   residentName: string
-  residentEmail: string
-  residentMobileNumber: string
+  residentEmail: string | null
+  residentMobileNumber: string | null
   flatCount: number
   flats: {
     flatId: string

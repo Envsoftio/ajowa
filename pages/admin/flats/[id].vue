@@ -13,6 +13,8 @@ const api = useApi()
 const { data, pending } = await useAsyncData(`admin-flat-${route.params.id}`, () =>
   api<{ ok: true; data: FlatDetail }>(`/api/admin/flats/${route.params.id}`),
 )
+
+const displayValue = (value: string | null | undefined) => value || '-'
 </script>
 
 <template>
@@ -59,10 +61,25 @@ const { data, pending } = await useAsyncData(`admin-flat-${route.params.id}`, ()
         <article v-for="relationship in data.data.relationships" :key="relationship.id" class="admin-detail-card">
           <div class="admin-detail-card__header">
             <div>
-              <h3>{{ relationship.residentName }}</h3>
-              <p>{{ relationship.relationshipType }} · {{ relationship.residentEmail }}</p>
+              <h3>
+                <NuxtLink :to="`/admin/residents/${relationship.userId}`" class="table-link-button">
+                  {{ relationship.residentName }}
+                </NuxtLink>
+              </h3>
+              <p>{{ relationship.relationshipType }} · {{ displayValue(relationship.residentEmail) }}</p>
             </div>
-            <AppStatusBadge :status="relationship.isActive ? 'active' : 'inactive'" />
+            <div class="admin-inline-actions">
+              <AppStatusBadge :status="relationship.isActive ? 'active' : 'inactive'" />
+              <NuxtLink :to="`/admin/residents/${relationship.userId}`">
+                <Button
+                  icon="pi pi-eye"
+                  severity="secondary"
+                  text
+                  rounded
+                  :aria-label="`View ${relationship.residentName}`"
+                />
+              </NuxtLink>
+            </div>
           </div>
           <div class="admin-detail-card__meta">
             <span>Primary: {{ relationship.isPrimaryContact ? 'Yes' : 'No' }}</span>

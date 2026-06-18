@@ -27,6 +27,7 @@ const selectedStaff = ref<StaffSummary | null>(null)
 const displayDialog = ref(false)
 const saving = ref(false)
 const resettingLoginId = ref<string | null>(null)
+const removingStaffId = ref<string | null>(null)
 const globalSearch = ref('')
 const loginDetails = ref<StaffLoginDetails | null>(null)
 const loginDialogVisible = ref(false)
@@ -204,6 +205,40 @@ const resetStaffLogin = async (staff: StaffSummary) => {
     await refresh()
   } finally {
     resettingLoginId.value = null
+  }
+}
+
+const removeStaff = async (staff: StaffSummary) => {
+  const confirmed = await confirmAction({
+    header: 'Remove staff member?',
+    message:
+      `Remove ${staff.fullName}? Their login will be revoked and they will no longer appear in the staff registry. ` +
+      'Historical activity stays on record.',
+    acceptLabel: 'Remove staff',
+    acceptSeverity: 'danger',
+  })
+
+  if (!confirmed) {
+    return
+  }
+
+  removingStaffId.value = staff.id
+
+  try {
+    await api(`/api/admin/staff/${staff.id}`, {
+      method: 'DELETE',
+    })
+
+    toast.add({
+      severity: 'success',
+      summary: 'Removed',
+      detail: 'Staff member removed.',
+      life: 10000,
+    })
+
+    await refresh()
+  } finally {
+    removingStaffId.value = null
   }
 }
 
@@ -395,11 +430,37 @@ const permissionLabel = (permission: string) =>
             <AppStatusBadge :status="row.canLogin ? 'active' : 'inactive'" />
           </template>
         </Column>
-        <Column header="Actions" class="text-right" style="width: 130px">
+        <Column header="Actions" class="text-right" style="width: 170px">
           <template #body="{ data: row }">
             <div class="admin-inline-actions" style="justify-content: flex-end; gap: 0.25rem;">
-              <Button icon="pi pi-key" severity="secondary" text rounded aria-label="Reset staff login" :loading="resettingLoginId === row.id" @click="resetStaffLogin(row)" />
-              <Button icon="pi pi-pencil" severity="secondary" text rounded aria-label="Edit staff" @click="editStaff(row)" />
+              <Button
+                icon="pi pi-key"
+                severity="secondary"
+                text
+                rounded
+                aria-label="Reset staff login"
+                :loading="resettingLoginId === row.id"
+                :disabled="removingStaffId === row.id"
+                @click="resetStaffLogin(row)"
+              />
+              <Button
+                icon="pi pi-pencil"
+                severity="secondary"
+                text
+                rounded
+                aria-label="Edit staff"
+                :disabled="removingStaffId === row.id"
+                @click="editStaff(row)"
+              />
+              <Button
+                icon="pi pi-trash"
+                severity="danger"
+                text
+                rounded
+                aria-label="Remove staff"
+                :loading="removingStaffId === row.id"
+                @click="removeStaff(row)"
+              />
             </div>
           </template>
         </Column>

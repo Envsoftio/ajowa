@@ -32,8 +32,8 @@ type RelationshipRow = {
   flat_id: string
   user_id: string
   resident_name: string
-  resident_email: string
-  resident_mobile_number: string
+  resident_email: string | null
+  resident_mobile_number: string | null
   relationship_type: string
   is_primary_contact: boolean
   is_billing_contact: boolean

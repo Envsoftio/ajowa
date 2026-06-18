@@ -26,10 +26,12 @@ export default defineEventHandler(async (event) => {
       flat_id: string | null
       charge_name: string
       amount: string
+      calculation_method: string
+      rate_per_sq_ft: string | null
       charge_breakdown: unknown
     }>(
       `
-        select scope::text, flat_type, flat_id, charge_name, amount::text, charge_breakdown
+        select scope::text, flat_type, flat_id, charge_name, amount::text, calculation_method::text, rate_per_sq_ft::text, charge_breakdown
         from maintenance_charges
         where society_id = $1 and is_active = true
         order by scope, flat_type, flat_id, charge_name
@@ -57,12 +59,24 @@ export default defineEventHandler(async (event) => {
 
     // Insert default charges
     for (const item of body.defaultCharges ?? []) {
+      const calculationMethod = item.calculationMethod ?? 'FIXED'
+      const ratePerSqFt = calculationMethod === 'AREA_RATE' ? item.ratePerSqFt ?? item.amount : null
+      const amount = calculationMethod === 'AREA_RATE' ? ratePerSqFt : item.amount
       await client.query(
         `
-          insert into maintenance_charges (society_id, scope, charge_name, amount, charge_breakdown, is_active)
-          values ($1, 'SOCIETY_DEFAULT', $2, $3, $4, true)
+          insert into maintenance_charges (
+            society_id, scope, charge_name, amount, calculation_method, rate_per_sq_ft, charge_breakdown, is_active
+          )
+          values ($1, 'SOCIETY_DEFAULT', $2, $3, $4, $5, $6, true)
         `,
-        [authMe.user.societyId, item.label, item.amount, JSON.stringify([item])],
+        [
+          authMe.user.societyId,
+          item.label,
+          amount,
+          calculationMethod,
+          ratePerSqFt,
+          JSON.stringify([{ ...item, amount, calculationMethod, ...(ratePerSqFt ? { ratePerSqFt } : {}) }]),
+        ],
       )
     }
 
@@ -70,12 +84,25 @@ export default defineEventHandler(async (event) => {
     for (const typeConfig of body.flatTypeCharges ?? []) {
       if (typeConfig.charges.length === 0) continue
       for (const item of typeConfig.charges) {
+        const calculationMethod = item.calculationMethod ?? 'FIXED'
+        const ratePerSqFt = calculationMethod === 'AREA_RATE' ? item.ratePerSqFt ?? item.amount : null
+        const amount = calculationMethod === 'AREA_RATE' ? ratePerSqFt : item.amount
         await client.query(
           `
-            insert into maintenance_charges (society_id, scope, flat_type, charge_name, amount, charge_breakdown, is_active)
-            values ($1, 'FLAT_TYPE', $2, $3, $4, $5, true)
+            insert into maintenance_charges (
+              society_id, scope, flat_type, charge_name, amount, calculation_method, rate_per_sq_ft, charge_breakdown, is_active
+            )
+            values ($1, 'FLAT_TYPE', $2, $3, $4, $5, $6, $7, true)
           `,
-          [authMe.user.societyId, typeConfig.flatType, item.label, item.amount, JSON.stringify([item])],
+          [
+            authMe.user.societyId,
+            typeConfig.flatType,
+            item.label,
+            amount,
+            calculationMethod,
+            ratePerSqFt,
+            JSON.stringify([{ ...item, amount, calculationMethod, ...(ratePerSqFt ? { ratePerSqFt } : {}) }]),
+          ],
         )
       }
     }
@@ -84,12 +111,25 @@ export default defineEventHandler(async (event) => {
     for (const flatConfig of body.flatOverrideCharges ?? []) {
       if (flatConfig.charges.length === 0) continue
       for (const item of flatConfig.charges) {
+        const calculationMethod = item.calculationMethod ?? 'FIXED'
+        const ratePerSqFt = calculationMethod === 'AREA_RATE' ? item.ratePerSqFt ?? item.amount : null
+        const amount = calculationMethod === 'AREA_RATE' ? ratePerSqFt : item.amount
         await client.query(
           `
-            insert into maintenance_charges (society_id, scope, flat_id, charge_name, amount, charge_breakdown, is_active)
-            values ($1, 'FLAT', $2, $3, $4, $5, true)
+            insert into maintenance_charges (
+              society_id, scope, flat_id, charge_name, amount, calculation_method, rate_per_sq_ft, charge_breakdown, is_active
+            )
+            values ($1, 'FLAT', $2, $3, $4, $5, $6, $7, true)
           `,
-          [authMe.user.societyId, flatConfig.flatId, item.label, item.amount, JSON.stringify([item])],
+          [
+            authMe.user.societyId,
+            flatConfig.flatId,
+            item.label,
+            amount,
+            calculationMethod,
+            ratePerSqFt,
+            JSON.stringify([{ ...item, amount, calculationMethod, ...(ratePerSqFt ? { ratePerSqFt } : {}) }]),
+          ],
         )
       }
     }

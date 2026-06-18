@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { ComponentPublicInstance } from 'vue'
 import type { DataTablePageEvent, DataTableSortEvent } from 'primevue/datatable'
 import type { ListQueryParams } from '~/types/api'
 import type { FlatSummary, ResidentDetail, ResidentSummary } from '~/types/domain'
@@ -11,6 +12,95 @@ definePageMeta({
 
 const api = useApi()
 const toast = useToast()
+const { formatBytes } = useFinanceFormatters()
+
+type ResidentFileField =
+  | 'profileImagePath'
+  | 'governmentIdDocumentPath'
+  | 'ownershipProofPath'
+  | 'leaseAgreementPath'
+
+type ResidentFileConfig = {
+  field: ResidentFileField
+  label: string
+  accept: string
+  allowedMimeTypes: readonly string[]
+  maxSizeBytes: number
+  icon: string
+  invalidTypeDetail: string
+  invalidSizeDetail: string
+}
+
+type LocalResidentFile = {
+  file: File
+  previewUrl: string
+  fileName: string
+  mimeType: string
+  sizeBytes: number
+}
+
+type ResidentSaveResponse = {
+  id: string
+  authUserId?: string
+  updated?: boolean
+}
+
+type ResidentFileUploadResponse = {
+  field: ResidentFileField
+  filePath: string
+  fileUrl: string
+  updatedAt: string
+}
+
+const residentProfileFileConfig: ResidentFileConfig = {
+  field: 'profileImagePath',
+  label: 'Profile photo',
+  accept: 'image/png,image/jpeg,image/webp',
+  allowedMimeTypes: ['image/png', 'image/jpeg', 'image/webp'],
+  maxSizeBytes: 2 * 1024 * 1024,
+  icon: 'pi pi-user',
+  invalidTypeDetail: 'Upload a PNG, JPG, JPEG, or WebP profile photo.',
+  invalidSizeDetail: 'Profile photos must be 2 MB or smaller.',
+}
+
+const residentDocumentFileConfigs: ResidentFileConfig[] = [
+  {
+    field: 'governmentIdDocumentPath',
+    label: 'Government ID document',
+    accept: 'application/pdf,image/png,image/jpeg,image/webp',
+    allowedMimeTypes: ['application/pdf', 'image/png', 'image/jpeg', 'image/webp'],
+    maxSizeBytes: 10 * 1024 * 1024,
+    icon: 'pi pi-id-card',
+    invalidTypeDetail: 'Upload a PDF, PNG, JPG, JPEG, or WebP document.',
+    invalidSizeDetail: 'Resident documents must be 10 MB or smaller.',
+  },
+  {
+    field: 'ownershipProofPath',
+    label: 'Ownership proof',
+    accept: 'application/pdf,image/png,image/jpeg,image/webp',
+    allowedMimeTypes: ['application/pdf', 'image/png', 'image/jpeg', 'image/webp'],
+    maxSizeBytes: 10 * 1024 * 1024,
+    icon: 'pi pi-home',
+    invalidTypeDetail: 'Upload a PDF, PNG, JPG, JPEG, or WebP document.',
+    invalidSizeDetail: 'Resident documents must be 10 MB or smaller.',
+  },
+  {
+    field: 'leaseAgreementPath',
+    label: 'Lease agreement',
+    accept: 'application/pdf,image/png,image/jpeg,image/webp',
+    allowedMimeTypes: ['application/pdf', 'image/png', 'image/jpeg', 'image/webp'],
+    maxSizeBytes: 10 * 1024 * 1024,
+    icon: 'pi pi-file-pdf',
+    invalidTypeDetail: 'Upload a PDF, PNG, JPG, JPEG, or WebP document.',
+    invalidSizeDetail: 'Resident documents must be 10 MB or smaller.',
+  },
+]
+
+const residentProfileFileConfigs = [residentProfileFileConfig]
+const residentFileConfigs = [
+  residentProfileFileConfig,
+  ...residentDocumentFileConfigs,
+]
 
 const query = ref<ListQueryParams>({
   page: 1,
@@ -23,6 +113,24 @@ const query = ref<ListQueryParams>({
 
 const selectedResident = ref<ResidentSummary | null>(null)
 const displayDialog = ref(false)
+const residentFileInputs = ref<Record<ResidentFileField, HTMLInputElement | null>>({
+  profileImagePath: null,
+  governmentIdDocumentPath: null,
+  ownershipProofPath: null,
+  leaseAgreementPath: null,
+})
+const selectedResidentFiles = reactive<Record<ResidentFileField, LocalResidentFile | null>>({
+  profileImagePath: null,
+  governmentIdDocumentPath: null,
+  ownershipProofPath: null,
+  leaseAgreementPath: null,
+})
+const residentFilePreviewVersion = reactive<Record<ResidentFileField, number>>({
+  profileImagePath: 0,
+  governmentIdDocumentPath: 0,
+  ownershipProofPath: 0,
+  leaseAgreementPath: 0,
+})
 const form = reactive({
   role: 'RESIDENT',
   fullName: '',
@@ -67,7 +175,7 @@ const form = reactive({
 
 const { data: flatsData } = await useAsyncData('admin-flat-options', () =>
   api<{ ok: true; data: { items: FlatSummary[] } }>('/api/admin/flats', {
-    query: { page: 1, pageSize: 200, sortBy: 'flatNumber', sortDirection: 'asc' },
+    query: { page: 1, pageSize: 500, sortBy: 'flatNumber', sortDirection: 'asc' },
   }),
 )
 
@@ -88,6 +196,7 @@ const loadResidents = () =>
       sortDirection: query.value.sortDirection,
       canLogin: query.value.filters.canLogin?.[0],
       isActive: query.value.filters.isActive?.[0],
+      flatId: query.value.filters.flatId?.[0],
     },
   })
 
@@ -119,7 +228,179 @@ const removeRelationship = (index: number) => {
   form.relationships.splice(index, 1)
 }
 
+const setResidentFileInput = (
+  field: ResidentFileField,
+  element: Element | ComponentPublicInstance | null,
+) => {
+  if (element instanceof HTMLInputElement) {
+    residentFileInputs.value[field] = element
+  } else {
+    residentFileInputs.value[field] = null
+  }
+}
+
+const getResidentFilePath = (field: ResidentFileField) => form[field]
+
+const setResidentFilePath = (field: ResidentFileField, value: string) => {
+  form[field] = value
+}
+
+const clearResidentFileSelection = (field: ResidentFileField) => {
+  const selectedFile = selectedResidentFiles[field]
+
+  if (selectedFile?.previewUrl) {
+    URL.revokeObjectURL(selectedFile.previewUrl)
+  }
+
+  selectedResidentFiles[field] = null
+}
+
+const clearAllResidentFileSelections = () => {
+  residentFileConfigs.forEach((config) => clearResidentFileSelection(config.field))
+}
+
+const bumpResidentFilePreview = (field: ResidentFileField) => {
+  residentFilePreviewVersion[field] = Date.now()
+}
+
+const getResidentFilePreviewUrl = (config: ResidentFileConfig) => {
+  const selectedFile = selectedResidentFiles[config.field]
+
+  if (selectedFile) {
+    return selectedFile.previewUrl
+  }
+
+  if (selectedResident.value && getResidentFilePath(config.field)) {
+    return `/api/admin/residents/${selectedResident.value.id}/files/${config.field}?v=${residentFilePreviewVersion[config.field]}`
+  }
+
+  return ''
+}
+
+const getResidentFileName = (field: ResidentFileField) => {
+  const selectedFile = selectedResidentFiles[field]
+
+  if (selectedFile) {
+    return selectedFile.fileName
+  }
+
+  return getResidentFilePath(field).split('/').pop() ?? ''
+}
+
+const getResidentFileMeta = (field: ResidentFileField) => {
+  const selectedFile = selectedResidentFiles[field]
+
+  if (!selectedFile) {
+    return ''
+  }
+
+  return `${selectedFile.mimeType} · ${formatBytes(selectedFile.sizeBytes)}`
+}
+
+const hasResidentFile = (field: ResidentFileField) =>
+  Boolean(selectedResidentFiles[field] || getResidentFilePath(field))
+
+const isResidentFileImage = (config: ResidentFileConfig) => {
+  const selectedFile = selectedResidentFiles[config.field]
+
+  if (selectedFile) {
+    return selectedFile.mimeType.startsWith('image/')
+  }
+
+  return config.field === 'profileImagePath'
+}
+
+const pickResidentFile = (field: ResidentFileField) => {
+  residentFileInputs.value[field]?.click()
+}
+
+const clearResidentFile = (field: ResidentFileField) => {
+  clearResidentFileSelection(field)
+  setResidentFilePath(field, '')
+  bumpResidentFilePreview(field)
+}
+
+const onResidentFileChange = (config: ResidentFileConfig, event: Event) => {
+  const target = event.target as HTMLInputElement
+  const file = target.files?.[0]
+  target.value = ''
+
+  if (!file) {
+    return
+  }
+
+  if (!config.allowedMimeTypes.includes(file.type)) {
+    toast.add({
+      severity: 'warn',
+      summary: 'Unsupported file',
+      detail: config.invalidTypeDetail,
+      life: 10000,
+    })
+    return
+  }
+
+  if (file.size <= 0 || file.size > config.maxSizeBytes) {
+    toast.add({
+      severity: 'warn',
+      summary: 'File too large',
+      detail: config.invalidSizeDetail,
+      life: 10000,
+    })
+    return
+  }
+
+  clearResidentFileSelection(config.field)
+  selectedResidentFiles[config.field] = {
+    file,
+    previewUrl: URL.createObjectURL(file),
+    fileName: file.name,
+    mimeType: file.type,
+    sizeBytes: file.size,
+  }
+}
+
+const uploadResidentFile = async (residentId: string, config: ResidentFileConfig) => {
+  const selectedFile = selectedResidentFiles[config.field]
+
+  if (!selectedFile) {
+    return null
+  }
+
+  const formData = new FormData()
+  formData.append('field', config.field)
+  formData.append('file', selectedFile.file)
+
+  const response = await api<{ ok: true; data: ResidentFileUploadResponse }>(
+    `/api/admin/residents/${residentId}/files`,
+    {
+      method: 'POST',
+      body: formData,
+    },
+  )
+
+  setResidentFilePath(config.field, response.data.filePath)
+  bumpResidentFilePreview(config.field)
+  clearResidentFileSelection(config.field)
+
+  return response.data
+}
+
+const uploadPendingResidentFiles = async (residentId: string) => {
+  const uploadedFiles: ResidentFileUploadResponse[] = []
+
+  for (const config of residentFileConfigs) {
+    const uploadedFile = await uploadResidentFile(residentId, config)
+
+    if (uploadedFile) {
+      uploadedFiles.push(uploadedFile)
+    }
+  }
+
+  return uploadedFiles
+}
+
 const resetForm = () => {
+  clearAllResidentFileSelections()
   selectedResident.value = null
   form.role = 'RESIDENT'
   form.fullName = ''
@@ -173,13 +454,14 @@ const closeDialog = () => {
 }
 
 const loadResident = async (resident: ResidentSummary) => {
+  clearAllResidentFileSelections()
   const response = await api<{ ok: true; data: ResidentDetail }>(`/api/admin/residents/${resident.id}`)
   const item = response.data
   selectedResident.value = resident
   form.role = item.role
   form.fullName = item.fullName
-  form.email = item.email
-  form.mobileNumber = item.mobileNumber
+  form.email = item.email ?? ''
+  form.mobileNumber = item.mobileNumber ?? ''
   form.whatsappNumber = item.whatsappNumber ?? ''
   form.isWhatsappSameAsMobile = item.isWhatsappSameAsMobile
   form.profileImagePath = item.profileImagePath ?? ''
@@ -212,6 +494,7 @@ const loadResident = async (resident: ResidentSummary) => {
     accessScope: relationship.accessScope ?? 'OWNERSHIP',
     relationshipNote: relationship.relationshipNote ?? '',
   }))
+  residentFileConfigs.forEach((config) => bumpResidentFilePreview(config.field))
   displayDialog.value = true
 }
 
@@ -243,16 +526,41 @@ const submit = async () => {
       })),
     }
 
+    let residentId = selectedResident.value?.id ?? ''
+    let createdResident = false
+
     if (selectedResident.value) {
       await api(`/api/admin/residents/${selectedResident.value.id}`, {
         method: 'PATCH',
         body: payload,
       })
     } else {
-      await api('/api/admin/residents', {
+      const response = await api<{ ok: true; data: ResidentSaveResponse }>('/api/admin/residents', {
         method: 'POST',
         body: payload,
       })
+      residentId = response.data.id
+      createdResident = true
+    }
+
+    try {
+      if (residentId) {
+        await uploadPendingResidentFiles(residentId)
+      }
+    } catch (error) {
+      if (createdResident) {
+        toast.add({
+          severity: 'warn',
+          summary: 'Resident created',
+          detail: 'Some files were not uploaded. Edit the resident to retry.',
+          life: 10000,
+        })
+        closeDialog()
+        await refresh()
+        return
+      }
+
+      throw error
     }
 
     toast.add({
@@ -267,6 +575,8 @@ const submit = async () => {
     saving.value = false
   }
 }
+
+onBeforeUnmount(clearAllResidentFileSelections)
 
 const updateQuery = (value: ListQueryParams) => {
   query.value = value
@@ -326,6 +636,27 @@ const loginFilter = computed({
     })
   },
 })
+
+const flatFilter = computed({
+  get: () => query.value.filters.flatId?.[0] ?? '',
+  set: (val) => {
+    updateQuery({
+      ...query.value,
+      page: 1,
+      filters: {
+        ...query.value.filters,
+        flatId: val ? [val] : [],
+      },
+    })
+  },
+})
+
+const displayValue = (value: string | null | undefined) => value || '-'
+const relationshipSeverity = (type: string) => {
+  if (type === 'OWNER') return 'success'
+  if (type === 'TENANT') return 'info'
+  return 'secondary'
+}
 </script>
 
 <template>
@@ -354,6 +685,15 @@ const loginFilter = computed({
             />
           </IconField>
           <div class="list-page__filters">
+            <Select
+              v-model="flatFilter"
+              :options="[{ label: 'All flats', value: '' }, ...flatOptions]"
+              option-label="label"
+              option-value="value"
+              placeholder="Flat"
+              filter
+              show-clear
+            />
             <Select
               v-model="loginFilter"
               :options="[
@@ -396,8 +736,38 @@ const loginFilter = computed({
           @sort="onSort"
         >
           <Column field="fullName" header="Resident" sortable />
-          <Column field="role" header="Role" sortable />
-          <Column field="email" header="Email" sortable />
+          <Column header="Type">
+            <template #body="{ data: row }">
+              <div class="resident-table-tags">
+                <Tag
+                  v-for="type in row.relationshipTypes"
+                  :key="type"
+                  :severity="relationshipSeverity(type)"
+                  :value="type.replaceAll('_', ' ')"
+                  rounded
+                />
+                <span v-if="!row.relationshipTypes?.length">-</span>
+              </div>
+            </template>
+          </Column>
+          <Column header="Flat">
+            <template #body="{ data: row }">
+              <div class="resident-table-flats">
+                <span v-for="flatNumber in row.flatNumbers" :key="flatNumber">{{ flatNumber }}</span>
+                <span v-if="!row.flatNumbers?.length">-</span>
+              </div>
+            </template>
+          </Column>
+          <Column field="email" header="Email" sortable>
+            <template #body="{ data: row }">
+              {{ displayValue(row.email ?? row.sourceEmail) }}
+            </template>
+          </Column>
+          <Column field="mobileNumber" header="Mobile">
+            <template #body="{ data: row }">
+              {{ displayValue(row.mobileNumber ?? row.sourceContact) }}
+            </template>
+          </Column>
           <Column field="canLogin" header="Login" sortable>
             <template #body="{ data: row }">
               <AppStatusBadge :status="row.canLogin ? 'active' : 'inactive'" />
@@ -479,10 +849,64 @@ const loginFilter = computed({
               <span>WhatsApp same as mobile</span>
               <ToggleSwitch v-model="form.isWhatsappSameAsMobile" />
             </label>
-            <label>
-              <span>Profile image path</span>
-              <InputText v-model="form.profileImagePath" />
-            </label>
+            <div
+              v-for="config in residentProfileFileConfigs"
+              :key="config.field"
+              class="admin-form-grid__full resident-file-upload"
+            >
+              <div class="resident-file-upload__preview">
+                <img
+                  v-if="isResidentFileImage(config) && getResidentFilePreviewUrl(config)"
+                  :src="getResidentFilePreviewUrl(config)"
+                  :alt="`${form.fullName || 'Resident'} ${config.label}`"
+                >
+                <i v-else :class="config.icon" aria-hidden="true" />
+              </div>
+              <div class="resident-file-upload__body">
+                <div class="resident-file-upload__header">
+                  <span class="field-label">{{ config.label }}</span>
+                  <div class="admin-inline-actions">
+                    <Button
+                      type="button"
+                      icon="pi pi-upload"
+                      :label="hasResidentFile(config.field) ? 'Replace' : 'Upload'"
+                      severity="secondary"
+                      outlined
+                      @click="pickResidentFile(config.field)"
+                    />
+                    <Button
+                      v-if="getResidentFilePreviewUrl(config)"
+                      as="a"
+                      :href="getResidentFilePreviewUrl(config)"
+                      target="_blank"
+                      rel="noopener"
+                      icon="pi pi-search-plus"
+                      label="Open"
+                      severity="secondary"
+                      outlined
+                    />
+                    <Button
+                      v-if="hasResidentFile(config.field)"
+                      type="button"
+                      icon="pi pi-times"
+                      label="Remove"
+                      severity="danger"
+                      outlined
+                      @click="clearResidentFile(config.field)"
+                    />
+                  </div>
+                </div>
+                <strong v-if="getResidentFileName(config.field)">{{ getResidentFileName(config.field) }}</strong>
+                <span class="muted-line">{{ getResidentFileMeta(config.field) || 'PNG, JPG, JPEG, or WebP' }}</span>
+                <input
+                  :ref="(element) => setResidentFileInput(config.field, element)"
+                  type="file"
+                  :accept="config.accept"
+                  class="resident-file-upload__input"
+                  @change="onResidentFileChange(config, $event)"
+                >
+              </div>
+            </div>
             <label>
               <span>Emergency contact name</span>
               <InputText v-model="form.emergencyContactName" />
@@ -582,18 +1006,66 @@ const loginFilter = computed({
               <span>Police verification</span>
               <Select v-model="form.policeVerificationStatus" :options="['PENDING', 'VERIFIED', 'REJECTED', 'NOT_REQUIRED']" required />
             </label>
-            <label class="admin-form-grid__full">
-              <span>Government ID document path</span>
-              <InputText v-model="form.governmentIdDocumentPath" />
-            </label>
-            <label class="admin-form-grid__full">
-              <span>Ownership proof path</span>
-              <InputText v-model="form.ownershipProofPath" />
-            </label>
-            <label class="admin-form-grid__full">
-              <span>Lease agreement path</span>
-              <InputText v-model="form.leaseAgreementPath" />
-            </label>
+            <div class="admin-form-grid__full resident-file-list">
+              <div
+                v-for="config in residentDocumentFileConfigs"
+                :key="config.field"
+                class="resident-file-upload resident-file-upload--document"
+              >
+                <div class="resident-file-upload__preview">
+                  <img
+                    v-if="isResidentFileImage(config) && getResidentFilePreviewUrl(config)"
+                    :src="getResidentFilePreviewUrl(config)"
+                    :alt="`${form.fullName || 'Resident'} ${config.label}`"
+                  >
+                  <i v-else :class="config.icon" aria-hidden="true" />
+                </div>
+                <div class="resident-file-upload__body">
+                  <div class="resident-file-upload__header">
+                    <span class="field-label">{{ config.label }}</span>
+                    <div class="admin-inline-actions">
+                      <Button
+                        type="button"
+                        icon="pi pi-upload"
+                        :label="hasResidentFile(config.field) ? 'Replace' : 'Upload'"
+                        severity="secondary"
+                        outlined
+                        @click="pickResidentFile(config.field)"
+                      />
+                      <Button
+                        v-if="getResidentFilePreviewUrl(config)"
+                        as="a"
+                        :href="getResidentFilePreviewUrl(config)"
+                        target="_blank"
+                        rel="noopener"
+                        icon="pi pi-search-plus"
+                        label="Open"
+                        severity="secondary"
+                        outlined
+                      />
+                      <Button
+                        v-if="hasResidentFile(config.field)"
+                        type="button"
+                        icon="pi pi-times"
+                        label="Remove"
+                        severity="danger"
+                        outlined
+                        @click="clearResidentFile(config.field)"
+                      />
+                    </div>
+                  </div>
+                  <strong v-if="getResidentFileName(config.field)">{{ getResidentFileName(config.field) }}</strong>
+                  <span class="muted-line">{{ getResidentFileMeta(config.field) || 'PDF, PNG, JPG, JPEG, or WebP' }}</span>
+                  <input
+                    :ref="(element) => setResidentFileInput(config.field, element)"
+                    type="file"
+                    :accept="config.accept"
+                    class="resident-file-upload__input"
+                    @change="onResidentFileChange(config, $event)"
+                  >
+                </div>
+              </div>
+            </div>
           </div>
 
           <div class="admin-toggle-grid" style="margin-top: 1rem;">
@@ -620,3 +1092,18 @@ const loginFilter = computed({
     </Dialog>
   </div>
 </template>
+
+<style scoped>
+.resident-table-tags,
+.resident-table-flats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.resident-table-flats span {
+  font-weight: 700;
+  color: var(--color-text);
+}
+</style>

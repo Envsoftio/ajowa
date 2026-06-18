@@ -56,6 +56,7 @@ export const useAuthStore = defineStore('auth', {
         await $fetch('/api/auth/sign-out', {
           method: 'POST',
           credentials: 'include',
+          body: {},
         })
       } finally {
         this.me = null

@@ -166,6 +166,27 @@ const priorityRank: Record<NotificationPriority, number> = {
   LOW: 3,
 }
 
+const importedOwnerEmailExpression = (relationshipAlias: string) => `
+  case
+    when ${relationshipAlias}.import_metadata->>'relationshipSource' = 'OWNER'
+      and upper(coalesce(btrim(${relationshipAlias}.import_metadata #>> '{sourceData,EMAIL ID}'), '')) not in ('', 'NA', 'N/A', 'NIL', '-', '--')
+    then btrim(${relationshipAlias}.import_metadata #>> '{sourceData,EMAIL ID}')
+    else null
+  end
+`
+
+const importedOwnerEmailJoin = `
+  left join lateral (
+    select ${importedOwnerEmailExpression('email_fr')} as email
+    from flat_residents email_fr
+    where email_fr.user_id = u.id
+      and email_fr.is_active = true
+      and ${importedOwnerEmailExpression('email_fr')} is not null
+    order by email_fr.is_billing_contact desc, email_fr.is_primary_contact desc, email_fr.created_at
+    limit 1
+  ) imported_email on true
+`
+
 const mapUserRow = (row: AudienceUserRow): NotificationUser => ({
   id: row.id,
   email: row.email,
@@ -280,7 +301,7 @@ export const resolveNotificationAudience = async (
     `
       select distinct
         u.id,
-        u.email::text,
+        coalesce(nullif(btrim(u.email::text), ''), imported_email.email) as email,
         u.mobile_number,
         u.whatsapp_number,
         u.preferred_notification_channels::text,
@@ -290,6 +311,7 @@ export const resolveNotificationAudience = async (
         u.notification_in_app_enabled
       from users u
       ${joins}
+      ${importedOwnerEmailJoin}
       where ${where.join(' and ')}
       order by u.id
     `,
@@ -1051,7 +1073,7 @@ export const enqueueDueBillingContactNotifications = async (
         b.name as block_name,
         md.balance_amount::text,
         u.id as user_id,
-        u.email::text,
+        coalesce(nullif(btrim(u.email::text), ''), ${importedOwnerEmailExpression('fr')}) as email,
         u.mobile_number,
         u.whatsapp_number,
         u.preferred_notification_channels::text,

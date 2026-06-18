@@ -20,6 +20,8 @@ const formatMoney = (value: number) =>
     maximumFractionDigits: 0,
   }).format(value)
 
+const formatContact = (value: string | null | undefined) => value || 'Not provided'
+
 const search = ref('')
 const sendingReminder = ref(false)
 
@@ -211,9 +213,13 @@ const sendFilteredReminders = () =>
       >
         <Column field="residentName" header="Resident">
           <template #body="{ data: row }">
-            <strong>{{ row.residentName }}</strong>
+            <strong>
+              <NuxtLink :to="`/admin/residents/${row.userId}`" class="table-link-button">
+                {{ row.residentName }}
+              </NuxtLink>
+            </strong>
             <p class="table-muted">
-              {{ row.residentEmail }} · {{ row.residentMobileNumber }}
+              {{ formatContact(row.residentEmail) }} · {{ formatContact(row.residentMobileNumber) }}
             </p>
           </template>
         </Column>
