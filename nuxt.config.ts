@@ -84,7 +84,15 @@ export default defineNuxtConfig({
           content: '#0f5f4d',
         },
       ],
-      link: [{ rel: 'manifest', href: '/manifest.webmanifest' }],
+      link: [
+        { rel: 'preconnect', href: 'https://fonts.googleapis.com' },
+        { rel: 'preconnect', href: 'https://fonts.gstatic.com', crossorigin: '' },
+        {
+          rel: 'stylesheet',
+          href: 'https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&display=swap',
+        },
+        { rel: 'manifest', href: '/manifest.webmanifest' },
+      ],
     },
   },
   nitro: {

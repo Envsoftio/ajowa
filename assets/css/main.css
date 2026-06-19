@@ -1,6 +1,7 @@
 :root {
-  --font-body: 'Manrope', 'Segoe UI', sans-serif;
+  --font-body: 'Sora', 'Segoe UI', sans-serif;
   --font-display: 'Sora', 'Segoe UI', sans-serif;
+  --p-font-family: var(--font-body);
   --color-brand: #0f766e;
   --color-brand-strong: #115e59;
   --color-brand-soft: rgba(15, 118, 110, 0.16);
@@ -51,6 +52,14 @@ body {
   color: var(--color-text);
   background-color: var(--color-bg);
   background: var(--color-bg);
+}
+
+button,
+input,
+select,
+textarea,
+.p-component {
+  font-family: var(--font-body);
 }
 
 a {
