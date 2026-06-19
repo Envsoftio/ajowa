@@ -17,6 +17,7 @@ type NoticeRow = {
   published_at: string | null
   expires_at: string | null
   created_at: string
+  attachment_file_id: string | null
   attachment_label: string | null
 }
 
@@ -53,6 +54,7 @@ export default defineEventHandler(async (event) => {
           published_at::text,
           expires_at::text,
           created_at::text,
+          attachment_file_id::text,
           attachment_label
         from notices
         where ${where.join(' and ')}
@@ -86,7 +88,9 @@ export default defineEventHandler(async (event) => {
       publishedAt: row.published_at,
       expiresAt: row.expires_at,
       createdAt: row.created_at,
+      attachmentFileId: row.attachment_file_id,
       attachmentLabel: row.attachment_label,
+      attachmentUrl: row.attachment_file_id ? `/api/admin/notices/${row.id}/attachment` : null,
     })),
     total: Number(total.rows[0]?.total ?? 0),
     page: query.page,

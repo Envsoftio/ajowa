@@ -1,11 +1,15 @@
+import { createHash } from 'node:crypto'
 import type { PoolClient } from 'pg'
 import type { H3Event } from 'h3'
 import { z } from 'zod'
 import { AppError } from './errors'
 import { getDatabasePool } from './database'
 import { parseListQuery } from './master-data'
+import { enqueueNotificationForUsers, resolveNotificationAudience } from './notifications'
+import { createStorageObjectKey, downloadPrivateFile, uploadPrivateFile } from './storage'
 import type { AuthMe } from '~/types/auth'
 import type {
+  ServiceRequestAttachment,
   ServiceCommentVisibility,
   ServiceDepartment,
   ServiceLocationType,
@@ -28,6 +32,13 @@ const serviceSources = ['RESIDENT_REQUEST', 'ADMIN_CREATED', 'COMMON_AREA_REPORT
 const commentVisibilities = ['INTERNAL_NOTE', 'RESIDENT_VISIBLE'] as const
 
 type TicketScope = 'admin' | 'resident' | 'service'
+
+type ServiceAttachmentUploadInput = {
+  fileName: string
+  mimeType: string
+  sizeBytes: number
+  body: Buffer
+}
 
 type DepartmentRow = {
   id: string
@@ -128,6 +139,16 @@ type AttachmentRow = {
   created_at: string
 }
 
+type TicketNotificationRow = {
+  id: string
+  society_id: string
+  requester_user_id: string | null
+  request_number: string
+  title: string
+  status: string
+  priority: string
+}
+
 export const serviceDepartmentSchema = z.object({
   code: z.string().trim().min(2).max(40).transform((value) => value.toUpperCase().replace(/\s+/g, '_')),
   name: z.string().trim().min(2).max(120),
@@ -182,6 +203,12 @@ export const serviceRequestAttachmentSchema = z.object({
   sizeBytes: z.coerce.number().int().positive().max(10 * 1024 * 1024),
   checksum: z.string().trim().max(160).nullable().optional(),
 })
+
+const ticketAttachmentDownloadUrl = (scope: TicketScope, ticketId: string, attachmentId: string) => {
+  if (scope === 'admin') return `/api/admin/service-requests/${ticketId}/attachments/${attachmentId}/download`
+  if (scope === 'service') return `/api/service/tickets/${ticketId}/attachments/${attachmentId}/download`
+  return `/api/my/service-requests/${ticketId}/attachments/${attachmentId}/download`
+}
 
 const mapDepartment = (row: DepartmentRow, assignments: StaffAssignmentRow[] = []): ServiceDepartment => ({
   id: row.id,
@@ -680,6 +707,77 @@ const assertAssigneeInDepartment = async (
   }
 }
 
+const warnNotificationFailure = (serviceRequestId: string, error: unknown) => {
+  const message = error instanceof Error ? error.message : 'Service request notification enqueue failed.'
+  console.warn(JSON.stringify({ level: 'warn', message, serviceRequestId }))
+}
+
+const enqueueServiceRequestNotification = async (
+  serviceRequestId: string,
+  input: {
+    title: string
+    body: string
+    idempotencyKey: string
+  },
+) => {
+  const client = await getDatabasePool().connect()
+
+  try {
+    const result = await client.query<TicketNotificationRow>(
+      `
+        select
+          id,
+          society_id,
+          requester_user_id,
+          request_number,
+          title,
+          status::text,
+          priority::text
+        from service_requests
+        where id = $1
+        limit 1
+      `,
+      [serviceRequestId],
+    )
+    const ticket = result.rows[0]
+
+    if (!ticket?.requester_user_id) {
+      return { eventId: null, audienceCount: 0, jobCount: 0 }
+    }
+
+    const users = await resolveNotificationAudience(client, ticket.society_id, {
+      scope: 'USERS',
+      userIds: [ticket.requester_user_id],
+    })
+
+    return enqueueNotificationForUsers(client, {
+      societyId: ticket.society_id,
+      eventKey: 'service_request.updated',
+      category: 'SERVICE_REQUESTS',
+      sourceTable: 'service_requests',
+      sourceId: ticket.id,
+      priority: ticket.priority === 'EMERGENCY' ? 'HIGH' : 'MEDIUM',
+      title: input.title,
+      body: input.body,
+      payload: {
+        serviceRequestId: ticket.id,
+        requestNumber: ticket.request_number,
+        ticketNumber: ticket.request_number,
+        status: ticket.status,
+        ticketTitle: ticket.title,
+        deepLinkUrl: `/my/service-requests/${ticket.id}`,
+      },
+      idempotencyKey: input.idempotencyKey,
+      idempotencyWindowSeconds: 31536000,
+      users,
+      audienceLabel: 'Service request requester',
+      audienceSnapshot: { eventKey: 'service_request.updated', serviceRequestId: ticket.id },
+    })
+  } finally {
+    client.release()
+  }
+}
+
 export const createServiceRequest = async (
   authMe: AuthMe,
   input: z.infer<typeof serviceRequestCreateSchema>,
@@ -843,6 +941,15 @@ export const createServiceRequest = async (
     }
 
     await client.query('commit')
+    try {
+      await enqueueServiceRequestNotification(id, {
+        title: 'Service request created',
+        body: `${requestNumber} has been created and is currently ${status.replaceAll('_', ' ').toLowerCase()}.`,
+        idempotencyKey: `service_request.created:${id}`,
+      })
+    } catch (notificationError) {
+      warnNotificationFailure(id, notificationError)
+    }
     return { id, requestNumber }
   } catch (error) {
     await client.query('rollback')
@@ -1036,6 +1143,7 @@ export const getServiceRequestDetail = async (authMe: AuthMe, id: string, scope:
       mimeType: row.mime_type,
       sizeBytes: row.size_bytes,
       checksum: row.checksum,
+      downloadUrl: ticketAttachmentDownloadUrl(scope, ticket.id, row.id),
       createdAt: row.created_at,
     })),
   }
@@ -1159,6 +1267,15 @@ export const assignServiceRequest = async (
     )
 
     await client.query('commit')
+    try {
+      await enqueueServiceRequestNotification(id, {
+        title: 'Service request assigned',
+        body: `${ticket.request_number} has been assigned for service.`,
+        idempotencyKey: `service_request.assigned:${id}:${Date.now()}`,
+      })
+    } catch (notificationError) {
+      warnNotificationFailure(id, notificationError)
+    }
   } catch (error) {
     await client.query('rollback')
     throw error
@@ -1282,6 +1399,15 @@ export const updateServiceRequestStatus = async (
     }
 
     await client.query('commit')
+    try {
+      await enqueueServiceRequestNotification(id, {
+        title: 'Service request status updated',
+        body: `${ticket.request_number} moved from ${fromStatus.replaceAll('_', ' ').toLowerCase()} to ${input.status.replaceAll('_', ' ').toLowerCase()}.`,
+        idempotencyKey: `service_request.status:${id}:${input.status}:${Date.now()}`,
+      })
+    } catch (notificationError) {
+      warnNotificationFailure(id, notificationError)
+    }
   } catch (error) {
     await client.query('rollback')
     throw error
@@ -1306,7 +1432,7 @@ export const addServiceRequestComment = async (
 
   try {
     await client.query('begin')
-    await loadTicketForAction(client, authMe, id, scope)
+    const ticket = await loadTicketForAction(client, authMe, id, scope)
 
     const comment = await client.query<{ id: string }>(
       `
@@ -1345,6 +1471,17 @@ export const addServiceRequestComment = async (
     )
 
     await client.query('commit')
+    if (visibility === 'RESIDENT_VISIBLE' && authMe.user.id !== ticket.requester_user_id) {
+      try {
+        await enqueueServiceRequestNotification(id, {
+          title: 'Service request comment added',
+          body: `A new update was added to ${ticket.request_number}.`,
+          idempotencyKey: `service_request.comment:${comment.rows[0]?.id ?? Date.now()}`,
+        })
+      } catch (notificationError) {
+        warnNotificationFailure(id, notificationError)
+      }
+    }
     return comment.rows[0]?.id
   } catch (error) {
     await client.query('rollback')
@@ -1410,6 +1547,161 @@ export const createServiceRequestAttachment = async (
   } catch (error) {
     await client.query('rollback')
     throw error
+  } finally {
+    client.release()
+  }
+}
+
+export const uploadServiceRequestAttachment = async (
+  authMe: AuthMe,
+  id: string,
+  input: ServiceAttachmentUploadInput,
+  scope: TicketScope,
+): Promise<ServiceRequestAttachment> => {
+  const pool = getDatabasePool()
+  const client = await pool.connect()
+  const storageObjectKey = createStorageObjectKey({
+    recordType: 'service-request',
+    recordId: id,
+    fileName: input.fileName,
+  })
+  const checksum = createHash('sha256').update(input.body).digest('hex')
+
+  try {
+    await client.query('begin')
+    await loadTicketForAction(client, authMe, id, scope)
+
+    await uploadPrivateFile({
+      storageTargetKey: 'ticket_attachments',
+      storageObjectKey,
+      originalFileName: input.fileName,
+      mimeType: input.mimeType,
+      sizeBytes: input.sizeBytes,
+      body: input.body,
+      uploadedBy: authMe.user.id,
+      relation: {
+        recordType: 'service_requests',
+        recordId: id,
+      },
+      checksum,
+    })
+
+    const attachment = await client.query<AttachmentRow>(
+      `
+        insert into service_request_attachments (
+          service_request_id,
+          uploaded_by_user_id,
+          file_name,
+          file_path,
+          mime_type,
+          size_bytes,
+          checksum
+        )
+        values ($1, $2, $3, $4, $5, $6, $7)
+        returning
+          id,
+          service_request_id,
+          uploaded_by_user_id,
+          null::text as uploaded_by_name,
+          file_name,
+          file_path,
+          mime_type,
+          size_bytes,
+          checksum,
+          created_at::text
+      `,
+      [id, authMe.user.id, input.fileName, storageObjectKey, input.mimeType, input.sizeBytes, checksum],
+    )
+    const row = attachment.rows[0]
+
+    if (!row) {
+      throw new AppError({ code: 'INTERNAL_ERROR', statusCode: 500, message: 'Attachment save failed.' })
+    }
+
+    await client.query(
+      `
+        insert into service_request_events (
+          service_request_id,
+          event_type,
+          actor_user_id,
+          visibility,
+          metadata
+        )
+        values ($1, 'ATTACHMENT_ADDED', $2, 'RESIDENT_VISIBLE', $3)
+      `,
+      [
+        id,
+        authMe.user.id,
+        {
+          attachmentId: row?.id,
+          fileName: input.fileName,
+          storageObjectKey,
+        },
+      ],
+    )
+
+    await client.query('commit')
+
+    return {
+      id: row.id,
+      serviceRequestId: row.service_request_id,
+      uploadedByUserId: row.uploaded_by_user_id,
+      uploadedByName: authMe.user.fullName,
+      fileName: row.file_name,
+      filePath: row.file_path,
+      mimeType: row.mime_type,
+      sizeBytes: row.size_bytes,
+      checksum: row.checksum,
+      downloadUrl: ticketAttachmentDownloadUrl(scope, id, row.id),
+      createdAt: row.created_at,
+    }
+  } catch (error) {
+    await client.query('rollback')
+    throw error
+  } finally {
+    client.release()
+  }
+}
+
+export const downloadServiceRequestAttachment = async (
+  authMe: AuthMe,
+  id: string,
+  attachmentId: string,
+  scope: TicketScope,
+) => {
+  const pool = getDatabasePool()
+  const client = await pool.connect()
+
+  try {
+    await loadTicketForAction(client, authMe, id, scope)
+    const result = await client.query<{
+      file_name: string
+      file_path: string
+      mime_type: string
+    }>(
+      `
+        select file_name, file_path, mime_type
+        from service_request_attachments
+        where id = $1 and service_request_id = $2
+        limit 1
+      `,
+      [attachmentId, id],
+    )
+    const attachment = result.rows[0]
+    if (!attachment) {
+      throw new AppError({ code: 'NOT_FOUND', statusCode: 404, message: 'Attachment not found.' })
+    }
+
+    const blob = await downloadPrivateFile({
+      storageTargetKey: 'ticket_attachments',
+      storageObjectKey: attachment.file_path,
+    })
+
+    return {
+      fileName: attachment.file_name,
+      mimeType: attachment.mime_type,
+      buffer: Buffer.from(await blob.arrayBuffer()),
+    }
   } finally {
     client.release()
   }

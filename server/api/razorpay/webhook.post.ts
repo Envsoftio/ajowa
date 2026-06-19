@@ -1,4 +1,9 @@
-import { allocateMaintenancePayment, generateReceiptForPayment, verifyRazorpayWebhookSignature } from '~/server/utils/payments'
+import {
+  allocateMaintenancePayment,
+  enqueueReceiptReadyNotification,
+  generateReceiptForPayment,
+  verifyRazorpayWebhookSignature,
+} from '~/server/utils/payments'
 import { createApiSuccess } from '~/server/utils/api'
 import { getDatabasePool } from '~/server/utils/database'
 import { AppError } from '~/server/utils/errors'
@@ -83,6 +88,12 @@ export default defineEventHandler(async (event) => {
       if (localPaymentId) {
         await allocateMaintenancePayment(localPaymentId)
         await generateReceiptForPayment(localPaymentId)
+        try {
+          await enqueueReceiptReadyNotification(localPaymentId)
+        } catch (notificationError) {
+          const message = notificationError instanceof Error ? notificationError.message : 'Receipt notification enqueue failed.'
+          console.warn(JSON.stringify({ level: 'warn', message, paymentId: localPaymentId }))
+        }
       }
       return createApiSuccess(event, { processed: true, paymentId: localPaymentId ?? null })
     }

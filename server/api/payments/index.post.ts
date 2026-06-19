@@ -4,6 +4,7 @@ import { requireRole } from '~/server/utils/auth'
 import { getDatabasePool, queryRows } from '~/server/utils/database'
 import {
   allocateMaintenancePayment,
+  enqueueReceiptReadyNotification,
   generateReceiptForPayment,
   manualPaymentSchema,
   previewPaymentAllocation,
@@ -189,6 +190,13 @@ export default defineEventHandler(async (event) => {
       throw error
     } finally {
       journalClient.release()
+    }
+
+    try {
+      await enqueueReceiptReadyNotification(paymentId)
+    } catch (notificationError) {
+      const message = notificationError instanceof Error ? notificationError.message : 'Receipt notification enqueue failed.'
+      console.warn(JSON.stringify({ level: 'warn', message, paymentId }))
     }
 
     return createApiSuccess(event, { id: paymentId, receiptNumber })

@@ -1,4 +1,4 @@
-import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
+import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
 import type { PoolClient } from 'pg'
 import QRCode from 'qrcode'
 import { z } from 'zod'
@@ -7,6 +7,7 @@ import { getValidatedRuntimeConfig } from './env'
 import { AppError } from './errors'
 import { normalizeSocietySettings } from './master-data'
 import { enqueueNotificationForUsers } from './notifications'
+import { createStorageObjectKey, uploadPrivateFile } from './storage'
 
 type AccessScope = 'OWNERSHIP' | 'TENANCY' | 'HOUSEHOLD'
 type ScanResult = 'GRANTED' | 'DENIED' | 'EXPIRED' | 'REVOKED' | 'INVALID'
@@ -116,6 +117,27 @@ const mapNotificationUser = (row: NotificationUserRow) => ({
   whatsappEnabled: row.notification_whatsapp_enabled,
   inAppEnabled: row.notification_in_app_enabled,
 })
+
+const importedOwnerEmailExpression = (relationshipAlias: string) => `
+  case
+    when ${relationshipAlias}.import_metadata->>'relationshipSource' = 'OWNER'
+      and upper(coalesce(btrim(${relationshipAlias}.import_metadata #>> '{sourceData,EMAIL ID}'), '')) not in ('', 'NA', 'N/A', 'NIL', '-', '--')
+    then btrim(${relationshipAlias}.import_metadata #>> '{sourceData,EMAIL ID}')
+    else null
+  end
+`
+
+const importedOwnerEmailJoin = `
+  left join lateral (
+    select ${importedOwnerEmailExpression('email_fr')} as email
+    from flat_residents email_fr
+    where email_fr.user_id = u.id
+      and email_fr.is_active = true
+      and ${importedOwnerEmailExpression('email_fr')} is not null
+    order by email_fr.is_billing_contact desc, email_fr.is_primary_contact desc, email_fr.created_at
+    limit 1
+  ) imported_email on true
+`
 
 export const getCurrentBillingPeriodId = async (client: PoolClient, societyId: string) => {
   const result = await client.query<{ id: string }>(
@@ -387,17 +409,18 @@ const enqueueAccessNotification = async (
   const users = await client.query<NotificationUserRow>(
     `
       select
-        id,
-        email::text,
-        mobile_number,
-        whatsapp_number,
-        preferred_notification_channels,
-        notification_push_enabled,
-        notification_email_enabled,
-        notification_whatsapp_enabled,
-        notification_in_app_enabled
-      from users
-      where id = $1 and is_active = true
+        u.id,
+        coalesce(nullif(btrim(u.email::text), ''), imported_email.email) as email,
+        u.mobile_number,
+        u.whatsapp_number,
+        u.preferred_notification_channels,
+        u.notification_push_enabled,
+        u.notification_email_enabled,
+        u.notification_whatsapp_enabled,
+        u.notification_in_app_enabled
+      from users u
+      ${importedOwnerEmailJoin}
+      where u.id = $1 and u.is_active = true
     `,
     [userId],
   )
@@ -453,12 +476,39 @@ export const ensureQrForAccess = async (userId: string, billingPeriodId: string)
       validUntil: validUntil.toISOString(),
     }
     const signedToken = signQrPayload(payload)
+    const tokenId = randomUUID()
     const qrImage = await QRCode.toDataURL(signedToken, { margin: 1, width: 360 })
+    const imageMatch = qrImage.match(/^data:image\/png;base64,(.+)$/)
+    if (!imageMatch?.[1]) {
+      throw new AppError({ code: 'INTERNAL_ERROR', statusCode: 500, message: 'QR image generation failed.' })
+    }
+    const qrImageBuffer = Buffer.from(imageMatch[1], 'base64')
+    const qrImagePath = createStorageObjectKey({
+      recordType: 'access-token',
+      recordId: tokenId,
+      fileName: 'gate-qr.png',
+    })
     const tokenHash = sha256(signedToken)
+
+    await uploadPrivateFile({
+      storageTargetKey: 'qr_images',
+      storageObjectKey: qrImagePath,
+      originalFileName: 'ajowa-gate-qr.png',
+      mimeType: 'image/png',
+      sizeBytes: qrImageBuffer.length,
+      body: qrImageBuffer,
+      uploadedBy: userId,
+      relation: {
+        recordType: 'access_tokens',
+        recordId: tokenId,
+      },
+      checksum: createHash('sha256').update(qrImageBuffer).digest('hex'),
+    })
 
     const inserted = await client.query(
       `
         insert into access_tokens (
+          id,
           society_id,
           user_id,
           billing_period_id,
@@ -468,10 +518,19 @@ export const ensureQrForAccess = async (userId: string, billingPeriodId: string)
           expires_at,
           valid_until
         )
-        values ($1, $2, $3, $4, $5::jsonb, $6, $7, $7)
+        values ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $8)
         returning id, qr_payload, qr_image_path, expires_at::text, valid_until::text, generated_at::text
       `,
-      [grantedAccess.society_id, userId, billingPeriodId, tokenHash, JSON.stringify(payload), qrImage, validUntil.toISOString()],
+      [
+        tokenId,
+        grantedAccess.society_id,
+        userId,
+        billingPeriodId,
+        tokenHash,
+        JSON.stringify(payload),
+        qrImagePath,
+        validUntil.toISOString(),
+      ],
     )
 
     await enqueueAccessNotification(client, grantedAccess.society_id, userId, 'access_qr.generated', {

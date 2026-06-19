@@ -232,8 +232,14 @@ watch(
 const selectedPayment = ref<PaymentDetail | null>(null)
 const detailVisible = ref(false)
 const detailPending = ref(false)
+const proofInput = ref<HTMLInputElement | null>(null)
+const proofTargetPaymentId = ref<string | null>(null)
+const proofUploadingId = ref<string | null>(null)
+const proofAccept = 'application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,image/jpeg,image/png,image/webp'
+const proofAllowedMimeTypes = proofAccept.split(',')
+const proofMaxSizeBytes = 10 * 1024 * 1024
 
-const openDetail = async (payment: PaymentSummary) => {
+const openDetail = async (payment: Pick<PaymentSummary, 'id'>) => {
   detailPending.value = true
   detailVisible.value = true
 
@@ -265,10 +271,72 @@ const copyReceipt = async (payment: PaymentSummary) => {
   await navigator.clipboard.writeText(payment.receiptNumber)
   toast.add({ severity: 'success', summary: 'Receipt copied', life: 10000 })
 }
+
+const pickProofFile = (payment: PaymentSummary) => {
+  proofTargetPaymentId.value = payment.id
+  proofInput.value?.click()
+}
+
+const onProofFileChange = async (event: Event) => {
+  const target = event.target as HTMLInputElement
+  const file = target.files?.[0]
+  target.value = ''
+  const paymentId = proofTargetPaymentId.value
+  proofTargetPaymentId.value = null
+
+  if (!file || !paymentId) {
+    return
+  }
+
+  if (!proofAllowedMimeTypes.includes(file.type)) {
+    toast.add({
+      severity: 'warn',
+      summary: 'Unsupported file',
+      detail: 'Upload a PDF, Excel, JPG, PNG, or WebP proof file.',
+      life: 10000,
+    })
+    return
+  }
+
+  if (file.size <= 0 || file.size > proofMaxSizeBytes) {
+    toast.add({
+      severity: 'warn',
+      summary: 'File too large',
+      detail: 'Payment proof files must be 10 MB or smaller.',
+      life: 10000,
+    })
+    return
+  }
+
+  proofUploadingId.value = paymentId
+  try {
+    const formData = new FormData()
+    formData.append('file', file)
+    await api(`/api/payments/${paymentId}/proof`, {
+      method: 'POST',
+      body: formData,
+    })
+    toast.add({ severity: 'success', summary: 'Proof uploaded', life: 10000 })
+    await refresh()
+    if (selectedPayment.value?.id === paymentId) {
+      await openDetail({ id: paymentId })
+    }
+  } finally {
+    proofUploadingId.value = null
+  }
+}
 </script>
 
 <template>
   <div class="landing-page">
+    <input
+      ref="proofInput"
+      type="file"
+      :accept="proofAccept"
+      class="finance-upload-card__input"
+      @change="onProofFileChange"
+    >
+
     <div class="surface-grid">
       <section class="surface-card">
         <p class="eyebrow">Visible collected</p>
@@ -413,6 +481,29 @@ const copyReceipt = async (payment: PaymentSummary) => {
             <div class="admin-inline-actions">
               <Tag :severity="row.proofFilePath ? 'success' : 'warn'" :value="row.proofFilePath ? 'Proof' : 'No proof'" rounded />
               <Tag :severity="row.receiptNumber ? 'success' : 'warn'" :value="row.receiptNumber ? 'Receipt' : 'No receipt'" rounded />
+              <Button
+                v-if="row.proofFilePath"
+                as="a"
+                :href="`/api/payments/${row.id}/proof`"
+                target="_blank"
+                icon="pi pi-paperclip"
+                severity="secondary"
+                text
+                rounded
+                aria-label="Open proof"
+                title="Open proof"
+              />
+              <Button
+                type="button"
+                icon="pi pi-upload"
+                severity="secondary"
+                text
+                rounded
+                :loading="proofUploadingId === row.id"
+                :aria-label="row.proofFilePath ? 'Replace proof' : 'Upload proof'"
+                :title="row.proofFilePath ? 'Replace proof' : 'Upload proof'"
+                @click="pickProofFile(row)"
+              />
             </div>
           </template>
         </Column>
@@ -461,6 +552,27 @@ const copyReceipt = async (payment: PaymentSummary) => {
           <div class="admin-inline-actions">
             <Button label="View" icon="pi pi-eye" size="small" severity="secondary" outlined @click="openDetail(payment)" />
             <Button
+              v-if="payment.proofFilePath"
+              as="a"
+              :href="`/api/payments/${payment.id}/proof`"
+              target="_blank"
+              label="Proof"
+              icon="pi pi-paperclip"
+              size="small"
+              severity="secondary"
+              outlined
+            />
+            <Button
+              type="button"
+              :label="payment.proofFilePath ? 'Replace proof' : 'Upload proof'"
+              icon="pi pi-upload"
+              size="small"
+              severity="secondary"
+              outlined
+              :loading="proofUploadingId === payment.id"
+              @click="pickProofFile(payment)"
+            />
+            <Button
               as="a"
               :href="`/api/payments/${payment.id}/receipt`"
               target="_blank"
@@ -489,6 +601,16 @@ const copyReceipt = async (payment: PaymentSummary) => {
             <p class="eyebrow">Receipt</p>
             <h3>{{ selectedPayment.receipt_number || '-' }}</h3>
             <p>{{ formatDate(selectedPayment.payment_date) }}</p>
+            <Button
+              v-if="selectedPayment.proof_file_path"
+              as="a"
+              :href="`/api/payments/${selectedPayment.id}/proof`"
+              target="_blank"
+              icon="pi pi-paperclip"
+              label="Open proof"
+              severity="secondary"
+              outlined
+            />
           </section>
         </div>
         <DataTable :value="selectedPayment.allocations" responsive-layout="scroll">

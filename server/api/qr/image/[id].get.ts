@@ -3,6 +3,7 @@ import { requireActiveUser } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
 import { AppError } from '~/server/utils/errors'
 import { readUuidParam } from '~/server/utils/master-data'
+import { downloadPrivateFile } from '~/server/utils/storage'
 
 export default defineEventHandler(async (event) => {
   const authMe = await requireActiveUser(event)
@@ -34,8 +35,7 @@ export default defineEventHandler(async (event) => {
     throw new AppError({ code: 'VALIDATION_ERROR', statusCode: 410, message: 'QR image has expired.' })
   }
 
-  const imageMatch = token.qr_image_path?.match(/^data:image\/png;base64,(.+)$/)
-  if (!imageMatch?.[1]) {
+  if (!token.qr_image_path) {
     throw new AppError({ code: 'INTERNAL_ERROR', statusCode: 500, message: 'QR image is unavailable.' })
   }
 
@@ -43,5 +43,15 @@ export default defineEventHandler(async (event) => {
   setHeader(event, 'cache-control', 'private, no-store')
   setHeader(event, 'content-disposition', 'inline; filename="ajowa-gate-qr.png"')
 
-  return Buffer.from(imageMatch[1], 'base64')
+  const imageMatch = token.qr_image_path.match(/^data:image\/png;base64,(.+)$/)
+  if (imageMatch?.[1]) {
+    return Buffer.from(imageMatch[1], 'base64')
+  }
+
+  const blob = await downloadPrivateFile({
+    storageTargetKey: 'qr_images',
+    storageObjectKey: token.qr_image_path,
+  })
+
+  return Buffer.from(await blob.arrayBuffer())
 })

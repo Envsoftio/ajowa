@@ -62,6 +62,17 @@ const addComment = async (payload: { visibility: 'INTERNAL_NOTE' | 'RESIDENT_VIS
   }
 }
 
+const uploadAttachment = async (file: File) => {
+  saving.value = true
+  try {
+    await serviceRequests.uploadAttachment(String(route.params.id), file)
+    toast.add({ severity: 'success', summary: 'Attachment uploaded', life: 10000 })
+    await refresh()
+  } finally {
+    saving.value = false
+  }
+}
+
 const updateStatus = async (payload: { status: ServiceRequestStatus; comment?: string | null; reason?: string | null }) => {
   saving.value = true
   try {
@@ -157,7 +168,12 @@ const updateStatus = async (payload: { status: ServiceRequestStatus; comment?: s
             </div>
           </div>
           <TicketCommentPanel :comments="ticket.comments" allow-internal :saving="saving" @add="addComment" />
-          <TicketAttachmentGallery :attachments="ticket.attachments" />
+          <TicketAttachmentGallery
+            :attachments="ticket.attachments"
+            can-upload
+            :uploading="saving"
+            @upload="uploadAttachment"
+          />
         </section>
       </section>
     </template>

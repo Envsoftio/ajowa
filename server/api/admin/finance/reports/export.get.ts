@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { createApiSuccess } from '~/server/utils/api'
 import { requireRole } from '~/server/utils/auth'
 import { getQuerySafe } from '~/server/utils/master-data'
@@ -9,6 +10,7 @@ import {
   parseReportFilters,
   type ExportFormat,
 } from '~/server/utils/reports'
+import { createStorageObjectKey, uploadPrivateFile } from '~/server/utils/storage'
 
 export default defineEventHandler(async (event) => {
   const authMe = await requireRole(event, ['ADMIN', 'MANAGER'])
@@ -24,16 +26,35 @@ export default defineEventHandler(async (event) => {
   const buffer =
     format === 'xlsx' ? generateReportWorkbook(report) : await generateReportPdf(report, authMe.user.societyId)
   const extension = format === 'xlsx' ? 'xlsx' : 'pdf'
+  const fileName = buildReportFilename(report, extension)
+  const mimeType = format === 'xlsx'
+    ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    : 'application/pdf'
+  const storageObjectKey = createStorageObjectKey({
+    recordType: 'finance-report-export',
+    recordId: authMe.user.societyId,
+    fileName,
+  })
 
-  setHeader(
-    event,
-    'content-type',
-    format === 'xlsx'
-      ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-      : 'application/pdf',
-  )
-  setHeader(event, 'content-disposition', `attachment; filename="${buildReportFilename(report, extension)}"`)
+  await uploadPrivateFile({
+    storageTargetKey: 'report_exports',
+    storageObjectKey,
+    originalFileName: fileName,
+    mimeType,
+    sizeBytes: buffer.length,
+    body: buffer,
+    uploadedBy: authMe.user.id,
+    relation: {
+      recordType: 'finance_reports',
+      recordId: authMe.user.societyId,
+    },
+    checksum: createHash('sha256').update(buffer).digest('hex'),
+  })
+
+  setHeader(event, 'content-type', mimeType)
+  setHeader(event, 'content-disposition', `attachment; filename="${fileName}"`)
   setHeader(event, 'x-report-generation-ms', String(report.performanceMs))
+  setHeader(event, 'x-storage-object-key', storageObjectKey)
 
   return buffer
 })

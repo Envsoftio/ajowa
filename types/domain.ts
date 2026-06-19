@@ -377,6 +377,7 @@ export type ServiceRequestAttachment = {
   mimeType: string
   sizeBytes: number
   checksum: string | null
+  downloadUrl?: string
   createdAt: string
 }
 

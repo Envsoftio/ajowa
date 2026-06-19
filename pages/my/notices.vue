@@ -14,7 +14,9 @@ type Notice = {
   isPinned: boolean
   publishedAt: string | null
   expiresAt: string | null
+  attachmentFileId: string | null
   attachmentLabel: string | null
+  attachmentUrl: string | null
   isRead: boolean
 }
 
@@ -74,7 +76,16 @@ const readNotice = async (notice: Notice) => {
           <h2>{{ selectedNotice.title }}</h2>
           <p v-if="selectedNotice.summary" class="table-muted">{{ selectedNotice.summary }}</p>
           <p class="notice-body">{{ selectedNotice.body }}</p>
-          <Message v-if="selectedNotice.attachmentLabel" severity="info">{{ selectedNotice.attachmentLabel }}</Message>
+          <Button
+            v-if="selectedNotice.attachmentUrl"
+            as="a"
+            :href="selectedNotice.attachmentUrl"
+            target="_blank"
+            icon="pi pi-paperclip"
+            :label="selectedNotice.attachmentLabel || 'Open attachment'"
+            severity="secondary"
+            outlined
+          />
         </article>
       </div>
     </section>

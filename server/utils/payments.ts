@@ -6,6 +6,7 @@ import { AppError } from './errors'
 import { getDatabasePool, queryRows } from './database'
 import { computeDueAmounts, todayDate } from './billing'
 import { getValidatedRuntimeConfig } from './env'
+import { enqueueNotificationForUsers, resolveNotificationAudience } from './notifications'
 import { recomputeUserAccess } from './qr-access'
 import { uploadPrivateFile } from './storage'
 
@@ -108,6 +109,17 @@ type PaymentReceiptRow = {
   society_name: string
   society_code: string
   society_address: string
+}
+
+type PaymentNotificationRow = {
+  id: string
+  society_id: string
+  payer_user_id: string | null
+  received_for_flat_id: string
+  amount: string
+  receipt_number: string | null
+  flat_number: string | null
+  block_name: string | null
 }
 
 type PaymentReceiptAllocationRow = {
@@ -947,6 +959,70 @@ export const generateReceiptForPayment = async (paymentId: string) => {
   })
 
   return receiptNumber
+}
+
+export const enqueueReceiptReadyNotification = async (paymentId: string) => {
+  const client = await getDatabasePool().connect()
+
+  try {
+    const result = await client.query<PaymentNotificationRow>(
+      `
+        select
+          p.id,
+          p.society_id,
+          p.payer_user_id,
+          p.received_for_flat_id,
+          p.amount::text,
+          p.receipt_number,
+          f.flat_number,
+          b.name as block_name
+        from payments p
+        left join flats f on f.id = p.received_for_flat_id
+        left join blocks b on b.id = f.block_id
+        where p.id = $1
+        limit 1
+      `,
+      [paymentId],
+    )
+    const payment = result.rows[0]
+
+    if (!payment?.payer_user_id) {
+      return { eventId: null, audienceCount: 0, jobCount: 0 }
+    }
+
+    const users = await resolveNotificationAudience(client, payment.society_id, {
+      scope: 'USERS',
+      userIds: [payment.payer_user_id],
+    })
+    const flatLabel = [payment.block_name, payment.flat_number].filter(Boolean).join(' ') || 'your flat'
+    const receiptLabel = payment.receipt_number ? `Receipt ${payment.receipt_number}` : 'Your receipt'
+
+    return enqueueNotificationForUsers(client, {
+      societyId: payment.society_id,
+      eventKey: 'receipt.ready',
+      category: 'PAYMENTS',
+      sourceTable: 'payments',
+      sourceId: payment.id,
+      priority: 'MEDIUM',
+      title: 'Payment receipt ready',
+      body: `${receiptLabel} for ${formatReceiptMoney(Number(payment.amount))} has been generated for ${flatLabel}.`,
+      payload: {
+        paymentId: payment.id,
+        receiptNumber: payment.receipt_number,
+        amount: Number(payment.amount),
+        flatId: payment.received_for_flat_id,
+        flatLabel,
+        deepLinkUrl: '/my/receipts',
+      },
+      idempotencyKey: `receipt.ready:${payment.id}`,
+      idempotencyWindowSeconds: 31536000,
+      users,
+      audienceLabel: 'Payment payer',
+      audienceSnapshot: { eventKey: 'receipt.ready', paymentId: payment.id },
+    })
+  } finally {
+    client.release()
+  }
 }
 
 export const verifyRazorpayWebhookSignature = (rawBody: string, signature: string) => {

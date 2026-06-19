@@ -42,6 +42,17 @@ const addComment = async (payload: { visibility: 'INTERNAL_NOTE' | 'RESIDENT_VIS
     saving.value = false
   }
 }
+
+const uploadAttachment = async (file: File) => {
+  saving.value = true
+  try {
+    await serviceRequests.uploadAttachment(String(route.params.id), file)
+    toast.add({ severity: 'success', summary: 'Attachment uploaded', life: 10000 })
+    await refresh()
+  } finally {
+    saving.value = false
+  }
+}
 </script>
 
 <template>
@@ -97,7 +108,12 @@ const addComment = async (payload: { visibility: 'INTERNAL_NOTE' | 'RESIDENT_VIS
               <h2>Attachments</h2>
             </div>
           </div>
-          <TicketAttachmentGallery :attachments="ticket.attachments" />
+          <TicketAttachmentGallery
+            :attachments="ticket.attachments"
+            can-upload
+            :uploading="saving"
+            @upload="uploadAttachment"
+          />
         </section>
       </section>
     </template>

@@ -7,9 +7,17 @@ const smtpConfigSchema = z.object({
   pass: z.string().min(1, 'SMTP_PASS is required'),
 })
 
+const emailFromSchema = z
+  .string()
+  .email('EMAIL_FROM must be a valid email address')
+  .refine(
+    (value) => !value.toLowerCase().endsWith('@example.com'),
+    'EMAIL_FROM must be a verified sender address, not the example.com placeholder',
+  )
+
 const emailIntegrationSchema = z.object({
   smtp: smtpConfigSchema,
-  emailFrom: z.string().min(1, 'EMAIL_FROM is required'),
+  emailFrom: emailFromSchema,
   emailFromName: z.string().min(1, 'EMAIL_FROM_NAME is required'),
 })
 

@@ -13,6 +13,7 @@ export default defineEventHandler(async (event) => {
     is_pinned: boolean
     published_at: string | null
     expires_at: string | null
+    attachment_file_id: string | null
     attachment_label: string | null
     read_at: string | null
     dismissed_at: string | null
@@ -27,6 +28,7 @@ export default defineEventHandler(async (event) => {
         n.is_pinned,
         n.published_at::text,
         n.expires_at::text,
+        n.attachment_file_id::text,
         n.attachment_label,
         nr.read_at::text,
         nr.dismissed_at::text
@@ -50,7 +52,9 @@ export default defineEventHandler(async (event) => {
       isPinned: row.is_pinned,
       publishedAt: row.published_at,
       expiresAt: row.expires_at,
+      attachmentFileId: row.attachment_file_id,
       attachmentLabel: row.attachment_label,
+      attachmentUrl: row.attachment_file_id ? `/api/my/notices/${row.id}/attachment` : null,
       isRead: Boolean(row.read_at),
       readAt: row.read_at,
       dismissedAt: row.dismissed_at,

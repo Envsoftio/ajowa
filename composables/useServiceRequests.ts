@@ -1,4 +1,5 @@
 import type {
+  ServiceRequestAttachment,
   ServiceCommentVisibility,
   ServiceLocationType,
   ServicePriority,
@@ -61,20 +62,15 @@ export const useServiceRequests = (scope: 'admin' | 'resident' | 'service') => {
       body: payload,
     })
 
-  const addAttachmentMetadata = (
-    id: string,
-    payload: {
-      fileName: string
-      filePath: string
-      mimeType: string
-      sizeBytes: number
-      checksum?: string | null
-    },
-  ) =>
-    api(`${basePath}/${id}/attachments`, {
+  const uploadAttachment = (id: string, file: File) => {
+    const formData = new FormData()
+    formData.append('file', file)
+
+    return api<{ ok: true; data: ServiceRequestAttachment }>(`${basePath}/${id}/attachments`, {
       method: 'POST',
-      body: payload,
+      body: formData,
     })
+  }
 
   return {
     basePath,
@@ -82,6 +78,6 @@ export const useServiceRequests = (scope: 'admin' | 'resident' | 'service') => {
     assignTicket,
     addComment,
     updateStatus,
-    addAttachmentMetadata,
+    uploadAttachment,
   }
 }

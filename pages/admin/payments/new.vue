@@ -56,6 +56,12 @@ type FlatsResponse = { ok: true; data: Paginated<FlatSummary> }
 type ResidentsResponse = { ok: true; data: Paginated<ResidentSummary> }
 type DuesResponse = { ok: true; data: Paginated<MaintenanceDue> }
 type BankAccountsResponse = { ok: true; data: { items: BankAccount[] } }
+type LocalPaymentProof = {
+  file: File
+  fileName: string
+  mimeType: string
+  sizeBytes: number
+}
 
 const api = useApi()
 const toast = useToast()
@@ -118,6 +124,13 @@ const formatMoney = (value: number | string | null | undefined) =>
 
 const formatDate = (value: string | null | undefined) =>
   value ? new Date(`${value}T00:00:00`).toLocaleDateString('en-IN', { dateStyle: 'medium' }) : '-'
+
+const formatBytes = (value: number | null | undefined) => {
+  const bytes = Number(value ?? 0)
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
 
 const emptyDuesResponse = (): DuesResponse => ({
   ok: true,
@@ -203,6 +216,11 @@ const duplicate = ref<DuplicateResponse['data'] | null>(null)
 const duplicatePending = ref(false)
 const saving = ref(false)
 const success = ref<{ id: string; receiptNumber: string } | null>(null)
+const proofInput = ref<HTMLInputElement | null>(null)
+const proofFile = ref<LocalPaymentProof | null>(null)
+const proofAccept = 'application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,image/jpeg,image/png,image/webp'
+const proofAllowedMimeTypes = proofAccept.split(',')
+const proofMaxSizeBytes = 10 * 1024 * 1024
 
 watch(
   () => [form.flatId, form.amount, form.allocationMode, form.selectedDueIds.join(','), form.tenureMonths],
@@ -267,6 +285,64 @@ const checkDuplicateReference = async () => {
   }
 }
 
+const pickProofFile = () => {
+  proofInput.value?.click()
+}
+
+const clearProofFile = () => {
+  proofFile.value = null
+}
+
+const onProofFileChange = (event: Event) => {
+  const target = event.target as HTMLInputElement
+  const file = target.files?.[0]
+  target.value = ''
+
+  if (!file) {
+    return
+  }
+
+  if (!proofAllowedMimeTypes.includes(file.type)) {
+    toast.add({
+      severity: 'warn',
+      summary: 'Unsupported file',
+      detail: 'Upload a PDF, Excel, JPG, PNG, or WebP proof file.',
+      life: 10000,
+    })
+    return
+  }
+
+  if (file.size <= 0 || file.size > proofMaxSizeBytes) {
+    toast.add({
+      severity: 'warn',
+      summary: 'File too large',
+      detail: 'Payment proof files must be 10 MB or smaller.',
+      life: 10000,
+    })
+    return
+  }
+
+  proofFile.value = {
+    file,
+    fileName: file.name,
+    mimeType: file.type,
+    sizeBytes: file.size,
+  }
+}
+
+const uploadProofFile = async (paymentId: string) => {
+  if (!proofFile.value) {
+    return
+  }
+
+  const formData = new FormData()
+  formData.append('file', proofFile.value.file)
+  await api(`/api/payments/${paymentId}/proof`, {
+    method: 'POST',
+    body: formData,
+  })
+}
+
 const submitPayment = async () => {
   saving.value = true
 
@@ -295,6 +371,7 @@ const submitPayment = async () => {
         idempotencyKey: crypto.randomUUID(),
       },
     })
+    await uploadProofFile(response.data.id)
     success.value = response.data
     toast.add({ severity: 'success', summary: 'Payment recorded', detail: response.data.receiptNumber, life: 10000 })
     await refreshDues()
@@ -322,6 +399,7 @@ const resetForm = () => {
   form.notes = ''
   form.allowDuplicateUtr = false
   form.overrideReason = ''
+  clearProofFile()
   preview.value = null
   duplicate.value = null
   success.value = null
@@ -442,6 +520,49 @@ const resetForm = () => {
               <span class="field-label">Override reason</span>
               <Textarea v-model="form.overrideReason" rows="2" auto-resize :required="form.allowDuplicateUtr" />
             </label>
+          </div>
+        </section>
+
+        <section class="admin-form-section">
+          <div class="admin-form-section__header">
+            <div>
+              <p class="eyebrow">Proof</p>
+              <h2>Payment file</h2>
+            </div>
+            <Button
+              type="button"
+              :label="proofFile ? 'Replace' : 'Upload'"
+              icon="pi pi-upload"
+              severity="secondary"
+              outlined
+              @click="pickProofFile"
+            />
+          </div>
+          <input
+            ref="proofInput"
+            type="file"
+            :accept="proofAccept"
+            class="finance-upload-card__input"
+            @change="onProofFileChange"
+          >
+          <div class="resident-file-upload">
+            <div class="resident-file-upload__body">
+              <div class="resident-file-upload__header">
+                <strong>{{ proofFile?.fileName || 'No proof selected' }}</strong>
+                <span class="muted-line">
+                  {{ proofFile ? `${proofFile.mimeType} · ${formatBytes(proofFile.sizeBytes)}` : 'PDF, Excel, PNG, JPG, JPEG, or WebP' }}
+                </span>
+              </div>
+              <Button
+                v-if="proofFile"
+                type="button"
+                icon="pi pi-times"
+                label="Remove"
+                severity="danger"
+                text
+                @click="clearProofFile"
+              />
+            </div>
           </div>
         </section>
 
