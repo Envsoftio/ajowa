@@ -1,5 +1,5 @@
 import { createRequire } from 'node:module'
-import * as XLSX from 'xlsx'
+import * as XLSX from 'xlsx/xlsx.mjs'
 import { z } from 'zod'
 import { AppError } from './errors'
 import { getDatabasePool } from './database'

@@ -1,5 +1,5 @@
 import { setHeader } from 'h3'
-import * as XLSX from 'xlsx'
+import * as XLSX from 'xlsx/xlsx.mjs'
 import { createApiSuccess } from '~/server/utils/api'
 import { requireRole } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'

@@ -14,7 +14,7 @@ begin
     owner_mobile text,
     raw_contact text,
     raw_email text,
-    owner_login_email citext,
+    owner_login_email extensions.citext,
     owner_can_login boolean not null,
     owner_email_source text not null,
     flat_number text not null,
