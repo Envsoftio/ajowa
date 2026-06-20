@@ -1,12 +1,10 @@
-import { createRequire } from 'node:module'
+import pdfMake from 'pdfmake/build/pdfmake.js'
+import pdfFonts from 'pdfmake/build/vfs_fonts.js'
 import * as XLSX from 'xlsx/xlsx.mjs'
 import { z } from 'zod'
 import { AppError } from './errors'
 import { getDatabasePool } from './database'
 
-const require = createRequire(import.meta.url)
-const pdfMake = require('pdfmake/build/pdfmake')
-const pdfFonts = require('pdfmake/build/vfs_fonts')
 pdfMake.vfs = pdfFonts?.pdfMake?.vfs ?? pdfFonts?.vfs
 
 export const reportTypes = [

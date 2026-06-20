@@ -1,5 +1,6 @@
 import { createHmac } from 'node:crypto'
-import { createRequire } from 'node:module'
+import pdfMake from 'pdfmake/build/pdfmake.js'
+import pdfFonts from 'pdfmake/build/vfs_fonts.js'
 import type { PoolClient } from 'pg'
 import { z } from 'zod'
 import { AppError } from './errors'
@@ -10,9 +11,6 @@ import { enqueueNotificationForUsers, resolveNotificationAudience } from './noti
 import { recomputeUserAccess } from './qr-access'
 import { uploadPrivateFile } from './storage'
 
-const require = createRequire(import.meta.url)
-const pdfMake = require('pdfmake/build/pdfmake')
-const pdfFonts = require('pdfmake/build/vfs_fonts')
 pdfMake.vfs = pdfFonts?.pdfMake?.vfs ?? pdfFonts?.vfs
 
 export const allocationModeSchema = z.enum(['OLDEST_UNPAID_FIRST', 'SELECTED_PERIODS', 'TENURE_PACK'])

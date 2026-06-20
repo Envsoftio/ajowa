@@ -16,9 +16,9 @@ if (typeof process.loadEnvFile === 'function') {
 
 const databaseUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL;
 const societyCode = process.env.SOCIETY_CODE || process.env.NUXT_PUBLIC_SOCIETY_CODE || 'AJOWA';
-const adminEmail = process.env.AJOWA_ADMIN_EMAIL || 'vishnu@envsoft.io';
+const adminEmail = process.env.AJOWA_ADMIN_EMAIL || 'acmejubilee.rwa@gmail.com';
 const adminPassword = process.env.AJOWA_ADMIN_PASSWORD || 'Demo@123';
-const adminName = process.env.AJOWA_ADMIN_NAME || 'Vishnu';
+const adminName = process.env.AJOWA_ADMIN_NAME || 'ACME Jubilee RWA Admin';
 const adminMobile = process.env.AJOWA_ADMIN_MOBILE || '+919999999990';
 
 if (!databaseUrl) {

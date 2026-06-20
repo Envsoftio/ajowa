@@ -13,7 +13,7 @@ const camRate = 3.25
 const passwordHash =
   '83fc1288198e6f8b3b40b8c0defb7548:10b7066831355797e1a6b7b9f799b311337b3ad375a142609838916f18745908e2dc14d9de287efa542747de7203b350cb8cc50c2f04562eb21a2eed1120cc0f'
 const importUuidNamespace = '2da98afe-ee9b-4dd3-9f62-bcc9fc9def81'
-const adminEmail = 'vishnu@envsoft.io'
+const adminEmail = 'acmejubilee.rwa@gmail.com'
 const reservedLoginEmails = new Set([adminEmail])
 
 const workbook = XLSX.readFile(workbookPath)
@@ -614,7 +614,7 @@ ${tenantValues};
     'Mohali',
     'Punjab',
     '160055',
-    'vishnu@envsoft.io',
+    'acmejubilee.rwa@gmail.com',
     '+919999999999',
     'Asia/Kolkata',
     jsonb_build_object(
@@ -682,7 +682,7 @@ ${tenantValues};
   where au.id = du.auth_user_id;
 
   insert into auth_users (name, email, email_verified, created_at, updated_at)
-  values ('AJOWA Admin', 'vishnu@envsoft.io', true, now(), now())
+  values ('ACME Jubilee RWA Admin', 'acmejubilee.rwa@gmail.com', true, now(), now())
   on conflict (email) do update
     set name = excluded.name,
         email_verified = true,
@@ -711,7 +711,7 @@ ${tenantValues};
     police_verification_status,
     preferred_notification_channels
   )
-  values (v_society_id, v_admin_auth_id, 'ADMIN', 'AJOWA Admin', 'vishnu@envsoft.io', '+919999999991', '+919999999991', true, false, true, true, 'VERIFIED', 'NOT_REQUIRED', 'ALL_CHANNELS')
+  values (v_society_id, v_admin_auth_id, 'ADMIN', 'ACME Jubilee RWA Admin', 'acmejubilee.rwa@gmail.com', '+919999999991', '+919999999991', true, false, true, true, 'VERIFIED', 'NOT_REQUIRED', 'ALL_CHANNELS')
   on conflict (society_id, email) do update
     set auth_user_id = excluded.auth_user_id,
         role = excluded.role,
@@ -729,7 +729,7 @@ ${tenantValues};
 
   select id into v_admin_user_id
   from users
-  where society_id = v_society_id and email = 'vishnu@envsoft.io';
+  where society_id = v_society_id and email = 'acmejubilee.rwa@gmail.com';
 
   create temporary table ajowa_service_department_seed (
     id uuid not null,

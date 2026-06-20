@@ -1,14 +1,12 @@
-import { createRequire } from 'node:module'
+import pdfMake from 'pdfmake/build/pdfmake.js'
+import pdfFonts from 'pdfmake/build/vfs_fonts.js'
+import * as QRCode from 'qrcode'
 import { z } from 'zod'
 import type { ChargeBreakdownItem } from '~/types/domain'
 import { AppError } from './errors'
 import { getDatabasePool } from './database'
 import { normalizeSocietySettings } from './master-data'
 
-const require = createRequire(import.meta.url)
-const pdfMake = require('pdfmake/build/pdfmake')
-const pdfFonts = require('pdfmake/build/vfs_fonts')
-const QRCode = require('qrcode')
 pdfMake.vfs = pdfFonts?.pdfMake?.vfs ?? pdfFonts?.vfs
 
 export const chargeBreakdownItemSchema = z.object({
