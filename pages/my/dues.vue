@@ -123,7 +123,7 @@ const openBreakdown = (due: MaintenanceDue) => {
             <strong>{{ formatMoney(group.totalBalance) }}</strong>
           </header>
 
-          <DataTable :value="group.rows" responsive-layout="scroll" class="list-page__table">
+          <AppDataTable :value="group.rows" responsive-layout="scroll" class="list-page__table">
             <Column field="billingPeriodLabel" header="Period">
               <template #body="{ data: row }">
                 <strong>{{ row.billingPeriodLabel }}</strong>
@@ -159,6 +159,17 @@ const openBreakdown = (due: MaintenanceDue) => {
               <template #body="{ data: row }">
                 <div class="admin-inline-actions">
                   <Button
+                    as="a"
+                    :href="`/api/my/dues/${row.id}/bill`"
+                    target="_blank"
+                    icon="pi pi-file-pdf"
+                    severity="secondary"
+                    text
+                    rounded
+                    aria-label="Open bill PDF"
+                    title="Open bill PDF"
+                  />
+                  <Button
                     icon="pi pi-list"
                     severity="secondary"
                     text
@@ -178,7 +189,7 @@ const openBreakdown = (due: MaintenanceDue) => {
                 </div>
               </template>
             </Column>
-          </DataTable>
+          </AppDataTable>
         </section>
       </div>
     </section>
@@ -189,14 +200,14 @@ const openBreakdown = (due: MaintenanceDue) => {
           <h3>{{ selectedDue.billingPeriodLabel }}</h3>
           <p>{{ selectedDue.blockName }} {{ selectedDue.flatNumber }} · {{ formatDate(selectedDue.dueDate) }}</p>
         </div>
-        <DataTable :value="selectedDue.chargeBreakdown" responsive-layout="scroll">
+        <AppDataTable :value="selectedDue.chargeBreakdown" responsive-layout="scroll">
           <Column field="label" header="Charge" />
           <Column field="amount" header="Amount">
             <template #body="{ data: row }">
               {{ formatMoney(row.amount) }}
             </template>
           </Column>
-        </DataTable>
+        </AppDataTable>
         <div class="billing-total-line">
           <span>Balance</span>
           <strong>{{ formatMoney(selectedDue.balanceAmount) }}</strong>

@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import type { PoolClient } from 'pg'
 import webpush from 'web-push'
-import { sendEmail, sendNotificationEmail } from './email'
+import { generateMaintenanceBillPdf } from './billing'
+import { buildAppUrl, sendEmail, sendNotificationEmail } from './email'
 import { getPushIntegrationStatus, getValidatedRuntimeConfig, getWhatsAppIntegrationStatus } from './env'
 
 export type NotificationChannel = 'PUSH' | 'EMAIL' | 'WHATSAPP' | 'IN_APP'
@@ -148,6 +149,7 @@ const presetChannels: Record<NotificationPreset, NotificationChannel[]> = {
 
 const emailTemplateByEventKey = new Map<string, Parameters<typeof sendNotificationEmail>[0]['template']>([
   ['maintenance_due.created', 'due-created'],
+  ['maintenance_due.bill', 'bill-ready'],
   ['maintenance_due.reminder', 'due-reminder'],
   ['maintenance_due.overdue', 'due-overdue'],
   ['payment.received', 'payment-received'],
@@ -252,6 +254,27 @@ const createDedupeKey = (input: NotificationPayload, userId: string, channel: No
 }
 
 const getBackoffMinutes = (attemptCount: number) => Math.min(60, 2 ** Math.max(0, attemptCount - 1))
+
+const getEmailAttachmentsForJob = async (job: ClaimedJobRow) => {
+  if (job.event_key !== 'maintenance_due.bill') {
+    return undefined
+  }
+
+  const dueId = typeof job.payload.dueId === 'string' ? job.payload.dueId : null
+  if (!dueId) {
+    return undefined
+  }
+
+  const bill = await generateMaintenanceBillPdf(dueId)
+
+  return [
+    {
+      filename: bill.fileName,
+      content: bill.buffer,
+      contentType: 'application/pdf',
+    },
+  ]
+}
 
 export const resolveNotificationAudience = async (
   client: PoolClient,
@@ -816,6 +839,21 @@ const dispatchJob = async (
     }
 
     const template = emailTemplateByEventKey.get(job.event_key) ?? 'notice'
+    let attachments: Awaited<ReturnType<typeof getEmailAttachmentsForJob>>
+
+    try {
+      attachments = await getEmailAttachmentsForJob(job)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to generate the bill PDF.'
+
+      return {
+        ok: false,
+        providerName: 'SMTP',
+        failureReason: message,
+        permanentFailure: true,
+      }
+    }
+
     const result = await sendNotificationEmail({
       to: job.resolved_address,
       subject: title,
@@ -827,6 +865,7 @@ const dispatchJob = async (
         actionLabel: 'Open in AJOWA',
         ...job.payload,
       },
+      ...(attachments ? { attachments } : {}),
     })
 
     return {
@@ -1051,9 +1090,10 @@ export const enqueueDueBillingContactNotifications = async (
   input: {
     societyId: string
     dueIds: string[]
-    eventKey: 'maintenance_due.created' | 'maintenance_due.reminder'
+    eventKey: 'maintenance_due.created' | 'maintenance_due.bill' | 'maintenance_due.reminder'
     title: string
     bodyPrefix: string
+    channels?: NotificationChannel[]
     triggeredByUserId?: string
   },
 ) => {
@@ -1108,9 +1148,10 @@ export const enqueueDueBillingContactNotifications = async (
     const due = rows[0]
     if (!due) continue
     const idempotencyScope =
-      input.eventKey === 'maintenance_due.reminder'
+      input.eventKey === 'maintenance_due.reminder' || input.eventKey === 'maintenance_due.bill'
         ? `${dueId}:${new Date().toISOString().slice(0, 10)}`
         : dueId
+    const isBill = input.eventKey === 'maintenance_due.bill'
 
     const queued = await enqueueNotificationForUsers(client, {
       societyId: input.societyId,
@@ -1128,10 +1169,12 @@ export const enqueueDueBillingContactNotifications = async (
         flatId: due.flat_id,
         flatLabel: `${due.block_name} ${due.flat_number}`,
         balanceAmount: Number(due.balance_amount),
-        deepLinkUrl: '/my/dues',
+        deepLinkUrl: isBill ? buildAppUrl(`/api/my/dues/${dueId}/bill`) : '/my/dues',
+        actionLabel: isBill ? 'Download bill PDF' : 'Open in AJOWA',
       },
       idempotencyKey: `${input.eventKey}:${idempotencyScope}`,
-      idempotencyWindowSeconds: input.eventKey === 'maintenance_due.reminder' ? 86400 : 31536000,
+      idempotencyWindowSeconds:
+        input.eventKey === 'maintenance_due.created' ? 31536000 : 86400,
       ...(input.triggeredByUserId ? { triggeredByUserId: input.triggeredByUserId } : {}),
       users: rows.map((row) => ({
         id: row.user_id,
@@ -1144,6 +1187,7 @@ export const enqueueDueBillingContactNotifications = async (
         whatsappEnabled: row.notification_whatsapp_enabled,
         inAppEnabled: row.notification_in_app_enabled,
       })),
+      ...(input.channels ? { channels: input.channels } : {}),
       audienceLabel: 'Billing contact',
       audienceSnapshot: { eventKey: input.eventKey, dueId },
     })

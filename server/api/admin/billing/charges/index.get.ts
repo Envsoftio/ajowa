@@ -59,6 +59,7 @@ export default defineEventHandler(async (event) => {
       left join blocks b on b.id = f.block_id
       where mc.society_id = $1
         and mc.is_active = true
+        and mc.billing_period_id is null
       order by mc.scope, mc.flat_type, mc.charge_name
     `,
     [authMe.user.societyId],

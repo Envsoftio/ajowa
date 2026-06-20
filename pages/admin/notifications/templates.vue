@@ -72,13 +72,13 @@ const save = async () => {
         <Button label="Save template" icon="pi pi-save" type="submit" />
       </form>
 
-      <DataTable :value="rows" responsive-layout="scroll" class="list-page__table">
+      <AppDataTable :value="rows" responsive-layout="scroll" class="list-page__table">
         <Column field="eventKey" header="Event" />
         <Column field="channel" header="Channel" />
         <Column field="version" header="Version" />
         <Column field="templateName" header="Template" />
         <Column field="status" header="Status"><template #body="{ data: row }"><AppStatusBadge :status="row.status" /></template></Column>
-      </DataTable>
+      </AppDataTable>
     </section>
   </div>
 </template>

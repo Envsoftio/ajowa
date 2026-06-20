@@ -124,7 +124,6 @@ export default defineNuxtConfig({
         'Card',
         'Column',
         'ConfirmDialog',
-        'DataTable',
         'DatePicker',
         'Dialog',
         'Drawer',

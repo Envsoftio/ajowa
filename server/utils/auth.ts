@@ -9,8 +9,8 @@ import { AppError } from './errors'
 import { getDatabasePool, queryRows } from './database'
 import { sendTemplatedEmail, buildAppUrl } from './email'
 import { getValidatedRuntimeConfig } from './env'
-import { getRoleLandingRoute } from '~/shared/auth'
-import { adminPermissions, managerDefaultPermissions, staffPermissions, type StaffPermission } from '~/shared/permissions'
+import { getRoleLandingRoute, requiresTemporaryPasswordChangeForRole } from '~/shared/auth'
+import { normalizeRolePermissions, type StaffPermission } from '~/shared/permissions'
 import type {
   AccessScope,
   AppRole,
@@ -77,8 +77,12 @@ type InviteRecordRow = {
 }
 
 const RESIDENT_RELATIONSHIP_PRIORITY: RelationshipType[] = ['OWNER', 'TENANT', 'FAMILY_MEMBER']
+const STAFF_EMAIL_VERIFICATION_EXEMPT_ROLES: AppRole[] = ['MANAGER', 'SERVICE_STAFF', 'GUARD']
 
 const nowDate = () => new Date().toISOString().slice(0, 10)
+
+export const isEmailVerificationRequiredForRole = (role: AppRole) =>
+  !STAFF_EMAIL_VERIFICATION_EXEMPT_ROLES.includes(role)
 
 const getDefaultSocietyId = async () => {
   const runtimeConfig = getValidatedRuntimeConfig(useRuntimeConfig())
@@ -234,8 +238,10 @@ const buildAuthMe = (session: NonNullable<AuthSessionResult>, appState: NonNulla
   const landingRoute = getRoleLandingRoute(appState.user.role)
   const hasResidentAccess = canResidentUseApp(appState.flatAccess)
   const hasDepartmentAccess = appState.departmentAssignments.length > 0
-  const requiresPasswordChange = appState.user.must_change_password
-  const requiresEmailVerification = !appState.user.email_verified
+  const requiresPasswordChange =
+    appState.user.must_change_password && requiresTemporaryPasswordChangeForRole(appState.user.role)
+  const requiresEmailVerification =
+    isEmailVerificationRequiredForRole(appState.user.role) && !appState.user.email_verified
   const hasRoleAccess =
     appState.user.role === 'RESIDENT'
       ? hasResidentAccess
@@ -265,7 +271,7 @@ const buildAuthMe = (session: NonNullable<AuthSessionResult>, appState: NonNulla
       mobileNumber: appState.user.mobile_number,
       whatsappNumber: appState.user.whatsapp_number,
       canLogin: appState.user.can_login,
-      mustChangePassword: appState.user.must_change_password,
+      mustChangePassword: requiresPasswordChange,
       emailVerified: appState.user.email_verified,
       isActive: appState.user.is_active,
       permissions,
@@ -289,15 +295,7 @@ const buildAuthMe = (session: NonNullable<AuthSessionResult>, appState: NonNulla
 }
 
 const normalizeStaffPermissions = (role: AppRole, permissions: string[] | null | undefined): StaffPermission[] => {
-  if (role === 'ADMIN') {
-    return adminPermissions
-  }
-
-  const fallback = role === 'MANAGER' ? managerDefaultPermissions : []
-  const requested = permissions?.length ? permissions : fallback
-  return requested.filter((permission): permission is StaffPermission =>
-    staffPermissions.includes(permission as StaffPermission),
-  )
+  return normalizeRolePermissions(role, permissions)
 }
 
 const upsertAppUser = async ({
@@ -326,6 +324,9 @@ const upsertAppUser = async ({
   permissions?: StaffPermission[]
 }) => {
   const societyId = await getDefaultSocietyId()
+  const effectiveMustChangePassword =
+    mustChangePassword && requiresTemporaryPasswordChangeForRole(role)
+  const effectiveEmailVerified = emailVerified || !isEmailVerificationRequiredForRole(role)
 
   await queryRows(
     `
@@ -366,8 +367,8 @@ const upsertAppUser = async ({
       mobileNumber,
       whatsappNumber ?? null,
       canLogin,
-      mustChangePassword,
-      emailVerified,
+      effectiveMustChangePassword,
+      effectiveEmailVerified,
       isActive,
       normalizeStaffPermissions(role, permissions),
     ],
@@ -727,6 +728,9 @@ export const createCredentialUser = async ({
   const pool = getDatabasePool()
   const transactionClient = client ?? (await pool.connect())
   const ownsTransaction = !client
+  const effectiveMustChangePassword =
+    mustChangePassword && requiresTemporaryPasswordChangeForRole(role)
+  const effectiveEmailVerified = emailVerified || !isEmailVerificationRequiredForRole(role)
 
   try {
     if (ownsTransaction) {
@@ -757,7 +761,7 @@ export const createCredentialUser = async ({
         values ($1, $2, $3)
         returning id, email, name
       `,
-      [fullName, email, emailVerified],
+      [fullName, email, effectiveEmailVerified],
     )
 
     const authUserId = authUser.rows[0]?.id
@@ -804,8 +808,8 @@ export const createCredentialUser = async ({
         mobileNumber,
         whatsappNumber ?? null,
         canLogin,
-        mustChangePassword,
-        emailVerified,
+        effectiveMustChangePassword,
+        effectiveEmailVerified,
       ],
     )
 

@@ -183,7 +183,7 @@ const resolveCellValue = (row: TRow, field: string) => {
     />
 
     <template v-else>
-      <DataTable
+      <AppDataTable
         :value="rows"
         :loading="loading"
         :lazy="true"
@@ -215,7 +215,7 @@ const resolveCellValue = (row: TRow, field: string) => {
             </slot>
           </template>
         </Column>
-      </DataTable>
+      </AppDataTable>
 
       <div class="list-page__cards">
         <article v-for="(row, index) in rows" :key="index" class="list-card">

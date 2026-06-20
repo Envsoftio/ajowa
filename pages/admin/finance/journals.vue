@@ -509,7 +509,7 @@ const onPage = (event: { page: number; rows: number }) => {
         </div>
       </div>
 
-      <DataTable
+      <AppDataTable
         :value="transactions"
         :loading="pending"
         :paginator="true"
@@ -593,7 +593,7 @@ const onPage = (event: { page: number; rows: number }) => {
             </div>
           </template>
         </Column>
-      </DataTable>
+      </AppDataTable>
     </section>
 
     <Dialog

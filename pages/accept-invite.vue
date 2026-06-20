@@ -66,7 +66,13 @@ const submit = async () => {
   submitting.value = true
 
   try {
-    await $fetch('/api/auth/accept-invite', {
+    const response = await $fetch<{
+      ok: true
+      data: {
+        email: string
+        requiresEmailVerification: boolean
+      }
+    }>('/api/auth/accept-invite', {
       method: 'POST',
       body: {
         token: token.value,
@@ -80,7 +86,9 @@ const submit = async () => {
     toast.add({
       severity: 'success',
       summary: 'Invite accepted',
-      detail: 'Your account is ready. Verify your email after you sign in.',
+      detail: response.data.requiresEmailVerification
+        ? 'Your account is ready. Verify your email after you sign in.'
+        : 'Your account is ready. You can sign in now.',
       life: 10000,
     })
     await navigateTo('/login')

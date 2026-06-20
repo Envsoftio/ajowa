@@ -6,6 +6,7 @@ import { getEmailIntegrationStatus, getValidatedRuntimeConfig } from './env'
 
 type AuthTemplateName = 'verify-email' | 'reset-password' | 'invite-onboarding'
 type NotificationTemplateName =
+  | 'bill-ready'
   | 'due-created'
   | 'due-reminder'
   | 'due-overdue'

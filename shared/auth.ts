@@ -19,6 +19,12 @@ export const PASSWORD_POLICY = {
 }
 
 const SAFE_REDIRECT_PREFIXES = ['/admin', '/my', '/service', '/guard', '/change-password', '/verify-email']
+const TEMPORARY_PASSWORD_CHANGE_EXEMPT_ROLES: readonly AppRole[] = ['GUARD']
+
+type RouteAccessUser = {
+  role: AppRole
+  permissions: readonly string[]
+}
 
 export const getRoleLandingRoute = (role: AppRole) => {
   switch (role) {
@@ -35,12 +41,120 @@ export const getRoleLandingRoute = (role: AppRole) => {
   }
 }
 
+export const requiresTemporaryPasswordChangeForRole = (role: AppRole) =>
+  !TEMPORARY_PASSWORD_CHANGE_EXEMPT_ROLES.includes(role)
+
 export const isProtectedRoute = (path: string) =>
   path.startsWith('/admin') ||
   path.startsWith('/my') ||
   path.startsWith('/service') ||
   path.startsWith('/guard') ||
   path === '/change-password'
+
+const getPathname = (value: string) => value.split(/[?#]/)[0] || '/'
+
+export const getAdminRoutePermission = (path: string) => {
+  const pathname = getPathname(path)
+
+  if (pathname.startsWith('/admin/staff') || pathname.startsWith('/admin/auth/invites')) {
+    return 'staff.manage'
+  }
+  if (pathname.startsWith('/admin/society')) {
+    return 'society.manage'
+  }
+  if (pathname.startsWith('/admin/blocks')) {
+    return 'blocks.manage'
+  }
+  if (pathname.startsWith('/admin/flats')) {
+    return 'flats.manage'
+  }
+  if (pathname.startsWith('/admin/residents')) {
+    return 'residents.manage'
+  }
+  if (pathname.startsWith('/admin/gate-log')) {
+    return 'residents.manage'
+  }
+  if (pathname.startsWith('/admin/service-departments')) {
+    return 'staff.manage'
+  }
+  if (pathname.startsWith('/admin/service-requests')) {
+    return 'staff.manage'
+  }
+  if (pathname.startsWith('/admin/settings/notifications')) {
+    return 'notifications.manage'
+  }
+  if (
+    pathname.startsWith('/admin/notifications/compose') ||
+    pathname.startsWith('/admin/notifications/templates')
+  ) {
+    return 'notifications.manage'
+  }
+  if (
+    pathname.startsWith('/admin/notifications') ||
+    pathname.startsWith('/admin/notification') ||
+    pathname.startsWith('/admin/notices')
+  ) {
+    return 'notifications.view'
+  }
+  if (pathname.startsWith('/admin/billing/periods') || pathname.startsWith('/admin/billing/charges')) {
+    return 'billing.manage'
+  }
+  if (pathname.startsWith('/admin/billing/dues')) {
+    return 'dues.manage'
+  }
+  if (pathname.startsWith('/admin/billing/defaulters')) {
+    return 'defaulters.view'
+  }
+  if (pathname.startsWith('/admin/payments')) {
+    return 'billing.manage'
+  }
+  if (
+    pathname.startsWith('/admin/finance/transactions/new') ||
+    pathname.startsWith('/admin/finance/accounts') ||
+    pathname.startsWith('/admin/finance/bank-accounts') ||
+    pathname.startsWith('/admin/finance/categories') ||
+    pathname.startsWith('/admin/finance/period-close') ||
+    pathname.startsWith('/admin/finance/reconciliation')
+  ) {
+    return 'finance.manage'
+  }
+  if (pathname.startsWith('/admin/finance')) {
+    return 'finance.view'
+  }
+
+  return null
+}
+
+export const canUserAccessRoute = (path: string, user: RouteAccessUser) => {
+  const pathname = getPathname(path)
+
+  if (pathname === '/change-password' || pathname === '/verify-email' || pathname === '/forbidden') {
+    return true
+  }
+
+  if (pathname.startsWith('/guard')) {
+    return user.role === 'GUARD' && pathname === '/guard/scan'
+  }
+
+  if (pathname.startsWith('/service')) {
+    return user.role === 'SERVICE_STAFF'
+  }
+
+  if (pathname.startsWith('/my')) {
+    return user.role === 'RESIDENT'
+  }
+
+  if (pathname.startsWith('/admin')) {
+    if (!['ADMIN', 'MANAGER'].includes(user.role)) {
+      return false
+    }
+
+    const requiredPermission = getAdminRoutePermission(pathname)
+    return !requiredPermission || user.permissions.includes(requiredPermission)
+  }
+
+  return true
+}
 
 export const isGuestOnlyRoute = (path: string) => PUBLIC_AUTH_ROUTES.includes(path as (typeof PUBLIC_AUTH_ROUTES)[number])
 

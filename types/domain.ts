@@ -431,9 +431,23 @@ export type BillingPeriod = AuditFields & {
 export type ChargeBreakdownItem = {
   label: string
   amount: number
+  chargeType?: 'CAM' | 'DG_SET' | 'OTHER'
   calculationMethod?: 'FIXED' | 'AREA_RATE'
   ratePerSqFt?: number
   areaSqFt?: number
+  source?: string
+  electricityType?: string
+  meterNo?: string | null
+  openingReading?: number | null
+  closingReading?: number | null
+  consumedUnits?: number | null
+  ratePerUnit?: number | null
+  tariffRateLabel?: string | null
+  connectionLoad?: string | null
+  state?: string | null
+  stateCode?: string | null
+  previousOutstanding?: number | null
+  interestAmount?: number | null
 }
 
 export type MaintenanceChargeScope = 'SOCIETY_DEFAULT' | 'FLAT_TYPE' | 'FLAT'
@@ -540,6 +554,7 @@ export type DefaulterSummary = {
     dueId: string
     dueStatus: string
     billingPeriodLabel: string
+    dueDate: string
     totalAmount: number
     paidAmount: number
     balanceAmount: number

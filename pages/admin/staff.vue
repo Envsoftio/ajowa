@@ -2,7 +2,14 @@
 import type { DataTablePageEvent, DataTableSortEvent } from 'primevue/datatable'
 import type { ListQueryParams } from '~/types/api'
 import type { StaffSummary } from '~/types/domain'
-import { staffPermissionLabels, staffPermissions, type StaffPermission } from '~/shared/permissions'
+import { requiresTemporaryPasswordChangeForRole } from '~/shared/auth'
+import {
+  managerDefaultPermissions,
+  staffPermissionLabels,
+  staffPermissions,
+  staffRoleAccessDescriptions,
+  type StaffPermission,
+} from '~/shared/permissions'
 
 definePageMeta({
   layout: 'admin',
@@ -56,6 +63,20 @@ const permissionOptions = staffPermissions.map((permission) => ({
   value: permission,
 }))
 
+const selectedRoleAccess = computed(() => staffRoleAccessDescriptions[form.role])
+const canEditPermissions = computed(() => selectedRoleAccess.value.permissionsEditable)
+
+watch(
+  () => form.role,
+  (role) => {
+    if (!staffRoleAccessDescriptions[role].permissionsEditable) {
+      form.permissions = []
+    } else if (form.permissions.length === 0) {
+      form.permissions = [...managerDefaultPermissions]
+    }
+  },
+)
+
 const loadStaff = () =>
   api<{ ok: true; data: { items: StaffSummary[]; total: number } }>('/api/admin/staff', {
     query: {
@@ -84,7 +105,7 @@ const resetForm = () => {
   form.temporaryPassword = generateTemporaryPassword()
   form.canLogin = true
   form.isActive = true
-  form.permissions = []
+  form.permissions = [...managerDefaultPermissions]
 }
 
 const openCreateDialog = () => {
@@ -124,7 +145,7 @@ const submit = async () => {
       whatsappNumber: form.whatsappNumber || null,
       canLogin: form.canLogin,
       isActive: form.isActive,
-      permissions: form.permissions,
+      permissions: canEditPermissions.value ? form.permissions : [],
       ...(selectedStaff.value
         ? {}
         : {
@@ -171,9 +192,12 @@ const regenerateTemporaryPassword = () => {
 }
 
 const resetStaffLogin = async (staff: StaffSummary) => {
+  const requiresPasswordChange = requiresTemporaryPasswordChangeForRole(staff.role)
   const confirmed = await confirmAction({
     header: 'Reset staff login?',
-    message: `Reset login for ${staff.fullName}? This creates a new temporary password and requires a password change at next sign-in.`,
+    message: requiresPasswordChange
+      ? `Reset login for ${staff.fullName}? This creates a new temporary password and requires a password change at next sign-in.`
+      : `Reset login for ${staff.fullName}? This creates a new password the guard can use at next sign-in.`,
     acceptLabel: 'Reset login',
     acceptSeverity: 'warn',
   })
@@ -251,7 +275,9 @@ const loginInstructions = computed(() => {
     `Login URL: ${loginDetails.value.loginUrl}`,
     `Email: ${loginDetails.value.email}`,
     `Temporary password: ${loginDetails.value.temporaryPassword}`,
-    'They must change this password after signing in.',
+    loginDetails.value.requiresPasswordChange
+      ? 'They must change this password after signing in.'
+      : 'Password change is not required for this staff login.',
   ].join('\n')
 })
 
@@ -334,6 +360,8 @@ const loginFilter = computed({
 
 const permissionLabel = (permission: string) =>
   staffPermissionLabels[permission as StaffPermission] ?? permission
+
+const roleAccessLabel = (role: StaffSummary['role']) => staffRoleAccessDescriptions[role].accessLabel
 </script>
 
 <template>
@@ -342,7 +370,7 @@ const permissionLabel = (permission: string) =>
       <header class="list-page__header">
         <div>
           <h1>Staff registry</h1>
-          <p>Admin-managed staff accounts with route-level permissions.</p>
+          <p>Admin-managed staff accounts with role-based access.</p>
         </div>
         <div class="list-page__exports">
           <Button label="Add staff" icon="pi pi-plus" @click="openCreateDialog" />
@@ -393,7 +421,7 @@ const permissionLabel = (permission: string) =>
         </div>
       </div>
 
-      <DataTable
+      <AppDataTable
         :value="data?.data.items ?? []"
         :loading="pending"
         :lazy="true"
@@ -411,17 +439,20 @@ const permissionLabel = (permission: string) =>
         <Column field="fullName" header="Staff member" sortable />
         <Column field="role" header="Role" sortable />
         <Column field="email" header="Email" sortable />
-        <Column header="Permissions">
+        <Column header="Access">
           <template #body="{ data: row }">
             <div class="admin-inline-actions" style="gap: 0.35rem; flex-wrap: wrap;">
-              <Tag
-                v-for="permission in row.permissions.slice(0, 3)"
-                :key="permission"
-                severity="secondary"
-                :value="permissionLabel(permission)"
-                rounded
-              />
-              <Tag v-if="row.permissions.length > 3" severity="contrast" :value="`+${row.permissions.length - 3}`" rounded />
+              <template v-if="row.role === 'MANAGER'">
+                <Tag
+                  v-for="permission in row.permissions.slice(0, 3)"
+                  :key="permission"
+                  severity="secondary"
+                  :value="permissionLabel(permission)"
+                  rounded
+                />
+                <Tag v-if="row.permissions.length > 3" severity="contrast" :value="`+${row.permissions.length - 3}`" rounded />
+              </template>
+              <Tag v-else severity="info" :value="roleAccessLabel(row.role)" rounded />
             </div>
           </template>
         </Column>
@@ -464,7 +495,7 @@ const permissionLabel = (permission: string) =>
             </div>
           </template>
         </Column>
-      </DataTable>
+      </AppDataTable>
     </section>
 
     <Dialog
@@ -498,6 +529,10 @@ const permissionLabel = (permission: string) =>
               <span>Role</span>
               <Select v-model="form.role" :options="['MANAGER', 'SERVICE_STAFF', 'GUARD']" required />
             </label>
+            <div class="auth-banner auth-banner-info admin-form-grid__full">
+              <strong>{{ selectedRoleAccess.title }}</strong>
+              <span>{{ selectedRoleAccess.description }}</span>
+            </div>
             <label v-if="!selectedStaff" class="admin-form-grid__full">
               <span>Temporary password</span>
               <InputGroup>
@@ -507,11 +542,16 @@ const permissionLabel = (permission: string) =>
             </label>
           </div>
           <div v-if="!selectedStaff" class="auth-banner auth-banner-info">
-            Staff sign in at /login with this temporary password, then AJOWA forces a password change before protected access.
+            <span v-if="requiresTemporaryPasswordChangeForRole(form.role)">
+              Staff sign in at /login with this temporary password, then AJOWA forces a password change before protected access.
+            </span>
+            <span v-else>
+              Guards sign in at /login with this password and continue directly to the scanner.
+            </span>
           </div>
         </section>
 
-        <section class="admin-form-subsection">
+        <section v-if="canEditPermissions" class="admin-form-subsection">
           <h3>Permissions</h3>
           <MultiSelect
             v-model="form.permissions"
@@ -566,6 +606,9 @@ const permissionLabel = (permission: string) =>
             <span>Temporary password</span>
             <strong>{{ loginDetails.temporaryPassword }}</strong>
           </label>
+        </div>
+        <div class="auth-banner auth-banner-info">
+          {{ loginDetails.requiresPasswordChange ? 'Password change is required at next sign-in.' : 'Password change is not required for this role.' }}
         </div>
         <div class="admin-inline-actions" style="justify-content: flex-end; gap: 0.75rem;">
           <Button type="button" label="Copy details" icon="pi pi-copy" severity="secondary" outlined @click="copyLoginInstructions" />

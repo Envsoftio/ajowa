@@ -2,11 +2,12 @@ import { randomBytes } from 'node:crypto'
 import { hashPassword } from 'better-auth/crypto'
 import { z } from 'zod'
 import { createApiSuccess, readJsonBody, validateInput } from '~/server/utils/api'
-import { requirePermission } from '~/server/utils/auth'
+import { isEmailVerificationRequiredForRole, requirePermission } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
 import { AppError } from '~/server/utils/errors'
 import { buildAppUrl } from '~/server/utils/email'
-import { staffPermissions } from '~/shared/permissions'
+import { requiresTemporaryPasswordChangeForRole } from '~/shared/auth'
+import { normalizeRolePermissions, staffPermissions } from '~/shared/permissions'
 
 const staffSchema = z.object({
   role: z.enum(['MANAGER', 'SERVICE_STAFF', 'GUARD']),
@@ -26,6 +27,9 @@ export default defineEventHandler(async (event) => {
   const authMe = await requirePermission(event, 'staff.manage')
   const body = validateInput(staffSchema, await readJsonBody(event))
   const temporaryPassword = body.temporaryPassword ?? generateTemporaryPassword()
+  const rolePermissions = normalizeRolePermissions(body.role, body.permissions)
+  const emailVerified = !isEmailVerificationRequiredForRole(body.role)
+  const requiresPasswordChange = requiresTemporaryPasswordChangeForRole(body.role)
   const pool = getDatabasePool()
   const client = await pool.connect()
 
@@ -53,13 +57,14 @@ export default defineEventHandler(async (event) => {
     const authUser = await client.query<{ id: string }>(
       `
         insert into auth_users (name, email, email_verified)
-        values ($1, $2, false)
+        values ($1, $2, $3)
         on conflict (email) do update
           set name = excluded.name,
+              email_verified = excluded.email_verified,
               updated_at = now()
         returning id
       `,
-      [body.fullName, body.email],
+      [body.fullName, body.email, emailVerified],
     )
     const authUserId = authUser.rows[0]?.id
 
@@ -87,7 +92,7 @@ export default defineEventHandler(async (event) => {
           is_active,
           staff_permissions
         )
-        values ($1, $2, $3, $4, $5, $6, $7, $8, true, false, $9, $10)
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         returning id
       `,
       [
@@ -99,8 +104,10 @@ export default defineEventHandler(async (event) => {
         body.mobileNumber,
         body.whatsappNumber ?? null,
         body.canLogin,
+        requiresPasswordChange,
+        emailVerified,
         body.isActive,
-        body.permissions,
+        rolePermissions,
       ],
     )
 
@@ -132,7 +139,7 @@ export default defineEventHandler(async (event) => {
       email: body.email,
       temporaryPassword,
       loginUrl: buildAppUrl('/login'),
-      requiresPasswordChange: true,
+      requiresPasswordChange,
     })
   } catch (error) {
     await client.query('rollback')

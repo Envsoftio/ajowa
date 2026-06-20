@@ -33,7 +33,7 @@ export default defineEventHandler(async (event) => {
       `
         select scope::text, flat_type, flat_id, charge_name, amount::text, calculation_method::text, rate_per_sq_ft::text, charge_breakdown
         from maintenance_charges
-        where society_id = $1 and is_active = true
+        where society_id = $1 and is_active = true and billing_period_id is null
         order by scope, flat_type, flat_id, charge_name
       `,
       [authMe.user.societyId],
@@ -53,14 +53,14 @@ export default defineEventHandler(async (event) => {
 
     // Delete existing active maintenance_charges for this society and recreate
     await client.query(
-      `delete from maintenance_charges where society_id = $1 and is_active = true`,
+      `delete from maintenance_charges where society_id = $1 and is_active = true and billing_period_id is null`,
       [authMe.user.societyId],
     )
 
     // Insert default charges
     for (const item of body.defaultCharges ?? []) {
       const calculationMethod = item.calculationMethod ?? 'FIXED'
-      const ratePerSqFt = calculationMethod === 'AREA_RATE' ? item.ratePerSqFt ?? item.amount : null
+      const ratePerSqFt = calculationMethod === 'AREA_RATE' ? item.amount : null
       const amount = calculationMethod === 'AREA_RATE' ? ratePerSqFt : item.amount
       await client.query(
         `
@@ -85,7 +85,7 @@ export default defineEventHandler(async (event) => {
       if (typeConfig.charges.length === 0) continue
       for (const item of typeConfig.charges) {
         const calculationMethod = item.calculationMethod ?? 'FIXED'
-        const ratePerSqFt = calculationMethod === 'AREA_RATE' ? item.ratePerSqFt ?? item.amount : null
+        const ratePerSqFt = calculationMethod === 'AREA_RATE' ? item.amount : null
         const amount = calculationMethod === 'AREA_RATE' ? ratePerSqFt : item.amount
         await client.query(
           `
@@ -112,7 +112,7 @@ export default defineEventHandler(async (event) => {
       if (flatConfig.charges.length === 0) continue
       for (const item of flatConfig.charges) {
         const calculationMethod = item.calculationMethod ?? 'FIXED'
-        const ratePerSqFt = calculationMethod === 'AREA_RATE' ? item.ratePerSqFt ?? item.amount : null
+        const ratePerSqFt = calculationMethod === 'AREA_RATE' ? item.amount : null
         const amount = calculationMethod === 'AREA_RATE' ? ratePerSqFt : item.amount
         await client.query(
           `

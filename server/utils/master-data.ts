@@ -362,5 +362,8 @@ export const writeMasterAudit = async ({
     relatedEntities,
   })
 
-export const validatePayload = <T>(schema: z.ZodType<T>, value: unknown) =>
+export const validatePayload = <T>(
+  schema: z.ZodType<T, z.ZodTypeDef, unknown>,
+  value: unknown,
+) =>
   validateInput(schema, value)

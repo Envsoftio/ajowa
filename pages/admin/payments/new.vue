@@ -607,7 +607,7 @@ const resetForm = () => {
           <p>{{ openDues.length }} open due rows available for allocation.</p>
         </section>
 
-        <DataTable :value="openDues" :loading="duesPending" responsive-layout="scroll" class="list-page__table">
+        <AppDataTable :value="openDues" :loading="duesPending" responsive-layout="scroll" class="list-page__table">
           <Column field="billingPeriodLabel" header="Period" />
           <Column field="balanceAmount" header="Balance">
             <template #body="{ data: row }">{{ formatMoney(row.balanceAmount) }}</template>
@@ -615,7 +615,7 @@ const resetForm = () => {
           <Column field="dueDate" header="Due">
             <template #body="{ data: row }">{{ formatDate(row.dueDate) }}</template>
           </Column>
-        </DataTable>
+        </AppDataTable>
 
         <section class="finance-summary-card">
           <p class="eyebrow">Preview</p>
@@ -634,7 +634,7 @@ const resetForm = () => {
                 <dd>{{ formatMoney(preview.advanceAmount) }}</dd>
               </div>
             </dl>
-            <DataTable :value="preview.lines" responsive-layout="scroll">
+            <AppDataTable :value="preview.lines" responsive-layout="scroll">
               <Column field="billingPeriodLabel" header="Period" />
               <Column field="allocatedAmount" header="Allocated">
                 <template #body="{ data: row }">{{ formatMoney(row.allocatedAmount) }}</template>
@@ -642,7 +642,7 @@ const resetForm = () => {
               <Column field="remainingBalance" header="Balance">
                 <template #body="{ data: row }">{{ formatMoney(row.remainingBalance) }}</template>
               </Column>
-            </DataTable>
+            </AppDataTable>
           </template>
           <AppState v-else variant="empty" title="No preview yet" message="Select a flat and amount, then preview allocation before saving." />
         </section>

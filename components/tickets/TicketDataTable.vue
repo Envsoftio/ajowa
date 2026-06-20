@@ -22,7 +22,7 @@ const formatDate = (value: string | null) =>
 </script>
 
 <template>
-  <DataTable
+  <AppDataTable
     :value="tickets"
     :loading="loading"
     responsive-layout="scroll"
@@ -82,7 +82,7 @@ const formatDate = (value: string | null) =>
         </div>
       </template>
     </Column>
-  </DataTable>
+  </AppDataTable>
 </template>
 
 <style scoped>

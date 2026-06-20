@@ -228,7 +228,7 @@ const reopen = async (period: FinancialPeriodClose) => {
         </div>
       </header>
 
-      <DataTable
+      <AppDataTable
         :value="periods"
         :loading="pending"
         responsive-layout="scroll"
@@ -280,7 +280,7 @@ const reopen = async (period: FinancialPeriodClose) => {
             />
           </template>
         </Column>
-      </DataTable>
+      </AppDataTable>
     </section>
 
     <AppReasonDialog

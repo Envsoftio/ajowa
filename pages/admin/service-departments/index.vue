@@ -128,7 +128,7 @@ const deactivate = async (department: ServiceDepartment) => {
         </div>
       </header>
 
-      <DataTable :value="departments" :loading="pending" responsive-layout="scroll" class="list-page__table">
+      <AppDataTable :value="departments" :loading="pending" responsive-layout="scroll" class="list-page__table">
         <Column field="name" header="Department">
           <template #body="{ data: row }">
             <div class="ticket-table-stack">
@@ -157,7 +157,7 @@ const deactivate = async (department: ServiceDepartment) => {
             </div>
           </template>
         </Column>
-      </DataTable>
+      </AppDataTable>
     </section>
 
     <Dialog v-model:visible="dialogVisible" modal :header="selectedDepartment ? 'Edit department' : 'Add department'" :style="{ width: '720px', maxWidth: '95vw' }">

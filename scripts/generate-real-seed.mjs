@@ -518,7 +518,6 @@ declare
   v_society_id uuid;
   v_admin_auth_id uuid;
   v_admin_user_id uuid;
-  v_period_id uuid;
 begin
   create temporary table ajowa_unit_import (
     source_row integer not null,
@@ -1414,62 +1413,11 @@ ${serviceSlaValues};
         frequency = excluded.frequency,
         due_date = excluded.due_date,
         is_locked = excluded.is_locked,
-        updated_at = now()
-  returning id into v_period_id;
-
-  insert into maintenance_dues (
-    society_id,
-    billing_period_id,
-    flat_id,
-    due_date,
-    base_amount,
-    late_fee_amount,
-    waived_amount,
-    paid_amount,
-    total_amount,
-    balance_amount,
-    status,
-    charge_breakdown
-  )
-  select
-    v_society_id,
-    v_period_id,
-    f.id,
-    '2026-06-10',
-    round(i.area_sq_ft * i.rate_per_sq_ft, 2),
-    0,
-    0,
-    0,
-    round(i.area_sq_ft * i.rate_per_sq_ft, 2),
-    round(i.area_sq_ft * i.rate_per_sq_ft, 2),
-    'OPEN',
-    jsonb_build_array(
-      jsonb_build_object(
-        'label', 'CAM Charges',
-        'amount', round(i.area_sq_ft * i.rate_per_sq_ft, 2),
-        'calculationMethod', 'AREA_RATE',
-        'areaSqFt', i.area_sq_ft,
-        'ratePerSqFt', i.rate_per_sq_ft,
-        'sourceFile', 'Workbook1.xlsx',
-        'sourceRow', i.source_row,
-        'serialNumber', i.serial_number,
-        'sourceData', i.source_data
-      )
-    )
-  from ajowa_unit_import i
-  inner join blocks b on b.society_id = v_society_id and b.code = i.tower_code
-  inner join flats f on f.block_id = b.id and f.flat_number = i.flat_number
-  on conflict (billing_period_id, flat_id) do update
-    set due_date = excluded.due_date,
-        base_amount = excluded.base_amount,
-        late_fee_amount = excluded.late_fee_amount,
-        waived_amount = excluded.waived_amount,
-        paid_amount = excluded.paid_amount,
-        total_amount = excluded.total_amount,
-        balance_amount = excluded.balance_amount,
-        status = excluded.status,
-        charge_breakdown = excluded.charge_breakdown,
         updated_at = now();
+
+  delete from maintenance_dues
+  where society_id = v_society_id
+    and charge_breakdown @> '[{"sourceFile":"Workbook1.xlsx"}]'::jsonb;
 
   insert into document_sequences (document_type, sequence_year, last_value)
   values

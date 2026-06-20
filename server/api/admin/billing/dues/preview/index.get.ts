@@ -16,6 +16,7 @@ type FlatTarget = {
 }
 
 type ChargeConfig = {
+  billing_period_id: string | null
   scope: string
   flat_type: string | null
   flat_id: string | null
@@ -97,12 +98,14 @@ export default defineEventHandler(async (event) => {
     ),
     pool.query<ChargeConfig>(
       `
-        select scope::text, flat_type, flat_id, charge_name, amount::text, calculation_method::text, rate_per_sq_ft::text, charge_breakdown
+        select billing_period_id::text, scope::text, flat_type, flat_id, charge_name, amount::text, calculation_method::text, rate_per_sq_ft::text, charge_breakdown
         from maintenance_charges
-        where society_id = $1 and is_active = true
+        where society_id = $1
+          and is_active = true
+          and (billing_period_id is null or billing_period_id = $2)
         order by scope, flat_type
       `,
-      [authMe.user.societyId],
+      [authMe.user.societyId, query.billingPeriodId],
     ),
     pool.query<{ flat_id: string }>(
       `
@@ -118,6 +121,35 @@ export default defineEventHandler(async (event) => {
   const defaultCharges: ChargeBreakdownItem[] = []
   const flatTypeCharges: { flatType: string; charges: ChargeBreakdownItem[] }[] = []
   const flatOverrideCharges: { flatId: string; charges: ChargeBreakdownItem[] }[] = []
+  const periodDefaultCharges: ChargeBreakdownItem[] = []
+  const periodFlatTypeCharges: { flatType: string; charges: ChargeBreakdownItem[] }[] = []
+  const periodFlatCharges: { flatId: string; charges: ChargeBreakdownItem[] }[] = []
+
+  const addFlatTypeCharges = (
+    target: { flatType: string; charges: ChargeBreakdownItem[] }[],
+    flatType: string,
+    items: ChargeBreakdownItem[],
+  ) => {
+    const existing = target.find((entry) => entry.flatType === flatType)
+    if (existing) {
+      existing.charges.push(...items)
+    } else {
+      target.push({ flatType, charges: items })
+    }
+  }
+
+  const addFlatCharges = (
+    target: { flatId: string; charges: ChargeBreakdownItem[] }[],
+    flatId: string,
+    items: ChargeBreakdownItem[],
+  ) => {
+    const existing = target.find((entry) => entry.flatId === flatId)
+    if (existing) {
+      existing.charges.push(...items)
+    } else {
+      target.push({ flatId, charges: items })
+    }
+  }
 
   for (const charge of chargesResult.rows) {
     const fallbackRate = charge.rate_per_sq_ft ? Number(charge.rate_per_sq_ft) : Number(charge.amount)
@@ -131,12 +163,22 @@ export default defineEventHandler(async (event) => {
       ...(charge.calculation_method === 'AREA_RATE' ? { ratePerSqFt: fallbackRate } : {}),
     }))
 
+    const isPeriodCharge = charge.billing_period_id === period.id
     if (charge.scope === 'SOCIETY_DEFAULT') {
-      defaultCharges.push(...items)
+      const target = isPeriodCharge ? periodDefaultCharges : defaultCharges
+      target.push(...items)
     } else if (charge.scope === 'FLAT_TYPE' && charge.flat_type) {
-      flatTypeCharges.push({ flatType: charge.flat_type, charges: items })
+      addFlatTypeCharges(
+        isPeriodCharge ? periodFlatTypeCharges : flatTypeCharges,
+        charge.flat_type,
+        items,
+      )
     } else if (charge.scope === 'FLAT' && charge.flat_id) {
-      flatOverrideCharges.push({ flatId: charge.flat_id, charges: items })
+      addFlatCharges(
+        isPeriodCharge ? periodFlatCharges : flatOverrideCharges,
+        charge.flat_id,
+        items,
+      )
     }
   }
 
@@ -154,7 +196,7 @@ export default defineEventHandler(async (event) => {
       continue
     }
 
-    const charges = resolveChargeBreakdown(
+    const baseCharges = resolveChargeBreakdown(
       defaultCharges,
       flatTypeCharges,
       flatOverrideCharges,
@@ -162,6 +204,15 @@ export default defineEventHandler(async (event) => {
       flat.flatId,
       flat.areaSqFt ? Number(flat.areaSqFt) : null,
     )
+    const periodCharges = resolveChargeBreakdown(
+      periodDefaultCharges,
+      periodFlatTypeCharges,
+      periodFlatCharges,
+      flat.unitType,
+      flat.flatId,
+      flat.areaSqFt ? Number(flat.areaSqFt) : null,
+    )
+    const charges = [...baseCharges, ...periodCharges]
     const effectiveCharges =
       charges.length > 0 ? charges : [{ label: 'Maintenance Charges', amount: 2000 }]
 

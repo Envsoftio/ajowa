@@ -720,7 +720,7 @@ const relationshipSeverity = (type: string) => {
           </div>
         </div>
 
-        <DataTable
+        <AppDataTable
           :value="data?.data.items ?? []"
           :loading="pending"
           :lazy="true"
@@ -801,7 +801,7 @@ const relationshipSeverity = (type: string) => {
               </div>
             </template>
           </Column>
-        </DataTable>
+        </AppDataTable>
       </section>
     </div>
 

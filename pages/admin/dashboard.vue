@@ -425,7 +425,7 @@ const hasWelcomeName = computed(() => authStore.me?.user?.fullName || authStore.
 }
 
 :global(.app-theme-dark) .dashboard-priority-item strong {
-  color: #99f6e4;
+  color: #f8fafc;
 }
 
 .dashboard-priority-item__meta,

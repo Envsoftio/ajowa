@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import type { DataTablePageEvent } from 'primevue/datatable'
+
 definePageMeta({
   layout: 'resident',
   middleware: ['protected'],
@@ -211,7 +213,7 @@ const resetFilters = () => {
       />
 
       <template v-else>
-        <DataTable
+        <AppDataTable
           :value="receipts"
           paginator
           :rows="query.pageSize"
@@ -221,7 +223,7 @@ const resetFilters = () => {
           class="list-page__table"
           data-key="id"
           @page="
-            (event) => {
+            (event: DataTablePageEvent) => {
               query.page = Math.floor(event.first / event.rows) + 1
               query.pageSize = event.rows
             }
@@ -259,7 +261,7 @@ const resetFilters = () => {
               <Button as="a" :href="`/api/payments/${row.id}/receipt`" target="_blank" icon="pi pi-download" severity="secondary" text rounded aria-label="Download receipt" title="Download receipt" />
             </template>
           </Column>
-        </DataTable>
+        </AppDataTable>
 
         <div class="list-page__cards">
           <article v-for="receipt in receipts" :key="receipt.id" class="list-card">

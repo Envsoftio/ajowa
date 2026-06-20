@@ -22,6 +22,7 @@ type FlatTarget = {
 }
 
 type ChargeConfig = {
+  billing_period_id: string | null
   scope: string
   flat_type: string | null
   flat_id: string | null
@@ -96,17 +97,48 @@ export default defineEventHandler(async (event) => {
     // Fetch charge configuration
     const chargesResult = await client.query<ChargeConfig>(
       `
-        select scope::text, flat_type, flat_id, charge_name, amount::text, calculation_method::text, rate_per_sq_ft::text, charge_breakdown
+        select billing_period_id::text, scope::text, flat_type, flat_id, charge_name, amount::text, calculation_method::text, rate_per_sq_ft::text, charge_breakdown
         from maintenance_charges
-        where society_id = $1 and is_active = true
+        where society_id = $1
+          and is_active = true
+          and (billing_period_id is null or billing_period_id = $2)
         order by scope, flat_type
       `,
-      [authMe.user.societyId],
+      [authMe.user.societyId, body.billingPeriodId],
     )
 
     const defaultCharges: ChargeBreakdownItem[] = []
     const flatTypeCharges: { flatType: string; charges: ChargeBreakdownItem[] }[] = []
     const flatOverrideCharges: { flatId: string; charges: ChargeBreakdownItem[] }[] = []
+    const periodDefaultCharges: ChargeBreakdownItem[] = []
+    const periodFlatTypeCharges: { flatType: string; charges: ChargeBreakdownItem[] }[] = []
+    const periodFlatCharges: { flatId: string; charges: ChargeBreakdownItem[] }[] = []
+
+    const addFlatTypeCharges = (
+      target: { flatType: string; charges: ChargeBreakdownItem[] }[],
+      flatType: string,
+      items: ChargeBreakdownItem[],
+    ) => {
+      const existing = target.find((entry) => entry.flatType === flatType)
+      if (existing) {
+        existing.charges.push(...items)
+      } else {
+        target.push({ flatType, charges: items })
+      }
+    }
+
+    const addFlatCharges = (
+      target: { flatId: string; charges: ChargeBreakdownItem[] }[],
+      flatId: string,
+      items: ChargeBreakdownItem[],
+    ) => {
+      const existing = target.find((entry) => entry.flatId === flatId)
+      if (existing) {
+        existing.charges.push(...items)
+      } else {
+        target.push({ flatId, charges: items })
+      }
+    }
 
     for (const c of chargesResult.rows) {
       const fallbackRate = c.rate_per_sq_ft ? Number(c.rate_per_sq_ft) : Number(c.amount)
@@ -120,22 +152,22 @@ export default defineEventHandler(async (event) => {
         ...(c.calculation_method === 'AREA_RATE' ? { ratePerSqFt: fallbackRate } : {}),
       }))
 
+      const isPeriodCharge = c.billing_period_id === body.billingPeriodId
       if (c.scope === 'SOCIETY_DEFAULT') {
-        defaultCharges.push(...items)
+        const target = isPeriodCharge ? periodDefaultCharges : defaultCharges
+        target.push(...items)
       } else if (c.scope === 'FLAT_TYPE' && c.flat_type) {
-        const existing = flatTypeCharges.find((f) => f.flatType === c.flat_type)
-        if (existing) {
-          existing.charges.push(...items)
-        } else {
-          flatTypeCharges.push({ flatType: c.flat_type, charges: items })
-        }
+        addFlatTypeCharges(
+          isPeriodCharge ? periodFlatTypeCharges : flatTypeCharges,
+          c.flat_type,
+          items,
+        )
       } else if (c.scope === 'FLAT' && c.flat_id) {
-        const existing = flatOverrideCharges.find((f) => f.flatId === c.flat_id)
-        if (existing) {
-          existing.charges.push(...items)
-        } else {
-          flatOverrideCharges.push({ flatId: c.flat_id, charges: items })
-        }
+        addFlatCharges(
+          isPeriodCharge ? periodFlatCharges : flatOverrideCharges,
+          c.flat_id,
+          items,
+        )
       }
     }
 
@@ -156,7 +188,7 @@ export default defineEventHandler(async (event) => {
         continue
       }
 
-      const breakdown = resolveChargeBreakdown(
+      const baseBreakdown = resolveChargeBreakdown(
         defaultCharges,
         flatTypeCharges,
         flatOverrideCharges,
@@ -164,6 +196,15 @@ export default defineEventHandler(async (event) => {
         flat.flatId,
         flat.areaSqFt ? Number(flat.areaSqFt) : null,
       )
+      const periodBreakdown = resolveChargeBreakdown(
+        periodDefaultCharges,
+        periodFlatTypeCharges,
+        periodFlatCharges,
+        flat.unitType,
+        flat.flatId,
+        flat.areaSqFt ? Number(flat.areaSqFt) : null,
+      )
+      const breakdown = [...baseBreakdown, ...periodBreakdown]
 
       if (breakdown.length === 0) {
         // No charges configured — create a default entry

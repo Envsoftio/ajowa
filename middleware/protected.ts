@@ -17,6 +17,10 @@ export default defineNuxtRouteMiddleware(async (to) => {
     return navigateTo('/verify-email')
   }
 
+  if (to.path === '/change-password' || to.path === '/verify-email') {
+    return
+  }
+
   if (!me.access.hasAppAccess && to.path !== '/forbidden') {
     return navigateTo('/forbidden')
   }

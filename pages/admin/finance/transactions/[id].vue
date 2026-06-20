@@ -190,7 +190,7 @@ const reverse = async () => {
             Reversed by {{ detail.linkedEntries.reversingVoucherNumber }}.
           </Message>
 
-          <DataTable
+          <AppDataTable
             v-for="journal in detail.journals"
             :key="journal.id"
             :value="journal.lines"
@@ -210,7 +210,7 @@ const reverse = async () => {
             <Column field="amount" header="Amount">
               <template #body="{ data: row }">{{ formatMoney(row.amount) }}</template>
             </Column>
-          </DataTable>
+          </AppDataTable>
         </section>
 
         <aside class="admin-form-layout">

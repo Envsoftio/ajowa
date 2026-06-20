@@ -86,7 +86,7 @@ const processQueue = async () => {
         <Select v-model="query.status" :options="[{ label: 'All statuses', value: '' }, { label: 'Queued', value: 'QUEUED' }, { label: 'Processed', value: 'PROCESSED' }, { label: 'Failed', value: 'FAILED' }]" option-label="label" option-value="value" />
       </div>
 
-      <DataTable :value="rows" :loading="pending" responsive-layout="scroll" class="list-page__table">
+      <AppDataTable :value="rows" :loading="pending" responsive-layout="scroll" class="list-page__table">
         <Column field="eventKey" header="Event" />
         <Column field="category" header="Category" />
         <Column field="priority" header="Priority"><template #body="{ data: row }"><Tag :value="row.priority" /></template></Column>
@@ -95,7 +95,7 @@ const processQueue = async () => {
         <Column field="sentCount" header="Sent" />
         <Column field="failedCount" header="Failed" />
         <Column field="createdAt" header="Created" />
-      </DataTable>
+      </AppDataTable>
     </section>
   </div>
 </template>

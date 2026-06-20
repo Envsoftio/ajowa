@@ -255,7 +255,7 @@ const deleteFlat = async (flat: FlatSummary) => {
           </div>
         </div>
 
-        <DataTable
+        <AppDataTable
           :value="filteredFlats"
           :loading="pending"
           paginator
@@ -330,7 +330,7 @@ const deleteFlat = async (flat: FlatSummary) => {
               </div>
             </template>
           </Column>
-        </DataTable>
+        </AppDataTable>
       </section>
     </div>
 

@@ -23,7 +23,7 @@ const { formatMoney, formatDate } = useFinanceFormatters()
 <template>
   <EmptyFinanceState v-if="!loading && transactions.length === 0" />
 
-  <DataTable
+  <AppDataTable
     v-else
     :value="transactions"
     :loading="loading"
@@ -130,7 +130,7 @@ const { formatMoney, formatDate } = useFinanceFormatters()
         </div>
       </template>
     </Column>
-  </DataTable>
+  </AppDataTable>
 
   <div class="list-page__cards">
     <article v-for="row in transactions" :key="row.id" class="list-card">

@@ -2,7 +2,7 @@ import { createPaginatedSuccess } from '~/server/utils/api'
 import { requirePermission } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
 import { parseListQuery } from '~/server/utils/master-data'
-import { staffPermissions, type StaffPermission } from '~/shared/permissions'
+import { normalizeRolePermissions } from '~/shared/permissions'
 import type { StaffSummary } from '~/types/domain'
 
 type StaffRow = {
@@ -29,11 +29,6 @@ const sortColumns: Record<string, string> = {
   canLogin: 'u.can_login',
   isActive: 'u.is_active',
 }
-
-const normalizePermissions = (permissions: string[] | null): StaffPermission[] =>
-  (permissions ?? []).filter((permission): permission is StaffPermission =>
-    staffPermissions.includes(permission as StaffPermission),
-  )
 
 export default defineEventHandler(async (event) => {
   const authMe = await requirePermission(event, 'staff.manage')
@@ -122,7 +117,7 @@ export default defineEventHandler(async (event) => {
     canLogin: row.can_login,
     emailVerified: row.email_verified,
     isActive: row.is_active,
-    permissions: normalizePermissions(row.staff_permissions),
+    permissions: normalizeRolePermissions(row.role, row.staff_permissions),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }))

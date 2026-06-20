@@ -112,7 +112,7 @@ const exportUrl = (format: 'csv' | 'excel' | 'pdf') =>
       </div>
 
       <AppSkeletonState v-if="pending" />
-      <DataTable v-else :value="rows" responsive-layout="scroll" class="list-page__table">
+      <AppDataTable v-else :value="rows" responsive-layout="scroll" class="list-page__table">
         <Column field="scannedAt" header="Time">
           <template #body="{ data: row }">{{ new Date(row.scannedAt).toLocaleString('en-IN') }}</template>
         </Column>
@@ -125,7 +125,7 @@ const exportUrl = (format: 'csv' | 'excel' | 'pdf') =>
           </template>
         </Column>
         <Column field="reason" header="Reason" />
-      </DataTable>
+      </AppDataTable>
     </section>
   </div>
 </template>

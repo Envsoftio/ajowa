@@ -191,15 +191,15 @@ const exportUrl = (format: 'pdf' | 'xlsx') => {
         </div>
       </div>
 
-      <DataTable :value="rows" :loading="pending" responsive-layout="scroll" class="list-page__table" scrollable scroll-height="32rem">
+      <AppDataTable :value="rows" :loading="pending" responsive-layout="scroll" class="list-page__table" scrollable scroll-height="32rem">
         <Column v-for="column in columns" :key="column.key" :field="column.key" :header="column.label">
           <template #body="{ data: row }">
             {{ formatCell(column, row[column.key]) }}
           </template>
         </Column>
-      </DataTable>
+      </AppDataTable>
 
-      <DataTable :value="report?.reconciliation ?? []" responsive-layout="scroll">
+      <AppDataTable :value="report?.reconciliation ?? []" responsive-layout="scroll">
         <Column field="label" header="Reconciliation" />
         <Column field="expected" header="Expected">
           <template #body="{ data: row }">{{ formatMoney(row.expected) }}</template>
@@ -210,7 +210,7 @@ const exportUrl = (format: 'pdf' | 'xlsx') => {
         <Column field="variance" header="Variance">
           <template #body="{ data: row }">{{ formatMoney(row.variance) }}</template>
         </Column>
-      </DataTable>
+      </AppDataTable>
     </section>
 
     <SharedReportLinkPanel :owners="owners" :flats="flats" :start-date="filters.startDate" :end-date="filters.endDate" />

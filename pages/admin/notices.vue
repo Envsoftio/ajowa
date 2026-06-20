@@ -308,7 +308,7 @@ const publish = async (notice: NoticeRow) => {
         <Button label="Save notice" icon="pi pi-save" type="submit" />
       </form>
 
-      <DataTable :value="rows" :loading="pending" responsive-layout="scroll" class="list-page__table">
+      <AppDataTable :value="rows" :loading="pending" responsive-layout="scroll" class="list-page__table">
         <Column field="title" header="Title" />
         <Column field="priority" header="Priority"><template #body="{ data: row }"><Tag :value="row.priority" /></template></Column>
         <Column field="status" header="Status"><template #body="{ data: row }"><AppStatusBadge :status="row.status" /></template></Column>
@@ -343,7 +343,7 @@ const publish = async (notice: NoticeRow) => {
             <Button label="Publish" icon="pi pi-send" size="small" severity="secondary" outlined :disabled="row.status === 'PUBLISHED'" @click="publish(row)" />
           </template>
         </Column>
-      </DataTable>
+      </AppDataTable>
     </section>
   </div>
 </template>

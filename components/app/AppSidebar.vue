@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { AppNavGroup, AppNavItem, AppShellType } from '~/shared/shell'
+import { canUserAccessRoute } from '~/shared/auth'
 import { shellNavigation } from '~/shared/shell'
 
 const props = defineProps<{
@@ -7,8 +8,23 @@ const props = defineProps<{
 }>()
 
 const appStore = useAppStore()
+const authStore = useAuthStore()
 const route = useRoute()
-const groups = computed(() => shellNavigation[props.shell])
+const groups = computed<AppNavGroup[]>(() => {
+  const navigation = shellNavigation[props.shell]
+  const user = authStore.me?.user
+
+  if (!user) {
+    return navigation
+  }
+
+  return navigation
+    .map((group) => ({
+      ...group,
+      items: group.items.filter((item) => canUserAccessRoute(item.to, user)),
+    }))
+    .filter((group) => group.items.length > 0)
+})
 const openGroups = ref<Record<string, boolean>>({})
 
 const getGroupKey = (group: AppNavGroup) => `${props.shell}-${group.label}`

@@ -104,7 +104,7 @@ const subscribePush = async () => {
       <Message v-if="pushState && pushState !== 'idle' && pushState !== 'subscribed'" severity="warn">{{ pushState }}</Message>
       <Message v-if="pushState === 'subscribed'" severity="success">Push subscription refreshed.</Message>
 
-      <DataTable :value="preferences" responsive-layout="scroll" class="list-page__table">
+      <AppDataTable :value="preferences" responsive-layout="scroll" class="list-page__table">
         <Column field="category" header="Category" />
         <Column header="Push"><template #body="{ data: row }"><ToggleSwitch v-model="row.pushEnabled" /></template></Column>
         <Column header="Email"><template #body="{ data: row }"><ToggleSwitch v-model="row.emailEnabled" /></template></Column>
@@ -119,7 +119,7 @@ const subscribePush = async () => {
           </template>
         </Column>
         <Column header="Mobile fallback"><template #body="{ data: row }"><ToggleSwitch v-model="row.fallbackToMobileForWhatsapp" /></template></Column>
-      </DataTable>
+      </AppDataTable>
     </section>
   </div>
 </template>

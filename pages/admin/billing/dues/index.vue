@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { DataTablePageEvent } from 'primevue/datatable'
 import type { BillingPeriod, MaintenanceDue } from '~/types/domain'
 
 definePageMeta({
@@ -17,6 +18,7 @@ type DueResponse = {
   }
 }
 type PeriodResponse = { ok: true; data: { items: BillingPeriod[] } }
+type BillChannel = 'EMAIL' | 'WHATSAPP'
 
 const api = useApi()
 const toast = useToast()
@@ -131,6 +133,7 @@ const summary = computed(() => {
 const selectedReminderCount = computed(
   () => selectedDues.value.filter(isReminderEligible).length,
 )
+const selectedBillCount = computed(() => selectedDues.value.length)
 
 const hasActiveFilters = computed(
   () =>
@@ -169,7 +172,16 @@ const waiverTarget = ref<MaintenanceDue | null>(null)
 const waiverReason = ref('')
 const savingWaiver = ref(false)
 const sendingReminder = ref(false)
+const billSendDialogVisible = ref(false)
+const billSendTargets = ref<MaintenanceDue[]>([])
+const billChannels = ref<BillChannel[]>(['EMAIL', 'WHATSAPP'])
+const sendingBills = ref(false)
 const confirmAction = useAppConfirm()
+
+const billChannelOptions = [
+  { label: 'Email', value: 'EMAIL' },
+  { label: 'WhatsApp', value: 'WHATSAPP' },
+]
 
 const openBreakdown = (due: MaintenanceDue) => {
   selectedDue.value = due
@@ -248,6 +260,51 @@ const sendSelectedReminders = () =>
     selectedDues.value.filter(isReminderEligible).map((due) => due.id),
   )
 
+const openBillSend = (targets: MaintenanceDue[]) => {
+  billSendTargets.value = targets
+  billChannels.value = ['EMAIL', 'WHATSAPP']
+  billSendDialogVisible.value = true
+}
+
+const billSendSummary = computed(() => {
+  if (billSendTargets.value.length === 0) return 'No dues selected.'
+  if (billSendTargets.value.length === 1) {
+    const due = billSendTargets.value[0]
+    return `${due?.blockName ?? ''} ${due?.flatNumber ?? ''} · ${due?.billingPeriodLabel ?? ''}`.trim()
+  }
+
+  return `${billSendTargets.value.length} bills selected`
+})
+
+const sendBills = async () => {
+  const dueIds = billSendTargets.value.map((due) => due.id)
+  if (dueIds.length === 0 || billChannels.value.length === 0) return
+
+  sendingBills.value = true
+
+  try {
+    const response = await api<{
+      ok: true
+      data: { eligible: number; jobCount: number }
+    }>('/api/admin/billing/dues/send-bills', {
+      method: 'POST',
+      body: {
+        dueIds,
+        channels: billChannels.value,
+      },
+    })
+    toast.add({
+      severity: 'success',
+      summary: 'Bills queued',
+      detail: `${response.data.eligible} bills matched and ${response.data.jobCount} delivery jobs were queued.`,
+      life: 10000,
+    })
+    billSendDialogVisible.value = false
+  } finally {
+    sendingBills.value = false
+  }
+}
+
 const resetFilters = () => {
   query.page = 1
   query.search = ''
@@ -281,10 +338,10 @@ const resetFilters = () => {
     <section class="list-page surface-card">
       <header class="list-page__header">
         <div>
-          <h1>Maintenance dues</h1>
+          <h1>Maintenance bills</h1>
           <p>
-            Review period-wise dues with computed late fees, paid amounts,
-            balances, and statuses.
+            Generate PDFs, send bills, and track period-wise balances for every
+            flat.
           </p>
         </div>
         <div class="list-page__exports">
@@ -294,6 +351,19 @@ const resetFilters = () => {
             severity="secondary"
             outlined
             @click="() => refresh()"
+          />
+          <Button
+            :label="
+              selectedBillCount > 0
+                ? `Send ${selectedBillCount} bill${selectedBillCount === 1 ? '' : 's'}`
+                : 'Send bills'
+            "
+            icon="pi pi-envelope"
+            severity="secondary"
+            outlined
+            :loading="sendingBills"
+            :disabled="selectedBillCount === 0"
+            @click="openBillSend(selectedDues)"
           />
           <Button
             :label="
@@ -318,30 +388,6 @@ const resetFilters = () => {
           />
         </div>
       </header>
-
-      <div class="admin-page-guide">
-        <h2>How to use this page</h2>
-        <p>
-          Use the filters to narrow dues, review balances, send reminders, or
-          waive dues with an audit reason.
-        </p>
-        <ol>
-          <li>
-            Select a period or status to find the dues you want to act on.
-          </li>
-          <li>
-            Open the breakdown action to verify how the base amount was
-            calculated.
-          </li>
-          <li>
-            Select rows and send reminders only for balances that are still
-            outstanding.
-          </li>
-          <li>
-            Use waiver only when the society has approved removing the due.
-          </li>
-        </ol>
-      </div>
 
       <div class="billing-workflow-panel billing-workflow-panel--dues">
         <div>
@@ -451,7 +497,7 @@ const resetFilters = () => {
         </div>
       </div>
 
-      <DataTable
+      <AppDataTable
         v-model:selection="selectedDues"
         :value="dues"
         :loading="pending"
@@ -463,7 +509,7 @@ const resetFilters = () => {
         class="list-page__table"
         data-key="id"
         @page="
-          (event) => {
+          (event: DataTablePageEvent) => {
             query.page = Math.floor(event.first / event.rows) + 1
             query.pageSize = event.rows
           }
@@ -518,9 +564,29 @@ const resetFilters = () => {
             <AppStatusBadge :status="row.status" />
           </template>
         </Column>
-        <Column header="Actions" style="width: 150px">
+        <Column header="Actions" style="width: 210px">
           <template #body="{ data: row }">
             <div class="admin-inline-actions">
+              <Button
+                as="a"
+                :href="`/api/admin/billing/dues/${row.id}/bill`"
+                target="_blank"
+                icon="pi pi-file-pdf"
+                severity="secondary"
+                text
+                rounded
+                aria-label="Open bill PDF"
+                title="Open bill PDF"
+              />
+              <Button
+                icon="pi pi-envelope"
+                severity="secondary"
+                text
+                rounded
+                aria-label="Send bill"
+                title="Send bill"
+                @click="openBillSend([row])"
+              />
               <Button
                 icon="pi pi-list"
                 severity="secondary"
@@ -555,7 +621,7 @@ const resetFilters = () => {
             </div>
           </template>
         </Column>
-      </DataTable>
+      </AppDataTable>
 
       <div class="list-page__cards">
         <article v-for="due in dues" :key="due.id" class="list-card">
@@ -590,6 +656,24 @@ const resetFilters = () => {
             </strong>
           </div>
           <div class="admin-inline-actions">
+            <Button
+              as="a"
+              :href="`/api/admin/billing/dues/${due.id}/bill`"
+              target="_blank"
+              label="PDF"
+              icon="pi pi-file-pdf"
+              size="small"
+              severity="secondary"
+              outlined
+            />
+            <Button
+              label="Send bill"
+              icon="pi pi-envelope"
+              size="small"
+              severity="secondary"
+              outlined
+              @click="openBillSend([due])"
+            />
             <Button
               label="Breakdown"
               icon="pi pi-list"
@@ -635,7 +719,7 @@ const resetFilters = () => {
             {{ formatDate(selectedDue.dueDate) }}
           </p>
         </div>
-        <DataTable
+        <AppDataTable
           :value="selectedDue.chargeBreakdown"
           responsive-layout="scroll"
         >
@@ -645,12 +729,65 @@ const resetFilters = () => {
               {{ formatMoney(row.amount) }}
             </template>
           </Column>
-        </DataTable>
+        </AppDataTable>
         <div class="billing-total-line">
           <span>Computed balance</span>
           <strong>{{ formatMoney(selectedDue.balanceAmount) }}</strong>
         </div>
       </div>
+    </Dialog>
+
+    <Dialog
+      v-model:visible="billSendDialogVisible"
+      header="Send bill"
+      modal
+      :style="{ width: '480px' }"
+    >
+      <form class="admin-form-layout" @submit.prevent="sendBills">
+        <div class="billing-dialog-intro billing-dialog-intro--compact">
+          <div>
+            <p class="eyebrow">Bill delivery</p>
+            <h2>{{ billSendSummary }}</h2>
+            <p>Email delivery includes the PDF bill attachment.</p>
+          </div>
+        </div>
+        <label>
+          <span class="field-label">
+            Channels
+            <AppHelpIcon
+              text="Choose Email, WhatsApp, or both for the billing contacts linked to each flat."
+            />
+          </span>
+          <MultiSelect
+            v-model="billChannels"
+            :options="billChannelOptions"
+            option-label="label"
+            option-value="value"
+            display="chip"
+            placeholder="Choose channels"
+          />
+        </label>
+        <Message v-if="billChannels.includes('WHATSAPP')" severity="info">
+          WhatsApp delivery uses the configured provider and sends the resident
+          a secure bill link.
+        </Message>
+        <div class="admin-inline-actions dialog-actions">
+          <Button
+            type="button"
+            label="Cancel"
+            severity="secondary"
+            outlined
+            @click="billSendDialogVisible = false"
+          />
+          <Button
+            type="submit"
+            label="Send bill"
+            icon="pi pi-send"
+            :loading="sendingBills"
+            :disabled="billSendTargets.length === 0 || billChannels.length === 0"
+          />
+        </div>
+      </form>
     </Dialog>
 
     <Dialog

@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import type { MenuItem } from 'primevue/menuitem'
 import type { AppShellType } from '~/shared/shell'
-import { shellLabels } from '~/shared/shell'
 
-const props = defineProps<{
+defineProps<{
   shell: AppShellType
 }>()
 
@@ -14,7 +13,6 @@ const route = useRoute()
 const loading = useLoadingIndicator()
 const menu = ref()
 
-const shellLabel = computed(() => shellLabels[props.shell])
 const pageTitle = computed(() => String(route.meta.title ?? 'AJOWA'))
 const isLoading = computed(() => loading.isLoading.value)
 const userInitial = computed(() => authStore.me?.user.fullName?.charAt(0).toUpperCase() || 'A')
@@ -59,7 +57,6 @@ const toggleMenu = (event: Event) => {
         aria-label="Toggle navigation"
         @click="appStore.toggleSidebar()"
       />
-      <p class="eyebrow">{{ shellLabel }}</p>
       <h2>{{ pageTitle }}</h2>
     </div>
 

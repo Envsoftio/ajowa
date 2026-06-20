@@ -6,7 +6,7 @@ const surfaceCards = [
   },
   {
     title: 'Operations',
-    body: 'Admin, manager, and service staff foundations are ready for scoped dashboards and workflows.',
+    body: 'Admin, manager, and service staff dashboards are ready for scoped workflows.',
   },
   {
     title: 'Delivery Guardrails',
@@ -18,11 +18,9 @@ const surfaceCards = [
 <template>
   <div class="landing-page">
     <section class="hero-panel">
-      <Tag severity="contrast" value="Phase 1 Foundation" rounded />
       <h1>AJOWA Society Management System</h1>
       <p>
-        Nuxt 3, Nitro SSR, PrimeVue, Pinia, Better Auth, and Supabase foundations
-        for the AJOWA residential community.
+        Society operations, billing, resident access, and service workflows for the AJOWA residential community.
       </p>
       <div class="hero-actions">
         <Button label="Login" as="a" href="/login" />

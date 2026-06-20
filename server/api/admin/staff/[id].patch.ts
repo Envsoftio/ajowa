@@ -1,10 +1,10 @@
 import { z } from 'zod'
 import { createApiSuccess, readJsonBody, validateInput } from '~/server/utils/api'
-import { requirePermission } from '~/server/utils/auth'
+import { isEmailVerificationRequiredForRole, requirePermission } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
 import { AppError } from '~/server/utils/errors'
 import { readUuidParam } from '~/server/utils/master-data'
-import { staffPermissions } from '~/shared/permissions'
+import { normalizeRolePermissions, staffPermissions } from '~/shared/permissions'
 
 const staffSchema = z.object({
   role: z.enum(['MANAGER', 'SERVICE_STAFF', 'GUARD']),
@@ -20,9 +20,11 @@ export default defineEventHandler(async (event) => {
   const authMe = await requirePermission(event, 'staff.manage')
   const id = readUuidParam(event)
   const body = validateInput(staffSchema, await readJsonBody(event))
+  const rolePermissions = normalizeRolePermissions(body.role, body.permissions)
+  const emailVerified = !isEmailVerificationRequiredForRole(body.role)
   const pool = getDatabasePool()
 
-  const result = await pool.query<{ id: string }>(
+  const result = await pool.query<{ id: string; auth_user_id: string }>(
     `
       update users
       set role = $3,
@@ -32,12 +34,14 @@ export default defineEventHandler(async (event) => {
           can_login = $7,
           is_active = $8,
           staff_permissions = $9,
+          email_verified = $10,
+          must_change_password = case when $3 = 'GUARD' then false else must_change_password end,
           updated_at = now()
       where id = $1
         and society_id = $2
         and role in ('MANAGER', 'SERVICE_STAFF', 'GUARD')
         and deleted_at is null
-      returning id
+      returning id, auth_user_id
     `,
     [
       id,
@@ -48,17 +52,30 @@ export default defineEventHandler(async (event) => {
       body.whatsappNumber ?? null,
       body.canLogin,
       body.isActive,
-      body.permissions,
+      rolePermissions,
+      emailVerified,
     ],
   )
 
-  if (!result.rows[0]?.id) {
+  const updated = result.rows[0]
+
+  if (!updated?.id) {
     throw new AppError({
       code: 'NOT_FOUND',
       statusCode: 404,
       message: 'Staff member was not found.',
     })
   }
+
+  await pool.query(
+    `
+      update auth_users
+      set email_verified = $2,
+          updated_at = now()
+      where id = $1
+    `,
+    [updated.auth_user_id, emailVerified],
+  )
 
   return createApiSuccess(event, { id })
 })

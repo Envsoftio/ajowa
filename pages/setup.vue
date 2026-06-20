@@ -11,7 +11,7 @@ type SetupTask = {
 
 definePageMeta({
   layout: 'admin',
-  title: 'Phase 1 Setup',
+  title: 'Setup',
 })
 
 const toast = useToast()
@@ -138,22 +138,9 @@ const updateQuery = (value: ListQueryParams) => {
 
 <template>
   <div class="landing-page">
-    <!-- <section class="hero-panel">
-      <Tag severity="contrast" value="Setup" rounded />
-      <h1>Local Setup</h1>
-      <p>
-        Copy `.env.example` to `.env`, install dependencies with `npm install`, and
-        start the SSR app with `npm run dev`.
-      </p>
-      <p>
-        Phase 2 will add the full local Supabase bootstrap, but the standard workflow is
-        already documented in the repository README and `docs/project-setup.md`.
-      </p>
-    </section> -->
-
     <AppListPage
-      title="Foundation Completion Tracker"
-      description="A reusable Phase 1 list-page pattern with search, status badges, pagination hooks, and mobile cards."
+      title="Completion Tracker"
+      description="Track setup tasks with search, status badges, pagination hooks, and mobile cards."
       :rows="rowsFiltered"
       :columns="columns"
       :query="query"

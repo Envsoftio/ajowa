@@ -493,7 +493,7 @@ const runAction = async (action: ResidentAction) => {
           <Tag :value="`${resident.flatOccupants.length} records`" severity="secondary" rounded />
         </div>
 
-        <DataTable
+        <AppDataTable
           v-if="resident.flatOccupants.length"
           :value="resident.flatOccupants"
           responsive-layout="scroll"
@@ -532,7 +532,7 @@ const runAction = async (action: ResidentAction) => {
               </div>
             </template>
           </Column>
-        </DataTable>
+        </AppDataTable>
         <AppState
           v-else
           title="No linked occupants"
@@ -551,7 +551,7 @@ const runAction = async (action: ResidentAction) => {
             <Tag :value="formatMoney(financialSummary.dueBalance)" :severity="financialSummary.dueBalance > 0 ? 'danger' : 'success'" rounded />
           </div>
 
-          <DataTable
+          <AppDataTable
             v-if="resident.dues.length"
             :value="resident.dues"
             responsive-layout="scroll"
@@ -577,7 +577,7 @@ const runAction = async (action: ResidentAction) => {
                 <Tag :severity="statusSeverity(row.status)" :value="row.status.replaceAll('_', ' ')" rounded />
               </template>
             </Column>
-          </DataTable>
+          </AppDataTable>
           <AppState
             v-else
             title="No dues"
@@ -595,7 +595,7 @@ const runAction = async (action: ResidentAction) => {
             <Tag :value="formatMoney(financialSummary.paymentTotal)" severity="success" rounded />
           </div>
 
-          <DataTable
+          <AppDataTable
             v-if="resident.payments.length"
             :value="resident.payments"
             responsive-layout="scroll"
@@ -619,7 +619,7 @@ const runAction = async (action: ResidentAction) => {
               </template>
             </Column>
             <Column field="receiptNumber" header="Receipt" />
-          </DataTable>
+          </AppDataTable>
           <AppState
             v-else
             title="No payments"
@@ -639,7 +639,7 @@ const runAction = async (action: ResidentAction) => {
             <Tag :value="`${requestSummary.open} open`" :severity="requestSummary.open > 0 ? 'info' : 'success'" rounded />
           </div>
 
-          <DataTable
+          <AppDataTable
             v-if="resident.serviceRequests.length"
             :value="resident.serviceRequests"
             responsive-layout="scroll"
@@ -663,7 +663,7 @@ const runAction = async (action: ResidentAction) => {
                 <Tag :severity="statusSeverity(row.status)" :value="row.status.replaceAll('_', ' ')" rounded />
               </template>
             </Column>
-          </DataTable>
+          </AppDataTable>
           <AppState
             v-else
             title="No service requests"
@@ -681,7 +681,7 @@ const runAction = async (action: ResidentAction) => {
             <Tag :value="`${resident.accessLogs.length} scans`" severity="secondary" rounded />
           </div>
 
-          <DataTable
+          <AppDataTable
             v-if="resident.accessLogs.length"
             :value="resident.accessLogs"
             responsive-layout="scroll"
@@ -700,7 +700,7 @@ const runAction = async (action: ResidentAction) => {
                 <Tag :severity="statusSeverity(row.scanResult)" :value="row.scanResult.replaceAll('_', ' ')" rounded />
               </template>
             </Column>
-          </DataTable>
+          </AppDataTable>
           <AppState
             v-else
             title="No access scans"

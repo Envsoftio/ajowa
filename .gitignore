@@ -15,3 +15,4 @@ dist
 *.local
 supabase/.temp
 .playwright-mcp/
+.agents/

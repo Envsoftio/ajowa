@@ -173,10 +173,5 @@ export const shellNavigation: Record<AppShellType, AppNavGroup[]> = {
       icon: 'pi pi-qrcode',
       items: [{ label: 'Scan Desk', to: '/guard/scan', icon: 'pi pi-qrcode' }],
     },
-    {
-      label: 'Account',
-      icon: 'pi pi-user',
-      items: [{ label: 'Password Change', to: '/change-password', icon: 'pi pi-key' }],
-    },
   ],
 }

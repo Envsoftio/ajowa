@@ -26,23 +26,46 @@ defineProps<{
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: var(--color-info);
+  width: 1.1rem;
+  height: 1.1rem;
+  border: 0;
+  background: transparent;
+  color: #bad6fe;
   cursor: help;
+  font-size: 0.82rem;
   line-height: 1;
   border-radius: 999px;
   outline: none;
 }
 
-:global(.app-theme-dark) .app-help-icon {
-  --app-help-tooltip-bg: #f8fafc;
-  --app-help-tooltip-text: #102030;
-  --app-help-tooltip-border: rgba(15, 23, 42, 0.18);
+.app-help-icon .pi-info-circle,
+.app-help-icon .pi-info-circle::before {
+  color: inherit;
+  font-size: inherit;
+}
 
-  color: #93c5fd;
+:global(.app-theme-dark) .app-help-icon {
+  --app-help-tooltip-bg: #0f172a;
+  --app-help-tooltip-text: #f8fafc;
+  --app-help-tooltip-border: rgba(248, 250, 252, 0.22);
+
+  border: 0;
+  background: transparent;
+  color: #bad6fe !important;
+}
+
+:global(.app-theme-dark) .app-help-icon .pi-info-circle,
+:global(.app-theme-dark) .app-help-icon .pi-info-circle::before {
+  color: #bad6fe !important;
+  text-shadow: 0 1px 2px rgba(15, 23, 42, 0.55);
 }
 
 .app-help-icon:focus-visible {
-  box-shadow: 0 0 0 3px rgba(29, 78, 216, 0.2);
+  box-shadow: 0 0 0 3px rgba(100, 116, 139, 0.24);
+}
+
+:global(.app-theme-dark) .app-help-icon:focus-visible {
+  box-shadow: 0 0 0 3px rgba(248, 250, 252, 0.22);
 }
 
 .app-help-icon::before,

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { isSafeRedirectPath } from '~/shared/auth'
+import { canUserAccessRoute, isSafeRedirectPath } from '~/shared/auth'
 
 definePageMeta({
   layout: 'public',
@@ -25,6 +25,7 @@ const submit = async () => {
   try {
     const me = await authStore.login(form)
     const redirect = isSafeRedirectPath(route.query.redirect) ? route.query.redirect : undefined
+    const allowedRedirect = me && redirect && canUserAccessRoute(redirect, me.user) ? redirect : undefined
 
     if (me?.access.requiresPasswordChange) {
       await navigateTo('/change-password')
@@ -36,7 +37,7 @@ const submit = async () => {
       return
     }
 
-    await navigateTo(redirect ?? me?.landingRoute ?? '/')
+    await navigateTo(allowedRedirect ?? me?.landingRoute ?? '/')
   } catch {
     toast.add({
       severity: 'error',

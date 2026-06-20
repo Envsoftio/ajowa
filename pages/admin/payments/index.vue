@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { DataTablePageEvent } from 'primevue/datatable'
 import type { BillingPeriod, FlatSummary, ResidentSummary } from '~/types/domain'
 
 definePageMeta({
@@ -424,7 +425,7 @@ const onProofFileChange = async (event: Event) => {
         </div>
       </div>
 
-      <DataTable
+      <AppDataTable
         :value="payments"
         :loading="pending"
         paginator
@@ -435,7 +436,7 @@ const onProofFileChange = async (event: Event) => {
         class="list-page__table"
         data-key="id"
         @page="
-          (event) => {
+          (event: DataTablePageEvent) => {
             query.page = Math.floor(event.first / event.rows) + 1
             query.pageSize = event.rows
           }
@@ -526,7 +527,7 @@ const onProofFileChange = async (event: Event) => {
             </div>
           </template>
         </Column>
-      </DataTable>
+      </AppDataTable>
 
       <div class="list-page__cards">
         <article v-for="payment in payments" :key="payment.id" class="list-card">
@@ -613,7 +614,7 @@ const onProofFileChange = async (event: Event) => {
             />
           </section>
         </div>
-        <DataTable :value="selectedPayment.allocations" responsive-layout="scroll">
+        <AppDataTable :value="selectedPayment.allocations" responsive-layout="scroll">
           <Column field="billingPeriodLabel" header="Period" />
           <Column field="dueAmount" header="Due">
             <template #body="{ data: row }">{{ formatMoney(row.dueAmount) }}</template>
@@ -627,7 +628,7 @@ const onProofFileChange = async (event: Event) => {
           <Column field="remainingBalance" header="Balance">
             <template #body="{ data: row }">{{ formatMoney(row.remainingBalance) }}</template>
           </Column>
-        </DataTable>
+        </AppDataTable>
       </div>
     </Dialog>
   </div>

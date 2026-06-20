@@ -315,8 +315,62 @@ const removeStorageObjectQuietly = async (
   storageTargetKey: StorageTargetKey,
   storageObjectKey: string,
 ) => {
-  const storageTarget = getStorageTarget(storageTargetKey)
-  await supabaseAdmin.storage.from(storageTarget.providerContainer).remove([storageObjectKey])
+  try {
+    const storageTarget = getStorageTarget(storageTargetKey)
+    const { error } = await supabaseAdmin.storage.from(storageTarget.providerContainer).remove([storageObjectKey])
+
+    if (error) {
+      console.warn(
+        JSON.stringify({
+          level: 'warn',
+          message: 'Unable to remove a storage object during cleanup.',
+          storageTargetKey,
+          storageObjectKey,
+          cause: error.message,
+        }),
+      )
+
+      return false
+    }
+
+    return true
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown storage cleanup error.'
+    console.warn(
+      JSON.stringify({
+        level: 'warn',
+        message: 'Storage object cleanup threw unexpectedly.',
+        storageTargetKey,
+        storageObjectKey,
+        cause: message,
+      }),
+    )
+
+    return false
+  }
+}
+
+const markFileRecordFailedQuietly = async (
+  supabaseAdmin: SupabaseClient,
+  fileId: string,
+  message: string,
+) => {
+  try {
+    await updateFileRecord(supabaseAdmin, fileId, {
+      upload_status: 'FAILED',
+      last_error: message,
+    })
+  } catch (error) {
+    const cause = error instanceof Error ? error.message : 'Unknown file metadata update error.'
+    console.warn(
+      JSON.stringify({
+        level: 'warn',
+        message: 'Unable to mark a file metadata record as FAILED.',
+        fileId,
+        cause,
+      }),
+    )
+  }
 }
 
 export const createStorageObjectKey = ({
@@ -377,15 +431,12 @@ export const uploadPrivateFile = async (input: StorageUploadInput) => {
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown storage upload error.'
 
-    await updateFileRecord(supabaseAdmin, fileId, {
-      upload_status: 'FAILED',
-      last_error: message,
-    })
     await removeStorageObjectQuietly(
       supabaseAdmin,
       validInput.storageTargetKey,
       validInput.storageObjectKey,
     )
+    await markFileRecordFailedQuietly(supabaseAdmin, fileId, message)
 
     throw error
   }
@@ -461,11 +512,6 @@ export const replacePrivateFile = async (input: ReplaceStoredFileInput) => {
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown storage replace error.'
 
-    await updateFileRecord(supabaseAdmin, input.fileId, {
-      upload_status: 'FAILED',
-      last_error: message,
-    })
-
     if (
       existingRecord.storage_target_key !== validInput.storageTargetKey ||
       existingRecord.storage_object_key !== validInput.storageObjectKey
@@ -476,6 +522,7 @@ export const replacePrivateFile = async (input: ReplaceStoredFileInput) => {
         validInput.storageObjectKey,
       )
     }
+    await markFileRecordFailedQuietly(supabaseAdmin, input.fileId, message)
 
     throw error
   }
@@ -581,8 +628,15 @@ export const cleanupFailedUploads = async (olderThanHours = 24): Promise<Cleanup
   let deletedFileRecords = 0
 
   for (const row of data ?? []) {
-    await removeStorageObjectQuietly(supabaseAdmin, row.storage_target_key, row.storage_object_key)
-    deletedStorageObjects += 1
+    const storageObjectDeleted = await removeStorageObjectQuietly(
+      supabaseAdmin,
+      row.storage_target_key,
+      row.storage_object_key,
+    )
+
+    if (storageObjectDeleted) {
+      deletedStorageObjects += 1
+    }
 
     const { error: deleteError } = await supabaseAdmin.from('file_objects').delete().eq('id', row.id)
 

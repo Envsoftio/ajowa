@@ -5,6 +5,7 @@ import {
   createCredentialUser,
   getInvitePreview,
   hashInviteToken,
+  isEmailVerificationRequiredForRole,
   sendVerificationEmailToUser,
 } from '~/server/utils/auth'
 import { AppError } from '~/server/utils/errors'
@@ -97,6 +98,8 @@ export default defineEventHandler(async (event) => {
       })
     }
 
+    const requiresEmailVerification = isEmailVerificationRequiredForRole(invite.role)
+
     const createdUser = await createCredentialUser({
       client,
       email: invite.email,
@@ -105,7 +108,7 @@ export default defineEventHandler(async (event) => {
       mobileNumber: body.mobileNumber,
       whatsappNumber: body.whatsappNumber || body.mobileNumber,
       role: invite.role,
-      emailVerified: false,
+      emailVerified: !requiresEmailVerification,
       mustChangePassword: false,
     })
 
@@ -132,15 +135,17 @@ export default defineEventHandler(async (event) => {
 
     await client.query('commit')
 
-    await sendVerificationEmailToUser({
-      id: createdUser.authUserId,
-      email: createdUser.email,
-      name: createdUser.fullName,
-    })
+    if (requiresEmailVerification) {
+      await sendVerificationEmailToUser({
+        id: createdUser.authUserId,
+        email: createdUser.email,
+        name: createdUser.fullName,
+      })
+    }
 
     return createApiSuccess(event, {
       email: createdUser.email,
-      requiresEmailVerification: true,
+      requiresEmailVerification,
     })
   } catch (error) {
     await client.query('rollback')

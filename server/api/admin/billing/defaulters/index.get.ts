@@ -1,7 +1,11 @@
 import { createApiSuccess } from '~/server/utils/api'
 import { requireRole } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
-import { computeDueAmounts, getDaysOverdue, todayDate } from '~/server/utils/billing'
+import {
+  computeDueAmounts,
+  getDaysOverdue,
+  todayDate,
+} from '~/server/utils/billing'
 import { normalizeSocietySettings } from '~/server/utils/master-data'
 import type { DefaulterSummary } from '~/types/domain'
 
@@ -49,7 +53,7 @@ export default defineEventHandler(async (event) => {
         f.id as flat_id,
         f.flat_number,
         b.name as block_name,
-        fr.relationship_type::text,
+        u.relationship_type::text,
         md.id as due_id,
         md.status::text as due_status,
         bp.label as billing_period_label,
@@ -63,8 +67,30 @@ export default defineEventHandler(async (event) => {
       inner join flats f on f.id = md.flat_id
       inner join blocks b on b.id = f.block_id
       inner join billing_periods bp on bp.id = md.billing_period_id
-      inner join flat_residents fr on fr.flat_id = md.flat_id and fr.is_active = true
-      inner join users u on u.id = fr.user_id
+      inner join lateral (
+        select
+          u.id,
+          u.auth_user_id,
+          u.full_name,
+          u.email,
+          u.mobile_number,
+          fr.relationship_type
+        from flat_residents fr
+        inner join users u on u.id = fr.user_id
+        where fr.flat_id = md.flat_id
+          and fr.is_active = true
+          and u.is_active = true
+        order by
+          fr.is_billing_contact desc,
+          fr.is_primary_contact desc,
+          case fr.relationship_type
+            when 'OWNER' then 1
+            when 'TENANT' then 2
+            else 3
+          end,
+          fr.created_at asc
+        limit 1
+      ) u on true
       where md.society_id = $1
         and md.status in ('OPEN', 'PARTIALLY_PAID', 'OVERDUE')
         and md.balance_amount > 0
@@ -91,7 +117,17 @@ export default defineEventHandler(async (event) => {
       settings.lateFeePerDay,
     )
 
-    if (computed.balanceAmount <= 0 || ['PAID', 'WAIVED', 'CANCELLED'].includes(computed.status)) {
+    const daysOverdue = getDaysOverdue(row.due_date, today)
+    const graceAdjustedDaysOverdue = Math.max(
+      0,
+      daysOverdue - settings.graceDays,
+    )
+
+    if (
+      computed.balanceAmount <= 0 ||
+      graceAdjustedDaysOverdue <= 0 ||
+      ['PAID', 'WAIVED', 'CANCELLED'].includes(computed.status)
+    ) {
       continue
     }
 
@@ -103,10 +139,11 @@ export default defineEventHandler(async (event) => {
       dueId: row.due_id,
       dueStatus: computed.status,
       billingPeriodLabel: row.billing_period_label,
+      dueDate: row.due_date,
       totalAmount: computed.totalAmount,
       paidAmount: Number(row.paid_amount),
       balanceAmount: computed.balanceAmount,
-      daysOverdue: getDaysOverdue(row.due_date, today),
+      daysOverdue,
     }
 
     if (existing) {
@@ -115,7 +152,10 @@ export default defineEventHandler(async (event) => {
       existing.totalDue += flatInfo.totalAmount
       existing.totalPaid += flatInfo.paidAmount
       existing.totalBalance += flatInfo.balanceAmount
-      existing.maxDaysOverdue = Math.max(existing.maxDaysOverdue, flatInfo.daysOverdue)
+      existing.maxDaysOverdue = Math.max(
+        existing.maxDaysOverdue,
+        flatInfo.daysOverdue,
+      )
     } else {
       userMap.set(row.user_id, {
         userId: row.user_id,
@@ -133,7 +173,9 @@ export default defineEventHandler(async (event) => {
     }
   }
 
-  const defaulters = Array.from(userMap.values()).sort((a, b) => b.totalBalance - a.totalBalance)
+  const defaulters = Array.from(userMap.values()).sort(
+    (a, b) => b.totalBalance - a.totalBalance,
+  )
 
   return createApiSuccess(event, defaulters)
 })

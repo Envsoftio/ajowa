@@ -490,7 +490,7 @@ const deleteBankAccount = async (account: BankAccount) => {
         </div>
       </div>
 
-      <DataTable
+      <AppDataTable
         v-if="activeTab === 'accounts'"
         :value="accounts"
         :loading="accountsPending"
@@ -556,9 +556,9 @@ const deleteBankAccount = async (account: BankAccount) => {
             </div>
           </template>
         </Column>
-      </DataTable>
+      </AppDataTable>
 
-      <DataTable
+      <AppDataTable
         v-else
         :value="bankAccounts"
         :loading="bankAccountsPending"
@@ -613,7 +613,7 @@ const deleteBankAccount = async (account: BankAccount) => {
             </div>
           </template>
         </Column>
-      </DataTable>
+      </AppDataTable>
     </section>
 
     <Dialog

@@ -6,6 +6,7 @@ import { requirePermission } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
 import { AppError } from '~/server/utils/errors'
 import { buildAppUrl } from '~/server/utils/email'
+import { requiresTemporaryPasswordChangeForRole } from '~/shared/auth'
 
 const schema = z.object({
   temporaryPassword: z.string().trim().min(8).max(128).optional(),
@@ -33,9 +34,9 @@ export default defineEventHandler(async (event) => {
   try {
     await client.query('begin')
 
-    const staff = await client.query<{ auth_user_id: string; email: string }>(
+    const staff = await client.query<{ auth_user_id: string; email: string; role: 'MANAGER' | 'SERVICE_STAFF' | 'GUARD' }>(
       `
-        select auth_user_id, email
+        select auth_user_id, email, role::text as role
         from users
         where id = $1
           and society_id = $2
@@ -58,6 +59,7 @@ export default defineEventHandler(async (event) => {
       })
     }
 
+    const requiresPasswordChange = requiresTemporaryPasswordChangeForRole(staffUser.role)
     const passwordHash = await hashPassword(temporaryPassword)
 
     await client.query(
@@ -75,12 +77,12 @@ export default defineEventHandler(async (event) => {
       `
         update users
         set can_login = true,
-            must_change_password = true,
+            must_change_password = $3,
             updated_at = now()
         where id = $1
           and society_id = $2
       `,
-      [id, authMe.user.societyId],
+      [id, authMe.user.societyId, requiresPasswordChange],
     )
 
     await client.query('commit')
@@ -91,7 +93,7 @@ export default defineEventHandler(async (event) => {
       email: staffUser.email,
       temporaryPassword,
       loginUrl: buildAppUrl('/login'),
-      requiresPasswordChange: true,
+      requiresPasswordChange,
     })
   } catch (error) {
     await client.query('rollback')

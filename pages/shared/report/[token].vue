@@ -101,13 +101,13 @@ const formatCell = (column: ReportColumn, value: unknown) => {
       </section>
 
       <section class="surface-card">
-        <DataTable :value="report.rows" responsive-layout="scroll">
+        <AppDataTable :value="report.rows" responsive-layout="scroll">
           <Column v-for="column in report.columns" :key="column.key" :field="column.key" :header="column.label">
             <template #body="{ data: row }">
               {{ formatCell(column, row[column.key]) }}
             </template>
           </Column>
-        </DataTable>
+        </AppDataTable>
       </section>
     </template>
   </div>

@@ -178,7 +178,7 @@ const submit = async () => {
           </div>
         </div>
 
-        <DataTable
+        <AppDataTable
           :value="filteredBlocks"
           :loading="pending"
           responsive-layout="scroll"
@@ -210,7 +210,7 @@ const submit = async () => {
               />
             </template>
           </Column>
-        </DataTable>
+        </AppDataTable>
       </section>
     </div>
 

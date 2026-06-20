@@ -91,7 +91,7 @@ const verify = async () => {
         <Button label="Save" icon="pi pi-save" :loading="saving" @click="save" />
       </header>
 
-      <DataTable :value="settings" responsive-layout="scroll" class="list-page__table">
+      <AppDataTable :value="settings" responsive-layout="scroll" class="list-page__table">
         <Column field="eventKey" header="Event"><template #body="{ data: row }"><InputText v-model="row.eventKey" /></template></Column>
         <Column field="category" header="Category"><template #body="{ data: row }"><Select v-model="row.category" :options="['BILLING', 'PAYMENTS', 'ACCESS_QR', 'SERVICE_REQUESTS', 'NOTICES_ANNOUNCEMENTS', 'ACCOUNT_ONBOARDING', 'EMERGENCY_ALERTS']" /></template></Column>
         <Column header="Push"><template #body="{ data: row }"><ToggleSwitch v-model="row.pushEnabled" /></template></Column>
@@ -99,7 +99,7 @@ const verify = async () => {
         <Column header="WhatsApp"><template #body="{ data: row }"><ToggleSwitch v-model="row.whatsappEnabled" /></template></Column>
         <Column header="In-app"><template #body="{ data: row }"><ToggleSwitch v-model="row.inAppEnabled" /></template></Column>
         <Column field="retryMaxAttempts" header="Retries"><template #body="{ data: row }"><InputNumber v-model="row.retryMaxAttempts" :min="1" :max="10" /></template></Column>
-      </DataTable>
+      </AppDataTable>
 
       <div class="admin-form-layout">
         <h2>Provider verification</h2>

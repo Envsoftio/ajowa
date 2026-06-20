@@ -16,7 +16,12 @@ export default defineEventHandler(async (event) => {
 })
 
 const getAdminApiPermission = (path: string, method: string): StaffPermission | null => {
-  if (path.startsWith('/api/admin/staff') || path.startsWith('/api/admin/auth/invites')) {
+  if (
+    path.startsWith('/api/admin/staff') ||
+    path.startsWith('/api/admin/auth/invites') ||
+    path.startsWith('/api/admin/service-departments') ||
+    path.startsWith('/api/admin/service-requests')
+  ) {
     return 'staff.manage'
   }
   if (path.startsWith('/api/admin/society')) {
@@ -29,6 +34,9 @@ const getAdminApiPermission = (path: string, method: string): StaffPermission | 
     return 'flats.manage'
   }
   if (path.startsWith('/api/admin/residents')) {
+    return 'residents.manage'
+  }
+  if (path.startsWith('/api/admin/gate-log') || path.startsWith('/api/admin/qr')) {
     return 'residents.manage'
   }
   if (path.startsWith('/api/admin/billing/periods') || path.startsWith('/api/admin/billing/charges')) {
@@ -46,11 +54,11 @@ const getAdminApiPermission = (path: string, method: string): StaffPermission | 
   if (path.startsWith('/api/admin/notifications') || path.startsWith('/api/admin/notices')) {
     return method === 'GET' ? 'notifications.view' : 'notifications.manage'
   }
-  if (path.startsWith('/api/admin/billing/dues/preview') || method === 'GET') {
+  if (path.startsWith('/api/admin/billing/dues/preview')) {
     return 'billing.view'
   }
   if (path.startsWith('/api/admin/billing/dues')) {
-    return 'dues.manage'
+    return method === 'GET' ? 'billing.view' : 'dues.manage'
   }
   return null
 }

@@ -384,7 +384,7 @@ const deleteCategory = async (category: FinanceCategory) => {
         </div>
       </div>
 
-      <DataTable
+      <AppDataTable
         :value="categories"
         :loading="pending"
         responsive-layout="scroll"
@@ -447,7 +447,7 @@ const deleteCategory = async (category: FinanceCategory) => {
             </div>
           </template>
         </Column>
-      </DataTable>
+      </AppDataTable>
     </section>
 
     <Dialog

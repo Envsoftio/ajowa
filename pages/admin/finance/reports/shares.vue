@@ -117,7 +117,7 @@ const regenerate = async (share: SharedReport) => {
         </div>
       </header>
 
-      <DataTable :value="shares" :loading="pending" responsive-layout="scroll" class="list-page__table">
+      <AppDataTable :value="shares" :loading="pending" responsive-layout="scroll" class="list-page__table">
         <Column field="ownerName" header="Owner">
           <template #body="{ data: row }">
             <div class="report-owner-cell">
@@ -170,7 +170,7 @@ const regenerate = async (share: SharedReport) => {
             </div>
           </template>
         </Column>
-      </DataTable>
+      </AppDataTable>
     </section>
 
     <SharedReportLinkPanel :owners="owners" :flats="flats" :start-date="new Date().toISOString().slice(0, 10)" :end-date="new Date().toISOString().slice(0, 10)" @created="refresh" />

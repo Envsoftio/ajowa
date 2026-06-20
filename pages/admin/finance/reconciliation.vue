@@ -130,7 +130,7 @@ const formatMoney = (value: number) =>
         </section>
       </div>
 
-      <DataTable
+      <AppDataTable
         :value="accounts"
         :loading="pending"
         responsive-layout="scroll"
@@ -154,7 +154,7 @@ const formatMoney = (value: number) =>
             {{ formatMoney(row.balance) }}
           </template>
         </Column>
-      </DataTable>
+      </AppDataTable>
     </section>
   </div>
 </template>
