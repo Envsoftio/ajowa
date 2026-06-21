@@ -1,5 +1,6 @@
 import { getDatabasePool } from '../utils/database'
 import { dispatchNotificationJobs } from '../utils/notifications'
+import type { PoolClient } from 'pg'
 
 type NotificationWorkerState = {
   timer: ReturnType<typeof setInterval> | null
@@ -37,9 +38,10 @@ export default defineNitroPlugin((nitroApp) => {
     }
 
     state.processing = true
-    const client = await getDatabasePool().connect()
+    let client: PoolClient | null = null
 
     try {
+      client = await getDatabasePool().connect()
       const result = await dispatchNotificationJobs(client, { limit: batchSize })
       if (result.claimed > 0) {
         console.info(JSON.stringify({ level: 'info', message: 'Notification queue processed.', ...result }))
@@ -48,7 +50,7 @@ export default defineNitroPlugin((nitroApp) => {
       const message = error instanceof Error ? error.message : 'Notification queue processing failed.'
       console.error(JSON.stringify({ level: 'error', message }))
     } finally {
-      client.release()
+      client?.release()
       state.processing = false
     }
   }

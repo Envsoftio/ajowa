@@ -11,7 +11,7 @@ const workbookPath = process.argv[2] || '/Users/vishnu/Desktop/Workbook1.xlsx'
 const outputPath = process.argv[3] || path.resolve('supabase/seed.sql')
 const camRate = 3.25
 const passwordHash =
-  '83fc1288198e6f8b3b40b8c0defb7548:10b7066831355797e1a6b7b9f799b311337b3ad375a142609838916f18745908e2dc14d9de287efa542747de7203b350cb8cc50c2f04562eb21a2eed1120cc0f'
+  '67666976fa09afdf7c6ce04476f0e0b4:84e0c64a9ef0785acd14a271778130b32bcb894d39d297d77db67eef8ef918c6895b0d8ac558be6102fd756531f152d4d739558d90dc1096adf87a2d9cf4e3f4'
 const importUuidNamespace = '2da98afe-ee9b-4dd3-9f62-bcc9fc9def81'
 const adminEmail = 'acmejubilee.rwa@gmail.com'
 const reservedLoginEmails = new Set([adminEmail])
