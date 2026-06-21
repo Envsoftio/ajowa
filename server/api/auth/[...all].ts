@@ -12,6 +12,7 @@ type WebRequestLike = {
   url?: string
   headers?: Headers
   arrayBuffer?: () => Promise<ArrayBuffer>
+  text?: () => Promise<string>
 }
 
 const readNodeRequestBody = async (request: AsyncIterable<RequestChunk>) => {
@@ -46,6 +47,16 @@ const readRequestBody = async (event: AuthEvent) => {
     return undefined
   }
 
+  const webRequest = event.req as WebRequestLike
+
+  if (typeof webRequest.arrayBuffer === 'function') {
+    return webRequest.arrayBuffer()
+  }
+
+  if (typeof webRequest.text === 'function') {
+    return webRequest.text()
+  }
+
   const nodeRequest = event.node?.req as unknown
 
   if (
@@ -53,12 +64,6 @@ const readRequestBody = async (event: AuthEvent) => {
     typeof (nodeRequest as AsyncIterable<RequestChunk>)[Symbol.asyncIterator] === 'function'
   ) {
     return readNodeRequestBody(nodeRequest as AsyncIterable<RequestChunk>)
-  }
-
-  const webRequest = event.req as WebRequestLike
-
-  if (typeof webRequest.arrayBuffer === 'function') {
-    return webRequest.arrayBuffer()
   }
 
   return undefined
