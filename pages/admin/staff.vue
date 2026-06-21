@@ -361,6 +361,11 @@ const loginFilter = computed({
 const permissionLabel = (permission: string) =>
   staffPermissionLabels[permission as StaffPermission] ?? permission
 
+const permissionChipSeverities = ['info', 'success', 'warn', 'danger', 'contrast', 'secondary'] as const
+
+const permissionChipSeverity = (index: number) =>
+  permissionChipSeverities[index % permissionChipSeverities.length]
+
 const roleAccessLabel = (role: StaffSummary['role']) => staffRoleAccessDescriptions[role].accessLabel
 </script>
 
@@ -444,9 +449,9 @@ const roleAccessLabel = (role: StaffSummary['role']) => staffRoleAccessDescripti
             <div class="admin-inline-actions" style="gap: 0.35rem; flex-wrap: wrap;">
               <template v-if="row.role === 'MANAGER'">
                 <Tag
-                  v-for="permission in row.permissions.slice(0, 3)"
+                  v-for="(permission, index) in row.permissions.slice(0, 3)"
                   :key="permission"
-                  severity="secondary"
+                  :severity="permissionChipSeverity(Number(index))"
                   :value="permissionLabel(permission)"
                   rounded
                 />

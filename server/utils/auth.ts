@@ -22,7 +22,7 @@ import type {
   RelationshipType,
 } from '~/types/auth'
 
-type AuthSessionResult = Awaited<ReturnType<typeof auth.api.getSession>>
+type AuthSessionResult = Awaited<ReturnType<ReturnType<typeof betterAuth>['api']['getSession']>>
 
 type AppUserRow = {
   id: string
@@ -398,7 +398,7 @@ const syncAuthIdentityToAppUser = async (authUser: {
   })
 }
 
-export const auth = betterAuth({
+const createAuth = () => betterAuth({
   appName: 'AJOWA',
   baseURL: getValidatedRuntimeConfig(useRuntimeConfig()).betterAuthUrl,
   basePath: '/api/auth',
@@ -556,8 +556,20 @@ export const auth = betterAuth({
   },
 })
 
+let authInstance: ReturnType<typeof createAuth> | null = null
+
+export const getAuth = () => {
+  if (authInstance) {
+    return authInstance
+  }
+
+  const nextAuth = createAuth()
+  authInstance = nextAuth
+  return nextAuth
+}
+
 export const getAuthSession = async (event: H3Event) => {
-  return auth.api.getSession({
+  return getAuth().api.getSession({
     headers: fromNodeHeaders(event.node?.req.headers ?? {}),
   })
 }

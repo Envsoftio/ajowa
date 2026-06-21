@@ -1,6 +1,10 @@
 import process from 'node:process'
 import Aura from '@primevue/themes/aura'
 
+const deploymentUrl = process.env.URL ?? process.env.DEPLOY_PRIME_URL ?? process.env.DEPLOY_URL
+const appUrl = process.env.APP_URL ?? deploymentUrl ?? 'http://localhost:3000'
+const publicAppUrl = process.env.NUXT_PUBLIC_APP_URL ?? appUrl
+
 export default defineNuxtConfig({
   compatibilityDate: '2025-01-01',
   devtools: {
@@ -18,7 +22,7 @@ export default defineNuxtConfig({
     databaseUrl: process.env.DATABASE_URL ?? process.env.SUPABASE_DB_URL ?? '',
     supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
     betterAuthSecret: process.env.BETTER_AUTH_SECRET ?? '',
-    betterAuthUrl: process.env.BETTER_AUTH_URL ?? '',
+    betterAuthUrl: process.env.BETTER_AUTH_URL ?? appUrl,
     smtp: {
       host: process.env.SMTP_HOST ?? '',
       port: Number(process.env.SMTP_PORT ?? 587),
@@ -40,12 +44,12 @@ export default defineNuxtConfig({
     razorpayKeyId: process.env.RAZORPAY_KEY_ID ?? '',
     razorpayKeySecret: process.env.RAZORPAY_KEY_SECRET ?? '',
     razorpayWebhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET ?? '',
-    appUrl: process.env.APP_URL ?? 'http://localhost:3000',
+    appUrl,
     qrSecret: process.env.QR_SECRET ?? '',
     societyCode: process.env.SOCIETY_CODE ?? 'AJOWA',
     public: {
       appName: process.env.NUXT_PUBLIC_APP_NAME ?? 'AJOWA',
-      appUrl: process.env.NUXT_PUBLIC_APP_URL ?? 'http://localhost:3000',
+      appUrl: publicAppUrl,
       // Support the older local env names while standardizing on Nuxt public keys.
       supabaseUrl: process.env.NUXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? '',
       supabaseAnonKey:
