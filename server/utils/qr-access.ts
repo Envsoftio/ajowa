@@ -48,6 +48,13 @@ type AccessStatusRow = {
   computed_at: string
 }
 
+type BillingPeriodQrRow = {
+  id: string
+  society_id: string
+  valid_until: string
+  is_current: boolean
+}
+
 type NotificationUserRow = {
   id: string
   email: string | null
@@ -142,15 +149,40 @@ const importedOwnerEmailJoin = `
 export const getCurrentBillingPeriodId = async (client: PoolClient, societyId: string) => {
   const result = await client.query<{ id: string }>(
     `
-      select id
-      from billing_periods
-      where society_id = $1 and start_date <= current_date and end_date >= current_date
-      order by start_date desc
+      select bp.id
+      from billing_periods bp
+      inner join society_profile sp on sp.id = bp.society_id
+      where bp.society_id = $1
+        and bp.start_date <= (now() at time zone sp.timezone)::date
+        and bp.end_date >= (now() at time zone sp.timezone)::date
+      order by bp.start_date desc
       limit 1
     `,
     [societyId],
   )
   return result.rows[0]?.id ?? null
+}
+
+const getBillingPeriodForQr = async (client: PoolClient, billingPeriodId: string) => {
+  const result = await client.query<BillingPeriodQrRow>(
+    `
+      select
+        bp.id,
+        bp.society_id,
+        ((bp.end_date + 1)::timestamp at time zone sp.timezone)::text as valid_until,
+        (
+          bp.start_date <= (now() at time zone sp.timezone)::date
+          and bp.end_date >= (now() at time zone sp.timezone)::date
+        ) as is_current
+      from billing_periods bp
+      inner join society_profile sp on sp.id = bp.society_id
+      where bp.id = $1
+      limit 1
+    `,
+    [billingPeriodId],
+  )
+
+  return result.rows[0] ?? null
 }
 
 const getAccessRows = async (client: PoolClient, userId: string) => {
@@ -360,11 +392,12 @@ export const recomputeUserAccessForActiveBillingPeriods = async (
 
   const periods = await client.query<{ id: string }>(
     `
-      select id
-      from billing_periods
-      where society_id = $1
-        and start_date <= current_date
-        and end_date >= current_date
+      select bp.id
+      from billing_periods bp
+      inner join society_profile sp on sp.id = bp.society_id
+      where bp.society_id = $1
+        and bp.start_date <= (now() at time zone sp.timezone)::date
+        and bp.end_date >= (now() at time zone sp.timezone)::date
     `,
     [societyId],
   )
@@ -451,15 +484,43 @@ export const ensureQrForAccess = async (userId: string, billingPeriodId: string)
       return { access, token: null }
     }
     const grantedAccess = access
+    const period = await getBillingPeriodForQr(client, billingPeriodId)
+
+    if (!period || period.society_id !== grantedAccess.society_id || !period.is_current) {
+      await revokeActiveQr(client, userId, billingPeriodId, 'Billing period is not currently active.')
+      await client.query('commit')
+      return { access, token: null }
+    }
+    const periodValidUntil = new Date(period.valid_until).toISOString()
+
+    await client.query(
+      `
+        update access_tokens
+        set status = 'EXPIRED',
+            is_valid = false,
+            updated_at = now()
+        where user_id = $1
+          and billing_period_id = $2
+          and status = 'ACTIVE'
+          and is_valid = true
+          and (
+            coalesce(expires_at, valid_until) <= now()
+            or coalesce(expires_at, valid_until) is distinct from $3::timestamptz
+          )
+      `,
+      [userId, billingPeriodId, periodValidUntil],
+    )
 
     const existing = await client.query(
       `
         select id, qr_payload, qr_image_path, expires_at::text, valid_until::text, generated_at::text
         from access_tokens
         where user_id = $1 and billing_period_id = $2 and status = 'ACTIVE' and is_valid = true
+          and coalesce(expires_at, valid_until) > now()
+          and coalesce(expires_at, valid_until) = $3::timestamptz
         limit 1
       `,
-      [userId, billingPeriodId],
+      [userId, billingPeriodId, periodValidUntil],
     )
 
     if (existing.rows[0]) {
@@ -467,13 +528,11 @@ export const ensureQrForAccess = async (userId: string, billingPeriodId: string)
       return { access, token: existing.rows[0] }
     }
 
-    const validUntil = new Date()
-    validUntil.setDate(validUntil.getDate() + 32)
     const payload = {
       userId,
       billingPeriodId,
       societyId: grantedAccess.society_id,
-      validUntil: validUntil.toISOString(),
+      validUntil: periodValidUntil,
     }
     const signedToken = signQrPayload(payload)
     const tokenId = randomUUID()
@@ -529,7 +588,7 @@ export const ensureQrForAccess = async (userId: string, billingPeriodId: string)
         tokenHash,
         JSON.stringify(payload),
         qrImagePath,
-        validUntil.toISOString(),
+        payload.validUntil,
       ],
     )
 
@@ -579,11 +638,25 @@ export const verifyQrToken = async (
         user_id: string
         society_id: string
         billing_period_id: string
+        is_current_period: boolean
       }>(
         `
-          select id, status, is_valid, expires_at::text, user_id, society_id, billing_period_id
-          from access_tokens
-          where token_hash = $1 and society_id = $2
+          select
+            at.id,
+            at.status,
+            at.is_valid,
+            coalesce(at.expires_at, at.valid_until)::text as expires_at,
+            at.user_id,
+            at.society_id,
+            at.billing_period_id,
+            (
+              bp.start_date <= (now() at time zone sp.timezone)::date
+              and bp.end_date >= (now() at time zone sp.timezone)::date
+            ) as is_current_period
+          from access_tokens at
+          inner join billing_periods bp on bp.id = at.billing_period_id
+          inner join society_profile sp on sp.id = at.society_id
+          where at.token_hash = $1 and at.society_id = $2
           limit 1
         `,
         [tokenHash, societyId],
@@ -597,6 +670,9 @@ export const verifyQrToken = async (
       } else if (new Date(parsed.validUntil).getTime() <= Date.now() || (row.expires_at && new Date(row.expires_at).getTime() <= Date.now())) {
         scanResult = 'EXPIRED'
         denialReason = 'QR code has expired.'
+      } else if (!row.is_current_period) {
+        scanResult = 'EXPIRED'
+        denialReason = 'QR code is not for the current billing period.'
       } else if (row.status !== 'ACTIVE' || !row.is_valid) {
         scanResult = 'REVOKED'
         denialReason = 'QR code has been revoked.'
