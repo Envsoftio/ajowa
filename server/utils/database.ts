@@ -22,7 +22,11 @@ const createDatabasePoolConfig = (databaseUrl: string): PoolConfig => {
 
     const sslMode = url.searchParams.get('sslmode')?.toLowerCase()
 
-    if (sslMode && SSL_MODES.has(sslMode)) {
+    if (!sslMode || !SSL_MODES.has(sslMode)) {
+      url.searchParams.set('sslmode', 'require')
+    }
+
+    if (SSL_MODES.has(url.searchParams.get('sslmode')?.toLowerCase() ?? '')) {
       url.searchParams.set('uselibpqcompat', 'true')
       return { connectionString: url.toString() }
     }
