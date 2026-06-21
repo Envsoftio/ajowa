@@ -8,9 +8,15 @@ import type { H3Event } from 'h3'
 import { AppError } from './errors'
 import { getDatabasePool, queryRows } from './database'
 import { sendTemplatedEmail, buildAppUrl } from './email'
-import { getValidatedRuntimeConfig } from './env'
-import { getRoleLandingRoute, requiresTemporaryPasswordChangeForRole } from '~/shared/auth'
-import { normalizeRolePermissions, type StaffPermission } from '~/shared/permissions'
+import { getValidatedRuntimeConfig, type ValidatedRuntimeConfig } from './env'
+import {
+  getRoleLandingRoute,
+  requiresTemporaryPasswordChangeForRole,
+} from '~/shared/auth'
+import {
+  normalizeRolePermissions,
+  type StaffPermission,
+} from '~/shared/permissions'
 import type {
   AccessScope,
   AppRole,
@@ -22,7 +28,9 @@ import type {
   RelationshipType,
 } from '~/types/auth'
 
-type AuthSessionResult = Awaited<ReturnType<ReturnType<typeof betterAuth>['api']['getSession']>>
+type AuthSessionResult = Awaited<
+  ReturnType<ReturnType<typeof betterAuth>['api']['getSession']>
+>
 
 type AppUserRow = {
   id: string
@@ -76,13 +84,87 @@ type InviteRecordRow = {
   revoked_at: string | null
 }
 
-const RESIDENT_RELATIONSHIP_PRIORITY: RelationshipType[] = ['OWNER', 'TENANT', 'FAMILY_MEMBER']
-const STAFF_EMAIL_VERIFICATION_EXEMPT_ROLES: AppRole[] = ['MANAGER', 'SERVICE_STAFF', 'GUARD']
+const RESIDENT_RELATIONSHIP_PRIORITY: RelationshipType[] = [
+  'OWNER',
+  'TENANT',
+  'FAMILY_MEMBER',
+]
+const STAFF_EMAIL_VERIFICATION_EXEMPT_ROLES: AppRole[] = [
+  'MANAGER',
+  'SERVICE_STAFF',
+  'GUARD',
+]
 
 const nowDate = () => new Date().toISOString().slice(0, 10)
 
 export const isEmailVerificationRequiredForRole = (role: AppRole) =>
   !STAFF_EMAIL_VERIFICATION_EXEMPT_ROLES.includes(role)
+
+const normalizeOrigin = (value: string | null | undefined) => {
+  if (!value) {
+    return null
+  }
+
+  try {
+    return new URL(value).origin
+  } catch {
+    return null
+  }
+}
+
+const firstHeaderValue = (value: string | null | undefined) =>
+  value?.split(',')[0]?.trim() || null
+
+const buildOriginFromHost = (protocol: string | null, host: string | null) => {
+  if (!host) {
+    return null
+  }
+
+  return normalizeOrigin(`${protocol || 'https'}://${host}`)
+}
+
+const getSameHostRequestOrigin = (request?: Request) => {
+  if (!request) {
+    return null
+  }
+
+  const requestOrigin = normalizeOrigin(request.headers.get('origin'))
+  const requestUrl = new URL(request.url)
+  const expectedOrigin = buildOriginFromHost(
+    firstHeaderValue(request.headers.get('x-forwarded-proto')) ??
+      requestUrl.protocol.replace(':', ''),
+    firstHeaderValue(request.headers.get('x-forwarded-host')) ??
+      firstHeaderValue(request.headers.get('host')) ??
+      requestUrl.host,
+  )
+
+  if (!requestOrigin || !expectedOrigin) {
+    return expectedOrigin
+  }
+
+  return requestOrigin === expectedOrigin ? requestOrigin : null
+}
+
+const uniqueOrigins = (origins: Array<string | null | undefined>) =>
+  Array.from(
+    new Set(origins.filter((origin): origin is string => Boolean(origin))),
+  )
+
+const buildTrustedOrigins = (runtimeConfig: ValidatedRuntimeConfig) => {
+  const configuredOrigins = uniqueOrigins([
+    normalizeOrigin(runtimeConfig.appUrl),
+    normalizeOrigin(runtimeConfig.public.appUrl),
+    normalizeOrigin(runtimeConfig.betterAuthUrl),
+    normalizeOrigin(process.env.URL),
+    normalizeOrigin(process.env.DEPLOY_URL),
+    normalizeOrigin(process.env.DEPLOY_PRIME_URL),
+    'https://ajowa.netlify.app',
+    'https://ajowa.in',
+  ])
+
+  return (request?: Request) =>
+    uniqueOrigins([...configuredOrigins, getSameHostRequestOrigin(request)])
+}
 
 const getDefaultSocietyId = async () => {
   const runtimeConfig = getValidatedRuntimeConfig(useRuntimeConfig())
@@ -138,7 +220,9 @@ const toAuthFlatAccess = (row: FlatAccessRow): AuthFlatAccess => ({
   occupancyStatus: row.occupancy_status,
 })
 
-const toDepartmentAssignment = (row: DepartmentAssignmentRow): AuthDepartmentAssignment => ({
+const toDepartmentAssignment = (
+  row: DepartmentAssignmentRow,
+): AuthDepartmentAssignment => ({
   id: row.id,
   departmentId: row.department_id,
   departmentCode: row.department_code,
@@ -152,7 +236,11 @@ const hasCurrentLease = (flatAccess: AuthFlatAccess) =>
   flatAccess.leaseEndDate >= nowDate()
 
 const canResidentUseApp = (flatAccess: AuthFlatAccess[]) =>
-  flatAccess.some((item) => RESIDENT_RELATIONSHIP_PRIORITY.includes(item.relationshipType) && hasCurrentLease(item))
+  flatAccess.some(
+    (item) =>
+      RESIDENT_RELATIONSHIP_PRIORITY.includes(item.relationshipType) &&
+      hasCurrentLease(item),
+  )
 
 const loadAppUserByAuthUserId = async (authUserId: string) => {
   const [userResult, flatAccessResult, departmentResult] = await Promise.all([
@@ -234,21 +322,29 @@ const loadAppUserByAuthUserId = async (authUserId: string) => {
   }
 }
 
-const buildAuthMe = (session: NonNullable<AuthSessionResult>, appState: NonNullable<Awaited<ReturnType<typeof loadAppUserByAuthUserId>>>): AuthMe => {
+const buildAuthMe = (
+  session: NonNullable<AuthSessionResult>,
+  appState: NonNullable<Awaited<ReturnType<typeof loadAppUserByAuthUserId>>>,
+): AuthMe => {
   const landingRoute = getRoleLandingRoute(appState.user.role)
   const hasResidentAccess = canResidentUseApp(appState.flatAccess)
   const hasDepartmentAccess = appState.departmentAssignments.length > 0
   const requiresPasswordChange =
-    appState.user.must_change_password && requiresTemporaryPasswordChangeForRole(appState.user.role)
+    appState.user.must_change_password &&
+    requiresTemporaryPasswordChangeForRole(appState.user.role)
   const requiresEmailVerification =
-    isEmailVerificationRequiredForRole(appState.user.role) && !appState.user.email_verified
+    isEmailVerificationRequiredForRole(appState.user.role) &&
+    !appState.user.email_verified
   const hasRoleAccess =
     appState.user.role === 'RESIDENT'
       ? hasResidentAccess
       : appState.user.role === 'SERVICE_STAFF'
         ? hasDepartmentAccess
         : true
-  const permissions = normalizeStaffPermissions(appState.user.role, appState.user.staff_permissions)
+  const permissions = normalizeStaffPermissions(
+    appState.user.role,
+    appState.user.staff_permissions,
+  )
 
   return {
     session: {
@@ -294,7 +390,10 @@ const buildAuthMe = (session: NonNullable<AuthSessionResult>, appState: NonNulla
   }
 }
 
-const normalizeStaffPermissions = (role: AppRole, permissions: string[] | null | undefined): StaffPermission[] => {
+const normalizeStaffPermissions = (
+  role: AppRole,
+  permissions: string[] | null | undefined,
+): StaffPermission[] => {
   return normalizeRolePermissions(role, permissions)
 }
 
@@ -326,7 +425,8 @@ const upsertAppUser = async ({
   const societyId = await getDefaultSocietyId()
   const effectiveMustChangePassword =
     mustChangePassword && requiresTemporaryPasswordChangeForRole(role)
-  const effectiveEmailVerified = emailVerified || !isEmailVerificationRequiredForRole(role)
+  const effectiveEmailVerified =
+    emailVerified || !isEmailVerificationRequiredForRole(role)
 
   await queryRows(
     `
@@ -394,167 +494,173 @@ const syncAuthIdentityToAppUser = async (authUser: {
     mustChangePassword: existing?.user.must_change_password ?? false,
     emailVerified: authUser.emailVerified,
     isActive: existing?.user.is_active ?? true,
-    permissions: normalizeStaffPermissions(existing?.user.role ?? 'RESIDENT', existing?.user.staff_permissions),
+    permissions: normalizeStaffPermissions(
+      existing?.user.role ?? 'RESIDENT',
+      existing?.user.staff_permissions,
+    ),
   })
 }
 
-const createAuth = () => betterAuth({
-  appName: 'AJOWA',
-  baseURL: getValidatedRuntimeConfig(useRuntimeConfig()).betterAuthUrl,
-  basePath: '/api/auth',
-  secret: getValidatedRuntimeConfig(useRuntimeConfig()).betterAuthSecret,
-  trustedOrigins: [
-    getValidatedRuntimeConfig(useRuntimeConfig()).appUrl,
-    getValidatedRuntimeConfig(useRuntimeConfig()).public.appUrl,
-    getValidatedRuntimeConfig(useRuntimeConfig()).betterAuthUrl,
-  ],
-  database: getDatabasePool(),
-  user: {
-    modelName: 'auth_users',
-    fields: {
-      emailVerified: 'email_verified',
-      createdAt: 'created_at',
-      updatedAt: 'updated_at',
-    },
-  },
-  session: {
-    expiresIn: 60 * 60 * 24 * 30, // 30 days
-    updateAge: 60 * 60 * 24, // 1 day
-    modelName: 'auth_sessions',
-    fields: {
-      expiresAt: 'expires_at',
-      createdAt: 'created_at',
-      updatedAt: 'updated_at',
-      ipAddress: 'ip_address',
-      userAgent: 'user_agent',
-      userId: 'user_id',
-    },
-  },
-  account: {
-    modelName: 'auth_accounts',
-    fields: {
-      accountId: 'account_id',
-      providerId: 'provider_id',
-      userId: 'user_id',
-      accessToken: 'access_token',
-      refreshToken: 'refresh_token',
-      idToken: 'id_token',
-      accessTokenExpiresAt: 'access_token_expires_at',
-      refreshTokenExpiresAt: 'refresh_token_expires_at',
-      createdAt: 'created_at',
-      updatedAt: 'updated_at',
-    },
-  },
-  verification: {
-    modelName: 'auth_verifications',
-    fields: {
-      expiresAt: 'expires_at',
-      createdAt: 'created_at',
-      updatedAt: 'updated_at',
-    },
-  },
-  emailAndPassword: {
-    enabled: true,
-    minPasswordLength: 12,
-    maxPasswordLength: 128,
-    sendResetPassword: async ({ user, url }) => {
-      await sendTemplatedEmail({
-        to: user.email,
-        subject: 'Reset your AJOWA password',
-        template: 'reset-password',
-        context: {
-          title: 'Reset your password',
-          name: user.name,
-          actionUrl: url,
-          expiresLabel: 'in 1 hour',
-        },
-      })
-    },
-    onPasswordReset: async ({ user }) => {
-      const appState = await loadAppUserByAuthUserId(user.id)
+const createAuth = () => {
+  const runtimeConfig = getValidatedRuntimeConfig(useRuntimeConfig())
 
-      if (!appState) {
-        return
-      }
-
-      await upsertAppUser({
-        authUserId: user.id,
-        email: appState.user.email,
-        fullName: appState.user.full_name,
-        mobileNumber: appState.user.mobile_number,
-        whatsappNumber: appState.user.whatsapp_number,
-        role: appState.user.role,
-        canLogin: appState.user.can_login,
-        mustChangePassword: false,
-        emailVerified: appState.user.email_verified,
-        isActive: appState.user.is_active,
-        permissions: normalizeStaffPermissions(appState.user.role, appState.user.staff_permissions),
-      })
-    },
-  },
-  emailVerification: {
-    sendOnSignUp: true,
-    sendOnSignIn: true,
-    autoSignInAfterVerification: false,
-    sendVerificationEmail: async ({ user, url }) => {
-      await sendTemplatedEmail({
-        to: user.email,
-        subject: 'Verify your AJOWA email',
-        template: 'verify-email',
-        context: {
-          title: 'Verify your email',
-          name: user.name,
-          actionUrl: url,
-          expiresLabel: 'in 1 hour',
-        },
-      })
-    },
-    afterEmailVerification: async (user) => {
-      await syncAuthIdentityToAppUser({
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        emailVerified: true,
-      })
-    },
-  },
-  advanced: {
-    database: {
-      generateId: 'uuid',
-    },
-    useSecureCookies: process.env.NODE_ENV === 'production',
-    defaultCookieAttributes: {
-      httpOnly: true,
-      sameSite: 'lax',
-      secure: process.env.NODE_ENV === 'production',
-      path: '/',
-    },
-  },
-  databaseHooks: {
+  return betterAuth({
+    appName: 'AJOWA',
+    baseURL: runtimeConfig.betterAuthUrl,
+    basePath: '/api/auth',
+    secret: runtimeConfig.betterAuthSecret,
+    trustedOrigins: buildTrustedOrigins(runtimeConfig),
+    database: getDatabasePool(),
     user: {
-      create: {
-        after: async (user) => {
-          await syncAuthIdentityToAppUser({
-            id: user.id,
-            email: user.email,
-            name: user.name,
-            emailVerified: user.emailVerified,
-          })
-        },
+      modelName: 'auth_users',
+      fields: {
+        emailVerified: 'email_verified',
+        createdAt: 'created_at',
+        updatedAt: 'updated_at',
       },
-      update: {
-        after: async (user) => {
-          await syncAuthIdentityToAppUser({
-            id: user.id,
-            email: user.email,
+    },
+    session: {
+      expiresIn: 60 * 60 * 24 * 30, // 30 days
+      updateAge: 60 * 60 * 24, // 1 day
+      modelName: 'auth_sessions',
+      fields: {
+        expiresAt: 'expires_at',
+        createdAt: 'created_at',
+        updatedAt: 'updated_at',
+        ipAddress: 'ip_address',
+        userAgent: 'user_agent',
+        userId: 'user_id',
+      },
+    },
+    account: {
+      modelName: 'auth_accounts',
+      fields: {
+        accountId: 'account_id',
+        providerId: 'provider_id',
+        userId: 'user_id',
+        accessToken: 'access_token',
+        refreshToken: 'refresh_token',
+        idToken: 'id_token',
+        accessTokenExpiresAt: 'access_token_expires_at',
+        refreshTokenExpiresAt: 'refresh_token_expires_at',
+        createdAt: 'created_at',
+        updatedAt: 'updated_at',
+      },
+    },
+    verification: {
+      modelName: 'auth_verifications',
+      fields: {
+        expiresAt: 'expires_at',
+        createdAt: 'created_at',
+        updatedAt: 'updated_at',
+      },
+    },
+    emailAndPassword: {
+      enabled: true,
+      minPasswordLength: 12,
+      maxPasswordLength: 128,
+      sendResetPassword: async ({ user, url }) => {
+        await sendTemplatedEmail({
+          to: user.email,
+          subject: 'Reset your AJOWA password',
+          template: 'reset-password',
+          context: {
+            title: 'Reset your password',
             name: user.name,
-            emailVerified: user.emailVerified,
-          })
+            actionUrl: url,
+            expiresLabel: 'in 1 hour',
+          },
+        })
+      },
+      onPasswordReset: async ({ user }) => {
+        const appState = await loadAppUserByAuthUserId(user.id)
+
+        if (!appState) {
+          return
+        }
+
+        await upsertAppUser({
+          authUserId: user.id,
+          email: appState.user.email,
+          fullName: appState.user.full_name,
+          mobileNumber: appState.user.mobile_number,
+          whatsappNumber: appState.user.whatsapp_number,
+          role: appState.user.role,
+          canLogin: appState.user.can_login,
+          mustChangePassword: false,
+          emailVerified: appState.user.email_verified,
+          isActive: appState.user.is_active,
+          permissions: normalizeStaffPermissions(
+            appState.user.role,
+            appState.user.staff_permissions,
+          ),
+        })
+      },
+    },
+    emailVerification: {
+      sendOnSignUp: true,
+      sendOnSignIn: true,
+      autoSignInAfterVerification: false,
+      sendVerificationEmail: async ({ user, url }) => {
+        await sendTemplatedEmail({
+          to: user.email,
+          subject: 'Verify your AJOWA email',
+          template: 'verify-email',
+          context: {
+            title: 'Verify your email',
+            name: user.name,
+            actionUrl: url,
+            expiresLabel: 'in 1 hour',
+          },
+        })
+      },
+      afterEmailVerification: async (user) => {
+        await syncAuthIdentityToAppUser({
+          id: user.id,
+          email: user.email,
+          name: user.name,
+          emailVerified: true,
+        })
+      },
+    },
+    advanced: {
+      database: {
+        generateId: 'uuid',
+      },
+      useSecureCookies: process.env.NODE_ENV === 'production',
+      defaultCookieAttributes: {
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: process.env.NODE_ENV === 'production',
+        path: '/',
+      },
+    },
+    databaseHooks: {
+      user: {
+        create: {
+          after: async (user) => {
+            await syncAuthIdentityToAppUser({
+              id: user.id,
+              email: user.email,
+              name: user.name,
+              emailVerified: user.emailVerified,
+            })
+          },
+        },
+        update: {
+          after: async (user) => {
+            await syncAuthIdentityToAppUser({
+              id: user.id,
+              email: user.email,
+              name: user.name,
+              emailVerified: user.emailVerified,
+            })
+          },
         },
       },
     },
-  },
-})
+  })
+}
 
 let authInstance: ReturnType<typeof createAuth> | null = null
 
@@ -574,7 +680,9 @@ export const getAuthSession = async (event: H3Event) => {
   })
 }
 
-export const getOptionalAuth = async (event: H3Event): Promise<AuthMe | null> => {
+export const getOptionalAuth = async (
+  event: H3Event,
+): Promise<AuthMe | null> => {
   const session = await getAuthSession(event)
 
   if (!session) {
@@ -618,7 +726,10 @@ export const requireRole = async (event: H3Event, roles: AppRole[]) => {
   return authMe
 }
 
-export const requirePermission = async (event: H3Event, permission: StaffPermission) => {
+export const requirePermission = async (
+  event: H3Event,
+  permission: StaffPermission,
+) => {
   const authMe = await requireRole(event, ['ADMIN', 'MANAGER'])
 
   if (!authMe.user.permissions.includes(permission)) {
@@ -671,34 +782,57 @@ export const requireActiveUser = async (event: H3Event) => {
 }
 
 export const getOwnedFlatIds = (authMe: AuthMe) =>
-  authMe.flatAccess.filter((item) => item.relationshipType === 'OWNER').map((item) => item.flatId)
+  authMe.flatAccess
+    .filter((item) => item.relationshipType === 'OWNER')
+    .map((item) => item.flatId)
 
 export const getActiveLeasedFlatIds = (authMe: AuthMe) =>
   authMe.flatAccess
-    .filter((item) => item.relationshipType === 'TENANT' && hasCurrentLease(item))
+    .filter(
+      (item) => item.relationshipType === 'TENANT' && hasCurrentLease(item),
+    )
     .map((item) => item.flatId)
 
 export const getHouseholdFlatIds = (authMe: AuthMe) =>
   authMe.flatAccess
-    .filter((item) => item.relationshipType === 'FAMILY_MEMBER' && hasCurrentLease(item))
+    .filter(
+      (item) =>
+        item.relationshipType === 'FAMILY_MEMBER' && hasCurrentLease(item),
+    )
     .map((item) => item.flatId)
 
 export const getAssignedDepartmentIds = (authMe: AuthMe) =>
   authMe.departmentAssignments.map((item) => item.departmentId)
 
-export const canAccessTicketAssignment = (authMe: AuthMe, assigneeUserId?: string | null) =>
+export const canAccessTicketAssignment = (
+  authMe: AuthMe,
+  assigneeUserId?: string | null,
+) =>
   authMe.user.role === 'ADMIN' ||
   authMe.user.role === 'MANAGER' ||
   (authMe.user.role === 'SERVICE_STAFF' && assigneeUserId === authMe.user.id)
 
-export const canAccessDepartmentTicket = (authMe: AuthMe, departmentId?: string | null) =>
+export const canAccessDepartmentTicket = (
+  authMe: AuthMe,
+  departmentId?: string | null,
+) =>
   authMe.user.role === 'ADMIN' ||
   authMe.user.role === 'MANAGER' ||
-  (departmentId != null && getAssignedDepartmentIds(authMe).includes(departmentId))
+  (departmentId != null &&
+    getAssignedDepartmentIds(authMe).includes(departmentId))
 
-export const sendVerificationEmailToUser = async (user: { id: string; email: string; name: string }) => {
+export const sendVerificationEmailToUser = async (user: {
+  id: string
+  email: string
+  name: string
+}) => {
   const runtimeConfig = getValidatedRuntimeConfig(useRuntimeConfig())
-  const token = await createEmailVerificationToken(runtimeConfig.betterAuthSecret, user.email, undefined, 3600)
+  const token = await createEmailVerificationToken(
+    runtimeConfig.betterAuthSecret,
+    user.email,
+    undefined,
+    3600,
+  )
   const actionUrl = buildAppUrl('/verify-email', { token })
 
   await sendTemplatedEmail({
@@ -742,7 +876,8 @@ export const createCredentialUser = async ({
   const ownsTransaction = !client
   const effectiveMustChangePassword =
     mustChangePassword && requiresTemporaryPasswordChangeForRole(role)
-  const effectiveEmailVerified = emailVerified || !isEmailVerificationRequiredForRole(role)
+  const effectiveEmailVerified =
+    emailVerified || !isEmailVerificationRequiredForRole(role)
 
   try {
     if (ownsTransaction) {
@@ -767,7 +902,11 @@ export const createCredentialUser = async ({
       })
     }
 
-    const authUser = await transactionClient.query<{ id: string; email: string; name: string }>(
+    const authUser = await transactionClient.query<{
+      id: string
+      email: string
+      name: string
+    }>(
       `
         insert into auth_users (name, email, email_verified)
         values ($1, $2, $3)
@@ -854,7 +993,8 @@ export const createInviteToken = () => {
   }
 }
 
-export const hashInviteToken = (token: string) => createHash('sha256').update(token).digest('hex')
+export const hashInviteToken = (token: string) =>
+  createHash('sha256').update(token).digest('hex')
 
 export const assignInviteRelationships = async ({
   client,
@@ -926,7 +1066,9 @@ export const assignInviteRelationships = async ({
   }
 }
 
-export const getInvitePreview = async (token: string): Promise<InvitePreview | null> => {
+export const getInvitePreview = async (
+  token: string,
+): Promise<InvitePreview | null> => {
   const tokenHash = hashInviteToken(token)
   const result = await queryRows<InviteRecordRow>(
     `
