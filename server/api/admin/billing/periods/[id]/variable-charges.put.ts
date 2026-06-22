@@ -12,6 +12,10 @@ import type { ChargeBreakdownItem } from '~/types/domain'
 
 const variableChargesSchema = z.object({
   chargeName: z.string().trim().min(1).max(80).default('DG Set'),
+  chargeType: z.enum(['CAM', 'DG_SET', 'OTHER']).optional(),
+  chargeLabel: z.string().trim().min(1).max(200).optional(),
+  source: z.string().trim().min(1).max(80).optional(),
+  electricityType: z.string().trim().max(80).nullable().optional(),
   entries: z.array(
     z.object({
       flatId: z.string().uuid(),
@@ -48,6 +52,13 @@ type PreviousChargeSummary = {
   total_amount: string | null
 }
 
+type VariableChargeConfig = {
+  chargeType: NonNullable<ChargeBreakdownItem['chargeType']>
+  chargeLabel: string
+  source: string
+  electricityType: string | null
+}
+
 const roundVariableChargeMoney = (value: number) => Math.round(value * 100) / 100
 
 const normalizeOptionalText = (value: string | null | undefined) => {
@@ -61,8 +72,42 @@ const normalizeOptionalNumber = (value: number | null | undefined) => {
   return Number.isFinite(numberValue) ? numberValue : null
 }
 
+const inferVariableChargeType = (
+  body: Pick<VariableChargesInput, 'chargeName' | 'chargeType'>,
+): NonNullable<ChargeBreakdownItem['chargeType']> => {
+  if (body.chargeType) return body.chargeType
+  if (/^cam(?:\s+charges?)?$/i.test(body.chargeName.trim())) return 'CAM'
+  if (/\b(dg\s*set|dgset|generator|power\s*back\s*up|power\s*backup)\b/i.test(body.chargeName)) {
+    return 'DG_SET'
+  }
+
+  return 'OTHER'
+}
+
+const buildVariableChargeConfig = (body: VariableChargesInput): VariableChargeConfig => {
+  const chargeType = inferVariableChargeType(body)
+
+  return {
+    chargeType,
+    chargeLabel:
+      body.chargeLabel?.trim() ??
+      (chargeType === 'DG_SET' ? 'Power Back Up Charges' : body.chargeName),
+    source:
+      body.source?.trim() ??
+      (chargeType === 'DG_SET'
+        ? 'MONTHLY_DG_METER_CHARGE'
+        : chargeType === 'CAM'
+          ? 'CYCLE_CAM_FLAT_CHARGE'
+          : 'CYCLE_VARIABLE_FLAT_CHARGE'),
+    electricityType:
+      normalizeOptionalText(body.electricityType) ??
+      (chargeType === 'DG_SET' ? 'POWER BACK UP' : null),
+  }
+}
+
 const normalizeVariableChargeEntry = (
   entry: VariableChargesInput['entries'][number],
+  chargeName: string,
 ): NormalizedVariableChargeEntry => {
   const openingReading = normalizeOptionalNumber(entry.openingReading)
   const closingReading = normalizeOptionalNumber(entry.closingReading)
@@ -75,7 +120,7 @@ const normalizeVariableChargeEntry = (
     throw new AppError({
       code: 'VALIDATION_ERROR',
       statusCode: 400,
-      message: 'Closing DG reading cannot be less than opening reading.',
+      message: `Closing ${chargeName} reading cannot be less than opening reading.`,
     })
   }
 
@@ -103,14 +148,14 @@ const normalizeVariableChargeEntry = (
 
 const buildVariableChargeBreakdown = (
   entry: NormalizedVariableChargeEntry,
-): ChargeBreakdownItem[] => [
-  {
-    label: 'Power Back Up Charges',
+  config: VariableChargeConfig,
+): ChargeBreakdownItem[] => {
+  const item: ChargeBreakdownItem = {
+    label: config.chargeLabel,
     amount: entry.amount,
-    chargeType: 'DG_SET',
+    chargeType: config.chargeType,
     calculationMethod: 'FIXED',
-    source: 'MONTHLY_DG_METER_CHARGE',
-    electricityType: 'POWER BACK UP',
+    source: config.source,
     meterNo: entry.meterNo,
     openingReading: entry.openingReading,
     closingReading: entry.closingReading,
@@ -118,13 +163,34 @@ const buildVariableChargeBreakdown = (
     ratePerUnit: entry.ratePerUnit,
     tariffRateLabel:
       entry.ratePerUnit != null ? `Rs.${entry.ratePerUnit}/Unit` : null,
-    connectionLoad: entry.connectionLoad ?? '4 KW (5KVA)',
-    state: 'PUNJAB',
-    stateCode: '03',
+    connectionLoad:
+      entry.connectionLoad ?? (config.chargeType === 'DG_SET' ? '4 KW (5KVA)' : null),
+    state: config.chargeType === 'DG_SET' ? 'PUNJAB' : null,
+    stateCode: config.chargeType === 'DG_SET' ? '03' : null,
     previousOutstanding: entry.previousOutstanding,
     interestAmount: entry.interestAmount,
-  },
-]
+  }
+
+  if (config.electricityType) {
+    item.electricityType = config.electricityType
+  }
+
+  return [item]
+}
+
+const hasVariableChargeData = (entry: NormalizedVariableChargeEntry) =>
+  entry.amount > 0 ||
+  entry.meterNo != null ||
+  entry.openingReading != null ||
+  entry.closingReading != null ||
+  entry.consumedUnits != null ||
+  entry.previousOutstanding > 0 ||
+  entry.interestAmount > 0
+
+const shouldPersistVariableCharge = (
+  entry: NormalizedVariableChargeEntry,
+  config: VariableChargeConfig,
+) => entry.amount > 0 || (config.chargeType === 'DG_SET' && hasVariableChargeData(entry))
 
 export default defineEventHandler(async (event) => {
   const authMe = await requireRole(event, ['ADMIN'])
@@ -170,7 +236,10 @@ export default defineEventHandler(async (event) => {
       })
     }
 
-    const normalizedEntries = body.entries.map(normalizeVariableChargeEntry)
+    const chargeConfig = buildVariableChargeConfig(body)
+    const normalizedEntries = body.entries.map((entry) =>
+      normalizeVariableChargeEntry(entry, body.chargeName),
+    )
     const flatIds = normalizedEntries.map((entry) => entry.flatId)
     const validFlats = flatIds.length
       ? await client.query<{ id: string }>(
@@ -220,11 +289,13 @@ export default defineEventHandler(async (event) => {
       [authMe.user.societyId, periodId, body.chargeName],
     )
 
-    const positiveEntries = normalizedEntries.filter((entry) => entry.amount > 0)
-    const insertPayload = positiveEntries.map((entry) => ({
+    const persistedEntries = normalizedEntries.filter((entry) =>
+      shouldPersistVariableCharge(entry, chargeConfig),
+    )
+    const insertPayload = persistedEntries.map((entry) => ({
       flat_id: entry.flatId,
       amount: entry.amount,
-      charge_breakdown: buildVariableChargeBreakdown(entry),
+      charge_breakdown: buildVariableChargeBreakdown(entry, chargeConfig),
     }))
 
     if (insertPayload.length > 0) {
@@ -275,13 +346,15 @@ export default defineEventHandler(async (event) => {
       eventKey: 'billing_period_variable_charges.updated',
       beforeState: {
         chargeName: body.chargeName,
+        chargeType: chargeConfig.chargeType,
         entryCount: previousEntryCount,
         totalAmount: previousTotalAmount,
       },
       afterState: {
         chargeName: body.chargeName,
-        entryCount: positiveEntries.length,
-        totalAmount: positiveEntries.reduce(
+        chargeType: chargeConfig.chargeType,
+        entryCount: persistedEntries.length,
+        totalAmount: persistedEntries.reduce(
           (sum, entry) => sum + entry.amount,
           0,
         ),
@@ -297,8 +370,8 @@ export default defineEventHandler(async (event) => {
 
     await client.query('commit')
     return createApiSuccess(event, {
-      saved: positiveEntries.length,
-      removed: Math.max(previousEntryCount - positiveEntries.length, 0),
+      saved: persistedEntries.length,
+      removed: Math.max(previousEntryCount - persistedEntries.length, 0),
     })
   } catch (error) {
     await client.query('rollback')

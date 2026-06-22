@@ -81,7 +81,12 @@ export default defineEventHandler(async (event) => {
        and mc.is_active = true
       where f.society_id = $1
         and f.is_active = true
-      order by b.name, f.flat_number
+      order by
+        b.sort_order asc,
+        b.name asc,
+        nullif(regexp_replace(coalesce(f.floor_label, ''), '\\D', '', 'g'), '')::integer asc nulls last,
+        nullif(regexp_replace(f.flat_number, '\\D', '', 'g'), '')::integer asc nulls last,
+        f.flat_number asc
     `,
     [authMe.user.societyId, periodId, query.chargeName],
   )

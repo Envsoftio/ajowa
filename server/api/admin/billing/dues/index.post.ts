@@ -9,6 +9,7 @@ import {
   getBillingCycleMultiplier,
   type DueGenerationInput,
   hasUnresolvedAreaRateCharge,
+  removeChargesOverriddenByPeriod,
   resolveChargeBreakdown,
 } from '~/server/utils/billing'
 import { AppError } from '~/server/utils/errors'
@@ -202,7 +203,10 @@ export default defineEventHandler(async (event) => {
         flat.areaSqFt ? Number(flat.areaSqFt) : null,
         { cycleMultiplier },
       )
-      const breakdown = [...baseBreakdown, ...periodBreakdown]
+      const breakdown = [
+        ...removeChargesOverriddenByPeriod(baseBreakdown, periodBreakdown),
+        ...periodBreakdown,
+      ]
 
       if (breakdown.length === 0) {
         // No charges configured — create a default entry

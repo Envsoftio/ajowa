@@ -117,6 +117,8 @@ export const shellNavigation: Record<AppShellType, AppNavGroup[]> = {
       icon: 'pi pi-wallet',
       items: [
         { label: 'Billing Periods', to: '/admin/billing/periods', icon: 'pi pi-calendar' },
+        { label: 'CAM Charges', to: '/admin/billing/cam', icon: 'pi pi-percentage' },
+        { label: 'DG Set Charges', to: '/admin/billing/dg-set', icon: 'pi pi-bolt' },
         { label: 'Dues', to: '/admin/billing/dues', icon: 'pi pi-wallet' },
         { label: 'Defaulters', to: '/admin/billing/defaulters', icon: 'pi pi-exclamation-triangle' },
         { label: 'Payments', to: '/admin/payments', icon: 'pi pi-credit-card' },

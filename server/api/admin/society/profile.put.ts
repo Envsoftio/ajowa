@@ -32,6 +32,8 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const trimText = (value: unknown) =>
   typeof value === 'string' ? value.trim() : value
 
+const emptyTextMarkers = new Set(['', 'NA', 'N/A', 'NIL', '-', '--'])
+
 const nullableText = (value: unknown) => {
   if (value == null) {
     return null
@@ -42,7 +44,7 @@ const nullableText = (value: unknown) => {
   }
 
   const trimmed = value.trim()
-  return trimmed.length > 0 ? trimmed : null
+  return emptyTextMarkers.has(trimmed.toUpperCase()) ? null : trimmed
 }
 
 const normalizeProfilePayload = (value: unknown) => {
@@ -66,12 +68,16 @@ const normalizeProfilePayload = (value: unknown) => {
 const serializeError = (error: unknown) => {
   if (error instanceof Error) {
     const code = (error as { code?: string }).code
+    const statusCode = (error as { statusCode?: number }).statusCode
+    const details = (error as { details?: unknown }).details
 
     return {
       name: error.name,
       message: error.message,
       stack: error.stack,
       ...(code ? { code } : {}),
+      ...(statusCode ? { statusCode } : {}),
+      ...(details ? { details } : {}),
     }
   }
 

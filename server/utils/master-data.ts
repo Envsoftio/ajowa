@@ -65,6 +65,27 @@ const notificationScopes = [
   'CONFIGURABLE',
 ] as const
 
+const emptyTextMarkers = new Set(['', 'NA', 'N/A', 'NIL', '-', '--'])
+
+const trimNullableText = (value: unknown) => {
+  if (value == null) {
+    return null
+  }
+
+  if (typeof value !== 'string') {
+    return value
+  }
+
+  const trimmed = value.trim()
+  return emptyTextMarkers.has(trimmed.toUpperCase()) ? null : trimmed
+}
+
+const nullableTextSchema = (maxLength: number) =>
+  z.preprocess(
+    trimNullableText,
+    z.string().max(maxLength).nullable().optional(),
+  )
+
 export const societyPolicySchema = z.object({
   billingTenure: z.enum(billingTenures),
   excessPaymentHandling: z.enum(excessPaymentHandlingOptions),
@@ -80,14 +101,17 @@ export const societyPolicySchema = z.object({
 
 export const societyProfileSchema = z.object({
   name: z.string().trim().min(2),
-  registrationNumber: z.string().trim().max(100).nullable().optional(),
+  registrationNumber: nullableTextSchema(150),
   addressLine1: z.string().trim().min(2),
-  addressLine2: z.string().trim().max(200).nullable().optional(),
+  addressLine2: nullableTextSchema(300),
   city: z.string().trim().min(2),
   state: z.string().trim().min(2),
-  pincode: z.string().trim().min(4).max(12),
-  contactEmail: z.string().trim().email().nullable().optional(),
-  contactPhone: z.string().trim().min(8).max(20).nullable().optional(),
+  pincode: z.string().trim().min(1).max(30),
+  contactEmail: z.preprocess(
+    trimNullableText,
+    z.string().email().max(254).nullable().optional(),
+  ),
+  contactPhone: nullableTextSchema(40),
   timezone: z.string().trim().min(3),
   settings: societyPolicySchema,
 })

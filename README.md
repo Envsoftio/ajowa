@@ -14,16 +14,92 @@ AJOWA is a Nuxt 3 + Nitro SSR application for society management, built with Pri
 1. Copy `.env.example` to `.env` and fill in the required values.
 2. Install dependencies with `npm install`.
 3. Start the app with `npm run dev`.
-4. Use `npm run db:reset` after Supabase is initialized in Phase 2.
+4. Use `npm run db:reset` only when you intentionally want to rebuild the local database from scratch.
 
 ## Scripts
 
 - `npm run dev` starts the Nuxt development server.
 - `npm run build` creates the production Nitro bundle.
 - `npm run preview` serves the production build locally.
+- `npm run netlify:dev` starts the app through Netlify Dev with production-context env.
+- `npm run netlify:serve` builds and serves the Netlify production bundle locally.
 - `npm run lint` runs ESLint.
 - `npm run typecheck` runs Nuxt type checking.
 - `npm run db:reset` resets the local Supabase database.
+
+## Local Database Migrations
+
+To apply new migration files to the local Supabase database without resetting
+local data, make sure Supabase is running and then run:
+
+```bash
+npx supabase start
+npx supabase migration list --local
+npx supabase migration up --local
+npx supabase migration list --local
+```
+
+Use `npm run db:reset` only when you want to drop and recreate the local
+database, including seed data.
+
+## Production Database
+
+For Netlify functions, set `DATABASE_URL` to the Supabase Shared Pooler
+transaction URL on port `6543`:
+
+```text
+postgresql://postgres.<project-ref>:<db-password>@aws-<region>.pooler.supabase.com:6543/postgres?sslmode=require
+```
+
+Do not use `db.<project-ref>.supabase.co:5432` for Netlify production unless the
+Supabase project has the IPv4 add-on. That direct endpoint is IPv6 by default,
+while serverless functions commonly need the IPv4 pooler.
+
+Load `.env` before running production database commands:
+
+```bash
+set -a
+source .env
+set +a
+```
+
+Preview and apply pending production migrations:
+
+```bash
+npx supabase migration list --db-url "$DATABASE_URL"
+npx supabase db push --db-url "$DATABASE_URL" --dry-run
+npx supabase db push --db-url "$DATABASE_URL" --yes
+npx supabase migration list --db-url "$DATABASE_URL"
+```
+
+If `db push` fails through the Supabase transaction pooler with a prepared
+statement error, apply the single migration with `psql` and record it in
+Supabase migration history in the same transaction:
+
+```bash
+MIGRATION_VERSION=20260622144953
+MIGRATION_NAME=allow_zero_period_variable_charges
+MIGRATION_FILE="supabase/migrations/${MIGRATION_VERSION}_${MIGRATION_NAME}.sql"
+
+psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -1 \
+  -f "$MIGRATION_FILE" \
+  -c "insert into supabase_migrations.schema_migrations (version, name) values ('$MIGRATION_VERSION', '$MIGRATION_NAME') on conflict (version) do update set name = excluded.name;"
+```
+
+Verify the production migration after applying it:
+
+```bash
+psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -qAt \
+  -c "select version, name from supabase_migrations.schema_migrations where version = '20260622144953';"
+```
+
+Run advisors after schema changes:
+
+```bash
+npx supabase db advisors --db-url "$DATABASE_URL" --type all --level warn --fail-on none
+```
+
+`supabase/seed.sql` is an initial-load seed. It rewrites society, resident, auth, service, and billing seed data, so do not rerun it on a live production database with real activity unless you intentionally want to refresh those rows.
 
 ## Delivery Guardrails
 

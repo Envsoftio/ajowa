@@ -62,9 +62,11 @@ watchEffect(() => {
 
 const saving = ref(false)
 
+const emptyTextMarkers = new Set(['', 'NA', 'N/A', 'NIL', '-', '--'])
+
 const nullableText = (value: unknown) => {
   const trimmed = typeof value === 'string' ? value.trim() : ''
-  return trimmed.length > 0 ? trimmed : null
+  return emptyTextMarkers.has(trimmed.toUpperCase()) ? null : trimmed
 }
 
 const nonNegativeNumber = (value: unknown, fallback: number) => {

@@ -7,6 +7,7 @@ import {
   getBillingCycleLabel,
   getBillingCycleMultiplier,
   hasUnresolvedAreaRateCharge,
+  removeChargesOverriddenByPeriod,
   resolveChargeBreakdown,
 } from '~/server/utils/billing'
 import type { ChargeBreakdownItem, DueGenerationPreview } from '~/types/domain'
@@ -199,7 +200,10 @@ export default defineEventHandler(async (event) => {
       flat.areaSqFt ? Number(flat.areaSqFt) : null,
       { cycleMultiplier },
     )
-    const charges = [...baseCharges, ...periodCharges]
+    const charges = [
+      ...removeChargesOverriddenByPeriod(baseCharges, periodCharges),
+      ...periodCharges,
+    ]
     const effectiveCharges =
       charges.length > 0 ? charges : [{ label: 'Maintenance Charges', amount: 2000 }]
 

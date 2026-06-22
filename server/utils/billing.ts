@@ -387,6 +387,33 @@ export const materializeChargeBreakdown = (
 export const hasUnresolvedAreaRateCharge = (charges: ChargeBreakdownItem[]) =>
   charges.some((charge) => charge.calculationMethod === 'AREA_RATE' && charge.amount <= 0)
 
+export const isCamCharge = (charge: ChargeBreakdownItem) =>
+  charge.chargeType === 'CAM' ||
+  charge.calculationMethod === 'AREA_RATE' ||
+  /^cam(?:\s+charges?)?$/i.test(charge.label.trim())
+
+export const isDgSetCharge = (charge: ChargeBreakdownItem) =>
+  charge.chargeType === 'DG_SET' ||
+  /\b(dg\s*set|dgset|generator|power\s*back\s*up|power\s*backup)\b/i.test(charge.label)
+
+export const removeChargesOverriddenByPeriod = (
+  baseCharges: ChargeBreakdownItem[],
+  periodCharges: ChargeBreakdownItem[],
+) => {
+  const hasPeriodCam = periodCharges.some(isCamCharge)
+  const hasPeriodDgSet = periodCharges.some(isDgSetCharge)
+
+  if (!hasPeriodCam && !hasPeriodDgSet) {
+    return baseCharges
+  }
+
+  return baseCharges.filter(
+    (charge) =>
+      !(hasPeriodCam && isCamCharge(charge)) &&
+      !(hasPeriodDgSet && isDgSetCharge(charge)),
+  )
+}
+
 type MaintenanceBillAccess = {
   societyId?: string
   userId?: string
@@ -568,10 +595,6 @@ const buildMaintenanceBillNumber = (row: MaintenanceBillDueRow) => {
   const flatCode = sanitizeBillFileSegment(`${row.block_name}-${row.flat_number}`).toUpperCase()
   return sanitizeBillFileSegment(`${row.society_code}-BILL-${periodCode}-${flatCode}`).toUpperCase()
 }
-
-const isDgSetCharge = (charge: ChargeBreakdownItem) =>
-  charge.chargeType === 'DG_SET' ||
-  /\b(dg\s*set|dgset|generator|power\s*back\s*up|power\s*backup)\b/i.test(charge.label)
 
 const sumBillCharges = (charges: ChargeBreakdownItem[]) =>
   roundBillMoney(charges.reduce((sum, charge) => sum + Number(charge.amount ?? 0), 0))
@@ -815,8 +838,16 @@ export const generateMaintenanceBillPdf = async (
       isAreaRate && charge.cycleMultiplier && charge.cycleMultiplier > 1
         ? ` x ${charge.cycleLabel ?? getBillingCycleLabel(charge.cycleMultiplier)}`
         : ''
-    const units = isAreaRate && charge.areaSqFt ? `${charge.areaSqFt} sq ft${cycleText}` : '-'
-    const rate = isAreaRate && charge.ratePerSqFt ? `${formatBillMoney(charge.ratePerSqFt)} / sq ft / month` : '-'
+    const units = isAreaRate && charge.areaSqFt
+      ? `${charge.areaSqFt} sq ft${cycleText}`
+      : charge.consumedUnits != null
+        ? `${formatBillPlainNumber(charge.consumedUnits)} units`
+        : '-'
+    const rate = isAreaRate && charge.ratePerSqFt
+      ? `${formatBillMoney(charge.ratePerSqFt)} / sq ft / month`
+      : charge.ratePerUnit != null
+        ? `${formatBillMoney(charge.ratePerUnit)} / unit`
+        : '-'
 
     return [
       { text: charge.label, style: 'tableCell' },

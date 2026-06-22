@@ -96,7 +96,12 @@ export const getAdminRoutePermission = (path: string) => {
   ) {
     return 'notifications.view'
   }
-  if (pathname.startsWith('/admin/billing/periods') || pathname.startsWith('/admin/billing/charges')) {
+  if (
+    pathname.startsWith('/admin/billing/periods') ||
+    pathname.startsWith('/admin/billing/charges') ||
+    pathname.startsWith('/admin/billing/cam') ||
+    pathname.startsWith('/admin/billing/dg-set')
+  ) {
     return 'billing.manage'
   }
   if (pathname.startsWith('/admin/billing/dues')) {

@@ -33,38 +33,12 @@ type GenerationResponse = {
     advanceAppliedAmount: number
   }
 }
-type VariableChargeEntry = {
-  flatId: string
-  flatNumber: string
-  blockName: string
-  unitType: string
-  meterNo: string | null
-  openingReading: number | null
-  closingReading: number | null
-  consumedUnits: number | null
-  ratePerUnit: number | null
-  connectionLoad: string | null
-  previousOutstanding: number | null
-  interestAmount: number | null
-  amount: number | null
-}
-type VariableChargesResponse = {
-  ok: true
-  data: {
-    billingPeriodId: string
-    chargeName: string
-    items: VariableChargeEntry[]
-  }
-}
-type VariableChargesSaveResponse = {
-  ok: true
-  data: { saved: number; removed: number }
-}
 type ChargePanel = 'FLAT' | 'COMMON' | 'POLICY'
 type ChargeCalculationMethod = NonNullable<ChargeBreakdownItem['calculationMethod']>
 
 const api = useApi()
 const toast = useToast()
+const route = useRoute()
 
 const formatMoney = (value: number) =>
   new Intl.NumberFormat('en-IN', {
@@ -408,7 +382,7 @@ const savePeriod = async () => {
     toast.add({
       severity: 'warn',
       summary: 'Use a cycle name',
-      detail: 'Use a period name like July - September 2026 here. CAM rates and DG readings are handled separately.',
+      detail: 'Use a period name like July - September 2026 here. CAM charges and DG readings are handled in their own routes.',
       life: 10000,
     })
     return
@@ -484,54 +458,6 @@ const generationTarget = ref<BillingPeriod | null>(null)
 const selectedFlatIds = ref<string[]>([])
 const generationPreview = ref<PreviewResponse['data'] | null>(null)
 const generating = ref(false)
-const variableChargeName = ref('DG Set')
-const variableChargeEntries = ref<VariableChargeEntry[]>([])
-const variableChargeSearch = ref('')
-const variableChargesLoading = ref(false)
-const savingVariableCharges = ref(false)
-const dgDefaultRatePerUnit = ref<number | null>(29)
-const dgDefaultConnectionLoad = ref('4 KW (5KVA)')
-
-const filteredVariableChargeEntries = computed(() => {
-  const term = variableChargeSearch.value.trim().toLowerCase()
-  if (!term) return variableChargeEntries.value
-
-  return variableChargeEntries.value.filter((entry) =>
-    [entry.blockName, entry.flatNumber, entry.unitType]
-      .join(' ')
-      .toLowerCase()
-      .includes(term),
-  )
-})
-
-const variableChargeFilledCount = computed(
-  () =>
-    variableChargeEntries.value.filter((entry) => Number(entry.amount ?? 0) > 0)
-      .length,
-)
-
-const variableChargeTotal = computed(() =>
-  variableChargeEntries.value.reduce(
-    (sum, entry) => sum + Number(entry.amount ?? 0),
-    0,
-  ),
-)
-
-const variableChargeUnitsTotal = computed(() =>
-  variableChargeEntries.value.reduce(
-    (sum, entry) => sum + Number(entry.consumedUnits ?? 0),
-    0,
-  ),
-)
-
-const invalidVariableChargeEntries = computed(() =>
-  variableChargeEntries.value.filter(
-    (entry) =>
-      entry.openingReading != null &&
-      entry.closingReading != null &&
-      Number(entry.closingReading) < Number(entry.openingReading),
-  ),
-)
 
 const generationCycleMonths = computed(() =>
   generationPreview.value?.cycleMultiplier ??
@@ -570,152 +496,10 @@ const getPreviewChargeTotal = (predicate: (charge: ChargeBreakdownItem) => boole
 const generationCamTotal = computed(() => getPreviewChargeTotal(isCamCharge))
 const generationDgTotal = computed(() => getPreviewChargeTotal(isDgCharge))
 
-const roundVariableChargeValue = (value: number) => Math.round(value * 100) / 100
-
-const normalizeVariableChargeNumber = (value: number | null | undefined) => {
-  if (value == null) return null
-  const numberValue = Number(value)
-  return Number.isFinite(numberValue) ? numberValue : null
-}
-
-const normalizeVariableChargeEntry = (
-  entry: VariableChargeEntry,
-): VariableChargeEntry => ({
-  ...entry,
-  meterNo: entry.meterNo ?? null,
-  openingReading: normalizeVariableChargeNumber(entry.openingReading),
-  closingReading: normalizeVariableChargeNumber(entry.closingReading),
-  consumedUnits: normalizeVariableChargeNumber(entry.consumedUnits),
-  ratePerUnit:
-    normalizeVariableChargeNumber(entry.ratePerUnit) ??
-    normalizeVariableChargeNumber(dgDefaultRatePerUnit.value),
-  connectionLoad: entry.connectionLoad ?? dgDefaultConnectionLoad.value,
-  previousOutstanding: normalizeVariableChargeNumber(entry.previousOutstanding) ?? 0,
-  interestAmount: normalizeVariableChargeNumber(entry.interestAmount) ?? 0,
-  amount: normalizeVariableChargeNumber(entry.amount),
-})
-
-const recalculateVariableCharge = (entry: VariableChargeEntry) => {
-  const openingReading = normalizeVariableChargeNumber(entry.openingReading)
-  const closingReading = normalizeVariableChargeNumber(entry.closingReading)
-
-  if (openingReading != null && closingReading != null) {
-    if (closingReading < openingReading) {
-      entry.consumedUnits = null
-      entry.amount = null
-      return
-    }
-
-    entry.consumedUnits = roundVariableChargeValue(closingReading - openingReading)
-  }
-
-  const units = normalizeVariableChargeNumber(entry.consumedUnits)
-  const rate = normalizeVariableChargeNumber(entry.ratePerUnit)
-
-  entry.amount =
-    units != null && rate != null
-      ? roundVariableChargeValue(units * rate)
-      : null
-}
-
-const applyVariableChargeDefaults = () => {
-  for (const entry of variableChargeEntries.value) {
-    if (!entry.ratePerUnit) {
-      entry.ratePerUnit = dgDefaultRatePerUnit.value
-    }
-
-    if (!entry.connectionLoad) {
-      entry.connectionLoad = dgDefaultConnectionLoad.value
-    }
-
-    recalculateVariableCharge(entry)
-  }
-}
-
-const loadVariableCharges = async () => {
-  if (!generationTarget.value) return
-  variableChargesLoading.value = true
-
-  try {
-    const response = await api<VariableChargesResponse>(
-      `/api/admin/billing/periods/${generationTarget.value.id}/variable-charges`,
-      {
-        query: {
-          chargeName: variableChargeName.value,
-        },
-      },
-    )
-    variableChargeName.value = response.data.chargeName
-    variableChargeEntries.value = response.data.items.map(normalizeVariableChargeEntry)
-  } finally {
-    variableChargesLoading.value = false
-  }
-}
-
-const saveVariableCharges = async (
-  options: { refreshPreview?: boolean; silent?: boolean } = {},
-) => {
-  if (!generationTarget.value) return
-  if (invalidVariableChargeEntries.value.length > 0) {
-    toast.add({
-      severity: 'warn',
-      summary: 'Check DG readings',
-      detail: `${formatUnit(invalidVariableChargeEntries.value.length, 'flat')} has closing below opening.`,
-      life: 10000,
-    })
-    return false
-  }
-  savingVariableCharges.value = true
-
-  try {
-    const response = await api<VariableChargesSaveResponse>(
-      `/api/admin/billing/periods/${generationTarget.value.id}/variable-charges`,
-      {
-        method: 'PUT',
-        body: {
-          chargeName: variableChargeName.value,
-          entries: variableChargeEntries.value.map((entry) => ({
-            flatId: entry.flatId,
-            meterNo: entry.meterNo || null,
-            openingReading: entry.openingReading,
-            closingReading: entry.closingReading,
-            consumedUnits: entry.consumedUnits,
-            ratePerUnit: entry.ratePerUnit,
-            connectionLoad: entry.connectionLoad || null,
-            previousOutstanding: entry.previousOutstanding ?? 0,
-            interestAmount: entry.interestAmount ?? 0,
-            amount: Number(entry.amount ?? 0),
-          })),
-        },
-      },
-    )
-
-    if (!options.silent) {
-      toast.add({
-        severity: 'success',
-        summary: 'DG charges saved',
-        detail: `${response.data.saved} flat charge${
-          response.data.saved === 1 ? '' : 's'
-        } saved for this cycle.`,
-        life: 10000,
-      })
-    }
-
-    if (options.refreshPreview !== false) {
-      await loadGenerationPreview()
-    }
-    return true
-  } finally {
-    savingVariableCharges.value = false
-  }
-}
-
 const openGenerationDialog = async (period: BillingPeriod) => {
   generationTarget.value = period
   selectedFlatIds.value = []
-  variableChargeSearch.value = ''
   generationDialogVisible.value = true
-  await loadVariableCharges()
   await loadGenerationPreview()
 }
 
@@ -738,13 +522,28 @@ const loadGenerationPreview = async () => {
 
 watch(selectedFlatIds, () => loadGenerationPreview())
 
+const openedRouteGenerationPeriodId = ref('')
+
+watch(
+  [periods, () => route.query.generatePeriodId],
+  ([items, generatePeriodId]) => {
+    if (typeof generatePeriodId !== 'string' || !generatePeriodId) return
+    if (openedRouteGenerationPeriodId.value === generatePeriodId) return
+
+    const period = items.find((item) => item.id === generatePeriodId)
+    if (!period) return
+
+    openedRouteGenerationPeriodId.value = generatePeriodId
+    void openGenerationDialog(period)
+  },
+  { immediate: true },
+)
+
 const generateDues = async () => {
   if (!generationTarget.value) return
   generating.value = true
 
   try {
-    const chargesSaved = await saveVariableCharges({ refreshPreview: false, silent: true })
-    if (chargesSaved === false) return
     const response = await api<GenerationResponse>('/api/admin/billing/dues', {
       method: 'POST',
       body: {
@@ -808,54 +607,6 @@ const chargeRuleSummary = computed(() => {
     graceDays: chargeForm.graceDays,
     lateFeePerDay: chargeForm.lateFeePerDay,
   }
-})
-
-const normalizeChargeLabel = (label: string) => {
-  const cleanLabel = label.trim().replace(/\s+/g, ' ')
-
-  if (/^dg\s*set$/i.test(cleanLabel) || /^dgset$/i.test(cleanLabel)) {
-    return 'DG Set'
-  }
-
-  if (/^cam(?:\s+charges?)?$/i.test(cleanLabel)) {
-    return 'CAM Charges'
-  }
-
-  return cleanLabel
-}
-
-const configuredChargeLabels = computed(() => {
-  const labels = new Map<string, string>()
-  const addCharges = (charges: ChargeBreakdownItem[]) => {
-    for (const charge of charges) {
-      const label = normalizeChargeLabel(charge.label || '')
-      if (label) {
-        labels.set(label.toLowerCase(), label)
-      }
-    }
-  }
-
-  addCharges(chargeForm.defaultCharges)
-  chargeForm.flatTypeCharges.forEach((item) => addCharges(item.charges))
-  chargeForm.flatOverrideCharges.forEach((item) => addCharges(item.charges))
-
-  return Array.from(labels.values())
-})
-
-const chargeLineSummary = computed(() => {
-  if (configuredChargeLabels.value.length === 0) {
-    return 'Add CAM Charges'
-  }
-
-  const visibleLabels = configuredChargeLabels.value.slice(0, 3)
-  const extraCount = configuredChargeLabels.value.length - visibleLabels.length
-
-  return [
-    visibleLabels.join(', '),
-    extraCount > 0 ? `+${extraCount} more` : '',
-  ]
-    .filter(Boolean)
-    .join(' ')
 })
 
 const chargeRuleDetail = computed(() => {
@@ -1000,22 +751,6 @@ const addFlatOverride = () => {
   })
 }
 
-const ensureDefaultCamCharge = () => {
-  const existing = chargeForm.defaultCharges.find((charge) => isCamCharge(charge))
-  chargePanel.value = 'COMMON'
-
-  if (!existing) {
-    addCharge(chargeForm.defaultCharges, {
-      label: 'CAM Charges',
-      amount: 3.25,
-      calculationMethod: 'AREA_RATE',
-      chargeType: 'CAM',
-    })
-  }
-
-  chargeDialogVisible.value = true
-}
-
 const syncFlatOverrideLabel = (index: number) => {
   const override = chargeForm.flatOverrideCharges[index]
   if (!override) return
@@ -1093,24 +828,26 @@ const saveCharges = async () => {
       <header class="billing-command-header">
         <div>
           <p class="eyebrow">Billing</p>
-          <h1>Generate CAM and DG bills</h1>
+          <h1>Billing periods</h1>
           <p>
-            CAM uses the saved monthly sq-ft rate for the selected cycle.
-            DG Set readings are added for the cycle before bills are generated.
+            Create bill cycles and generate final bills. Enter CAM charges and
+            DG Set readings on their own pages before generation.
           </p>
         </div>
         <div class="billing-command-actions">
           <Button
-            label="CAM rates"
+            as="a"
+            href="/admin/billing/cam"
+            label="CAM charges"
             icon="pi pi-percentage"
-            @click="openChargeDialog('COMMON')"
           />
           <Button
-            label="Add CAM rate"
-            icon="pi pi-plus"
+            as="a"
+            href="/admin/billing/dg-set"
+            label="DG Set readings"
+            icon="pi pi-bolt"
             severity="secondary"
             outlined
-            @click="ensureDefaultCamCharge"
           />
           <Button
             label="Create bill cycle"
@@ -1130,34 +867,19 @@ const saveCharges = async () => {
         </div>
         <div>
           <span>CAM rate</span>
-          <strong>{{ chargeLineSummary }}</strong>
-          <p>Saved as a monthly per-sq-ft rate.</p>
+          <strong>Dedicated route</strong>
+          <p>Enter CAM readings or per-flat amounts by selected cycle.</p>
         </div>
         <div>
           <span>DG Set</span>
-          <strong>Meter readings</strong>
-          <p>Added before generating each cycle.</p>
+          <strong>Dedicated route</strong>
+          <p>Enter opening and closing readings by flat.</p>
         </div>
       </div>
 
       <div class="billing-command-steps">
         <article class="billing-command-step billing-command-step--active">
           <span>1</span>
-          <div>
-            <h2>Set CAM rates</h2>
-            <p>{{ billAmountStepDetail }}</p>
-          </div>
-          <Button
-            label="CAM rates"
-            icon="pi pi-pencil"
-            size="small"
-            severity="secondary"
-            outlined
-            @click="openChargeDialog('COMMON')"
-          />
-        </article>
-        <article class="billing-command-step">
-          <span>2</span>
           <div>
             <h2>Create bill cycle</h2>
             <p>{{ openPeriodStepDetail }}</p>
@@ -1171,14 +893,46 @@ const saveCharges = async () => {
             @click="openCreatePeriod"
           />
         </article>
+        <article class="billing-command-step">
+          <span>2</span>
+          <div>
+            <h2>Enter CAM charges</h2>
+            <p>{{ billAmountStepDetail }}</p>
+          </div>
+          <Button
+            as="a"
+            :href="nextGenerationPeriod ? '/admin/billing/cam?periodId=' + nextGenerationPeriod.id : '/admin/billing/cam'"
+            label="CAM"
+            icon="pi pi-percentage"
+            size="small"
+            severity="secondary"
+            outlined
+          />
+        </article>
         <article
           class="billing-command-step"
           :class="{ 'billing-command-step--active': Boolean(nextGenerationPeriod) }"
         >
           <span>3</span>
           <div>
-            <h2>Add DG and generate</h2>
+            <h2>Enter DG readings</h2>
             <p>{{ generationStepDetail }}</p>
+          </div>
+          <Button
+            as="a"
+            :href="nextGenerationPeriod ? '/admin/billing/dg-set?periodId=' + nextGenerationPeriod.id : '/admin/billing/dg-set'"
+            label="DG Set"
+            icon="pi pi-bolt"
+            size="small"
+            severity="secondary"
+            outlined
+          />
+        </article>
+        <article class="billing-command-step">
+          <span>4</span>
+          <div>
+            <h2>Generate bills</h2>
+            <p>{{ summary.dueCount }} generated bills</p>
           </div>
           <Button
             v-if="nextGenerationPeriod"
@@ -1189,28 +943,13 @@ const saveCharges = async () => {
           />
           <Button
             v-else
-            label="Done"
-            icon="pi pi-check"
-            size="small"
-            severity="secondary"
-            outlined
-            disabled
-          />
-        </article>
-        <article class="billing-command-step">
-          <span>4</span>
-          <div>
-            <h2>Send bills</h2>
-            <p>{{ summary.dueCount }} generated bills</p>
-          </div>
-          <Button
-            as="a"
-            href="/admin/billing/dues"
             label="Open bills"
             icon="pi pi-send"
             size="small"
             severity="secondary"
             outlined
+            as="a"
+            href="/admin/billing/dues"
           />
         </article>
       </div>
@@ -1268,12 +1007,20 @@ const saveCharges = async () => {
         </div>
         <div class="list-page__exports">
           <Button
-            label="CAM rates"
+            as="a"
+            href="/admin/billing/cam"
+            label="CAM charges"
             icon="pi pi-percentage"
             severity="secondary"
             outlined
-            :loading="chargePending"
-            @click="openChargeDialog('COMMON')"
+          />
+          <Button
+            as="a"
+            href="/admin/billing/dg-set"
+            label="DG Set"
+            icon="pi pi-bolt"
+            severity="secondary"
+            outlined
           />
           <Button
             label="Policy"
@@ -1992,7 +1739,7 @@ const saveCharges = async () => {
             class="admin-form-grid__full"
           >
             This looks like a charge name. Use a month name such as June 2026
-            here; CAM rates and DG readings are handled separately.
+            here; CAM charges and DG readings are handled in their own routes.
           </Message>
           <label>
             <span class="field-label">
@@ -2114,7 +1861,7 @@ const saveCharges = async () => {
           <div>
             <span>DG estimate</span>
             <strong>{{ formatMoney(generationDgTotal) }}</strong>
-            <small>{{ formatUnit(variableChargeFilledCount, 'flat') }}</small>
+            <small>Saved DG rows included</small>
           </div>
           <div>
             <span>Total</span>
@@ -2144,171 +1891,37 @@ const saveCharges = async () => {
         <section class="billing-variable-charge-panel">
           <header>
             <div>
-              <p class="eyebrow">Cycle variable charge</p>
-              <h3>{{ variableChargeName }} charges</h3>
+              <p class="eyebrow">Charge entry</p>
+              <h3>CAM and DG are managed separately</h3>
               <p>
-                Enter opening and closing DG readings for each flat. Units and
-                amount are calculated from the rate before bills are generated.
+                Use the dedicated routes to enter CAM readings or amounts and
+                DG Set opening/closing readings for this selected cycle.
               </p>
             </div>
             <div>
-              <strong>{{ formatMoney(variableChargeTotal) }}</strong>
-              <span>
-                {{ formatUnit(variableChargeFilledCount, 'flat') }} with DG
-                charge · {{ formatNumber(variableChargeUnitsTotal) }} units
-              </span>
+              <strong>{{ formatMoney(generationPreview?.totalAmount ?? 0) }}</strong>
+              <span>Current preview total</span>
             </div>
           </header>
 
-          <div class="billing-variable-charge-defaults">
-            <label>
-              <span class="field-label">
-                DG rate per unit
-                <AppHelpIcon
-                  text="Used when a flat row does not already have its own DG rate."
-                />
-              </span>
-              <InputNumber
-                v-model="dgDefaultRatePerUnit"
-                :min="0"
-                :max-fraction-digits="2"
-                fluid
-              />
-            </label>
-            <label>
-              <span class="field-label">
-                Connection load
-                <AppHelpIcon
-                  text="Printed on the DG bill notice for rows that do not have a custom load."
-                />
-              </span>
-              <InputText v-model="dgDefaultConnectionLoad" />
-            </label>
+          <div class="billing-command-actions">
             <Button
-              label="Apply defaults"
-              icon="pi pi-clone"
+              as="a"
+              :href="generationTarget ? '/admin/billing/cam?periodId=' + generationTarget.id : '/admin/billing/cam'"
+              label="Open CAM charges"
+              icon="pi pi-percentage"
               severity="secondary"
               outlined
-              @click="applyVariableChargeDefaults"
             />
-          </div>
-
-          <div class="billing-variable-charge-toolbar">
-            <IconField>
-              <InputIcon class="pi pi-search" />
-              <InputText
-                v-model="variableChargeSearch"
-                placeholder="Find flat"
-              />
-            </IconField>
             <Button
-              label="Save DG readings"
-              icon="pi pi-save"
+              as="a"
+              :href="generationTarget ? '/admin/billing/dg-set?periodId=' + generationTarget.id : '/admin/billing/dg-set'"
+              label="Open DG readings"
+              icon="pi pi-bolt"
               severity="secondary"
               outlined
-              :loading="savingVariableCharges"
-              :disabled="invalidVariableChargeEntries.length > 0"
-              @click="saveVariableCharges()"
             />
           </div>
-
-          <Message v-if="invalidVariableChargeEntries.length > 0" severity="warn">
-            {{ formatUnit(invalidVariableChargeEntries.length, 'flat') }} has
-            closing reading below opening reading.
-          </Message>
-
-          <AppSkeletonState v-if="variableChargesLoading" />
-          <AppDataTable
-            v-else
-            :value="filteredVariableChargeEntries"
-            scrollable
-            scroll-height="18rem"
-            responsive-layout="scroll"
-            size="small"
-          >
-            <Column header="Flat" style="min-width: 10rem">
-              <template #body="{ data: row }">
-                <div class="billing-period-cell">
-                  <strong>{{ row.blockName }} {{ row.flatNumber }}</strong>
-                  <span>{{ row.unitType }}</span>
-                </div>
-              </template>
-            </Column>
-            <Column header="Meter no." style="min-width: 8rem">
-              <template #body="{ data: row }">
-                <InputText
-                  v-model="row.meterNo"
-                  placeholder="Optional"
-                  fluid
-                />
-              </template>
-            </Column>
-            <Column header="Opening" style="min-width: 7.5rem">
-              <template #body="{ data: row }">
-                <InputNumber
-                  v-model="row.openingReading"
-                  :min="0"
-                  :max-fraction-digits="2"
-                  placeholder="0"
-                  fluid
-                  @update:model-value="recalculateVariableCharge(row)"
-                />
-              </template>
-            </Column>
-            <Column header="Closing" style="min-width: 7.5rem">
-              <template #body="{ data: row }">
-                <InputNumber
-                  v-model="row.closingReading"
-                  :min="0"
-                  :max-fraction-digits="2"
-                  placeholder="0"
-                  fluid
-                  @update:model-value="recalculateVariableCharge(row)"
-                />
-              </template>
-            </Column>
-            <Column header="Units" style="min-width: 7rem">
-              <template #body="{ data: row }">
-                <InputNumber
-                  v-model="row.consumedUnits"
-                  :min="0"
-                  :max-fraction-digits="2"
-                  placeholder="0"
-                  fluid
-                  :disabled="
-                    row.openingReading != null && row.closingReading != null
-                  "
-                  @update:model-value="recalculateVariableCharge(row)"
-                />
-              </template>
-            </Column>
-            <Column header="Rate/unit" style="min-width: 7.5rem">
-              <template #body="{ data: row }">
-                <InputNumber
-                  v-model="row.ratePerUnit"
-                  :min="0"
-                  :max-fraction-digits="2"
-                  placeholder="29"
-                  fluid
-                  @update:model-value="recalculateVariableCharge(row)"
-                />
-              </template>
-            </Column>
-            <Column header="Amount" style="min-width: 7.5rem">
-              <template #body="{ data: row }">
-                <strong>{{ formatMoney(Number(row.amount ?? 0)) }}</strong>
-              </template>
-            </Column>
-            <Column header="Load" style="min-width: 8.5rem">
-              <template #body="{ data: row }">
-                <InputText
-                  v-model="row.connectionLoad"
-                  placeholder="4 KW (5KVA)"
-                  fluid
-                />
-              </template>
-            </Column>
-          </AppDataTable>
         </section>
 
         <template v-if="generationPreview?.warnings.length">
@@ -2331,12 +1944,11 @@ const saveCharges = async () => {
           <Button
             label="Generate bills"
             icon="pi pi-bolt"
-            :loading="generating || savingVariableCharges"
+            :loading="generating"
             :disabled="
               !generationPreview ||
               generationPreview.isLocked ||
-              generationPreview.totalFlats === 0 ||
-              invalidVariableChargeEntries.length > 0
+              generationPreview.totalFlats === 0
             "
             @click="generateDues"
           />
