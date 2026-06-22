@@ -62,10 +62,48 @@ watchEffect(() => {
 
 const saving = ref(false)
 
-const nullableText = (value: string) => {
-  const trimmed = value.trim()
+const nullableText = (value: unknown) => {
+  const trimmed = typeof value === 'string' ? value.trim() : ''
   return trimmed.length > 0 ? trimmed : null
 }
+
+const nonNegativeNumber = (value: unknown, fallback: number) => {
+  const number = Number(value)
+  return Number.isFinite(number) && number >= 0 ? number : fallback
+}
+
+const nonNegativeInteger = (value: unknown, fallback: number) => {
+  const number = nonNegativeNumber(value, fallback)
+  return Number.isInteger(number) ? number : fallback
+}
+
+const buildPayload = () => ({
+  name: form.name.trim(),
+  registrationNumber: nullableText(form.registrationNumber),
+  addressLine1: form.addressLine1.trim(),
+  addressLine2: nullableText(form.addressLine2),
+  city: form.city.trim(),
+  state: form.state.trim(),
+  pincode: form.pincode.trim(),
+  contactEmail: nullableText(form.contactEmail),
+  contactPhone: nullableText(form.contactPhone),
+  timezone: form.timezone.trim() || 'Asia/Kolkata',
+  settings: {
+    billingTenure: form.settings.billingTenure,
+    excessPaymentHandling: form.settings.excessPaymentHandling,
+    tenantPaymentsEnabled: Boolean(form.settings.tenantPaymentsEnabled),
+    familyAccessEnabled: Boolean(form.settings.familyAccessEnabled),
+    notificationScope: form.settings.notificationScope,
+    financeApprovalRequired: Boolean(form.settings.financeApprovalRequired),
+    attachmentsRequired: Boolean(form.settings.attachmentsRequired),
+    highValueThreshold: nonNegativeNumber(
+      form.settings.highValueThreshold,
+      10000,
+    ),
+    graceDays: nonNegativeInteger(form.settings.graceDays, 0),
+    lateFeePerDay: nonNegativeNumber(form.settings.lateFeePerDay, 50),
+  },
+})
 
 const submit = async () => {
   saving.value = true
@@ -73,13 +111,7 @@ const submit = async () => {
   try {
     await api('/api/admin/society/profile', {
       method: 'PUT',
-      body: {
-        ...form,
-        registrationNumber: nullableText(form.registrationNumber),
-        addressLine2: nullableText(form.addressLine2),
-        contactEmail: nullableText(form.contactEmail),
-        contactPhone: nullableText(form.contactPhone),
-      },
+      body: buildPayload(),
     })
 
     toast.add({

@@ -26,6 +26,43 @@ type SocietyProfileRow = {
   settings: Record<string, unknown>
 }
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+
+const trimText = (value: unknown) =>
+  typeof value === 'string' ? value.trim() : value
+
+const nullableText = (value: unknown) => {
+  if (value == null) {
+    return null
+  }
+
+  if (typeof value !== 'string') {
+    return value
+  }
+
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed : null
+}
+
+const normalizeProfilePayload = (value: unknown) => {
+  const payload = isRecord(value) ? value : {}
+
+  return {
+    name: trimText(payload.name),
+    registrationNumber: nullableText(payload.registrationNumber),
+    addressLine1: trimText(payload.addressLine1),
+    addressLine2: nullableText(payload.addressLine2),
+    city: trimText(payload.city),
+    state: trimText(payload.state),
+    pincode: trimText(payload.pincode),
+    contactEmail: nullableText(payload.contactEmail),
+    contactPhone: nullableText(payload.contactPhone),
+    timezone: trimText(payload.timezone) || 'Asia/Kolkata',
+    settings: normalizeSocietySettings(payload.settings),
+  }
+}
+
 const serializeError = (error: unknown) => {
   if (error instanceof Error) {
     const code = (error as { code?: string }).code
@@ -46,7 +83,7 @@ export default defineEventHandler(async (event) => {
     const authMe = await requireRole(event, ['ADMIN', 'MANAGER'])
     const body = validatePayload(
       societyProfileSchema,
-      await readJsonBody(event),
+      normalizeProfilePayload(await readJsonBody(event)),
     )
     const pool = getDatabasePool()
     const client = await pool.connect()

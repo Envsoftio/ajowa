@@ -45,22 +45,32 @@ export const notificationPresets = [
   'ALL_CHANNELS',
 ] as const
 
+const billingTenures = [
+  'MONTHLY',
+  'QUARTERLY',
+  'HALF_YEARLY',
+  'YEARLY',
+  'CUSTOM',
+] as const
+
+const excessPaymentHandlingOptions = [
+  'KEEP_AS_ADVANCE',
+  'REFUND',
+  'MANUAL_REVIEW',
+] as const
+
+const notificationScopes = [
+  'ADMIN_ONLY',
+  'ADMIN_AND_MANAGER',
+  'CONFIGURABLE',
+] as const
+
 export const societyPolicySchema = z.object({
-  billingTenure: z.enum([
-    'MONTHLY',
-    'QUARTERLY',
-    'HALF_YEARLY',
-    'YEARLY',
-    'CUSTOM',
-  ]),
-  excessPaymentHandling: z.enum(['KEEP_AS_ADVANCE', 'REFUND', 'MANUAL_REVIEW']),
+  billingTenure: z.enum(billingTenures),
+  excessPaymentHandling: z.enum(excessPaymentHandlingOptions),
   tenantPaymentsEnabled: z.boolean(),
   familyAccessEnabled: z.boolean(),
-  notificationScope: z.enum([
-    'ADMIN_ONLY',
-    'ADMIN_AND_MANAGER',
-    'CONFIGURABLE',
-  ]),
+  notificationScope: z.enum(notificationScopes),
   financeApprovalRequired: z.boolean(),
   attachmentsRequired: z.boolean(),
   highValueThreshold: z.coerce.number().nonnegative(),
@@ -162,6 +172,31 @@ export const defaultSocietyPolicies: z.infer<typeof societyPolicySchema> = {
   lateFeePerDay: 50,
 }
 
+const enumValue = <T extends readonly string[]>(
+  value: unknown,
+  options: T,
+): T[number] | undefined =>
+  typeof value === 'string' && options.includes(value)
+    ? (value as T[number])
+    : undefined
+
+const nonNegativeNumberSetting = (value: unknown, fallback: number) => {
+  const normalized =
+    typeof value === 'string' ? value.trim().replace(/,/g, '') : value
+
+  if (normalized == null || normalized === '') {
+    return fallback
+  }
+
+  const number = Number(normalized)
+  return Number.isFinite(number) && number >= 0 ? number : fallback
+}
+
+const nonNegativeIntegerSetting = (value: unknown, fallback: number) => {
+  const number = nonNegativeNumberSetting(value, fallback)
+  return Number.isInteger(number) ? number : fallback
+}
+
 export const getQuerySafe = (event: H3Event) => {
   return getEventQuery(event)
 }
@@ -205,14 +240,12 @@ export const normalizeSocietySettings = (
   return {
     ...defaultSocietyPolicies,
     billingTenure:
-      normalized.billingTenure ??
-      (settings.billingFrequency as
-        | SocietyPolicySettings['billingTenure']
-        | undefined) ??
+      enumValue(normalized.billingTenure, billingTenures) ??
+      enumValue(settings.billingFrequency, billingTenures) ??
       defaultSocietyPolicies.billingTenure,
     excessPaymentHandling:
-      normalized.excessPaymentHandling ??
-      (settings.advanceCredit
+      enumValue(normalized.excessPaymentHandling, excessPaymentHandlingOptions) ??
+      (settings.advanceCredit === true
         ? 'KEEP_AS_ADVANCE'
         : defaultSocietyPolicies.excessPaymentHandling),
     tenantPaymentsEnabled:
@@ -226,10 +259,8 @@ export const normalizeSocietySettings = (
         ? settings.familyAccess
         : defaultSocietyPolicies.familyAccessEnabled),
     notificationScope:
-      normalized.notificationScope ??
-      (settings.managerBroadcastScope as
-        | SocietyPolicySettings['notificationScope']
-        | undefined) ??
+      enumValue(normalized.notificationScope, notificationScopes) ??
+      enumValue(settings.managerBroadcastScope, notificationScopes) ??
       defaultSocietyPolicies.notificationScope,
     financeApprovalRequired:
       normalized.financeApprovalRequired ??
@@ -237,14 +268,20 @@ export const normalizeSocietySettings = (
     attachmentsRequired:
       normalized.attachmentsRequired ??
       defaultSocietyPolicies.attachmentsRequired,
-    highValueThreshold: Number(
-      settings.highValueThreshold ??
-        (settings.highValueConfirmation
-          ? 10000
-          : defaultSocietyPolicies.highValueThreshold),
+    highValueThreshold: nonNegativeNumberSetting(
+      normalized.highValueThreshold ?? settings.highValueThreshold,
+      settings.highValueConfirmation
+        ? 10000
+        : defaultSocietyPolicies.highValueThreshold,
     ),
-    graceDays: normalized.graceDays ?? defaultSocietyPolicies.graceDays,
-    lateFeePerDay: normalized.lateFeePerDay ?? defaultSocietyPolicies.lateFeePerDay,
+    graceDays: nonNegativeIntegerSetting(
+      normalized.graceDays ?? settings.graceDays,
+      defaultSocietyPolicies.graceDays,
+    ),
+    lateFeePerDay: nonNegativeNumberSetting(
+      normalized.lateFeePerDay ?? settings.lateFeePerDay,
+      defaultSocietyPolicies.lateFeePerDay,
+    ),
   }
 }
 
