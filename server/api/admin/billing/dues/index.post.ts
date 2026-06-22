@@ -38,6 +38,9 @@ type ChargeConfig = {
   charge_breakdown: ChargeBreakdownItem[]
 }
 
+const flatNumberSortExpression =
+  "coalesce(nullif(regexp_replace(f.flat_number, '\\D', '', 'g'), '')::integer, 2147483647)"
+
 export default defineEventHandler(async (event) => {
   const authMe = await requireRole(event, ['ADMIN'])
   const body = validatePayload<DueGenerationInput>(dueGenerationSchema, await readJsonBody(event))
@@ -102,7 +105,7 @@ export default defineEventHandler(async (event) => {
         where f.society_id = $1
           and f.is_active = true
           ${body.flatIds ? `and f.id = any($2::uuid[])` : ''}
-        order by b.name, f.flat_number
+        order by b.sort_order asc, ${flatNumberSortExpression} asc, f.flat_number asc
       `,
       [authMe.user.societyId, ...(body.flatIds ? [body.flatIds] : [])],
     )
@@ -172,6 +175,8 @@ export default defineEventHandler(async (event) => {
     let advanceAppliedCount = 0
     let advanceAppliedAmount = 0
     const generatedDueIds: string[] = []
+    const generatedDues: Array<{ dueId: string; flatId: string }> = []
+    const skippedDues: Array<{ dueId: string; flatId: string }> = []
 
     for (const flat of flatsResult.rows) {
       // Check if due already exists for this flat + period
@@ -181,6 +186,10 @@ export default defineEventHandler(async (event) => {
       )
 
       if (existingDue.rows[0]) {
+        skippedDues.push({
+          dueId: existingDue.rows[0].id,
+          flatId: flat.flatId,
+        })
         skipped++
         continue
       }
@@ -232,6 +241,10 @@ export default defineEventHandler(async (event) => {
         )
         if (insertResult.rows[0]?.id) {
           generatedDueIds.push(insertResult.rows[0].id)
+          generatedDues.push({
+            dueId: insertResult.rows[0].id,
+            flatId: flat.flatId,
+          })
           const advanceResult = await consumeAdvanceCreditsForDueWithClient(client, insertResult.rows[0].id)
           if (advanceResult.consumedAmount > 0) {
             advanceAppliedCount += 1
@@ -274,6 +287,10 @@ export default defineEventHandler(async (event) => {
         )
         if (insertResult.rows[0]?.id) {
           generatedDueIds.push(insertResult.rows[0].id)
+          generatedDues.push({
+            dueId: insertResult.rows[0].id,
+            flatId: flat.flatId,
+          })
           const advanceResult = await consumeAdvanceCreditsForDueWithClient(client, insertResult.rows[0].id)
           if (advanceResult.consumedAmount > 0) {
             advanceAppliedCount += 1
@@ -327,6 +344,9 @@ export default defineEventHandler(async (event) => {
       skipped,
       advanceAppliedCount,
       advanceAppliedAmount,
+      dueIds: generatedDueIds,
+      generatedDues,
+      skippedDues,
     })
   } catch (error) {
     await client.query('rollback')

@@ -1252,6 +1252,13 @@ a {
   cursor: help;
 }
 
+.field-error {
+  color: var(--color-danger);
+  font-size: 0.82rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
 .admin-page-guide {
   display: grid;
   gap: 0.75rem;
@@ -2084,6 +2091,150 @@ a {
   overflow-wrap: anywhere;
 }
 
+.billing-delivery-panel {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.8rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-surface) 78%, var(--color-bg));
+}
+
+.billing-generation-progress {
+  display: grid;
+  gap: 0.75rem;
+  margin-bottom: 0.9rem;
+  padding: 0.85rem;
+  border: 1px solid rgba(15, 118, 110, 0.28);
+  border-radius: var(--radius-md);
+  background: rgba(15, 118, 110, 0.08);
+}
+
+.billing-generation-progress header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+.billing-generation-progress header > div {
+  min-width: 0;
+  display: grid;
+  gap: 0.15rem;
+}
+
+.billing-generation-progress header span,
+.billing-generation-progress p {
+  color: var(--color-muted);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.billing-generation-progress header span {
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.billing-generation-progress header strong {
+  color: var(--color-text);
+  font-weight: 900;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.billing-generation-progress header > strong {
+  flex: 0 0 auto;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid rgba(15, 118, 110, 0.22);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+}
+
+.billing-generation-progress p {
+  margin: 0;
+}
+
+.billing-generation-progress__bar {
+  width: 100%;
+  height: 0.55rem;
+  overflow: hidden;
+  border: 1px solid rgba(15, 118, 110, 0.22);
+  border-radius: 999px;
+  background: var(--color-bg);
+}
+
+.billing-generation-progress__bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--color-brand);
+  transition: width 180ms ease;
+}
+
+.billing-generation-progress ol {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.billing-generation-progress__step {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.65rem;
+  align-items: start;
+  padding: 0.65rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+}
+
+.billing-generation-progress__icon {
+  display: inline-grid;
+  place-items: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  color: var(--color-muted);
+  background: var(--color-bg);
+}
+
+.billing-generation-progress__step strong {
+  display: block;
+  color: var(--color-text);
+  font-size: 0.9rem;
+  line-height: 1.25;
+}
+
+.billing-generation-progress__step--active {
+  border-color: rgba(15, 118, 110, 0.32);
+  background: color-mix(in srgb, var(--color-surface) 82%, rgba(15, 118, 110, 0.18));
+}
+
+.billing-generation-progress__step--active .billing-generation-progress__icon,
+.billing-generation-progress__step--done .billing-generation-progress__icon {
+  border-color: rgba(15, 118, 110, 0.32);
+  color: #fff;
+  background: var(--color-brand);
+}
+
+.billing-generation-progress__step--done {
+  border-color: rgba(15, 118, 110, 0.2);
+}
+
+.billing-generation-progress__step--error {
+  border-color: rgba(220, 38, 38, 0.32);
+  background: rgba(220, 38, 38, 0.08);
+}
+
+.billing-generation-progress__step--error .billing-generation-progress__icon {
+  border-color: rgba(220, 38, 38, 0.32);
+  color: #fff;
+  background: #dc2626;
+}
+
 .billing-variable-charge-panel header,
 .billing-variable-charge-toolbar {
   display: flex;
@@ -2212,6 +2363,17 @@ a {
   border-color: rgba(245, 158, 11, 0.28);
   border-left-color: var(--color-accent);
   background: rgba(245, 158, 11, 0.08);
+}
+
+.billing-selection-actions {
+  display: grid;
+  gap: 0.65rem;
+  margin-top: 0.85rem;
+}
+
+.billing-selection-actions p {
+  max-width: none;
+  font-size: 0.84rem;
 }
 
 .billing-balance-cell {
@@ -2765,6 +2927,10 @@ a {
   }
 
   .billing-dialog-intro {
+    display: grid;
+  }
+
+  .billing-generation-progress header {
     display: grid;
   }
 

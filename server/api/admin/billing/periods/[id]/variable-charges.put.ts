@@ -19,6 +19,8 @@ const variableChargesSchema = z.object({
   entries: z.array(
     z.object({
       flatId: z.string().uuid(),
+      areaSqFt: z.coerce.number().min(0).nullable().optional(),
+      ratePerSqFt: z.coerce.number().min(0).nullable().optional(),
       meterNo: z.string().trim().max(80).nullable().optional(),
       openingReading: z.coerce.number().min(0).nullable().optional(),
       closingReading: z.coerce.number().min(0).nullable().optional(),
@@ -27,6 +29,8 @@ const variableChargesSchema = z.object({
       connectionLoad: z.string().trim().max(80).nullable().optional(),
       previousOutstanding: z.coerce.number().min(0).nullable().optional(),
       interestAmount: z.coerce.number().min(0).nullable().optional(),
+      cycleMultiplier: z.coerce.number().min(1).max(120).nullable().optional(),
+      cycleLabel: z.string().trim().max(80).nullable().optional(),
       amount: z.coerce.number().min(0).nullable().optional(),
     }),
   ),
@@ -36,6 +40,8 @@ type VariableChargesInput = z.infer<typeof variableChargesSchema>
 
 type NormalizedVariableChargeEntry = {
   flatId: string
+  areaSqFt: number | null
+  ratePerSqFt: number | null
   meterNo: string | null
   openingReading: number | null
   closingReading: number | null
@@ -44,6 +50,8 @@ type NormalizedVariableChargeEntry = {
   connectionLoad: string | null
   previousOutstanding: number
   interestAmount: number
+  cycleMultiplier: number | null
+  cycleLabel: string | null
   amount: number
 }
 
@@ -60,6 +68,7 @@ type VariableChargeConfig = {
 }
 
 const roundVariableChargeMoney = (value: number) => Math.round(value * 100) / 100
+const roundAreaRateChargeAmount = (value: number) => Math.ceil(value)
 
 const normalizeOptionalText = (value: string | null | undefined) => {
   const normalized = value?.trim()
@@ -107,8 +116,11 @@ const buildVariableChargeConfig = (body: VariableChargesInput): VariableChargeCo
 
 const normalizeVariableChargeEntry = (
   entry: VariableChargesInput['entries'][number],
+  config: VariableChargeConfig,
   chargeName: string,
 ): NormalizedVariableChargeEntry => {
+  const areaSqFt = normalizeOptionalNumber(entry.areaSqFt)
+  const ratePerSqFt = normalizeOptionalNumber(entry.ratePerSqFt)
   const openingReading = normalizeOptionalNumber(entry.openingReading)
   const closingReading = normalizeOptionalNumber(entry.closingReading)
 
@@ -128,12 +140,18 @@ const normalizeVariableChargeEntry = (
     ? roundVariableChargeMoney(closingReading - openingReading)
     : normalizeOptionalNumber(entry.consumedUnits)
   const ratePerUnit = normalizeOptionalNumber(entry.ratePerUnit)
-  const computedAmount = consumedUnits != null && ratePerUnit != null
-    ? consumedUnits * ratePerUnit
-    : normalizeOptionalNumber(entry.amount) ?? 0
+  const cycleMultiplier = normalizeOptionalNumber(entry.cycleMultiplier)
+  const computedAmount =
+    config.chargeType === 'CAM' && areaSqFt != null && areaSqFt > 0 && ratePerSqFt != null
+      ? roundAreaRateChargeAmount(areaSqFt * ratePerSqFt * Math.max(1, cycleMultiplier ?? 1))
+      : consumedUnits != null && ratePerUnit != null
+        ? consumedUnits * ratePerUnit
+        : normalizeOptionalNumber(entry.amount) ?? 0
 
   return {
     flatId: entry.flatId,
+    areaSqFt,
+    ratePerSqFt,
     meterNo: normalizeOptionalText(entry.meterNo),
     openingReading,
     closingReading,
@@ -142,6 +160,8 @@ const normalizeVariableChargeEntry = (
     connectionLoad: normalizeOptionalText(entry.connectionLoad),
     previousOutstanding: roundVariableChargeMoney(Number(entry.previousOutstanding ?? 0)),
     interestAmount: roundVariableChargeMoney(Number(entry.interestAmount ?? 0)),
+    cycleMultiplier,
+    cycleLabel: normalizeOptionalText(entry.cycleLabel),
     amount: roundVariableChargeMoney(Math.max(0, computedAmount)),
   }
 }
@@ -150,11 +170,12 @@ const buildVariableChargeBreakdown = (
   entry: NormalizedVariableChargeEntry,
   config: VariableChargeConfig,
 ): ChargeBreakdownItem[] => {
+  const isAreaRateCam = config.chargeType === 'CAM' && entry.ratePerSqFt != null
   const item: ChargeBreakdownItem = {
     label: config.chargeLabel,
     amount: entry.amount,
     chargeType: config.chargeType,
-    calculationMethod: 'FIXED',
+    calculationMethod: isAreaRateCam ? 'AREA_RATE' : 'FIXED',
     source: config.source,
     meterNo: entry.meterNo,
     openingReading: entry.openingReading,
@@ -171,6 +192,21 @@ const buildVariableChargeBreakdown = (
     interestAmount: entry.interestAmount,
   }
 
+  if (isAreaRateCam && entry.ratePerSqFt != null) {
+    item.ratePerSqFt = entry.ratePerSqFt
+    if (entry.areaSqFt != null) {
+      item.areaSqFt = entry.areaSqFt
+    }
+    item.tariffRateLabel = `Rs.${entry.ratePerSqFt}/sq ft/month`
+  }
+
+  if (entry.cycleMultiplier != null) {
+    item.cycleMultiplier = entry.cycleMultiplier
+    item.cycleLabel =
+      entry.cycleLabel ??
+      `${entry.cycleMultiplier} ${entry.cycleMultiplier === 1 ? 'month' : 'months'}`
+  }
+
   if (config.electricityType) {
     item.electricityType = config.electricityType
   }
@@ -180,6 +216,8 @@ const buildVariableChargeBreakdown = (
 
 const hasVariableChargeData = (entry: NormalizedVariableChargeEntry) =>
   entry.amount > 0 ||
+  entry.areaSqFt != null ||
+  entry.ratePerSqFt != null ||
   entry.meterNo != null ||
   entry.openingReading != null ||
   entry.closingReading != null ||
@@ -238,7 +276,7 @@ export default defineEventHandler(async (event) => {
 
     const chargeConfig = buildVariableChargeConfig(body)
     const normalizedEntries = body.entries.map((entry) =>
-      normalizeVariableChargeEntry(entry, body.chargeName),
+      normalizeVariableChargeEntry(entry, chargeConfig, body.chargeName),
     )
     const flatIds = normalizedEntries.map((entry) => entry.flatId)
     const validFlats = flatIds.length
@@ -295,6 +333,14 @@ export default defineEventHandler(async (event) => {
     const insertPayload = persistedEntries.map((entry) => ({
       flat_id: entry.flatId,
       amount: entry.amount,
+      calculation_method:
+        chargeConfig.chargeType === 'CAM' && entry.ratePerSqFt != null
+          ? 'AREA_RATE'
+          : 'FIXED',
+      rate_per_sq_ft:
+        chargeConfig.chargeType === 'CAM' && entry.ratePerSqFt != null
+          ? entry.ratePerSqFt
+          : null,
       charge_breakdown: buildVariableChargeBreakdown(entry, chargeConfig),
     }))
 
@@ -309,6 +355,7 @@ export default defineEventHandler(async (event) => {
             charge_name,
             amount,
             calculation_method,
+            rate_per_sq_ft,
             charge_breakdown,
             is_active
           )
@@ -319,12 +366,15 @@ export default defineEventHandler(async (event) => {
             payload.flat_id,
             $3,
             payload.amount,
-            'FIXED',
+            payload.calculation_method::maintenance_charge_calculation_method,
+            payload.rate_per_sq_ft,
             payload.charge_breakdown,
             true
           from jsonb_to_recordset($4::jsonb) as payload(
             flat_id uuid,
             amount numeric,
+            calculation_method text,
+            rate_per_sq_ft numeric,
             charge_breakdown jsonb
           )
         `,

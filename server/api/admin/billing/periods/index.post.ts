@@ -30,35 +30,38 @@ export default defineEventHandler(async (event) => {
       })
     }
 
-    const overlap = await client.query<{ id: string; label: string }>(
+    const duplicate = await client.query<{ id: string; label: string }>(
       `
         select id, label
         from billing_periods
         where society_id = $1
-          and daterange(start_date, end_date, '[]') && daterange($2::date, $3::date, '[]')
+          and charge_type = $2
+          and start_date = $3
+          and end_date = $4
         limit 1
       `,
-      [authMe.user.societyId, body.startDate, body.endDate],
+      [authMe.user.societyId, body.chargeType, body.startDate, body.endDate],
     )
 
-    if (overlap.rows[0]) {
+    if (duplicate.rows[0]) {
       throw new AppError({
         code: 'VALIDATION_ERROR',
         statusCode: 400,
-        message: `The date range overlaps with existing period "${overlap.rows[0].label}".`,
+        message: `A ${body.chargeType} period already exists for this exact date range as "${duplicate.rows[0].label}".`,
       })
     }
 
     const result = await client.query<{ id: string }>(
       `
-        insert into billing_periods (society_id, label, frequency, start_date, end_date, due_date)
-        values ($1, $2, $3, $4, $5, $6)
+        insert into billing_periods (society_id, label, frequency, charge_type, start_date, end_date, due_date)
+        values ($1, $2, $3, $4, $5, $6, $7)
         returning id
       `,
       [
         authMe.user.societyId,
         body.label,
         body.frequency,
+        body.chargeType,
         body.startDate,
         body.endDate,
         body.dueDate,

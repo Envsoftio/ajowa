@@ -35,6 +35,7 @@ export default defineEventHandler(async (event) => {
       title: 'Maintenance bill generated',
       bodyPrefix: 'Your maintenance bill is ready for',
       channels,
+      recipientRelationshipTypes: ['OWNER'],
       triggeredByUserId: authMe.user.id,
     })
 
@@ -49,6 +50,7 @@ export default defineEventHandler(async (event) => {
         requestedDueCount: body.dueIds.length,
         eligibleDueCount: dueIds.length,
         channels,
+        recipientRelationshipTypes: ['OWNER'],
         eventCount: queued.eventCount,
         audienceCount: queued.audienceCount,
         jobCount: queued.jobCount,

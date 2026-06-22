@@ -25,7 +25,6 @@ const surfaceCards = [
       <div class="hero-actions">
         <Button label="Login" as="a" href="/login" />
         <Button label="Forgot Password" as="a" href="/forgot-password" severity="secondary" outlined />
-        <Button label="Read Setup Guide" as="a" href="/setup" severity="contrast" text />
       </div>
     </section>
 

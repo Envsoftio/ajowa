@@ -14,7 +14,9 @@ type FlatChargeRow = {
   flat_number: string
   block_name: string
   unit_type: string
+  area_sq_ft: string | null
   amount: string | null
+  rate_per_sq_ft: string | null
   charge_breakdown: unknown
 }
 
@@ -68,7 +70,9 @@ export default defineEventHandler(async (event) => {
         f.flat_number,
         b.name as block_name,
         f.unit_type,
+        f.area_sq_ft::text as area_sq_ft,
         mc.amount::text,
+        mc.rate_per_sq_ft::text,
         mc.charge_breakdown
       from flats f
       inner join blocks b on b.id = f.block_id
@@ -102,14 +106,18 @@ export default defineEventHandler(async (event) => {
         flatNumber: row.flat_number,
         blockName: row.block_name,
         unitType: row.unit_type,
+        areaSqFt: readNumber(metadata, 'areaSqFt') ?? (row.area_sq_ft == null ? null : Number(row.area_sq_ft)),
         meterNo: readString(metadata, 'meterNo'),
         openingReading: readNumber(metadata, 'openingReading'),
         closingReading: readNumber(metadata, 'closingReading'),
         consumedUnits: readNumber(metadata, 'consumedUnits'),
         ratePerUnit: readNumber(metadata, 'ratePerUnit'),
+        ratePerSqFt: readNumber(metadata, 'ratePerSqFt') ?? (row.rate_per_sq_ft == null ? null : Number(row.rate_per_sq_ft)),
         connectionLoad: readString(metadata, 'connectionLoad'),
         previousOutstanding: readNumber(metadata, 'previousOutstanding'),
         interestAmount: readNumber(metadata, 'interestAmount'),
+        cycleMultiplier: readNumber(metadata, 'cycleMultiplier'),
+        cycleLabel: readString(metadata, 'cycleLabel'),
         amount: row.amount == null ? readNumber(metadata, 'amount') : Number(row.amount),
       }
     }),

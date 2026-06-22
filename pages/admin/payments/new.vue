@@ -1,5 +1,11 @@
 <script setup lang="ts">
-import type { BankAccount, FlatSummary, MaintenanceDue, ResidentSummary } from '~/types/domain'
+import type {
+  BankAccount,
+  FlatDetail,
+  FlatResidentRelationship,
+  FlatSummary,
+  MaintenanceDue,
+} from '~/types/domain'
 
 definePageMeta({
   layout: 'admin',
@@ -53,7 +59,7 @@ type DuplicateResponse = {
   }
 }
 type FlatsResponse = { ok: true; data: Paginated<FlatSummary> }
-type ResidentsResponse = { ok: true; data: Paginated<ResidentSummary> }
+type FlatDetailResponse = { ok: true; data: FlatDetail }
 type DuesResponse = { ok: true; data: Paginated<MaintenanceDue> }
 type BankAccountsResponse = { ok: true; data: { items: BankAccount[] } }
 type LocalPaymentProof = {
@@ -64,6 +70,7 @@ type LocalPaymentProof = {
 }
 
 const api = useApi()
+const route = useRoute()
 const toast = useToast()
 
 const todayDate = () => {
@@ -74,15 +81,29 @@ const todayDate = () => {
 
 const formatContact = (value: string | null | undefined) => value || 'No contact'
 
+const getQueryText = (value: unknown) => {
+  if (Array.isArray(value)) return typeof value[0] === 'string' ? value[0] : ''
+  return typeof value === 'string' ? value : ''
+}
+
+const getQueryAmount = (value: unknown) => {
+  const amount = Number(getQueryText(value))
+  return Number.isFinite(amount) && amount > 0 ? String(amount) : ''
+}
+
+const initialFlatId = getQueryText(route.query.flatId)
+const initialDueId = getQueryText(route.query.dueId)
+const initialBillingPeriodId = getQueryText(route.query.billingPeriodId)
+
 const form = reactive({
-  flatId: '',
+  flatId: initialFlatId,
   payerUserId: '',
-  amount: '',
+  amount: getQueryAmount(route.query.amount),
   paymentDate: todayDate(),
   mode: 'UPI',
   transferKind: '',
-  allocationMode: 'OLDEST_UNPAID_FIRST',
-  selectedDueIds: [] as string[],
+  allocationMode: initialDueId || initialBillingPeriodId ? 'SELECTED_PERIODS' : 'OLDEST_UNPAID_FIRST',
+  selectedDueIds: initialDueId ? [initialDueId] : [] as string[],
   tenureMonths: '3',
   utrReference: '',
   bankReference: '',
@@ -142,10 +163,16 @@ const { data: flatsData } = await useAsyncData('manual-payment-flats', () =>
     query: { page: 1, pageSize: 2000, sortBy: 'flatNumber', sortDirection: 'asc', isActive: 'true' },
   }),
 )
-const { data: residentsData } = await useAsyncData('manual-payment-residents', () =>
-  api<ResidentsResponse>('/api/admin/residents', {
-    query: { page: 1, pageSize: 2000, sortBy: 'fullName', sortDirection: 'asc', isActive: 'true' },
-  }),
+const {
+  data: selectedFlatDetailData,
+  pending: payerPending,
+} = await useAsyncData(
+  'manual-payment-selected-flat',
+  () =>
+    form.flatId
+      ? api<FlatDetailResponse>(`/api/admin/flats/${form.flatId}`)
+      : Promise.resolve(null),
+  { watch: [() => form.flatId] },
 )
 const { data: bankAccountsData } = await useAsyncData('manual-payment-bank-accounts', () =>
   api<BankAccountsResponse>('/api/admin/finance/bank-accounts', { query: { isActive: 'true' } }),
@@ -179,15 +206,42 @@ const flatOptions = computed(() =>
   })),
 )
 
-const residentOptions = computed(() =>
-  [
-    { label: 'Use billing contact', value: '' },
-    ...(residentsData.value?.data.items ?? []).map((resident) => ({
-      label: `${resident.fullName} · ${formatContact(resident.mobileNumber)}`,
-      value: resident.id,
-    })),
-  ],
+const payerRelationships = computed(() =>
+  (selectedFlatDetailData.value?.data.relationships ?? []).filter(
+    (relationship) => relationship.isActive,
+  ),
 )
+
+const getPayerOptionTag = (relationship: FlatResidentRelationship) => {
+  if (relationship.isBillingContact) return 'Billing contact'
+  if (relationship.isPrimaryContact) return 'Primary contact'
+  return relationship.relationshipType
+}
+
+const residentOptions = computed(() =>
+  payerRelationships.value.map((relationship) => ({
+    label: [
+      relationship.residentName,
+      getPayerOptionTag(relationship),
+      formatContact(relationship.residentMobileNumber ?? relationship.residentEmail),
+    ].filter(Boolean).join(' · '),
+    value: relationship.userId,
+  })),
+)
+
+const defaultPayerUserId = computed(
+  () =>
+    payerRelationships.value.find((relationship) => relationship.isBillingContact)?.userId ??
+    payerRelationships.value.find((relationship) => relationship.isPrimaryContact)?.userId ??
+    payerRelationships.value[0]?.userId ??
+    '',
+)
+
+const payerPlaceholder = computed(() => {
+  if (!form.flatId) return 'Select flat first'
+  if (payerPending.value) return 'Loading payer'
+  return residentOptions.value.length > 0 ? 'Select payer' : 'No active payer found'
+})
 
 const accountOptions = computed(() =>
   (bankAccountsData.value?.data.items ?? []).map((account) => ({
@@ -203,6 +257,28 @@ const dueOptions = computed(() =>
     value: due.id,
   })),
 )
+
+const routeDuePrefillApplied = ref(false)
+
+const applyRouteDuePrefill = () => {
+  if (routeDuePrefillApplied.value) return
+  if (!form.flatId || (!initialDueId && !initialBillingPeriodId)) return
+
+  const matchingDue = openDues.value.find((due) =>
+    initialDueId
+      ? due.id === initialDueId
+      : due.billingPeriodId === initialBillingPeriodId,
+  )
+
+  if (!matchingDue) return
+
+  form.allocationMode = 'SELECTED_PERIODS'
+  form.selectedDueIds = [matchingDue.id]
+  if (!form.amount) {
+    form.amount = String(matchingDue.balanceAmount)
+  }
+  routeDuePrefillApplied.value = true
+}
 
 const selectedFlat = computed(() => flatOptions.value.find((flat) => flat.value === form.flatId)?.label ?? '-')
 const amountNumber = computed(() => Number(form.amount || 0))
@@ -229,10 +305,31 @@ watch(
   },
 )
 
+watch(openDues, applyRouteDuePrefill, { immediate: true })
+
+watch(
+  () => [form.flatId, defaultPayerUserId.value, residentOptions.value.map((option) => option.value).join(',')],
+  () => {
+    if (!form.flatId) {
+      form.payerUserId = ''
+      return
+    }
+
+    const selectedPayerStillValid = residentOptions.value.some(
+      (option) => option.value === form.payerUserId,
+    )
+    if (selectedPayerStillValid) return
+
+    form.payerUserId = defaultPayerUserId.value
+  },
+  { immediate: true },
+)
+
 watch(
   () => form.flatId,
   () => {
     form.selectedDueIds = []
+    form.payerUserId = ''
     preview.value = null
   },
 )
@@ -452,7 +549,16 @@ const resetForm = () => {
             </label>
             <label>
               <span class="field-label">Payer</span>
-              <Select v-model="form.payerUserId" :options="residentOptions" option-label="label" option-value="value" filter placeholder="Billing contact" />
+              <Select
+                v-model="form.payerUserId"
+                :options="residentOptions"
+                option-label="label"
+                option-value="value"
+                filter
+                :loading="payerPending"
+                :disabled="!form.flatId || payerPending || residentOptions.length === 0"
+                :placeholder="payerPlaceholder"
+              />
             </label>
             <label>
               <span class="field-label">Amount</span>

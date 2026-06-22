@@ -7,15 +7,17 @@ definePageMeta({
 </script>
 
 <template>
-  <BillingCycleChargeEntry
+  <CycleChargeEntry
     mode="DG"
     title="DG Set charges"
     eyebrow="DG Set billing"
-    description="Select a bill cycle, enter opening and closing DG readings per flat, apply the unit rate, and save before final bill generation."
+    description="Create a monthly DG Set period here, enter opening and closing readings per flat, then generate DG Set bills."
     charge-name="DG Set"
     charge-label="Power Back Up Charges"
     charge-type="DG_SET"
+    period-charge-type="DG_SET"
     source="MONTHLY_DG_METER_CHARGE"
+    default-period-frequency="MONTHLY"
     electricity-type="POWER BACK UP"
     :default-rate-per-unit="29"
     default-connection-load="4 KW (5KVA)"

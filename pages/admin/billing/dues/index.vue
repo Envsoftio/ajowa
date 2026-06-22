@@ -18,10 +18,15 @@ type DueResponse = {
   }
 }
 type PeriodResponse = { ok: true; data: { items: BillingPeriod[] } }
-type BillChannel = 'EMAIL' | 'WHATSAPP'
+type BillChannel = 'PUSH' | 'EMAIL' | 'WHATSAPP' | 'IN_APP'
+type NotificationQueueResponse = {
+  ok: true
+  data: { eligible: number; jobCount: number }
+}
 
 const api = useApi()
 const toast = useToast()
+const notificationBatchSize = 500
 
 const formatMoney = (value: number) =>
   new Intl.NumberFormat('en-IN', {
@@ -49,19 +54,21 @@ const query = reactive({
   sortDirection: 'asc',
 })
 
+const buildDueQuery = (overrides: Partial<typeof query> = {}) => ({
+  page: overrides.page ?? query.page,
+  pageSize: overrides.pageSize ?? query.pageSize,
+  search: query.search || undefined,
+  billingPeriodId: query.billingPeriodId || undefined,
+  status: query.status || undefined,
+  balance: query.balance || undefined,
+  overdue: query.overdue || undefined,
+  sortBy: query.sortBy,
+  sortDirection: query.sortDirection,
+})
+
 const loadDues = () =>
   api<DueResponse>('/api/admin/billing/dues', {
-    query: {
-      page: query.page,
-      pageSize: query.pageSize,
-      search: query.search || undefined,
-      billingPeriodId: query.billingPeriodId || undefined,
-      status: query.status || undefined,
-      balance: query.balance || undefined,
-      overdue: query.overdue || undefined,
-      sortBy: query.sortBy,
-      sortDirection: query.sortDirection,
-    },
+    query: buildDueQuery(),
   })
 
 const { data, pending, refresh } = await useAsyncData(
@@ -113,6 +120,19 @@ const overdueOptions = [
 const isReminderEligible = (due: MaintenanceDue) =>
   due.balanceAmount > 0 && !['PAID', 'WAIVED', 'CANCELLED'].includes(due.status)
 
+const canRecordPayment = (due: MaintenanceDue) =>
+  due.balanceAmount > 0 && !['PAID', 'WAIVED', 'CANCELLED'].includes(due.status)
+
+const getRecordPaymentRoute = (due: MaintenanceDue) => ({
+  path: '/admin/payments/new',
+  query: {
+    flatId: due.flatId,
+    dueId: due.id,
+    billingPeriodId: due.billingPeriodId,
+    amount: String(due.balanceAmount),
+  },
+})
+
 const summary = computed(() => {
   const rows = dues.value
   const totalDue = rows.reduce((sum, row) => sum + row.totalAmount, 0)
@@ -131,9 +151,9 @@ const summary = computed(() => {
 })
 
 const selectedReminderCount = computed(
-  () => selectedDues.value.filter(isReminderEligible).length,
+  () => notificationSelectedDues.value.filter(isReminderEligible).length,
 )
-const selectedBillCount = computed(() => selectedDues.value.length)
+const selectedBillCount = computed(() => notificationSelectedDues.value.length)
 
 const hasActiveFilters = computed(
   () =>
@@ -167,6 +187,8 @@ const paymentProgress = (due: MaintenanceDue) =>
 const selectedDue = ref<MaintenanceDue | null>(null)
 const breakdownVisible = ref(false)
 const selectedDues = ref<MaintenanceDue[]>([])
+const bulkSelectedDues = ref<MaintenanceDue[]>([])
+const loadingBulkSelection = ref(false)
 const waiverDialogVisible = ref(false)
 const waiverTarget = ref<MaintenanceDue | null>(null)
 const waiverReason = ref('')
@@ -178,10 +200,91 @@ const billChannels = ref<BillChannel[]>(['EMAIL', 'WHATSAPP'])
 const sendingBills = ref(false)
 const confirmAction = useAppConfirm()
 
+const hasBulkSelection = computed(() => bulkSelectedDues.value.length > 0)
+const notificationSelectedDues = computed(() =>
+  hasBulkSelection.value ? bulkSelectedDues.value : selectedDues.value,
+)
+const selectedReminderDues = computed(() =>
+  notificationSelectedDues.value.filter(isReminderEligible),
+)
+const notificationSelectionText = computed(() => {
+  if (hasBulkSelection.value) {
+    return `${bulkSelectedDues.value.length} matching due${bulkSelectedDues.value.length === 1 ? '' : 's'} selected across every page.`
+  }
+
+  if (selectedDues.value.length > 0) {
+    return `${selectedDues.value.length} due${selectedDues.value.length === 1 ? '' : 's'} selected on this page.`
+  }
+
+  return 'Select dues on this page, or select every due matching the current filters.'
+})
+
 const billChannelOptions = [
   { label: 'Email', value: 'EMAIL' },
   { label: 'WhatsApp', value: 'WHATSAPP' },
+  { label: 'Push', value: 'PUSH' },
+  { label: 'In-app', value: 'IN_APP' },
 ]
+
+const chunkDueIds = (dueIds: string[]) => {
+  const chunks: string[][] = []
+
+  for (let index = 0; index < dueIds.length; index += notificationBatchSize) {
+    chunks.push(dueIds.slice(index, index + notificationBatchSize))
+  }
+
+  return chunks
+}
+
+const sumNotificationResponses = (responses: NotificationQueueResponse['data'][]) =>
+  responses.reduce(
+    (total, item) => ({
+      eligible: total.eligible + item.eligible,
+      jobCount: total.jobCount + item.jobCount,
+    }),
+    { eligible: 0, jobCount: 0 },
+  )
+
+const fetchAllMatchingDues = async () => {
+  const pageSize = 2000
+  const firstPage = await api<DueResponse>('/api/admin/billing/dues', {
+    query: buildDueQuery({ page: 1, pageSize }),
+  })
+  const items = [...firstPage.data.items]
+  const pageCount = Math.ceil(firstPage.data.total / pageSize)
+
+  for (let page = 2; page <= pageCount; page += 1) {
+    const response = await api<DueResponse>('/api/admin/billing/dues', {
+      query: buildDueQuery({ page, pageSize }),
+    })
+    items.push(...response.data.items)
+  }
+
+  return items
+}
+
+const selectAllMatchingDues = async () => {
+  if (totalRecords.value === 0) return
+
+  loadingBulkSelection.value = true
+
+  try {
+    bulkSelectedDues.value = await fetchAllMatchingDues()
+    toast.add({
+      severity: 'success',
+      summary: 'All matching dues selected',
+      detail: `${bulkSelectedDues.value.length} due${bulkSelectedDues.value.length === 1 ? '' : 's'} selected across all pages.`,
+      life: 8000,
+    })
+  } finally {
+    loadingBulkSelection.value = false
+  }
+}
+
+const clearNotificationSelection = () => {
+  selectedDues.value = []
+  bulkSelectedDues.value = []
+}
 
 const openBreakdown = (due: MaintenanceDue) => {
   selectedDue.value = due
@@ -222,9 +325,14 @@ const submitWaiver = async () => {
 
 const sendReminders = async (dueIds: string[]) => {
   if (dueIds.length === 0) return
+  const bulkReminderIds = new Set(selectedReminderDues.value.map((due) => due.id))
+  const isBulkReminderSend =
+    hasBulkSelection.value &&
+    dueIds.length === bulkReminderIds.size &&
+    dueIds.every((dueId) => bulkReminderIds.has(dueId))
   const confirmed = await confirmAction({
     header: 'Send payment reminders?',
-    message: `Queue reminders for ${dueIds.length} due${dueIds.length === 1 ? '' : 's'}?`,
+    message: `Queue reminders for ${dueIds.length} due${dueIds.length === 1 ? '' : 's'}${isBulkReminderSend ? ' across all matching pages' : ''}?`,
     icon: 'pi pi-send',
     acceptLabel: 'Send reminders',
     acceptSeverity: 'warn',
@@ -237,17 +345,21 @@ const sendReminders = async (dueIds: string[]) => {
   sendingReminder.value = true
 
   try {
-    const response = await api<{
-      ok: true
-      data: { eligible: number; jobCount: number }
-    }>('/api/admin/billing/dues/reminders', {
-      method: 'POST',
-      body: { dueIds },
-    })
+    const responses: NotificationQueueResponse['data'][] = []
+
+    for (const batchDueIds of chunkDueIds(dueIds)) {
+      const response = await api<NotificationQueueResponse>('/api/admin/billing/dues/reminders', {
+        method: 'POST',
+        body: { dueIds: batchDueIds },
+      })
+      responses.push(response.data)
+    }
+
+    const queued = sumNotificationResponses(responses)
     toast.add({
       severity: 'success',
       summary: 'Reminders queued',
-      detail: `${response.data.eligible} dues matched and ${response.data.jobCount} delivery jobs were queued.`,
+      detail: `${queued.eligible} dues matched and ${queued.jobCount} delivery jobs were queued.`,
       life: 10000,
     })
   } finally {
@@ -257,7 +369,7 @@ const sendReminders = async (dueIds: string[]) => {
 
 const sendSelectedReminders = () =>
   sendReminders(
-    selectedDues.value.filter(isReminderEligible).map((due) => due.id),
+    selectedReminderDues.value.map((due) => due.id),
   )
 
 const openBillSend = (targets: MaintenanceDue[]) => {
@@ -283,20 +395,24 @@ const sendBills = async () => {
   sendingBills.value = true
 
   try {
-    const response = await api<{
-      ok: true
-      data: { eligible: number; jobCount: number }
-    }>('/api/admin/billing/dues/send-bills', {
-      method: 'POST',
-      body: {
-        dueIds,
-        channels: billChannels.value,
-      },
-    })
+    const responses: NotificationQueueResponse['data'][] = []
+
+    for (const batchDueIds of chunkDueIds(dueIds)) {
+      const response = await api<NotificationQueueResponse>('/api/admin/billing/dues/send-bills', {
+        method: 'POST',
+        body: {
+          dueIds: batchDueIds,
+          channels: billChannels.value,
+        },
+      })
+      responses.push(response.data)
+    }
+
+    const queued = sumNotificationResponses(responses)
     toast.add({
       severity: 'success',
       summary: 'Bills queued',
-      detail: `${response.data.eligible} bills matched and ${response.data.jobCount} delivery jobs were queued.`,
+      detail: `${queued.eligible} bills matched and ${queued.jobCount} delivery jobs were queued.`,
       life: 10000,
     })
     billSendDialogVisible.value = false
@@ -313,6 +429,19 @@ const resetFilters = () => {
   query.balance = ''
   query.overdue = ''
 }
+
+watch(
+  () => [
+    query.search,
+    query.billingPeriodId,
+    query.status,
+    query.balance,
+    query.overdue,
+  ].join('|'),
+  () => {
+    clearNotificationSelection()
+  },
+)
 </script>
 
 <template>
@@ -363,7 +492,7 @@ const resetFilters = () => {
             outlined
             :loading="sendingBills"
             :disabled="selectedBillCount === 0"
-            @click="openBillSend(selectedDues)"
+            @click="openBillSend(notificationSelectedDues)"
           />
           <Button
             :label="
@@ -402,6 +531,28 @@ const resetFilters = () => {
           <p v-else>
             No outstanding balance is visible with the current filters.
           </p>
+          <div class="billing-selection-actions">
+            <p>{{ notificationSelectionText }}</p>
+            <div class="admin-inline-actions">
+              <Button
+                label="Select all matching"
+                icon="pi pi-check-square"
+                severity="secondary"
+                outlined
+                :loading="loadingBulkSelection"
+                :disabled="totalRecords === 0 || loadingBulkSelection"
+                @click="selectAllMatchingDues"
+              />
+              <Button
+                label="Clear selection"
+                icon="pi pi-times"
+                severity="secondary"
+                outlined
+                :disabled="selectedBillCount === 0 && !hasBulkSelection"
+                @click="clearNotificationSelection"
+              />
+            </div>
+          </div>
         </div>
         <dl>
           <div>
@@ -410,7 +561,7 @@ const resetFilters = () => {
           </div>
           <div>
             <dt>Selected</dt>
-            <dd>{{ selectedDues.length }}</dd>
+            <dd>{{ selectedBillCount }}</dd>
           </div>
           <div>
             <dt>Can remind</dt>
@@ -564,9 +715,20 @@ const resetFilters = () => {
             <AppStatusBadge :status="row.status" />
           </template>
         </Column>
-        <Column header="Actions" style="width: 210px">
+        <Column header="Actions" style="width: 250px">
           <template #body="{ data: row }">
             <div class="admin-inline-actions">
+              <Button
+                as="router-link"
+                :to="getRecordPaymentRoute(row)"
+                icon="pi pi-credit-card"
+                severity="secondary"
+                text
+                rounded
+                aria-label="Record payment"
+                title="Record payment"
+                :disabled="!canRecordPayment(row)"
+              />
               <Button
                 as="a"
                 :href="`/api/admin/billing/dues/${row.id}/bill`"
@@ -656,6 +818,16 @@ const resetFilters = () => {
             </strong>
           </div>
           <div class="admin-inline-actions">
+            <Button
+              as="router-link"
+              :to="getRecordPaymentRoute(due)"
+              label="Record"
+              icon="pi pi-credit-card"
+              size="small"
+              severity="secondary"
+              outlined
+              :disabled="!canRecordPayment(due)"
+            />
             <Button
               as="a"
               :href="`/api/admin/billing/dues/${due.id}/bill`"
@@ -748,14 +920,14 @@ const resetFilters = () => {
           <div>
             <p class="eyebrow">Bill delivery</p>
             <h2>{{ billSendSummary }}</h2>
-            <p>Email delivery includes the PDF bill attachment.</p>
+            <p>Email delivery includes the PDF bill attachment. Bills are sent to owner contacts.</p>
           </div>
         </div>
         <label>
           <span class="field-label">
             Channels
             <AppHelpIcon
-              text="Choose Email, WhatsApp, or both for the billing contacts linked to each flat."
+              text="Choose delivery channels for owner contacts linked to each selected flat."
             />
           </span>
           <MultiSelect

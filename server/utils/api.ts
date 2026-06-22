@@ -66,14 +66,32 @@ export const validateInput = <S extends ZodType>(schema: S, input: unknown): z.o
 type BodyChunk = ArrayBuffer | Buffer | Uint8Array | string
 type BodyStreamSource = {
   on?: (event: string, listener: (...args: unknown[]) => void) => BodyStreamSource
+  pipe?: unknown
   setEncoding?: (encoding: BufferEncoding) => void
+}
+type WebBodyStreamSource = {
+  getReader?: () => {
+    read: () => Promise<{ done: boolean; value?: BodyChunk }>
+    releaseLock?: () => void
+  }
+  pipeTo?: (destination: WritableStream<BodyChunk>) => Promise<void>
 }
 type NodeRequestWithBody = BodyStreamSource & {
   body?: unknown
+  rawBody?: unknown
 }
 type WebRequestWithBody = {
+  body?: unknown
+  clone?: () => WebRequestWithBody
   text?: () => Promise<string>
   arrayBuffer?: () => Promise<ArrayBuffer>
+}
+type EventWithRawBody = H3Event & {
+  _requestBody?: unknown
+  web?: {
+    request?: WebRequestWithBody
+  }
+  req?: WebRequestWithBody
 }
 
 const bodyChunkToString = (chunk: BodyChunk) => {
@@ -88,6 +106,14 @@ const bodyChunkToString = (chunk: BodyChunk) => {
   return Buffer.from(chunk).toString('utf8')
 }
 
+const isReadableBody = (value: unknown): value is BodyStreamSource | WebBodyStreamSource =>
+  Boolean(value) &&
+  typeof value === 'object' &&
+  (typeof (value as WebBodyStreamSource).getReader === 'function' ||
+    typeof (value as WebBodyStreamSource).pipeTo === 'function' ||
+    typeof (value as BodyStreamSource).on === 'function' ||
+    typeof (value as BodyStreamSource).pipe === 'function')
+
 const readNodeBody = (request: BodyStreamSource) =>
   new Promise<string>((resolve, reject) => {
     let body = ''
@@ -99,6 +125,55 @@ const readNodeBody = (request: BodyStreamSource) =>
     request.on?.('end', () => resolve(body))
     request.on?.('error', reject)
   })
+
+const readWebBody = async (stream: WebBodyStreamSource) => {
+  const chunks: BodyChunk[] = []
+
+  if (typeof stream.getReader === 'function') {
+    const reader = stream.getReader()
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read()
+
+        if (done) {
+          break
+        }
+
+        if (value != null) {
+          chunks.push(value)
+        }
+      }
+    } finally {
+      reader.releaseLock?.()
+    }
+  } else {
+    await stream.pipeTo?.(
+      new WritableStream({
+        write(chunk) {
+          chunks.push(chunk)
+        },
+      }),
+    )
+  }
+
+  return chunks.map(bodyChunkToString).join('')
+}
+
+const readBodyValue = async (body: unknown) => {
+  if (!isReadableBody(body)) {
+    return body
+  }
+
+  if (
+    typeof (body as WebBodyStreamSource).getReader === 'function' ||
+    typeof (body as WebBodyStreamSource).pipeTo === 'function'
+  ) {
+    return readWebBody(body as WebBodyStreamSource)
+  }
+
+  return readNodeBody(body as BodyStreamSource)
+}
 
 const parseJsonBody = <T>(body: unknown): T => {
   if (body == null || body === '') {
@@ -126,20 +201,32 @@ const parseJsonBody = <T>(body: unknown): T => {
 }
 
 export const readJsonBody = async <T = unknown>(event: H3Event): Promise<T> => {
+  const rawEvent = event as EventWithRawBody
   const nodeRequest = event.node?.req as NodeRequestWithBody | undefined
+  const bodyCandidates = [
+    rawEvent._requestBody,
+    nodeRequest?.rawBody,
+    nodeRequest?.body,
+    rawEvent.web?.request?.body,
+    rawEvent.req?.body,
+  ]
 
-  if (nodeRequest?.body != null) {
-    return parseJsonBody<T>(nodeRequest.body)
+  for (const candidate of bodyCandidates) {
+    if (candidate != null) {
+      return parseJsonBody<T>(await readBodyValue(candidate))
+    }
   }
 
-  const webRequest = event.req as WebRequestWithBody | undefined
+  if (nodeRequest && typeof nodeRequest.on === 'function') {
+    return parseJsonBody<T>(await readNodeBody(nodeRequest))
+  }
+
+  const webRequest = rawEvent.req?.clone?.() ?? rawEvent.req
   const body =
     typeof webRequest?.text === 'function'
       ? await webRequest.text()
       : typeof webRequest?.arrayBuffer === 'function'
         ? await webRequest.arrayBuffer()
-      : nodeRequest && typeof nodeRequest.on === 'function'
-        ? await readNodeBody(nodeRequest)
         : undefined
 
   return parseJsonBody<T>(body)

@@ -21,9 +21,12 @@ type FlatRow = {
   tenant_count: string
 }
 
+const flatNumberSortExpression =
+  "coalesce(nullif(regexp_replace(f.flat_number, '\\D', '', 'g'), '')::integer, 2147483647)"
+
 const sortColumns: Record<string, string> = {
-  flatNumber: 'f.flat_number',
-  blockName: 'b.name',
+  flatNumber: flatNumberSortExpression,
+  blockName: 'b.sort_order',
   unitType: 'f.unit_type',
   occupancyStatus: 'f.occupancy_status',
   areaSqFt: 'f.area_sq_ft',
@@ -68,8 +71,12 @@ export default defineEventHandler(async (event) => {
   }
 
   const whereSql = where.join(' and ')
-  const orderBy = sortColumns[query.sortBy ?? 'flatNumber'] ?? 'f.flat_number'
+  const sortBy = query.sortBy ?? 'flatNumber'
+  const orderBy = sortColumns[sortBy] ?? flatNumberSortExpression
   const direction = query.sortDirection === 'desc' ? 'desc' : 'asc'
+  const orderSql = sortBy === 'flatNumber'
+    ? `b.sort_order ${direction}, ${flatNumberSortExpression} ${direction}, f.flat_number ${direction}`
+    : `${orderBy} ${direction}, b.sort_order asc, ${flatNumberSortExpression} asc, f.flat_number asc`
   values.push(query.pageSize, (query.page - 1) * query.pageSize)
 
   const [dataResult, countResult] = await Promise.all([
@@ -95,7 +102,7 @@ export default defineEventHandler(async (event) => {
         left join flat_residents fr on fr.flat_id = f.id
         where ${whereSql}
         group by f.id, b.id
-        order by ${orderBy} ${direction}, b.name asc, f.flat_number asc
+        order by ${orderSql}
         limit $${values.length - 1}
         offset $${values.length}
       `,

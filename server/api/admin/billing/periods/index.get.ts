@@ -10,6 +10,7 @@ type BillingPeriodRow = {
   society_id: string
   label: string
   frequency: string
+  charge_type: string
   start_date: string
   end_date: string
   due_date: string
@@ -56,6 +57,12 @@ export default defineEventHandler(async (event) => {
     where.push(`bp.frequency = $${values.length}`)
   }
 
+  const chargeTypeFilter = query.filters.chargeType?.[0]
+  if (chargeTypeFilter && ['GENERAL', 'CAM', 'DG_SET'].includes(chargeTypeFilter)) {
+    values.push(chargeTypeFilter)
+    where.push(`bp.charge_type = $${values.length}`)
+  }
+
   const whereSql = where.join(' and ')
   const orderBy = sortColumns[query.sortBy ?? 'startDate'] ?? 'bp.start_date'
   const direction = query.sortDirection === 'asc' ? 'asc' : 'desc'
@@ -69,6 +76,7 @@ export default defineEventHandler(async (event) => {
           bp.society_id,
           bp.label,
           bp.frequency::text,
+          bp.charge_type::text,
           bp.start_date::text,
           bp.end_date::text,
           bp.due_date::text,

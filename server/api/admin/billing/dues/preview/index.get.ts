@@ -34,6 +34,9 @@ type ChargeConfig = {
   charge_breakdown: ChargeBreakdownItem[]
 }
 
+const flatNumberSortExpression =
+  "coalesce(nullif(regexp_replace(f.flat_number, '\\D', '', 'g'), '')::integer, 2147483647)"
+
 const previewQuerySchema = z.object({
   billingPeriodId: z.string().uuid(),
   flatIds: z.string().trim().optional(),
@@ -104,7 +107,7 @@ export default defineEventHandler(async (event) => {
         where f.society_id = $1
           and f.is_active = true
           ${flatIds?.length ? 'and f.id = any($2::uuid[])' : ''}
-        order by b.name, f.flat_number
+        order by b.sort_order asc, ${flatNumberSortExpression} asc, f.flat_number asc
       `,
       flatValues,
     ),

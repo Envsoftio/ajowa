@@ -1094,12 +1094,18 @@ export const enqueueDueBillingContactNotifications = async (
     title: string
     bodyPrefix: string
     channels?: NotificationChannel[]
+    recipientRelationshipTypes?: Array<'OWNER' | 'TENANT' | 'FAMILY_MEMBER'>
     triggeredByUserId?: string
   },
 ) => {
   if (input.dueIds.length === 0) {
     return { eventCount: 0, audienceCount: 0, jobCount: 0 }
   }
+
+  const params: unknown[] = [input.societyId, input.dueIds]
+  const relationshipFilter = input.recipientRelationshipTypes?.length
+    ? `and fr.relationship_type = any($${params.push(input.recipientRelationshipTypes)}::relationship_type[])`
+    : ''
 
   const result = await client.query<DueNotificationRow>(
     `
@@ -1129,10 +1135,11 @@ export const enqueueDueBillingContactNotifications = async (
       inner join users u on u.id = fr.user_id and u.is_active = true
       where md.society_id = $1
         and md.id = any($2::uuid[])
+        ${relationshipFilter}
         and (fr.is_billing_contact = true or fr.is_primary_contact = true)
       order by md.id, u.id, fr.is_billing_contact desc, fr.is_primary_contact desc
     `,
-    [input.societyId, input.dueIds],
+    params,
   )
 
   const rowsByDueId = new Map<string, DueNotificationRow[]>()

@@ -7,22 +7,26 @@ definePageMeta({
 </script>
 
 <template>
-  <BillingCycleChargeEntry
+  <CycleChargeEntry
     mode="CAM"
     title="CAM charges"
     eyebrow="CAM billing"
-    description="Select a monthly, quarterly, or custom bill cycle, then enter CAM readings or direct per-flat amounts before final bill generation."
+    description="Generate CAM invoices from a start month. Quarterly is applied by default, and monthly or yearly advance flats can be changed per row."
     charge-name="CAM Charges"
     charge-label="CAM Charges"
     charge-type="CAM"
+    period-charge-type="CAM"
     source="CYCLE_CAM_FLAT_CHARGE"
-    default-amount-label="Default CAM amount"
-    default-rate-label="Default CAM rate/unit"
-    meter-label="CAM ref."
+    default-period-frequency="QUARTERLY"
+    :default-cycle-months="3"
+    :default-rate-per-sq-ft="3.25"
+    default-rate-label="CAM rate/sq ft/month"
     save-button-label="Save CAM charges"
     saved-summary="CAM charges saved"
     amount-summary-label="CAM total"
-    units-summary-label="units"
-    allow-manual-amount
+    units-summary-label="sq ft"
+    show-area-rate
+    show-per-flat-cycle
+    cam-run-flow
   />
 </template>

@@ -37,7 +37,6 @@ export const shellNavigation: Record<AppShellType, AppNavGroup[]> = {
       items: [
         { label: 'Overview', to: '/', icon: 'pi pi-home' },
         { label: 'Login', to: '/login', icon: 'pi pi-sign-in' },
-        { label: 'Setup', to: '/setup', icon: 'pi pi-wrench' },
       ],
     },
   ],
@@ -116,7 +115,6 @@ export const shellNavigation: Record<AppShellType, AppNavGroup[]> = {
       label: 'Billing & Payments',
       icon: 'pi pi-wallet',
       items: [
-        { label: 'Billing Periods', to: '/admin/billing/periods', icon: 'pi pi-calendar' },
         { label: 'CAM Charges', to: '/admin/billing/cam', icon: 'pi pi-percentage' },
         { label: 'DG Set Charges', to: '/admin/billing/dg-set', icon: 'pi pi-bolt' },
         { label: 'Dues', to: '/admin/billing/dues', icon: 'pi pi-wallet' },
@@ -149,7 +147,6 @@ export const shellNavigation: Record<AppShellType, AppNavGroup[]> = {
       icon: 'pi pi-cog',
       items: [
         { label: 'Gate Log', to: '/admin/gate-log', icon: 'pi pi-qrcode' },
-        { label: 'Setup', to: '/setup', icon: 'pi pi-wrench' },
         { label: 'Password Change', to: '/change-password', icon: 'pi pi-key' },
       ],
     },

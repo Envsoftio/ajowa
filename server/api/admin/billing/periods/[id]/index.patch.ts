@@ -19,13 +19,14 @@ export default defineEventHandler(async (event) => {
       id: string
       label: string
       frequency: string
+      charge_type: string
       is_locked: boolean
       start_date: string
       end_date: string
       due_date: string
     }>(
       `
-        select id, label, frequency::text, is_locked, start_date::text, end_date::text, due_date::text
+        select id, label, frequency::text, charge_type::text, is_locked, start_date::text, end_date::text, due_date::text
         from billing_periods
         where id = $1 and society_id = $2
       `,
@@ -44,6 +45,7 @@ export default defineEventHandler(async (event) => {
     const hasMetadataChanges = [
       body.label,
       body.frequency,
+      body.chargeType,
       body.startDate,
       body.endDate,
       body.dueDate,
@@ -60,6 +62,7 @@ export default defineEventHandler(async (event) => {
     const nextStartDate = body.startDate ?? current.start_date
     const nextEndDate = body.endDate ?? current.end_date
     const nextDueDate = body.dueDate ?? current.due_date
+    const nextChargeType = body.chargeType ?? current.charge_type
 
     if (nextStartDate > nextEndDate) {
       throw new AppError({
@@ -78,23 +81,25 @@ export default defineEventHandler(async (event) => {
     }
 
     if (hasMetadataChanges) {
-      const overlap = await client.query<{ id: string; label: string }>(
+      const duplicate = await client.query<{ id: string; label: string }>(
         `
           select id, label
           from billing_periods
           where society_id = $1
             and id <> $2
-            and daterange(start_date, end_date, '[]') && daterange($3::date, $4::date, '[]')
+            and charge_type = $3
+            and start_date = $4
+            and end_date = $5
           limit 1
         `,
-        [authMe.user.societyId, periodId, nextStartDate, nextEndDate],
+        [authMe.user.societyId, periodId, nextChargeType, nextStartDate, nextEndDate],
       )
 
-      if (overlap.rows[0]) {
+      if (duplicate.rows[0]) {
         throw new AppError({
           code: 'VALIDATION_ERROR',
           statusCode: 400,
-          message: `The date range overlaps with existing period "${overlap.rows[0].label}".`,
+          message: `A ${nextChargeType} period already exists for this exact date range as "${duplicate.rows[0].label}".`,
         })
       }
     }
@@ -148,6 +153,10 @@ export default defineEventHandler(async (event) => {
       updates.push(`frequency = $${idx++}`)
       values.push(body.frequency)
     }
+    if (body.chargeType !== undefined) {
+      updates.push(`charge_type = $${idx++}`)
+      values.push(body.chargeType)
+    }
     if (body.startDate !== undefined) {
       updates.push(`start_date = $${idx++}`)
       values.push(body.startDate)
@@ -183,6 +192,7 @@ export default defineEventHandler(async (event) => {
         beforeState: {
           label: current.label,
           frequency: current.frequency,
+          chargeType: current.charge_type,
           startDate: current.start_date,
           endDate: current.end_date,
           dueDate: current.due_date,

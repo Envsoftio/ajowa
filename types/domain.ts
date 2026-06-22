@@ -408,6 +408,7 @@ export type ServiceRequestQueueSummary = {
 // --- Phase 6: Billing Types ---
 
 export type BillingFrequency = 'MONTHLY' | 'QUARTERLY' | 'HALF_YEARLY' | 'YEARLY' | 'CUSTOM'
+export type BillingPeriodChargeType = 'GENERAL' | 'CAM' | 'DG_SET'
 
 export type BillingPeriodStatus = 'OPEN' | 'LOCKED' | 'CLOSED'
 
@@ -416,6 +417,7 @@ export type BillingPeriod = AuditFields & {
   societyId: string
   label: string
   frequency: BillingFrequency
+  chargeType: BillingPeriodChargeType
   startDate: string
   endDate: string
   dueDate: string

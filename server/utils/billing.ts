@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import pdfMake from 'pdfmake/build/pdfmake.js'
 import pdfFonts from 'pdfmake/build/vfs_fonts.js'
 import * as QRCode from 'qrcode'
@@ -8,6 +10,30 @@ import { getDatabasePool } from './database'
 import { normalizeSocietySettings } from './master-data'
 
 pdfMake.vfs = pdfFonts?.pdfMake?.vfs ?? pdfFonts?.vfs
+
+const invoiceStampAssetPath = 'images/ajowa-stamp-signature.jpeg'
+let cachedInvoiceStampImage: string | null | undefined
+
+const getInvoiceStampImage = () => {
+  if (cachedInvoiceStampImage !== undefined) return cachedInvoiceStampImage
+
+  const candidates = [
+    join(process.cwd(), 'public', invoiceStampAssetPath),
+    join(process.cwd(), '.output', 'public', invoiceStampAssetPath),
+    join(process.cwd(), '..', 'public', invoiceStampAssetPath),
+  ]
+  const stampPath = candidates.find((candidate) => existsSync(candidate))
+
+  try {
+    cachedInvoiceStampImage = stampPath
+      ? `data:image/jpeg;base64,${readFileSync(stampPath).toString('base64')}`
+      : null
+  } catch {
+    cachedInvoiceStampImage = null
+  }
+
+  return cachedInvoiceStampImage
+}
 
 export const chargeBreakdownItemSchema = z.object({
   label: z.string().trim().min(1).max(200),
@@ -46,6 +72,7 @@ export const chargeBreakdownSchema = z.array(chargeBreakdownItemSchema).min(1)
 export const billingPeriodSchema = z.object({
   label: z.string().trim().min(2).max(200),
   frequency: z.enum(['MONTHLY', 'QUARTERLY', 'HALF_YEARLY', 'YEARLY', 'CUSTOM']),
+  chargeType: z.enum(['GENERAL', 'CAM', 'DG_SET']).default('GENERAL'),
   startDate: z.string().date(),
   endDate: z.string().date(),
   dueDate: z.string().date(),
@@ -105,7 +132,7 @@ export const dueReminderSchema = z.object({
 
 export const dueBillSendSchema = z.object({
   dueIds: z.array(z.string().uuid()).min(1).max(500),
-  channels: z.array(z.enum(['EMAIL', 'WHATSAPP'])).min(1).max(2).default(['EMAIL']),
+  channels: z.array(z.enum(['PUSH', 'EMAIL', 'WHATSAPP', 'IN_APP'])).min(1).max(4).default(['EMAIL']),
 })
 
 export type BillingPeriodInput = z.infer<typeof billingPeriodSchema>
@@ -245,6 +272,7 @@ export const mapRowToBillingPeriod = <
     society_id: string
     label: string
     frequency: string
+    charge_type?: string
     start_date: string
     end_date: string
     due_date: string
@@ -265,6 +293,7 @@ export const mapRowToBillingPeriod = <
     societyId: row.society_id,
     label: row.label,
     frequency: row.frequency,
+    chargeType: row.charge_type ?? 'GENERAL',
     startDate: row.start_date,
     endDate: row.end_date,
     dueDate: row.due_date,
@@ -363,7 +392,7 @@ export const materializeChargeBreakdown = (
 
     const ratePerSqFt = charge.ratePerSqFt ?? charge.amount
     const areaSqFt = flatAreaSqFt ?? charge.areaSqFt
-    const cycleMultiplier = options.cycleMultiplier ?? charge.cycleMultiplier ?? 1
+    const cycleMultiplier = charge.cycleMultiplier ?? options.cycleMultiplier ?? 1
     const amount = areaSqFt
       ? roundAreaRateChargeAmount(areaSqFt * ratePerSqFt * cycleMultiplier)
       : 0
@@ -831,6 +860,7 @@ export const generateMaintenanceBillPdf = async (
   const hasSeparateDgBill = dgCharges.length > 0
   const maintenanceAmount = sumBillCharges(invoiceCharges)
   const dgAmount = sumBillCharges(dgCharges)
+  const invoiceStampImage = getInvoiceStampImage()
 
   const buildChargeRows = (charges: ChargeBreakdownItem[]) => charges.map((charge) => {
     const isAreaRate = charge.calculationMethod === 'AREA_RATE'
@@ -1022,12 +1052,25 @@ export const generateMaintenanceBillPdf = async (
       {
         columns: [
           {
-            text: [
-              `${due.society_name}\n`,
-              due.registration_number ? `Registration No: ${due.registration_number}\n` : '',
-              'Authorised Signatory',
+            stack: [
+              ...(invoiceStampImage
+                ? [
+                    {
+                      image: invoiceStampImage,
+                      fit: [124, 76],
+                      margin: [0, 0, 0, 4],
+                    },
+                  ]
+                : []),
+              {
+                text: [
+                  `${due.society_name}\n`,
+                  due.registration_number ? `Registration No: ${due.registration_number}\n` : '',
+                  'Authorised Signatory',
+                ],
+                style: 'signature',
+              },
             ],
-            style: 'signature',
           },
           {
             text: 'This is a computer-generated bill and does not require a physical signature.',
@@ -1270,22 +1313,29 @@ export const generateMaintenanceBillPdf = async (
                       {
                         columns: [
                           {
-                            width: 66,
-                            stack: [
-                              {
-                                canvas: [
+                            width: 88,
+                            stack: invoiceStampImage
+                              ? [
                                   {
-                                    type: 'ellipse',
-                                    x: 27,
-                                    y: 18,
-                                    r1: 23,
-                                    r2: 16,
-                                    lineColor: '#2563eb',
-                                    lineWidth: 1,
+                                    image: invoiceStampImage,
+                                    fit: [84, 66],
+                                  },
+                                ]
+                              : [
+                                  {
+                                    canvas: [
+                                      {
+                                        type: 'ellipse',
+                                        x: 27,
+                                        y: 18,
+                                        r1: 23,
+                                        r2: 16,
+                                        lineColor: '#2563eb',
+                                        lineWidth: 1,
+                                      },
+                                    ],
                                   },
                                 ],
-                              },
-                            ],
                           },
                           {
                             width: '*',

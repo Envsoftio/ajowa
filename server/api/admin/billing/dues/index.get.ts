@@ -30,9 +30,12 @@ type DueRow = {
   updated_at: string
 }
 
+const flatNumberSortExpression =
+  "coalesce(nullif(regexp_replace(f.flat_number, '\\D', '', 'g'), '')::integer, 2147483647)"
+
 const sortColumns: Record<string, string> = {
-  flatNumber: 'f.flat_number',
-  blockName: 'b.name',
+  flatNumber: flatNumberSortExpression,
+  blockName: 'b.sort_order',
   dueDate: 'md.due_date',
   totalAmount: 'md.total_amount',
   balanceAmount: 'md.balance_amount',
@@ -90,8 +93,12 @@ export default defineEventHandler(async (event) => {
   }
 
   const whereSql = where.join(' and ')
-  const orderBy = sortColumns[query.sortBy ?? 'flatNumber'] ?? 'f.flat_number'
+  const sortBy = query.sortBy ?? 'flatNumber'
+  const orderBy = sortColumns[sortBy] ?? flatNumberSortExpression
   const direction = query.sortDirection === 'desc' ? 'desc' : 'asc'
+  const orderSql = sortBy === 'flatNumber'
+    ? `b.sort_order ${direction}, ${flatNumberSortExpression} ${direction}, f.flat_number ${direction}`
+    : `${orderBy} ${direction}, b.sort_order asc, ${flatNumberSortExpression} asc, f.flat_number asc`
   values.push(query.pageSize, (query.page - 1) * query.pageSize)
 
   const settingsResult = await pool.query<{ settings: Record<string, unknown> }>(
@@ -140,7 +147,7 @@ export default defineEventHandler(async (event) => {
           limit 1
         ) u on true
         where ${whereSql}
-        order by ${orderBy} ${direction}, b.name asc, f.flat_number asc
+        order by ${orderSql}
         limit $${values.length - 1}
         offset $${values.length}
       `,
