@@ -1,7 +1,7 @@
-import { setHeader } from 'h3'
 import { requireActiveUser } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
 import { AppError } from '~/server/utils/errors'
+import { setEventHeader } from '~/server/utils/http-event'
 import { readUuidParam } from '~/server/utils/master-data'
 import { downloadPrivateFile } from '~/server/utils/storage'
 
@@ -54,9 +54,9 @@ export default defineEventHandler(async (event) => {
     throw new AppError({ code: 'INTERNAL_ERROR', statusCode: 500, message: 'QR image is unavailable.' })
   }
 
-  setHeader(event, 'content-type', 'image/png')
-  setHeader(event, 'cache-control', 'private, no-store')
-  setHeader(event, 'content-disposition', 'inline; filename="ajowa-gate-qr.png"')
+  setEventHeader(event, 'content-type', 'image/png')
+  setEventHeader(event, 'cache-control', 'private, no-store')
+  setEventHeader(event, 'content-disposition', 'inline; filename="ajowa-gate-qr.png"')
 
   const imageMatch = token.qr_image_path.match(/^data:image\/png;base64,(.+)$/)
   if (imageMatch?.[1]) {

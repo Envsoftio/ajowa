@@ -536,135 +536,150 @@ export const allocateMaintenancePayment = async (paymentId: string) => {
   }
 }
 
+export const consumeAdvanceCreditsForDueWithClient = async (client: PoolClient, dueId: string) => {
+  const dueResult = await client.query<DueRow>(
+    `
+      select
+        md.id,
+        md.society_id,
+        md.billing_period_id,
+        bp.label as billing_period_label,
+        md.flat_id,
+        md.due_date::text,
+        md.base_amount::text,
+        md.late_fee_amount::text,
+        md.waived_amount::text,
+        md.paid_amount::text,
+        md.total_amount::text,
+        md.balance_amount::text,
+        md.status
+      from maintenance_dues md
+      inner join billing_periods bp on bp.id = md.billing_period_id
+      where md.id = $1
+      for update of md
+    `,
+    [dueId],
+  )
+  const due = dueResult.rows[0]
+  if (!due) {
+    throw new AppError({ code: 'NOT_FOUND', statusCode: 404, message: 'Due not found.' })
+  }
+  const policy = await getPaymentPolicy(client, due.society_id)
+  const computed = computeDueAmounts(
+    {
+      dueDate: due.due_date,
+      baseAmount: Number(due.base_amount),
+      paidAmount: Number(due.paid_amount),
+      waivedAmount: Number(due.waived_amount),
+      storedStatus: due.status,
+    },
+    todayDate(),
+    policy.graceDays,
+    policy.lateFeePerDay,
+  )
+  let remaining = computed.balanceAmount
+  let consumedAmount = 0
+  let consumedCreditCount = 0
+  const credits = await client.query<{ id: string; current_balance: string; source_payment_id: string | null }>(
+    `
+      select id, current_balance::text, source_payment_id
+      from resident_advance_credits
+      where society_id = $1 and flat_id = $2 and status = 'ACTIVE' and current_balance > 0
+      order by created_at asc
+      for update
+    `,
+    [due.society_id, due.flat_id],
+  )
+
+  for (const credit of credits.rows) {
+    if (remaining <= 0) break
+    const amount = roundMoney(Math.min(remaining, Number(credit.current_balance)))
+    const payment = await client.query<{ id: string }>(
+      `
+        insert into payments (
+          society_id,
+          payer_user_id,
+          received_for_flat_id,
+          mode,
+          status,
+          payment_date,
+          amount,
+          allocation_mode,
+          notes,
+          verified_at
+        )
+        select society_id, user_id, flat_id, 'ADVANCE_CREDIT', 'VERIFIED', current_date, $2, 'SELECTED_PERIODS', $3, now()
+        from resident_advance_credits
+        where id = $1
+        returning id
+      `,
+      [credit.id, amount, `Advance credit consumed against due ${dueId}.`],
+    )
+    const allocation = await client.query<{ id: string }>(
+      `
+        insert into payment_allocations (
+          payment_id,
+          maintenance_due_id,
+          allocated_amount,
+          due_amount,
+          late_fee_component,
+          remaining_balance,
+          allocation_order,
+          allocation_type
+        )
+        values ($1, $2, $3, $4, $5, $6, 1, 'ADVANCE_CREDIT')
+        returning id
+      `,
+      [payment.rows[0]?.id, dueId, amount, computed.totalAmount, computed.lateFeeAmount, roundMoney(remaining - amount)],
+    )
+    await client.query(
+      `
+        update resident_advance_credits
+        set current_balance = current_balance - $2,
+            status = case when current_balance - $2 <= 0 then 'CONSUMED' else status end
+        where id = $1
+      `,
+      [credit.id, amount],
+    )
+    await client.query(
+      `
+        insert into resident_advance_credit_history (
+          credit_id,
+          action,
+          amount,
+          payment_id,
+          payment_allocation_id,
+          notes
+        )
+        values ($1, 'CONSUMED', $2, $3, $4, $5)
+      `,
+      [credit.id, amount, payment.rows[0]?.id, allocation.rows[0]?.id, `Consumed against due ${dueId}.`],
+    )
+    remaining = roundMoney(remaining - amount)
+    consumedAmount = roundMoney(consumedAmount + amount)
+    consumedCreditCount += 1
+  }
+
+  const refreshed = await refreshDueTotals(client, dueId, policy.graceDays, policy.lateFeePerDay)
+  if (refreshed) {
+    await recomputeAccessForAffectedDues(client, [refreshed])
+  }
+
+  return {
+    consumedAmount,
+    consumedCreditCount,
+    balanceAmount: refreshed?.balanceAmount ?? remaining,
+  }
+}
+
 export const consumeAdvanceCreditsForDue = async (dueId: string) => {
   const client = await getDatabasePool().connect()
 
   try {
     await client.query('begin')
-    const dueResult = await client.query<DueRow>(
-      `
-        select
-          md.id,
-          md.society_id,
-          md.billing_period_id,
-          bp.label as billing_period_label,
-          md.flat_id,
-          md.due_date::text,
-          md.base_amount::text,
-          md.late_fee_amount::text,
-          md.waived_amount::text,
-          md.paid_amount::text,
-          md.total_amount::text,
-          md.balance_amount::text,
-          md.status
-        from maintenance_dues md
-        inner join billing_periods bp on bp.id = md.billing_period_id
-        where md.id = $1
-        for update of md
-      `,
-      [dueId],
-    )
-    const due = dueResult.rows[0]
-    if (!due) {
-      throw new AppError({ code: 'NOT_FOUND', statusCode: 404, message: 'Due not found.' })
-    }
-    const policy = await getPaymentPolicy(client, due.society_id)
-    const computed = computeDueAmounts(
-      {
-        dueDate: due.due_date,
-        baseAmount: Number(due.base_amount),
-        paidAmount: Number(due.paid_amount),
-        waivedAmount: Number(due.waived_amount),
-        storedStatus: due.status,
-      },
-      todayDate(),
-      policy.graceDays,
-      policy.lateFeePerDay,
-    )
-    let remaining = computed.balanceAmount
-    const credits = await client.query<{ id: string; current_balance: string; source_payment_id: string | null }>(
-      `
-        select id, current_balance::text, source_payment_id
-        from resident_advance_credits
-        where society_id = $1 and flat_id = $2 and status = 'ACTIVE' and current_balance > 0
-        order by created_at asc
-        for update
-      `,
-      [due.society_id, due.flat_id],
-    )
-
-    for (const credit of credits.rows) {
-      if (remaining <= 0) break
-      const amount = roundMoney(Math.min(remaining, Number(credit.current_balance)))
-      const payment = await client.query<{ id: string }>(
-        `
-          insert into payments (
-            society_id,
-            payer_user_id,
-            received_for_flat_id,
-            mode,
-            status,
-            payment_date,
-            amount,
-            allocation_mode,
-            notes,
-            verified_at
-          )
-          select society_id, user_id, flat_id, 'ADVANCE_CREDIT', 'VERIFIED', current_date, $2, 'SELECTED_PERIODS', $3, now()
-          from resident_advance_credits
-          where id = $1
-          returning id
-        `,
-        [credit.id, amount, `Advance credit consumed against due ${dueId}.`],
-      )
-      const allocation = await client.query<{ id: string }>(
-        `
-          insert into payment_allocations (
-            payment_id,
-            maintenance_due_id,
-            allocated_amount,
-            due_amount,
-            late_fee_component,
-            remaining_balance,
-            allocation_order,
-            allocation_type
-          )
-          values ($1, $2, $3, $4, $5, $6, 1, 'ADVANCE_CREDIT')
-          returning id
-        `,
-        [payment.rows[0]?.id, dueId, amount, computed.totalAmount, computed.lateFeeAmount, roundMoney(remaining - amount)],
-      )
-      await client.query(
-        `
-          update resident_advance_credits
-          set current_balance = current_balance - $2,
-              status = case when current_balance - $2 <= 0 then 'CONSUMED' else status end
-          where id = $1
-        `,
-        [credit.id, amount],
-      )
-      await client.query(
-        `
-          insert into resident_advance_credit_history (
-            credit_id,
-            action,
-            amount,
-            payment_id,
-            payment_allocation_id,
-            notes
-          )
-          values ($1, 'CONSUMED', $2, $3, $4, $5)
-        `,
-        [credit.id, amount, payment.rows[0]?.id, allocation.rows[0]?.id, `Consumed against due ${dueId}.`],
-      )
-      remaining = roundMoney(remaining - amount)
-    }
-
-    const refreshed = await refreshDueTotals(client, dueId, policy.graceDays, policy.lateFeePerDay)
-    if (refreshed) {
-      await recomputeAccessForAffectedDues(client, [refreshed])
-    }
+    const result = await consumeAdvanceCreditsForDueWithClient(client, dueId)
     await client.query('commit')
+    return result
   } catch (error) {
     await client.query('rollback')
     throw error

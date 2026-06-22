@@ -435,6 +435,8 @@ export type ChargeBreakdownItem = {
   calculationMethod?: 'FIXED' | 'AREA_RATE'
   ratePerSqFt?: number
   areaSqFt?: number
+  cycleMultiplier?: number
+  cycleLabel?: string
   source?: string
   electricityType?: string
   meterNo?: string | null
@@ -508,6 +510,8 @@ export type DueGenerationPreview = {
   billingPeriodId: string
   billingPeriodLabel: string
   billingPeriodDueDate: string
+  cycleMultiplier: number
+  cycleLabel: string
   totalFlats: number
   totalAmount: number
   flatTypeBreakdown: {

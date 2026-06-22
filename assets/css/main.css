@@ -1898,7 +1898,7 @@ a {
 
 .billing-cycle-guide {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr));
   gap: 0.75rem;
   padding: 0.8rem;
   border: 1px solid var(--color-border);
@@ -2045,6 +2045,43 @@ a {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--color-surface) 78%, var(--color-bg));
+}
+
+.billing-generation-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr));
+  gap: 0.75rem;
+}
+
+.billing-generation-summary > div {
+  min-width: 0;
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.8rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-surface) 76%, var(--color-bg));
+}
+
+.billing-generation-summary span,
+.billing-generation-summary small {
+  color: var(--color-muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+  line-height: 1.3;
+}
+
+.billing-generation-summary span {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.billing-generation-summary strong {
+  color: var(--color-text);
+  font-size: 1.05rem;
+  font-weight: 900;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
 }
 
 .billing-variable-charge-panel header,
@@ -2214,6 +2251,13 @@ a {
   padding: 0.9rem;
   border: 1px solid var(--color-border);
   background: var(--color-bg);
+}
+
+.billing-cycle-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: flex-end;
 }
 
 .billing-dialog-intro h2 {
@@ -2715,7 +2759,8 @@ a {
   }
 
   .billing-command-actions,
-  .billing-table-actions {
+  .billing-table-actions,
+  .billing-cycle-presets {
     justify-content: flex-start;
   }
 

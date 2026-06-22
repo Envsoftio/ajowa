@@ -16,6 +16,8 @@ export const chargeBreakdownItemSchema = z.object({
   calculationMethod: z.enum(['FIXED', 'AREA_RATE']).optional().default('FIXED'),
   ratePerSqFt: z.coerce.number().positive().optional(),
   areaSqFt: z.coerce.number().positive().optional(),
+  cycleMultiplier: z.coerce.number().positive().optional(),
+  cycleLabel: z.string().trim().max(80).optional(),
   source: z.string().trim().max(80).optional(),
   electricityType: z.string().trim().max(80).nullable().optional(),
   meterNo: z.string().trim().max(80).nullable().optional(),
@@ -115,6 +117,58 @@ export type DueReminderInput = z.infer<typeof dueReminderSchema>
 export type DueBillSendInput = z.infer<typeof dueBillSendSchema>
 
 export const todayDate = () => new Date().toISOString().slice(0, 10)
+
+const billingFrequencyMonthMultipliers: Record<string, number> = {
+  MONTHLY: 1,
+  QUARTERLY: 3,
+  HALF_YEARLY: 6,
+  YEARLY: 12,
+}
+
+const parseBillingDate = (value: string) => new Date(`${value}T00:00:00Z`)
+
+export const getBillingPeriodMonthSpan = (startDate: string, endDate: string) => {
+  const start = parseBillingDate(startDate)
+  const end = parseBillingDate(endDate)
+
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) {
+    return 1
+  }
+
+  return Math.max(
+    1,
+    (end.getUTCFullYear() - start.getUTCFullYear()) * 12 +
+      (end.getUTCMonth() - start.getUTCMonth()) +
+      1,
+  )
+}
+
+export const getBillingCycleMultiplier = (period: {
+  frequency: string
+  start_date?: string
+  end_date?: string
+  startDate?: string
+  endDate?: string
+}): number => {
+  const configuredMultiplier = billingFrequencyMonthMultipliers[period.frequency]
+  if (period.frequency !== 'CUSTOM' && configuredMultiplier != null) {
+    return configuredMultiplier
+  }
+
+  const startDate = period.start_date ?? period.startDate
+  const endDate = period.end_date ?? period.endDate
+
+  if (!startDate || !endDate) {
+    return 1
+  }
+
+  return getBillingPeriodMonthSpan(startDate, endDate)
+}
+
+export const getBillingCycleLabel = (cycleMultiplier: number) =>
+  `${cycleMultiplier} ${cycleMultiplier === 1 ? 'month' : 'months'}`
+
+const roundAreaRateChargeAmount = (value: number) => Math.ceil(value)
 
 export type DueAmountInput = {
   dueDate: string
@@ -282,23 +336,25 @@ export const resolveChargeBreakdown = (
   flatType: string,
   flatId: string,
   flatAreaSqFt?: number | null,
+  options: { cycleMultiplier?: number } = {},
 ): ChargeBreakdownItem[] => {
   const overrideCharges = readFlatOverrideCharges(flatOverrideCharges, flatId)
   if (overrideCharges) {
-    return materializeChargeBreakdown(overrideCharges, flatAreaSqFt)
+    return materializeChargeBreakdown(overrideCharges, flatAreaSqFt, options)
   }
 
   const typeCharges = readFlatTypeCharges(flatTypeCharges, flatType)
   if (typeCharges) {
-    return materializeChargeBreakdown(typeCharges, flatAreaSqFt)
+    return materializeChargeBreakdown(typeCharges, flatAreaSqFt, options)
   }
 
-  return materializeChargeBreakdown(defaultCharges, flatAreaSqFt)
+  return materializeChargeBreakdown(defaultCharges, flatAreaSqFt, options)
 }
 
 export const materializeChargeBreakdown = (
   charges: ChargeBreakdownItem[],
   flatAreaSqFt?: number | null,
+  options: { cycleMultiplier?: number } = {},
 ): ChargeBreakdownItem[] =>
   charges.map((charge) => {
     if (charge.calculationMethod !== 'AREA_RATE') {
@@ -307,13 +363,18 @@ export const materializeChargeBreakdown = (
 
     const ratePerSqFt = charge.ratePerSqFt ?? charge.amount
     const areaSqFt = flatAreaSqFt ?? charge.areaSqFt
-    const amount = areaSqFt ? Math.round(areaSqFt * ratePerSqFt * 100) / 100 : 0
+    const cycleMultiplier = options.cycleMultiplier ?? charge.cycleMultiplier ?? 1
+    const amount = areaSqFt
+      ? roundAreaRateChargeAmount(areaSqFt * ratePerSqFt * cycleMultiplier)
+      : 0
 
     const materialized: ChargeBreakdownItem = {
       ...charge,
       calculationMethod: 'AREA_RATE',
       ratePerSqFt,
       amount,
+      cycleMultiplier,
+      cycleLabel: getBillingCycleLabel(cycleMultiplier),
     }
 
     if (areaSqFt) {
@@ -487,6 +548,12 @@ const normalizeBillChargeBreakdown = (
       }
       if (source.areaSqFt != null && Number.isFinite(Number(source.areaSqFt))) {
         charge.areaSqFt = Number(source.areaSqFt)
+      }
+      if (source.cycleMultiplier != null && Number.isFinite(Number(source.cycleMultiplier))) {
+        charge.cycleMultiplier = Number(source.cycleMultiplier)
+      }
+      if (typeof source.cycleLabel === 'string' && source.cycleLabel.trim()) {
+        charge.cycleLabel = source.cycleLabel.trim()
       }
 
       return charge
@@ -744,8 +811,12 @@ export const generateMaintenanceBillPdf = async (
 
   const buildChargeRows = (charges: ChargeBreakdownItem[]) => charges.map((charge) => {
     const isAreaRate = charge.calculationMethod === 'AREA_RATE'
-    const units = isAreaRate && charge.areaSqFt ? `${charge.areaSqFt} sq ft` : '-'
-    const rate = isAreaRate && charge.ratePerSqFt ? `${formatBillMoney(charge.ratePerSqFt)} / sq ft` : '-'
+    const cycleText =
+      isAreaRate && charge.cycleMultiplier && charge.cycleMultiplier > 1
+        ? ` x ${charge.cycleLabel ?? getBillingCycleLabel(charge.cycleMultiplier)}`
+        : ''
+    const units = isAreaRate && charge.areaSqFt ? `${charge.areaSqFt} sq ft${cycleText}` : '-'
+    const rate = isAreaRate && charge.ratePerSqFt ? `${formatBillMoney(charge.ratePerSqFt)} / sq ft / month` : '-'
 
     return [
       { text: charge.label, style: 'tableCell' },

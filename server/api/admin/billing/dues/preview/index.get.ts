@@ -4,6 +4,8 @@ import { requireRole } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
 import {
   appendChargeLookup,
+  getBillingCycleLabel,
+  getBillingCycleMultiplier,
   hasUnresolvedAreaRateCharge,
   resolveChargeBreakdown,
 } from '~/server/utils/billing'
@@ -56,11 +58,14 @@ export default defineEventHandler(async (event) => {
   const periodResult = await pool.query<{
     id: string
     label: string
+    frequency: string
+    start_date: string
+    end_date: string
     due_date: string
     is_locked: boolean
   }>(
     `
-      select id, label, due_date::text, is_locked
+      select id, label, frequency::text, start_date::text, end_date::text, due_date::text, is_locked
       from billing_periods
       where id = $1 and society_id = $2
       limit 1
@@ -76,6 +81,8 @@ export default defineEventHandler(async (event) => {
       message: 'Billing period not found.',
     })
   }
+  const cycleMultiplier = getBillingCycleMultiplier(period)
+  const cycleLabel = getBillingCycleLabel(cycleMultiplier)
 
   const flatValues: unknown[] = [authMe.user.societyId]
   if (flatIds?.length) {
@@ -181,6 +188,7 @@ export default defineEventHandler(async (event) => {
       flat.unitType,
       flat.flatId,
       flat.areaSqFt ? Number(flat.areaSqFt) : null,
+      { cycleMultiplier },
     )
     const periodCharges = resolveChargeBreakdown(
       periodDefaultCharges,
@@ -189,6 +197,7 @@ export default defineEventHandler(async (event) => {
       flat.unitType,
       flat.flatId,
       flat.areaSqFt ? Number(flat.areaSqFt) : null,
+      { cycleMultiplier },
     )
     const charges = [...baseCharges, ...periodCharges]
     const effectiveCharges =
@@ -231,6 +240,8 @@ export default defineEventHandler(async (event) => {
     billingPeriodId: period.id,
     billingPeriodLabel: period.label,
     billingPeriodDueDate: period.due_date,
+    cycleMultiplier,
+    cycleLabel,
     totalFlats: flatsResult.rows.length - skippedExisting,
     totalAmount: Math.round(totalAmount * 100) / 100,
     flatTypeBreakdown: Array.from(breakdownMap.values()).map((item) => ({

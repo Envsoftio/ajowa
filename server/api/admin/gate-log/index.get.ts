@@ -1,8 +1,8 @@
-import { setHeader } from 'h3'
 import * as XLSX from 'xlsx/xlsx.mjs'
 import { createApiSuccess } from '~/server/utils/api'
 import { requireRole } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
+import { setEventHeader } from '~/server/utils/http-event'
 import { getQuerySafe } from '~/server/utils/master-data'
 
 type GateLogRow = {
@@ -136,8 +136,8 @@ export default defineEventHandler(async (event) => {
   )
 
   if (query.export === 'pdf') {
-    setHeader(event, 'content-type', 'application/pdf')
-    setHeader(event, 'content-disposition', 'attachment; filename="gate-log.pdf"')
+    setEventHeader(event, 'content-type', 'application/pdf')
+    setEventHeader(event, 'content-disposition', 'attachment; filename="gate-log.pdf"')
     return buildSimplePdf(result.rows)
   }
 
@@ -145,14 +145,14 @@ export default defineEventHandler(async (event) => {
     const workbook = XLSX.utils.book_new()
     const worksheet = XLSX.utils.json_to_sheet(result.rows.map(mapExportRow))
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Gate Log')
-    setHeader(event, 'content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-    setHeader(event, 'content-disposition', 'attachment; filename="gate-log.xlsx"')
+    setEventHeader(event, 'content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    setEventHeader(event, 'content-disposition', 'attachment; filename="gate-log.xlsx"')
     return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer
   }
 
   if (query.export === 'csv') {
-    setHeader(event, 'content-type', 'text/csv; charset=utf-8')
-    setHeader(event, 'content-disposition', 'attachment; filename="gate-log.csv"')
+    setEventHeader(event, 'content-type', 'text/csv; charset=utf-8')
+    setEventHeader(event, 'content-disposition', 'attachment; filename="gate-log.csv"')
     return [
       ['Scanned at', 'Guard', 'Resident', 'Flat', 'Result', 'Reason', 'Gate'].map(csvEscape).join(','),
       ...result.rows.map((row) => Object.values(mapExportRow(row)).map(csvEscape).join(',')),

@@ -1,9 +1,10 @@
-import { getQuery, getRouterParam, type H3Event } from 'h3'
+import type { H3Event } from 'h3'
 import { z } from 'zod'
 import type { PoolClient } from 'pg'
 import { AppError } from './errors'
 import { getListQueryParams, getPaginationParams, validateInput } from './api'
 import { writeAuditEvent, resolveAuditSeverity } from './audit'
+import { getEventQuery, getEventRouterParam } from './http-event'
 import type { AuditAction } from '~/shared/audit'
 import type { SocietyPolicySettings } from '~/types/domain'
 
@@ -162,17 +163,7 @@ export const defaultSocietyPolicies: z.infer<typeof societyPolicySchema> = {
 }
 
 export const getQuerySafe = (event: H3Event) => {
-  if (!event.url) {
-    const urlStr = event.node?.req?.url || event.req?.url
-    if (urlStr) {
-      try {
-        event.url = new URL(urlStr, 'http://localhost')
-      } catch {
-        // Ignore
-      }
-    }
-  }
-  return getQuery(event)
+  return getEventQuery(event)
 }
 
 export const parseListQuery = (event: H3Event) =>
@@ -181,7 +172,7 @@ export const parsePaginationQuery = (event: H3Event) =>
   getPaginationParams(getQuerySafe(event))
 
 export const readUuidParam = (event: H3Event, key = 'id') => {
-  const value = getRouterParam(event, key)
+  const value = getEventRouterParam(event, key)
 
   if (!value || !z.string().uuid().safeParse(value).success) {
     throw new AppError({

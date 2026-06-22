@@ -3,6 +3,39 @@ import { requireRole } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
 import { normalizeSocietySettings, validatePayload, writeMasterAudit } from '~/server/utils/master-data'
 import { chargeConfigSchema } from '~/server/utils/billing'
+import type { ChargeBreakdownItem } from '~/types/domain'
+
+type ChargeInputItem = {
+  label: string
+  chargeType?: ChargeBreakdownItem['chargeType'] | undefined
+  [key: string]: unknown
+}
+
+const inferChargeType = (item: ChargeInputItem): ChargeBreakdownItem['chargeType'] => {
+  if (item.chargeType) return item.chargeType
+  if (/^cam(?:\s+charges?)?$/i.test(item.label.trim())) return 'CAM'
+  if (/\b(dg\s*set|dgset|generator|power\s*back\s*up|power\s*backup)\b/i.test(item.label)) {
+    return 'DG_SET'
+  }
+
+  return 'OTHER'
+}
+
+const buildStoredChargeBreakdown = (
+  item: ChargeInputItem,
+  amount: number,
+  calculationMethod: NonNullable<ChargeBreakdownItem['calculationMethod']>,
+  ratePerSqFt: number | null,
+) =>
+  JSON.stringify([
+    {
+      ...item,
+      amount,
+      calculationMethod,
+      chargeType: inferChargeType(item),
+      ...(ratePerSqFt ? { ratePerSqFt } : {}),
+    },
+  ])
 
 export default defineEventHandler(async (event) => {
   const authMe = await requireRole(event, ['ADMIN'])
@@ -60,8 +93,8 @@ export default defineEventHandler(async (event) => {
     // Insert default charges
     for (const item of body.defaultCharges ?? []) {
       const calculationMethod = item.calculationMethod ?? 'FIXED'
-      const ratePerSqFt = calculationMethod === 'AREA_RATE' ? item.amount : null
-      const amount = calculationMethod === 'AREA_RATE' ? ratePerSqFt : item.amount
+      const amount = Number(item.amount)
+      const ratePerSqFt = calculationMethod === 'AREA_RATE' ? amount : null
       await client.query(
         `
           insert into maintenance_charges (
@@ -75,7 +108,7 @@ export default defineEventHandler(async (event) => {
           amount,
           calculationMethod,
           ratePerSqFt,
-          JSON.stringify([{ ...item, amount, calculationMethod, ...(ratePerSqFt ? { ratePerSqFt } : {}) }]),
+          buildStoredChargeBreakdown(item, amount, calculationMethod, ratePerSqFt),
         ],
       )
     }
@@ -85,8 +118,8 @@ export default defineEventHandler(async (event) => {
       if (typeConfig.charges.length === 0) continue
       for (const item of typeConfig.charges) {
         const calculationMethod = item.calculationMethod ?? 'FIXED'
-        const ratePerSqFt = calculationMethod === 'AREA_RATE' ? item.amount : null
-        const amount = calculationMethod === 'AREA_RATE' ? ratePerSqFt : item.amount
+        const amount = Number(item.amount)
+        const ratePerSqFt = calculationMethod === 'AREA_RATE' ? amount : null
         await client.query(
           `
             insert into maintenance_charges (
@@ -101,7 +134,7 @@ export default defineEventHandler(async (event) => {
             amount,
             calculationMethod,
             ratePerSqFt,
-            JSON.stringify([{ ...item, amount, calculationMethod, ...(ratePerSqFt ? { ratePerSqFt } : {}) }]),
+            buildStoredChargeBreakdown(item, amount, calculationMethod, ratePerSqFt),
           ],
         )
       }
@@ -112,8 +145,8 @@ export default defineEventHandler(async (event) => {
       if (flatConfig.charges.length === 0) continue
       for (const item of flatConfig.charges) {
         const calculationMethod = item.calculationMethod ?? 'FIXED'
-        const ratePerSqFt = calculationMethod === 'AREA_RATE' ? item.amount : null
-        const amount = calculationMethod === 'AREA_RATE' ? ratePerSqFt : item.amount
+        const amount = Number(item.amount)
+        const ratePerSqFt = calculationMethod === 'AREA_RATE' ? amount : null
         await client.query(
           `
             insert into maintenance_charges (
@@ -128,7 +161,7 @@ export default defineEventHandler(async (event) => {
             amount,
             calculationMethod,
             ratePerSqFt,
-            JSON.stringify([{ ...item, amount, calculationMethod, ...(ratePerSqFt ? { ratePerSqFt } : {}) }]),
+            buildStoredChargeBreakdown(item, amount, calculationMethod, ratePerSqFt),
           ],
         )
       }

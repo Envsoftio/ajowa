@@ -5,12 +5,15 @@ import { validatePayload, writeMasterAudit } from '~/server/utils/master-data'
 import {
   appendChargeLookup,
   dueGenerationSchema,
+  getBillingCycleLabel,
+  getBillingCycleMultiplier,
   type DueGenerationInput,
   hasUnresolvedAreaRateCharge,
   resolveChargeBreakdown,
 } from '~/server/utils/billing'
 import { AppError } from '~/server/utils/errors'
 import { enqueueDueBillingContactNotifications } from '~/server/utils/notifications'
+import { consumeAdvanceCreditsForDueWithClient } from '~/server/utils/payments'
 import type { ChargeBreakdownItem } from '~/types/domain'
 
 type FlatTarget = {
@@ -44,12 +47,26 @@ export default defineEventHandler(async (event) => {
     await client.query('begin')
 
     // Verify period exists and is not locked
-    const periodResult = await client.query<{ id: string; label: string; is_locked: boolean; due_date: string }>(
-      `select id, label, is_locked, due_date::text from billing_periods where id = $1 and society_id = $2 limit 1`,
+    const periodResult = await client.query<{
+      id: string
+      label: string
+      frequency: string
+      start_date: string
+      end_date: string
+      is_locked: boolean
+      due_date: string
+    }>(
+      `
+        select id, label, frequency::text, start_date::text, end_date::text, is_locked, due_date::text
+        from billing_periods
+        where id = $1 and society_id = $2
+        limit 1
+      `,
       [body.billingPeriodId, authMe.user.societyId],
     )
 
-    if (!periodResult.rows[0]) {
+    const period = periodResult.rows[0]
+    if (!period) {
       throw new AppError({
         code: 'NOT_FOUND',
         statusCode: 404,
@@ -57,7 +74,7 @@ export default defineEventHandler(async (event) => {
       })
     }
 
-    if (periodResult.rows[0].is_locked) {
+    if (period.is_locked) {
       throw new AppError({
         code: 'VALIDATION_ERROR',
         statusCode: 400,
@@ -65,7 +82,9 @@ export default defineEventHandler(async (event) => {
       })
     }
 
-    const periodDueDate = periodResult.rows[0].due_date
+    const periodDueDate = period.due_date
+    const cycleMultiplier = getBillingCycleMultiplier(period)
+    const cycleLabel = getBillingCycleLabel(cycleMultiplier)
 
     // Fetch active flats
     const flatsResult = await client.query<FlatTarget>(
@@ -149,6 +168,8 @@ export default defineEventHandler(async (event) => {
     // Generate dues
     let generated = 0
     let skipped = 0
+    let advanceAppliedCount = 0
+    let advanceAppliedAmount = 0
     const generatedDueIds: string[] = []
 
     for (const flat of flatsResult.rows) {
@@ -170,6 +191,7 @@ export default defineEventHandler(async (event) => {
         flat.unitType,
         flat.flatId,
         flat.areaSqFt ? Number(flat.areaSqFt) : null,
+        { cycleMultiplier },
       )
       const periodBreakdown = resolveChargeBreakdown(
         periodDefaultCharges,
@@ -178,6 +200,7 @@ export default defineEventHandler(async (event) => {
         flat.unitType,
         flat.flatId,
         flat.areaSqFt ? Number(flat.areaSqFt) : null,
+        { cycleMultiplier },
       )
       const breakdown = [...baseBreakdown, ...periodBreakdown]
 
@@ -205,6 +228,11 @@ export default defineEventHandler(async (event) => {
         )
         if (insertResult.rows[0]?.id) {
           generatedDueIds.push(insertResult.rows[0].id)
+          const advanceResult = await consumeAdvanceCreditsForDueWithClient(client, insertResult.rows[0].id)
+          if (advanceResult.consumedAmount > 0) {
+            advanceAppliedCount += 1
+            advanceAppliedAmount = Math.round((advanceAppliedAmount + advanceResult.consumedAmount) * 100) / 100
+          }
         }
       } else {
         if (hasUnresolvedAreaRateCharge(breakdown)) {
@@ -242,6 +270,11 @@ export default defineEventHandler(async (event) => {
         )
         if (insertResult.rows[0]?.id) {
           generatedDueIds.push(insertResult.rows[0].id)
+          const advanceResult = await consumeAdvanceCreditsForDueWithClient(client, insertResult.rows[0].id)
+          if (advanceResult.consumedAmount > 0) {
+            advanceAppliedCount += 1
+            advanceAppliedAmount = Math.round((advanceAppliedAmount + advanceResult.consumedAmount) * 100) / 100
+          }
         }
       }
 
@@ -267,21 +300,30 @@ export default defineEventHandler(async (event) => {
         eventKey: 'maintenance_dues.generated',
         metadata: {
           billingPeriodId: body.billingPeriodId,
+          cycleMultiplier,
+          cycleLabel,
           generatedCount: generated,
           skippedCount: skipped,
+          advanceAppliedCount,
+          advanceAppliedAmount,
           flatIds: body.flatIds,
           notificationEventCount: queued.eventCount,
           notificationAudienceCount: queued.audienceCount,
           notificationJobCount: queued.jobCount,
         },
         relatedEntities: [
-          { entityTable: 'billing_periods', entityId: body.billingPeriodId, entityLabel: periodResult.rows[0].label },
+          { entityTable: 'billing_periods', entityId: body.billingPeriodId, entityLabel: period.label },
         ],
       })
     }
 
     await client.query('commit')
-    return createApiSuccess(event, { generated, skipped })
+    return createApiSuccess(event, {
+      generated,
+      skipped,
+      advanceAppliedCount,
+      advanceAppliedAmount,
+    })
   } catch (error) {
     await client.query('rollback')
     throw error

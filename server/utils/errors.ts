@@ -1,4 +1,4 @@
-import { createError } from 'h3'
+import { createEventError } from './http-event'
 
 export type AppErrorCode =
   | 'AUTH_REQUIRED'
@@ -33,9 +33,10 @@ export const toApiError = (error: unknown) => {
   if (error instanceof AppError) {
     const fieldErrors = error.details?.fieldErrors
 
-    return createError({
+    return createEventError({
       statusCode: error.statusCode,
       statusMessage: error.code,
+      message: error.message,
       data: {
         code: error.code,
         message: error.message,
@@ -48,9 +49,10 @@ export const toApiError = (error: unknown) => {
     })
   }
 
-  return createError({
+  return createEventError({
     statusCode: 500,
     statusMessage: 'INTERNAL_ERROR',
+    message: 'Something went wrong.',
     data: {
       code: 'INTERNAL_ERROR',
       message: 'Something went wrong.',

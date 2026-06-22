@@ -10,8 +10,9 @@ definePageMeta({
 const api = useApi()
 const toast = useToast()
 
-const { data, pending, refresh } = await useAsyncData('admin-society-profile', () =>
-  api<{ ok: true; data: SocietyProfile }>('/api/admin/society/profile'),
+const { data, pending, refresh } = await useAsyncData(
+  'admin-society-profile',
+  () => api<{ ok: true; data: SocietyProfile }>('/api/admin/society/profile'),
 )
 
 const form = reactive({
@@ -34,6 +35,8 @@ const form = reactive({
     financeApprovalRequired: true,
     attachmentsRequired: true,
     highValueThreshold: 10000,
+    graceDays: 0,
+    lateFeePerDay: 50,
   },
 })
 
@@ -59,6 +62,11 @@ watchEffect(() => {
 
 const saving = ref(false)
 
+const nullableText = (value: string) => {
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed : null
+}
+
 const submit = async () => {
   saving.value = true
 
@@ -67,10 +75,10 @@ const submit = async () => {
       method: 'PUT',
       body: {
         ...form,
-        registrationNumber: form.registrationNumber || null,
-        addressLine2: form.addressLine2 || null,
-        contactEmail: form.contactEmail || null,
-        contactPhone: form.contactPhone || null,
+        registrationNumber: nullableText(form.registrationNumber),
+        addressLine2: nullableText(form.addressLine2),
+        contactEmail: nullableText(form.contactEmail),
+        contactPhone: nullableText(form.contactPhone),
       },
     })
 
@@ -96,7 +104,11 @@ const submit = async () => {
             <p class="eyebrow">Profile</p>
             <h2>Society identity</h2>
           </div>
-          <Button type="submit" label="Save profile" :loading="saving || pending" />
+          <Button
+            type="submit"
+            label="Save profile"
+            :loading="saving || pending"
+          />
         </div>
 
         <div class="admin-form-grid">
@@ -156,7 +168,13 @@ const submit = async () => {
             <span>Billing tenure</span>
             <Select
               v-model="form.settings.billingTenure"
-              :options="['MONTHLY', 'QUARTERLY', 'HALF_YEARLY', 'YEARLY', 'CUSTOM']"
+              :options="[
+                'MONTHLY',
+                'QUARTERLY',
+                'HALF_YEARLY',
+                'YEARLY',
+                'CUSTOM',
+              ]"
             />
           </label>
           <label>
@@ -175,7 +193,30 @@ const submit = async () => {
           </label>
           <label>
             <span>High-value threshold</span>
-            <InputNumber v-model="form.settings.highValueThreshold" :min="0" input-id="high-value-threshold" fluid />
+            <InputNumber
+              v-model="form.settings.highValueThreshold"
+              :min="0"
+              input-id="high-value-threshold"
+              fluid
+            />
+          </label>
+          <label>
+            <span>Grace days</span>
+            <InputNumber
+              v-model="form.settings.graceDays"
+              :min="0"
+              input-id="grace-days"
+              fluid
+            />
+          </label>
+          <label>
+            <span>Late fee per day</span>
+            <InputNumber
+              v-model="form.settings.lateFeePerDay"
+              :min="0"
+              input-id="late-fee-per-day"
+              fluid
+            />
           </label>
         </div>
 

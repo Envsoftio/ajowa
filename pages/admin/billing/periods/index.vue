@@ -24,6 +24,15 @@ type PreviewResponse = {
   ok: true
   data: DueGenerationPreview & { skippedExisting: number; isLocked: boolean }
 }
+type GenerationResponse = {
+  ok: true
+  data: {
+    generated: number
+    skipped: number
+    advanceAppliedCount: number
+    advanceAppliedAmount: number
+  }
+}
 type VariableChargeEntry = {
   flatId: string
   flatNumber: string
@@ -64,6 +73,14 @@ const formatMoney = (value: number) =>
     maximumFractionDigits: 0,
   }).format(value)
 
+const formatRate = (value: number) =>
+  new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value)
+
 const formatNumber = (value: number) =>
   new Intl.NumberFormat('en-IN').format(value)
 
@@ -76,6 +93,36 @@ const formatDate = (value: string | null | undefined) =>
         dateStyle: 'medium',
       })
     : '-'
+
+const frequencyMonthMultipliers: Partial<Record<BillingFrequency, number>> = {
+  MONTHLY: 1,
+  QUARTERLY: 3,
+  HALF_YEARLY: 6,
+  YEARLY: 12,
+}
+
+const getBillingPeriodMonthSpan = (startDate: string, endDate: string) => {
+  const start = new Date(`${startDate}T00:00:00Z`)
+  const end = new Date(`${endDate}T00:00:00Z`)
+
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) {
+    return 1
+  }
+
+  return Math.max(
+    1,
+    (end.getUTCFullYear() - start.getUTCFullYear()) * 12 +
+      (end.getUTCMonth() - start.getUTCMonth()) +
+      1,
+  )
+}
+
+const getFrequencyMonthCount = (frequency: BillingFrequency, startDate?: string, endDate?: string) =>
+  frequencyMonthMultipliers[frequency] ??
+  (startDate && endDate ? getBillingPeriodMonthSpan(startDate, endDate) : 1)
+
+const formatCycleMonths = (months: number) =>
+  `${months} ${months === 1 ? 'month' : 'months'}`
 
 const periodQuery = reactive({
   page: 1,
@@ -210,7 +257,28 @@ const startOfMonth = (date: Date) =>
 const endOfMonth = (date: Date) =>
   new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0))
 
-const applySuggestedMonthlyPeriod = () => {
+const addMonths = (date: Date, months: number) =>
+  new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + months, 1))
+
+const formatSuggestedCycleLabel = (startDate: Date, endDate: Date) => {
+  const startLabel = startDate.toLocaleDateString('en-IN', {
+    month: 'long',
+    timeZone: 'UTC',
+  })
+  const endLabel = endDate.toLocaleDateString('en-IN', {
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'UTC',
+  })
+
+  if (startDate.getUTCMonth() === endDate.getUTCMonth() && startDate.getUTCFullYear() === endDate.getUTCFullYear()) {
+    return endLabel
+  }
+
+  return `${startLabel} - ${endLabel}`
+}
+
+const applySuggestedPeriod = (frequency: BillingFrequency = chargeForm.billingTenure) => {
   const latestPeriod = periods.value
     .slice()
     .sort(
@@ -222,15 +290,12 @@ const applySuggestedMonthlyPeriod = () => {
     ? addDays(new Date(`${latestPeriod.endDate}T00:00:00Z`), 1)
     : startOfMonth(new Date())
   const monthStart = startOfMonth(start)
-  const monthEnd = endOfMonth(monthStart)
-  const dueDate = new Date(Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth() + 1, 10))
+  const monthCount = getFrequencyMonthCount(frequency)
+  const monthEnd = endOfMonth(addMonths(monthStart, monthCount - 1))
+  const dueDate = new Date(Date.UTC(monthEnd.getUTCFullYear(), monthEnd.getUTCMonth() + 1, 10))
 
-  periodForm.frequency = 'MONTHLY'
-  periodForm.label = monthStart.toLocaleDateString('en-IN', {
-    month: 'long',
-    year: 'numeric',
-    timeZone: 'UTC',
-  })
+  periodForm.frequency = frequency
+  periodForm.label = formatSuggestedCycleLabel(monthStart, monthEnd)
   periodForm.startDate = toDateInput(monthStart)
   periodForm.endDate = toDateInput(monthEnd)
   periodForm.dueDate = toDateInput(dueDate)
@@ -257,7 +322,7 @@ const getChargeAmountLabel = (charge: ChargeBreakdownItem) =>
 
 const getChargeAmountHelp = (charge: ChargeBreakdownItem) =>
   charge.calculationMethod === 'AREA_RATE'
-    ? 'Rate multiplied by the flat area. Example: 1670 sq ft x 3.25.'
+    ? 'Monthly rate multiplied by flat area and cycle months.'
     : 'Fixed amount charged for this line item in the bill cycle.'
 
 const setChargeCalculationMethod = (
@@ -299,6 +364,14 @@ const periodForm = reactive({
   dueDate: '',
 })
 
+const periodFormCycleMonths = computed(() =>
+  getFrequencyMonthCount(periodForm.frequency, periodForm.startDate, periodForm.endDate),
+)
+
+const periodFormCycleSummary = computed(() =>
+  `${formatCycleMonths(periodFormCycleMonths.value)} · ${formatDate(periodForm.startDate)} - ${formatDate(periodForm.endDate)}`,
+)
+
 const cycleNameLooksLikeCharge = computed(() =>
   /\b(cam|dg\s*set|dgset|generator|power\s*backup|maintenance\s*charge)\b/i.test(
     periodForm.label.trim(),
@@ -316,7 +389,7 @@ const resetPeriodForm = () => {
 
 const openCreatePeriod = () => {
   resetPeriodForm()
-  applySuggestedMonthlyPeriod()
+  applySuggestedPeriod()
   periodDialogVisible.value = true
 }
 
@@ -335,7 +408,7 @@ const savePeriod = async () => {
     toast.add({
       severity: 'warn',
       summary: 'Use a cycle name',
-      detail: 'Use a month name like June 2026 here. Add CAM or DG Set under charge lines.',
+      detail: 'Use a period name like July - September 2026 here. CAM rates and DG readings are handled separately.',
       life: 10000,
     })
     return
@@ -451,6 +524,52 @@ const variableChargeUnitsTotal = computed(() =>
   ),
 )
 
+const invalidVariableChargeEntries = computed(() =>
+  variableChargeEntries.value.filter(
+    (entry) =>
+      entry.openingReading != null &&
+      entry.closingReading != null &&
+      Number(entry.closingReading) < Number(entry.openingReading),
+  ),
+)
+
+const generationCycleMonths = computed(() =>
+  generationPreview.value?.cycleMultiplier ??
+  (generationTarget.value
+    ? getFrequencyMonthCount(
+        generationTarget.value.frequency,
+        generationTarget.value.startDate,
+        generationTarget.value.endDate,
+      )
+    : 1),
+)
+
+const generationCycleLabel = computed(() =>
+  generationPreview.value?.cycleLabel ?? formatCycleMonths(generationCycleMonths.value),
+)
+
+const isCamCharge = (charge: ChargeBreakdownItem) =>
+  charge.chargeType === 'CAM' ||
+  charge.calculationMethod === 'AREA_RATE' ||
+  /^cam(?:\s+charges?)?$/i.test(charge.label.trim())
+
+const isDgCharge = (charge: ChargeBreakdownItem) =>
+  charge.chargeType === 'DG_SET' ||
+  /\b(dg\s*set|dgset|generator|power\s*back\s*up|power\s*backup)\b/i.test(charge.label)
+
+const getPreviewChargeTotal = (predicate: (charge: ChargeBreakdownItem) => boolean) =>
+  generationPreview.value?.flatTypeBreakdown.reduce(
+    (sum, group) =>
+      sum +
+      group.chargeTemplate
+        .filter(predicate)
+        .reduce((chargeSum, charge) => chargeSum + Number(charge.amount ?? 0) * group.flatCount, 0),
+    0,
+  ) ?? 0
+
+const generationCamTotal = computed(() => getPreviewChargeTotal(isCamCharge))
+const generationDgTotal = computed(() => getPreviewChargeTotal(isDgCharge))
+
 const roundVariableChargeValue = (value: number) => Math.round(value * 100) / 100
 
 const normalizeVariableChargeNumber = (value: number | null | undefined) => {
@@ -537,6 +656,15 @@ const saveVariableCharges = async (
   options: { refreshPreview?: boolean; silent?: boolean } = {},
 ) => {
   if (!generationTarget.value) return
+  if (invalidVariableChargeEntries.value.length > 0) {
+    toast.add({
+      severity: 'warn',
+      summary: 'Check DG readings',
+      detail: `${formatUnit(invalidVariableChargeEntries.value.length, 'flat')} has closing below opening.`,
+      life: 10000,
+    })
+    return false
+  }
   savingVariableCharges.value = true
 
   try {
@@ -576,6 +704,7 @@ const saveVariableCharges = async (
     if (options.refreshPreview !== false) {
       await loadGenerationPreview()
     }
+    return true
   } finally {
     savingVariableCharges.value = false
   }
@@ -614,11 +743,9 @@ const generateDues = async () => {
   generating.value = true
 
   try {
-    await saveVariableCharges({ refreshPreview: false, silent: true })
-    const response = await api<{
-      ok: true
-      data: { generated: number; skipped: number }
-    }>('/api/admin/billing/dues', {
+    const chargesSaved = await saveVariableCharges({ refreshPreview: false, silent: true })
+    if (chargesSaved === false) return
+    const response = await api<GenerationResponse>('/api/admin/billing/dues', {
       method: 'POST',
       body: {
         billingPeriodId: generationTarget.value.id,
@@ -630,7 +757,13 @@ const generateDues = async () => {
     toast.add({
       severity: 'success',
       summary: 'Bills generated',
-      detail: `${response.data.generated} created, ${response.data.skipped} skipped.`,
+      detail: [
+        `${response.data.generated} created`,
+        `${response.data.skipped} skipped`,
+        response.data.advanceAppliedAmount > 0
+          ? `${formatMoney(response.data.advanceAppliedAmount)} advance applied`
+          : '',
+      ].filter(Boolean).join(', ') + '.',
       life: 10000,
     })
     generationDialogVisible.value = false
@@ -662,12 +795,14 @@ const chargeRuleSummary = computed(() => {
     (sum, charge) => sum + Number(charge.amount || 0),
     0,
   )
+  const defaultAreaRate = defaultAreaRateCharges[0]
 
   return {
     defaultCount: chargeForm.defaultCharges.length,
     defaultFixedCount: defaultFixedCharges.length,
     defaultAreaRateCount: defaultAreaRateCharges.length,
     defaultFixedTotal,
+    defaultAreaRateAmount: Number(defaultAreaRate?.amount ?? defaultAreaRate?.ratePerSqFt ?? 0),
     unitTypeCount: chargeForm.flatTypeCharges.length,
     overrideCount: chargeForm.flatOverrideCharges.length,
     graceDays: chargeForm.graceDays,
@@ -709,7 +844,7 @@ const configuredChargeLabels = computed(() => {
 
 const chargeLineSummary = computed(() => {
   if (configuredChargeLabels.value.length === 0) {
-    return 'Add CAM Charges, DG Set, or other charge lines'
+    return 'Add CAM Charges'
   }
 
   const visibleLabels = configuredChargeLabels.value.slice(0, 3)
@@ -751,13 +886,15 @@ const configuredChargeRuleCount = computed(
 const billAmountStepDetail = computed(() =>
   configuredChargeRuleCount.value > 0
     ? `${formatUnit(configuredChargeRuleCount.value, 'charge rule')} ready for bill generation`
-    : 'Add CAM, DG Set, or other charge lines first',
+    : 'Add CAM rates first',
 )
 
 const defaultBillBasisLabel = computed(() =>
   chargeRuleSummary.value.defaultFixedCount > 0
     ? formatMoney(chargeRuleSummary.value.defaultFixedTotal)
-    : 'No fixed default',
+    : chargeRuleSummary.value.defaultAreaRateCount > 0
+      ? `${formatRate(chargeRuleSummary.value.defaultAreaRateAmount)} / sq ft`
+      : 'No CAM rate',
 )
 
 const defaultBillBasisDetail = computed(() => {
@@ -778,7 +915,7 @@ const defaultBillBasisDetail = computed(() => {
 
 const generationQueueLabel = computed(() =>
   periodsWithoutDues.value.length > 0
-    ? formatUnit(periodsWithoutDues.value.length, 'month')
+    ? formatUnit(periodsWithoutDues.value.length, 'cycle')
     : 'Clear',
 )
 
@@ -835,8 +972,11 @@ watch(
   { immediate: true },
 )
 
-const addCharge = (charges: ChargeBreakdownItem[]) => {
-  charges.push({ label: '', amount: 0, calculationMethod: 'FIXED' })
+const addCharge = (
+  charges: ChargeBreakdownItem[],
+  defaults: Partial<ChargeBreakdownItem> = {},
+) => {
+  charges.push({ label: '', amount: 0, calculationMethod: 'FIXED', ...defaults })
 }
 
 const removeCharge = (charges: ChargeBreakdownItem[], index: number) => {
@@ -860,6 +1000,22 @@ const addFlatOverride = () => {
   })
 }
 
+const ensureDefaultCamCharge = () => {
+  const existing = chargeForm.defaultCharges.find((charge) => isCamCharge(charge))
+  chargePanel.value = 'COMMON'
+
+  if (!existing) {
+    addCharge(chargeForm.defaultCharges, {
+      label: 'CAM Charges',
+      amount: 3.25,
+      calculationMethod: 'AREA_RATE',
+      chargeType: 'CAM',
+    })
+  }
+
+  chargeDialogVisible.value = true
+}
+
 const syncFlatOverrideLabel = (index: number) => {
   const override = chargeForm.flatOverrideCharges[index]
   if (!override) return
@@ -873,23 +1029,23 @@ const chargeDialogVisible = ref(false)
 const chargePanel = ref<ChargePanel>('FLAT')
 
 const chargePanelOptions: Array<{ label: string; value: ChargePanel; icon: string }> = [
-  { label: 'Flat amounts', value: 'FLAT', icon: 'pi pi-building' },
-  { label: 'Common charges', value: 'COMMON', icon: 'pi pi-receipt' },
+  { label: 'CAM rates', value: 'COMMON', icon: 'pi pi-percentage' },
+  { label: 'Flat overrides', value: 'FLAT', icon: 'pi pi-building' },
   { label: 'Policy', value: 'POLICY', icon: 'pi pi-cog' },
 ]
 
 const chargePanelTitle = computed(() => {
-  if (chargePanel.value === 'FLAT') return 'Enter per-flat bill amounts'
-  if (chargePanel.value === 'COMMON') return 'Set common charges'
+  if (chargePanel.value === 'FLAT') return 'Flat-specific overrides'
+  if (chargePanel.value === 'COMMON') return 'CAM and common rates'
   return 'Billing policy'
 })
 
 const chargePanelDescription = computed(() => {
   if (chargePanel.value === 'FLAT') {
-    return 'Flat-specific bill line items and amount overrides.'
+    return 'Use only when a flat should not follow the CAM or unit-type rate.'
   }
   if (chargePanel.value === 'COMMON') {
-    return 'Default charges, plus optional unit-type templates.'
+    return 'Monthly per-sq-ft rates are multiplied automatically by the bill cycle.'
   }
   return 'Late fee, grace period, tenure, and excess payment rules.'
 })
@@ -936,18 +1092,25 @@ const saveCharges = async () => {
     <section class="billing-command-panel">
       <header class="billing-command-header">
         <div>
-          <p class="eyebrow">Monthly billing</p>
-          <h1>Generate flat bills</h1>
+          <p class="eyebrow">Billing</p>
+          <h1>Generate CAM and DG bills</h1>
           <p>
-            Add charge lines like CAM or DG Set, create the monthly bill cycle,
-            then generate bills for residents.
+            CAM uses the saved monthly sq-ft rate for the selected cycle.
+            DG Set readings are added for the cycle before bills are generated.
           </p>
         </div>
         <div class="billing-command-actions">
           <Button
-            label="Edit charge lines"
-            icon="pi pi-building"
-            @click="openChargeDialog('FLAT')"
+            label="CAM rates"
+            icon="pi pi-percentage"
+            @click="openChargeDialog('COMMON')"
+          />
+          <Button
+            label="Add CAM rate"
+            icon="pi pi-plus"
+            severity="secondary"
+            outlined
+            @click="ensureDefaultCamCharge"
           />
           <Button
             label="Create bill cycle"
@@ -962,13 +1125,18 @@ const saveCharges = async () => {
       <div class="billing-cycle-guide" aria-label="Billing setup guide">
         <div>
           <span>Bill cycle</span>
-          <strong>Month and date range</strong>
-          <p>Example: June 2026, 01 Jun - 30 Jun.</p>
+          <strong>{{ chargeForm.billingTenure.toLowerCase().replace('_', ' ') }}</strong>
+          <p>{{ formatCycleMonths(getFrequencyMonthCount(chargeForm.billingTenure)) }} per generated CAM bill.</p>
         </div>
         <div>
-          <span>Charge lines</span>
+          <span>CAM rate</span>
           <strong>{{ chargeLineSummary }}</strong>
-          <p>CAM and DG Set belong here, not in the cycle name.</p>
+          <p>Saved as a monthly per-sq-ft rate.</p>
+        </div>
+        <div>
+          <span>DG Set</span>
+          <strong>Meter readings</strong>
+          <p>Added before generating each cycle.</p>
         </div>
       </div>
 
@@ -976,16 +1144,16 @@ const saveCharges = async () => {
         <article class="billing-command-step billing-command-step--active">
           <span>1</span>
           <div>
-            <h2>Configure charge lines</h2>
+            <h2>Set CAM rates</h2>
             <p>{{ billAmountStepDetail }}</p>
           </div>
           <Button
-            label="Edit charge lines"
+            label="CAM rates"
             icon="pi pi-pencil"
             size="small"
             severity="secondary"
             outlined
-            @click="openChargeDialog('FLAT')"
+            @click="openChargeDialog('COMMON')"
           />
         </article>
         <article class="billing-command-step">
@@ -1009,7 +1177,7 @@ const saveCharges = async () => {
         >
           <span>3</span>
           <div>
-            <h2>Generate bills</h2>
+            <h2>Add DG and generate</h2>
             <p>{{ generationStepDetail }}</p>
           </div>
           <Button
@@ -1094,14 +1262,14 @@ const saveCharges = async () => {
         <div>
           <h1>Bill cycles</h1>
           <p>
-            Use cycles for month/date ranges. CAM and DG Set stay inside charge
-            lines.
+            Cycle dates control the CAM multiplier. DG Set readings are saved
+            per cycle before generation.
           </p>
         </div>
         <div class="list-page__exports">
           <Button
-            label="Common charges"
-            icon="pi pi-sliders-h"
+            label="CAM rates"
+            icon="pi pi-percentage"
             severity="secondary"
             outlined
             :loading="chargePending"
@@ -1405,21 +1573,28 @@ const saveCharges = async () => {
         <div v-if="chargePanel === 'COMMON'" class="admin-charge-section">
           <div class="admin-form-section__header">
             <div>
-              <h2>Default charges</h2>
-              <p>Used unless a flat amount or unit-type template exists.</p>
+              <h2>CAM and default charges</h2>
+              <p>Monthly rates used unless a unit-type or flat override exists.</p>
             </div>
             <Button
               type="button"
-              label="Add charge"
+              label="Add CAM"
               icon="pi pi-plus"
               severity="secondary"
               outlined
-              @click="addCharge(chargeForm.defaultCharges)"
+              @click="
+                addCharge(chargeForm.defaultCharges, {
+                  label: 'CAM Charges',
+                  amount: 3.25,
+                  calculationMethod: 'AREA_RATE',
+                  chargeType: 'CAM',
+                })
+              "
             />
           </div>
           <Message severity="info">
-            For CAM, choose <strong>Per sq ft</strong> and enter the rate. A
-            1670 sq ft flat at 3.25 is calculated as 1670 x 3.25.
+            Enter CAM as the monthly per-sq-ft rate. Quarterly and yearly
+            cycles multiply it automatically.
           </Message>
           <div
             v-for="(charge, index) in chargeForm.defaultCharges"
@@ -1481,6 +1656,14 @@ const saveCharges = async () => {
               @click="removeCharge(chargeForm.defaultCharges, index)"
             />
           </div>
+          <Button
+            type="button"
+            label="Add other charge"
+            icon="pi pi-plus"
+            severity="secondary"
+            outlined
+            @click="addCharge(chargeForm.defaultCharges)"
+          />
         </div>
 
         <div v-if="chargePanel === 'COMMON'" class="admin-charge-section">
@@ -1756,26 +1939,45 @@ const saveCharges = async () => {
             <p class="eyebrow">Bill cycle</p>
             <h2>{{ periodForm.label || 'New bill cycle' }}</h2>
             <p>
-              Use this for the billing month/date range. Add CAM and DG Set as
-              charge lines.
+              CAM per-sq-ft rates will use {{ formatCycleMonths(periodFormCycleMonths) }} for this cycle.
             </p>
           </div>
-          <Button
-            v-if="!selectedPeriod"
-            type="button"
-            label="Use next cycle"
-            icon="pi pi-calendar"
-            severity="secondary"
-            outlined
-            @click="applySuggestedMonthlyPeriod"
-          />
+          <div v-if="!selectedPeriod" class="billing-cycle-presets">
+            <Button
+              type="button"
+              label="Monthly"
+              icon="pi pi-calendar"
+              severity="secondary"
+              outlined
+              @click="applySuggestedPeriod('MONTHLY')"
+            />
+            <Button
+              type="button"
+              label="Quarterly"
+              icon="pi pi-calendar"
+              severity="secondary"
+              outlined
+              @click="applySuggestedPeriod('QUARTERLY')"
+            />
+            <Button
+              type="button"
+              label="Yearly"
+              icon="pi pi-calendar"
+              severity="secondary"
+              outlined
+              @click="applySuggestedPeriod('YEARLY')"
+            />
+          </div>
         </div>
+        <Message severity="info">
+          {{ periodFormCycleSummary }}
+        </Message>
         <div class="admin-form-grid">
           <label class="admin-form-grid__full">
             <span class="field-label">
               Cycle name
               <AppHelpIcon
-                text="Readable month or cycle name shown to admins and residents, such as June 2026. Charge names like CAM or DG Set go under charge lines."
+                text="Readable period name shown to admins and residents, such as July - September 2026."
               />
             </span>
             <InputText
@@ -1790,7 +1992,7 @@ const saveCharges = async () => {
             class="admin-form-grid__full"
           >
             This looks like a charge name. Use a month name such as June 2026
-            here; add CAM or DG Set under charge lines.
+            here; CAM rates and DG readings are handled separately.
           </Message>
           <label>
             <span class="field-label">
@@ -1893,6 +2095,34 @@ const saveCharges = async () => {
       :style="{ width: 'min(1180px, 96vw)' }"
     >
       <div class="admin-form-layout">
+        <div class="billing-generation-summary">
+          <div>
+            <span>Cycle</span>
+            <strong>{{ generationTarget?.label ?? '-' }}</strong>
+            <small>{{ generationCycleLabel }}</small>
+          </div>
+          <div>
+            <span>Bills to create</span>
+            <strong>{{ generationPreview?.totalFlats ?? 0 }}</strong>
+            <small>{{ generationPreview?.skippedExisting ?? 0 }} skipped</small>
+          </div>
+          <div>
+            <span>CAM estimate</span>
+            <strong>{{ formatMoney(generationCamTotal) }}</strong>
+            <small>{{ generationCycleLabel }} at saved rates</small>
+          </div>
+          <div>
+            <span>DG estimate</span>
+            <strong>{{ formatMoney(generationDgTotal) }}</strong>
+            <small>{{ formatUnit(variableChargeFilledCount, 'flat') }}</small>
+          </div>
+          <div>
+            <span>Total</span>
+            <strong>{{ formatMoney(generationPreview?.totalAmount ?? 0) }}</strong>
+            <small>Before new payments</small>
+          </div>
+        </div>
+
         <label>
           <span class="field-label">
             Flats
@@ -1914,7 +2144,7 @@ const saveCharges = async () => {
         <section class="billing-variable-charge-panel">
           <header>
             <div>
-              <p class="eyebrow">Monthly variable charge</p>
+              <p class="eyebrow">Cycle variable charge</p>
               <h3>{{ variableChargeName }} charges</h3>
               <p>
                 Enter opening and closing DG readings for each flat. Units and
@@ -1977,9 +2207,15 @@ const saveCharges = async () => {
               severity="secondary"
               outlined
               :loading="savingVariableCharges"
+              :disabled="invalidVariableChargeEntries.length > 0"
               @click="saveVariableCharges()"
             />
           </div>
+
+          <Message v-if="invalidVariableChargeEntries.length > 0" severity="warn">
+            {{ formatUnit(invalidVariableChargeEntries.length, 'flat') }} has
+            closing reading below opening reading.
+          </Message>
 
           <AppSkeletonState v-if="variableChargesLoading" />
           <AppDataTable
@@ -2099,7 +2335,8 @@ const saveCharges = async () => {
             :disabled="
               !generationPreview ||
               generationPreview.isLocked ||
-              generationPreview.totalFlats === 0
+              generationPreview.totalFlats === 0 ||
+              invalidVariableChargeEntries.length > 0
             "
             @click="generateDues"
           />

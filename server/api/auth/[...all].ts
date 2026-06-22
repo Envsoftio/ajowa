@@ -1,8 +1,8 @@
 import { fromNodeHeaders } from 'better-auth/node'
-import { createError } from 'h3'
 import type { EventHandlerRequest, H3Event } from 'h3'
 import { getAuth } from '~/server/utils/auth'
 import { getValidatedRuntimeConfig } from '~/server/utils/env'
+import { createEventError } from '~/server/utils/http-event'
 import { getRequestLogger } from '~/server/utils/logging'
 
 type AuthEvent = H3Event<EventHandlerRequest>
@@ -192,7 +192,7 @@ export default defineEventHandler(async (event) => {
   } catch (error) {
     logger.error('Auth handler failed', serializeError(error))
 
-    throw createError({
+    throw createEventError({
       statusCode: 500,
       statusMessage: 'AUTH_HANDLER_FAILED',
       data: {
