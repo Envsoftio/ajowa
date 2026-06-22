@@ -1,5 +1,5 @@
 import { ZodError, type z, type ZodType } from 'zod'
-import type { H3Event } from 'h3'
+import { readBody, type H3Event } from 'h3'
 import { createPaginatedResult, normalizeListQuery, normalizePaginationParams } from '~/shared/api'
 import type {
   ApiSuccessResponse,
@@ -63,37 +63,16 @@ export const validateInput = <S extends ZodType>(schema: S, input: unknown): z.o
   }
 }
 
-const readNodeRequestBody = async (event: H3Event) => {
-  const request = event.node?.req
-
-  if (!request) {
-    return undefined
-  }
-
-  return await new Promise<string>((resolve, reject) => {
-    let body = ''
-
-    request.setEncoding('utf8')
-    request.on('data', (chunk) => {
-      body += chunk
-    })
-    request.on('end', () => resolve(body))
-    request.on('error', reject)
-  })
-}
-
 export const readJsonBody = async <T = unknown>(event: H3Event): Promise<T> => {
-  const request = event.req as { json?: () => Promise<unknown>; text?: () => Promise<string> }
+  const body = await readBody(event)
 
-  if (typeof request?.json === 'function') {
-    return (await request.json()) as T
+  if (body == null || body === '') {
+    return {} as T
   }
 
-  if (typeof request?.text === 'function') {
-    const text = await request.text()
-    return (text.length > 0 ? JSON.parse(text) : {}) as T
+  if (typeof body === 'string') {
+    return JSON.parse(body) as T
   }
 
-  const rawBody = await readNodeRequestBody(event)
-  return (rawBody && rawBody.length > 0 ? JSON.parse(rawBody) : {}) as T
+  return body as T
 }
