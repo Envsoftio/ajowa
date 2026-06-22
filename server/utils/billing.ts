@@ -237,22 +237,60 @@ export const mapRowToBillingPeriod = <
   return result as unknown as import('~/types/domain').BillingPeriod
 }
 
+type FlatTypeChargeLookup =
+  | ReadonlyMap<string, ChargeBreakdownItem[]>
+  | { flatType: string; charges: ChargeBreakdownItem[] }[]
+
+type FlatOverrideChargeLookup =
+  | ReadonlyMap<string, ChargeBreakdownItem[]>
+  | { flatId: string; charges: ChargeBreakdownItem[] }[]
+
+export const appendChargeLookup = (
+  target: Map<string, ChargeBreakdownItem[]>,
+  key: string,
+  items: ChargeBreakdownItem[],
+) => {
+  const existing = target.get(key)
+
+  if (existing) {
+    existing.push(...items)
+  } else {
+    target.set(key, [...items])
+  }
+}
+
+const readFlatTypeCharges = (
+  lookup: FlatTypeChargeLookup,
+  flatType: string,
+) =>
+  Array.isArray(lookup)
+    ? lookup.find((entry) => entry.flatType === flatType)?.charges
+    : lookup.get(flatType)
+
+const readFlatOverrideCharges = (
+  lookup: FlatOverrideChargeLookup,
+  flatId: string,
+) =>
+  Array.isArray(lookup)
+    ? lookup.find((entry) => entry.flatId === flatId)?.charges
+    : lookup.get(flatId)
+
 export const resolveChargeBreakdown = (
   defaultCharges: ChargeBreakdownItem[],
-  flatTypeCharges: { flatType: string; charges: ChargeBreakdownItem[] }[],
-  flatOverrideCharges: { flatId: string; charges: ChargeBreakdownItem[] }[],
+  flatTypeCharges: FlatTypeChargeLookup,
+  flatOverrideCharges: FlatOverrideChargeLookup,
   flatType: string,
   flatId: string,
   flatAreaSqFt?: number | null,
 ): ChargeBreakdownItem[] => {
-  const override = flatOverrideCharges.find((f) => f.flatId === flatId)
-  if (override) {
-    return materializeChargeBreakdown(override.charges, flatAreaSqFt)
+  const overrideCharges = readFlatOverrideCharges(flatOverrideCharges, flatId)
+  if (overrideCharges) {
+    return materializeChargeBreakdown(overrideCharges, flatAreaSqFt)
   }
 
-  const typeCharges = flatTypeCharges.find((f) => f.flatType === flatType)
+  const typeCharges = readFlatTypeCharges(flatTypeCharges, flatType)
   if (typeCharges) {
-    return materializeChargeBreakdown(typeCharges.charges, flatAreaSqFt)
+    return materializeChargeBreakdown(typeCharges, flatAreaSqFt)
   }
 
   return materializeChargeBreakdown(defaultCharges, flatAreaSqFt)

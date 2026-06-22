@@ -3,6 +3,7 @@ import { requireRole } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
 import { validatePayload, writeMasterAudit } from '~/server/utils/master-data'
 import {
+  appendChargeLookup,
   dueGenerationSchema,
   type DueGenerationInput,
   hasUnresolvedAreaRateCharge,
@@ -108,37 +109,11 @@ export default defineEventHandler(async (event) => {
     )
 
     const defaultCharges: ChargeBreakdownItem[] = []
-    const flatTypeCharges: { flatType: string; charges: ChargeBreakdownItem[] }[] = []
-    const flatOverrideCharges: { flatId: string; charges: ChargeBreakdownItem[] }[] = []
+    const flatTypeCharges = new Map<string, ChargeBreakdownItem[]>()
+    const flatOverrideCharges = new Map<string, ChargeBreakdownItem[]>()
     const periodDefaultCharges: ChargeBreakdownItem[] = []
-    const periodFlatTypeCharges: { flatType: string; charges: ChargeBreakdownItem[] }[] = []
-    const periodFlatCharges: { flatId: string; charges: ChargeBreakdownItem[] }[] = []
-
-    const addFlatTypeCharges = (
-      target: { flatType: string; charges: ChargeBreakdownItem[] }[],
-      flatType: string,
-      items: ChargeBreakdownItem[],
-    ) => {
-      const existing = target.find((entry) => entry.flatType === flatType)
-      if (existing) {
-        existing.charges.push(...items)
-      } else {
-        target.push({ flatType, charges: items })
-      }
-    }
-
-    const addFlatCharges = (
-      target: { flatId: string; charges: ChargeBreakdownItem[] }[],
-      flatId: string,
-      items: ChargeBreakdownItem[],
-    ) => {
-      const existing = target.find((entry) => entry.flatId === flatId)
-      if (existing) {
-        existing.charges.push(...items)
-      } else {
-        target.push({ flatId, charges: items })
-      }
-    }
+    const periodFlatTypeCharges = new Map<string, ChargeBreakdownItem[]>()
+    const periodFlatCharges = new Map<string, ChargeBreakdownItem[]>()
 
     for (const c of chargesResult.rows) {
       const fallbackRate = c.rate_per_sq_ft ? Number(c.rate_per_sq_ft) : Number(c.amount)
@@ -157,13 +132,13 @@ export default defineEventHandler(async (event) => {
         const target = isPeriodCharge ? periodDefaultCharges : defaultCharges
         target.push(...items)
       } else if (c.scope === 'FLAT_TYPE' && c.flat_type) {
-        addFlatTypeCharges(
+        appendChargeLookup(
           isPeriodCharge ? periodFlatTypeCharges : flatTypeCharges,
           c.flat_type,
           items,
         )
       } else if (c.scope === 'FLAT' && c.flat_id) {
-        addFlatCharges(
+        appendChargeLookup(
           isPeriodCharge ? periodFlatCharges : flatOverrideCharges,
           c.flat_id,
           items,

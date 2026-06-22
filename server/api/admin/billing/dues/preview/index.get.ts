@@ -2,7 +2,11 @@ import { z } from 'zod'
 import { createApiSuccess, validateInput } from '~/server/utils/api'
 import { requireRole } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
-import { hasUnresolvedAreaRateCharge, resolveChargeBreakdown } from '~/server/utils/billing'
+import {
+  appendChargeLookup,
+  hasUnresolvedAreaRateCharge,
+  resolveChargeBreakdown,
+} from '~/server/utils/billing'
 import type { ChargeBreakdownItem, DueGenerationPreview } from '~/types/domain'
 import { AppError } from '~/server/utils/errors'
 import { getQuerySafe } from '~/server/utils/master-data'
@@ -119,37 +123,11 @@ export default defineEventHandler(async (event) => {
 
   const existingFlatIds = new Set(existingResult.rows.map((row) => row.flat_id))
   const defaultCharges: ChargeBreakdownItem[] = []
-  const flatTypeCharges: { flatType: string; charges: ChargeBreakdownItem[] }[] = []
-  const flatOverrideCharges: { flatId: string; charges: ChargeBreakdownItem[] }[] = []
+  const flatTypeCharges = new Map<string, ChargeBreakdownItem[]>()
+  const flatOverrideCharges = new Map<string, ChargeBreakdownItem[]>()
   const periodDefaultCharges: ChargeBreakdownItem[] = []
-  const periodFlatTypeCharges: { flatType: string; charges: ChargeBreakdownItem[] }[] = []
-  const periodFlatCharges: { flatId: string; charges: ChargeBreakdownItem[] }[] = []
-
-  const addFlatTypeCharges = (
-    target: { flatType: string; charges: ChargeBreakdownItem[] }[],
-    flatType: string,
-    items: ChargeBreakdownItem[],
-  ) => {
-    const existing = target.find((entry) => entry.flatType === flatType)
-    if (existing) {
-      existing.charges.push(...items)
-    } else {
-      target.push({ flatType, charges: items })
-    }
-  }
-
-  const addFlatCharges = (
-    target: { flatId: string; charges: ChargeBreakdownItem[] }[],
-    flatId: string,
-    items: ChargeBreakdownItem[],
-  ) => {
-    const existing = target.find((entry) => entry.flatId === flatId)
-    if (existing) {
-      existing.charges.push(...items)
-    } else {
-      target.push({ flatId, charges: items })
-    }
-  }
+  const periodFlatTypeCharges = new Map<string, ChargeBreakdownItem[]>()
+  const periodFlatCharges = new Map<string, ChargeBreakdownItem[]>()
 
   for (const charge of chargesResult.rows) {
     const fallbackRate = charge.rate_per_sq_ft ? Number(charge.rate_per_sq_ft) : Number(charge.amount)
@@ -168,13 +146,13 @@ export default defineEventHandler(async (event) => {
       const target = isPeriodCharge ? periodDefaultCharges : defaultCharges
       target.push(...items)
     } else if (charge.scope === 'FLAT_TYPE' && charge.flat_type) {
-      addFlatTypeCharges(
+      appendChargeLookup(
         isPeriodCharge ? periodFlatTypeCharges : flatTypeCharges,
         charge.flat_type,
         items,
       )
     } else if (charge.scope === 'FLAT' && charge.flat_id) {
-      addFlatCharges(
+      appendChargeLookup(
         isPeriodCharge ? periodFlatCharges : flatOverrideCharges,
         charge.flat_id,
         items,
