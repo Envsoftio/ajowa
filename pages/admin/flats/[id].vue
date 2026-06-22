@@ -51,6 +51,22 @@ const relationshipSeverity = (type: string) => {
   if (type === 'TENANT') return 'info'
   return 'secondary'
 }
+
+const displayRelationshipNote = (note: string | null | undefined) => {
+  const trimmed = note?.trim()
+
+  if (!trimmed) {
+    return null
+  }
+
+  const normalized = trimmed.toLowerCase()
+
+  if (normalized.startsWith('imported from workbook') || normalized.startsWith('tenant imported from workbook')) {
+    return null
+  }
+
+  return trimmed
+}
 </script>
 
 <template>
@@ -218,8 +234,8 @@ const relationshipSeverity = (type: string) => {
               <span>Ownership starts: {{ formatDate(relationship.ownershipStartDate) }}</span>
               <span>Lease: {{ formatDate(relationship.leaseStartDate) }} - {{ formatDate(relationship.leaseEndDate) }}</span>
             </div>
-            <p v-if="relationship.relationshipNote" class="flat-note">
-              {{ relationship.relationshipNote }}
+            <p v-if="displayRelationshipNote(relationship.relationshipNote)" class="flat-note">
+              {{ displayRelationshipNote(relationship.relationshipNote) }}
             </p>
           </article>
         </template>

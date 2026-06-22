@@ -8,6 +8,7 @@ import {
   writeMasterAudit,
 } from '~/server/utils/master-data'
 import { AppError } from '~/server/utils/errors'
+import type { ChargeBreakdownItem } from '~/types/domain'
 
 const variableChargesSchema = z.object({
   chargeName: z.string().trim().min(1).max(80).default('DG Set'),
@@ -40,6 +41,11 @@ type NormalizedVariableChargeEntry = {
   previousOutstanding: number
   interestAmount: number
   amount: number
+}
+
+type PreviousChargeSummary = {
+  charge_count: string
+  total_amount: string | null
 }
 
 const roundVariableChargeMoney = (value: number) => Math.round(value * 100) / 100
@@ -94,6 +100,31 @@ const normalizeVariableChargeEntry = (
     amount: roundVariableChargeMoney(Math.max(0, computedAmount)),
   }
 }
+
+const buildVariableChargeBreakdown = (
+  entry: NormalizedVariableChargeEntry,
+): ChargeBreakdownItem[] => [
+  {
+    label: 'Power Back Up Charges',
+    amount: entry.amount,
+    chargeType: 'DG_SET',
+    calculationMethod: 'FIXED',
+    source: 'MONTHLY_DG_METER_CHARGE',
+    electricityType: 'POWER BACK UP',
+    meterNo: entry.meterNo,
+    openingReading: entry.openingReading,
+    closingReading: entry.closingReading,
+    consumedUnits: entry.consumedUnits,
+    ratePerUnit: entry.ratePerUnit,
+    tariffRateLabel:
+      entry.ratePerUnit != null ? `Rs.${entry.ratePerUnit}/Unit` : null,
+    connectionLoad: entry.connectionLoad ?? '4 KW (5KVA)',
+    state: 'PUNJAB',
+    stateCode: '03',
+    previousOutstanding: entry.previousOutstanding,
+    interestAmount: entry.interestAmount,
+  },
+]
 
 export default defineEventHandler(async (event) => {
   const authMe = await requireRole(event, ['ADMIN'])
@@ -164,18 +195,19 @@ export default defineEventHandler(async (event) => {
       })
     }
 
-    const beforeResult = await client.query(
+    const beforeResult = await client.query<PreviousChargeSummary>(
       `
-        select flat_id, charge_name, amount::text, charge_breakdown
+        select count(*)::text as charge_count, coalesce(sum(amount), 0)::text as total_amount
         from maintenance_charges
         where society_id = $1
           and billing_period_id = $2
           and charge_name = $3
           and is_active = true
-        order by flat_id
       `,
       [authMe.user.societyId, periodId, body.chargeName],
     )
+    const previousEntryCount = Number(beforeResult.rows[0]?.charge_count ?? 0)
+    const previousTotalAmount = Number(beforeResult.rows[0]?.total_amount ?? 0)
 
     await client.query(
       `
@@ -189,32 +221,13 @@ export default defineEventHandler(async (event) => {
     )
 
     const positiveEntries = normalizedEntries.filter((entry) => entry.amount > 0)
+    const insertPayload = positiveEntries.map((entry) => ({
+      flat_id: entry.flatId,
+      amount: entry.amount,
+      charge_breakdown: buildVariableChargeBreakdown(entry),
+    }))
 
-    for (const entry of positiveEntries) {
-      const breakdown = [
-        {
-          label: 'Power Back Up Charges',
-          amount: entry.amount,
-          chargeType: 'DG_SET',
-          calculationMethod: 'FIXED',
-          source: 'MONTHLY_DG_METER_CHARGE',
-          electricityType: 'POWER BACK UP',
-          meterNo: entry.meterNo,
-          openingReading: entry.openingReading,
-          closingReading: entry.closingReading,
-          consumedUnits: entry.consumedUnits,
-          ratePerUnit: entry.ratePerUnit,
-          tariffRateLabel: entry.ratePerUnit != null
-            ? `Rs.${entry.ratePerUnit}/Unit`
-            : null,
-          connectionLoad: entry.connectionLoad ?? '4 KW (5KVA)',
-          state: 'PUNJAB',
-          stateCode: '03',
-          previousOutstanding: entry.previousOutstanding,
-          interestAmount: entry.interestAmount,
-        },
-      ]
-
+    if (insertPayload.length > 0) {
       await client.query(
         `
           insert into maintenance_charges (
@@ -228,15 +241,27 @@ export default defineEventHandler(async (event) => {
             charge_breakdown,
             is_active
           )
-          values ($1, $2, 'FLAT', $3, $4, $5, 'FIXED', $6, true)
+          select
+            $1,
+            $2,
+            'FLAT',
+            payload.flat_id,
+            $3,
+            payload.amount,
+            'FIXED',
+            payload.charge_breakdown,
+            true
+          from jsonb_to_recordset($4::jsonb) as payload(
+            flat_id uuid,
+            amount numeric,
+            charge_breakdown jsonb
+          )
         `,
         [
           authMe.user.societyId,
           periodId,
-          entry.flatId,
           body.chargeName,
-          entry.amount,
-          JSON.stringify(breakdown),
+          JSON.stringify(insertPayload),
         ],
       )
     }
@@ -250,7 +275,8 @@ export default defineEventHandler(async (event) => {
       eventKey: 'billing_period_variable_charges.updated',
       beforeState: {
         chargeName: body.chargeName,
-        entries: beforeResult.rows,
+        entryCount: previousEntryCount,
+        totalAmount: previousTotalAmount,
       },
       afterState: {
         chargeName: body.chargeName,
@@ -272,7 +298,7 @@ export default defineEventHandler(async (event) => {
     await client.query('commit')
     return createApiSuccess(event, {
       saved: positiveEntries.length,
-      removed: Math.max(beforeResult.rows.length - positiveEntries.length, 0),
+      removed: Math.max(previousEntryCount - positiveEntries.length, 0),
     })
   } catch (error) {
     await client.query('rollback')

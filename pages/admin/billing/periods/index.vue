@@ -410,7 +410,6 @@ const generationDialogVisible = ref(false)
 const generationTarget = ref<BillingPeriod | null>(null)
 const selectedFlatIds = ref<string[]>([])
 const generationPreview = ref<PreviewResponse['data'] | null>(null)
-const previewLoading = ref(false)
 const generating = ref(false)
 const variableChargeName = ref('DG Set')
 const variableChargeEntries = ref<VariableChargeEntry[]>([])
@@ -593,24 +592,19 @@ const openGenerationDialog = async (period: BillingPeriod) => {
 
 const loadGenerationPreview = async () => {
   if (!generationTarget.value) return
-  previewLoading.value = true
 
-  try {
-    const response = await api<PreviewResponse>(
-      '/api/admin/billing/dues/preview',
-      {
-        query: {
-          billingPeriodId: generationTarget.value.id,
-          flatIds: selectedFlatIds.value.length
-            ? selectedFlatIds.value.join(',')
-            : undefined,
-        },
+  const response = await api<PreviewResponse>(
+    '/api/admin/billing/dues/preview',
+    {
+      query: {
+        billingPeriodId: generationTarget.value.id,
+        flatIds: selectedFlatIds.value.length
+          ? selectedFlatIds.value.join(',')
+          : undefined,
       },
-    )
-    generationPreview.value = response.data
-  } finally {
-    previewLoading.value = false
-  }
+    },
+  )
+  generationPreview.value = response.data
 }
 
 watch(selectedFlatIds, () => loadGenerationPreview())
@@ -2081,22 +2075,7 @@ const saveCharges = async () => {
           </AppDataTable>
         </section>
 
-        <AppSkeletonState v-if="previewLoading" />
-        <template v-else-if="generationPreview">
-          <div class="surface-grid">
-            <section class="surface-card">
-              <p class="eyebrow">Affected flats</p>
-              <h3>{{ generationPreview.totalFlats }}</h3>
-            </section>
-            <section class="surface-card">
-              <p class="eyebrow">Preview amount</p>
-              <h3>{{ formatMoney(generationPreview.totalAmount) }}</h3>
-            </section>
-            <section class="surface-card">
-              <p class="eyebrow">Skipped</p>
-              <h3>{{ generationPreview.skippedExisting }}</h3>
-            </section>
-          </div>
+        <template v-if="generationPreview?.warnings.length">
           <Message
             v-for="warning in generationPreview.warnings"
             :key="warning"
@@ -2104,18 +2083,6 @@ const saveCharges = async () => {
           >
             {{ warning }}
           </Message>
-          <AppDataTable
-            :value="generationPreview.flatTypeBreakdown"
-            responsive-layout="scroll"
-          >
-            <Column field="flatType" header="Unit type" />
-            <Column field="flatCount" header="Flats" />
-            <Column header="Amount">
-              <template #body="{ data: row }">
-                {{ formatMoney(row.totalAmount) }}
-              </template>
-            </Column>
-          </AppDataTable>
         </template>
 
         <div class="admin-inline-actions dialog-actions">

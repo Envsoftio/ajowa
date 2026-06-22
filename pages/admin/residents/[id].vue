@@ -41,6 +41,21 @@ const relationshipSeverity = (type: string) => {
   if (type === 'TENANT') return 'info'
   return 'secondary'
 }
+const displayRelationshipNote = (note: string | null | undefined) => {
+  const trimmed = note?.trim()
+
+  if (!trimmed) {
+    return null
+  }
+
+  const normalized = trimmed.toLowerCase()
+
+  if (normalized.startsWith('imported from workbook') || normalized.startsWith('tenant imported from workbook')) {
+    return null
+  }
+
+  return trimmed
+}
 const statusSeverity = (status: string | null | undefined) => {
   if (!status) return 'secondary'
   if (['PAID', 'VERIFIED', 'RESOLVED', 'CLOSED', 'ALLOWED', 'ACTIVE'].includes(status)) return 'success'
@@ -477,8 +492,8 @@ const runAction = async (action: ResidentAction) => {
               </div>
             </div>
 
-            <p v-if="relationship.relationshipNote" class="resident-note">
-              {{ relationship.relationshipNote }}
+            <p v-if="displayRelationshipNote(relationship.relationshipNote)" class="resident-note">
+              {{ displayRelationshipNote(relationship.relationshipNote) }}
             </p>
           </article>
         </div>
