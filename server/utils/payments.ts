@@ -147,6 +147,63 @@ const formatReceiptDate = (value: string | null | undefined) =>
       })
     : '-'
 
+const syncFlatCamAdvancePaidUntil = async (client: PoolClient, dueId: string, status: string) => {
+  if (status !== 'PAID') return
+
+  const result = await client.query<{
+    society_id: string
+    flat_id: string
+    end_date: string
+    charge_type: string
+  }>(
+    `
+      select
+        md.society_id,
+        md.flat_id,
+        bp.end_date::text,
+        bp.charge_type::text
+      from maintenance_dues md
+      inner join billing_periods bp on bp.id = md.billing_period_id
+      where md.id = $1
+      limit 1
+    `,
+    [dueId],
+  )
+  const row = result.rows[0]
+  if (!row || row.charge_type !== 'CAM') return
+
+  await client.query(
+    `
+      update flats
+      set
+        cam_advance_paid_until = case
+          when cam_advance_paid_until is null or cam_advance_paid_until < $3::date then $3::date
+          else cam_advance_paid_until
+        end,
+        cam_advance_note = case
+          when cam_advance_paid_until is null or cam_advance_paid_until < $3::date then $4
+          else cam_advance_note
+        end,
+        cam_advance_updated_at = case
+          when cam_advance_paid_until is null or cam_advance_paid_until < $3::date then now()
+          else cam_advance_updated_at
+        end,
+        updated_at = case
+          when cam_advance_paid_until is null or cam_advance_paid_until < $3::date then now()
+          else updated_at
+        end
+      where society_id = $1
+        and id = $2
+    `,
+    [
+      row.society_id,
+      row.flat_id,
+      row.end_date,
+      `Auto-marked from paid CAM bill through ${formatReceiptDate(row.end_date)}.`,
+    ],
+  )
+}
+
 const getPaymentPolicy = async (client: PoolClient, societyId: string) => {
   const result = await client.query<{ settings: Record<string, unknown> }>(
     `select settings from society_profile where id = $1 limit 1`,
@@ -361,6 +418,8 @@ const refreshDueTotals = async (client: PoolClient, dueId: string, graceDays: nu
     `,
     [dueId, computed.lateFeeAmount, paidAmount, computed.totalAmount, computed.balanceAmount, computed.status],
   )
+
+  await syncFlatCamAdvancePaidUntil(client, dueId, computed.status)
 
   return {
     dueId,

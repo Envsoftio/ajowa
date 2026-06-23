@@ -1137,6 +1137,11 @@ export const enqueueDueBillingContactNotifications = async (
         and md.id = any($2::uuid[])
         ${relationshipFilter}
         and (fr.is_billing_contact = true or fr.is_primary_contact = true)
+        and not (
+          bp.charge_type = 'CAM'
+          and f.cam_advance_paid_until is not null
+          and f.cam_advance_paid_until >= bp.end_date
+        )
       order by md.id, u.id, fr.is_billing_contact desc, fr.is_primary_contact desc
     `,
     params,
@@ -1147,9 +1152,16 @@ export const enqueueDueBillingContactNotifications = async (
     rowsByDueId.set(row.due_id, [...(rowsByDueId.get(row.due_id) ?? []), row])
   }
 
-  let eventCount = 0
-  let audienceCount = 0
-  let jobCount = 0
+  const eventRows = []
+  const eventByDueId = new Map<
+    string,
+    {
+      idempotencyKey: string
+      payload: Record<string, unknown>
+      priority: NotificationPriority
+      windowSeconds: number
+    }
+  >()
 
   for (const [dueId, rows] of rowsByDueId.entries()) {
     const due = rows[0]
@@ -1159,31 +1171,118 @@ export const enqueueDueBillingContactNotifications = async (
         ? `${dueId}:${new Date().toISOString().slice(0, 10)}`
         : dueId
     const isBill = input.eventKey === 'maintenance_due.bill'
+    const idempotencyKey = `${input.eventKey}:${idempotencyScope}`
+    const priority: NotificationPriority = input.eventKey === 'maintenance_due.reminder' ? 'HIGH' : 'MEDIUM'
+    const windowSeconds = input.eventKey === 'maintenance_due.created' ? 31536000 : 86400
+    const payload = {
+      dueId,
+      billingPeriodId: due.billing_period_id,
+      billingPeriodLabel: due.billing_period_label,
+      flatId: due.flat_id,
+      flatLabel: `${due.block_name} ${due.flat_number}`,
+      balanceAmount: Number(due.balance_amount),
+      deepLinkUrl: isBill ? buildAppUrl(`/api/my/dues/${dueId}/bill`) : '/my/dues',
+      actionLabel: isBill ? 'Download bill PDF' : 'Open in AJOWA',
+    }
 
-    const queued = await enqueueNotificationForUsers(client, {
-      societyId: input.societyId,
-      eventKey: input.eventKey,
+    eventByDueId.set(dueId, { idempotencyKey, payload, priority, windowSeconds })
+    eventRows.push({
+      society_id: input.societyId,
+      event_key: input.eventKey,
       category: 'BILLING',
-      sourceTable: 'maintenance_dues',
-      sourceId: dueId,
-      priority: input.eventKey === 'maintenance_due.reminder' ? 'HIGH' : 'MEDIUM',
+      source_table: 'maintenance_dues',
+      source_id: dueId,
+      priority,
       title: input.title,
       body: `${input.bodyPrefix} ${due.block_name} ${due.flat_number} for ${due.billing_period_label}.`,
-      payload: {
-        dueId,
-        billingPeriodId: due.billing_period_id,
-        billingPeriodLabel: due.billing_period_label,
-        flatId: due.flat_id,
-        flatLabel: `${due.block_name} ${due.flat_number}`,
-        balanceAmount: Number(due.balance_amount),
-        deepLinkUrl: isBill ? buildAppUrl(`/api/my/dues/${dueId}/bill`) : '/my/dues',
-        actionLabel: isBill ? 'Download bill PDF' : 'Open in AJOWA',
-      },
-      idempotencyKey: `${input.eventKey}:${idempotencyScope}`,
-      idempotencyWindowSeconds:
-        input.eventKey === 'maintenance_due.created' ? 31536000 : 86400,
-      ...(input.triggeredByUserId ? { triggeredByUserId: input.triggeredByUserId } : {}),
-      users: rows.map((row) => ({
+      payload,
+      idempotency_key: idempotencyKey,
+      idempotency_window_seconds: windowSeconds,
+      triggered_by_user_id: input.triggeredByUserId ?? null,
+      audience_snapshot: { eventKey: input.eventKey, dueId },
+      channel_snapshot: input.channels?.length ? input.channels : ['PUSH', 'EMAIL', 'WHATSAPP', 'IN_APP'],
+      template_snapshot: {},
+      status: 'QUEUED',
+    })
+  }
+
+  if (eventRows.length === 0) {
+    return { eventCount: 0, audienceCount: 0, jobCount: 0 }
+  }
+
+  const eventResult = await client.query<{ id: string; idempotency_key: string }>(
+    `
+      insert into notification_events (
+        society_id,
+        event_key,
+        category,
+        source_table,
+        source_id,
+        priority,
+        title,
+        body,
+        payload,
+        idempotency_key,
+        idempotency_window_seconds,
+        triggered_by_user_id,
+        scheduled_for,
+        audience_snapshot,
+        channel_snapshot,
+        template_snapshot,
+        status
+      )
+      select
+        payload.society_id,
+        payload.event_key,
+        payload.category::notification_event_category,
+        payload.source_table,
+        payload.source_id,
+        payload.priority::service_priority,
+        payload.title,
+        payload.body,
+        payload.payload,
+        payload.idempotency_key,
+        payload.idempotency_window_seconds,
+        payload.triggered_by_user_id,
+        null,
+        payload.audience_snapshot,
+        payload.channel_snapshot,
+        payload.template_snapshot,
+        payload.status::notification_event_status
+      from jsonb_to_recordset($1::jsonb) as payload(
+        society_id uuid,
+        event_key text,
+        category text,
+        source_table text,
+        source_id uuid,
+        priority text,
+        title text,
+        body text,
+        payload jsonb,
+        idempotency_key text,
+        idempotency_window_seconds integer,
+        triggered_by_user_id uuid,
+        audience_snapshot jsonb,
+        channel_snapshot jsonb,
+        template_snapshot jsonb,
+        status text
+      )
+      on conflict (idempotency_key)
+      do update set updated_at = notification_events.updated_at
+      returning id, idempotency_key
+    `,
+    [JSON.stringify(eventRows)],
+  )
+  const eventIdByKey = new Map(eventResult.rows.map((row) => [row.idempotency_key, row.id]))
+  const audienceRows = []
+
+  for (const [dueId, rows] of rowsByDueId.entries()) {
+    const eventMeta = eventByDueId.get(dueId)
+    const eventId = eventMeta ? eventIdByKey.get(eventMeta.idempotencyKey) : null
+    if (!eventMeta || !eventId) continue
+
+    for (const row of rows) {
+      const user: NotificationUser = {
         id: row.user_id,
         email: row.email,
         mobileNumber: row.mobile_number,
@@ -1193,18 +1292,165 @@ export const enqueueDueBillingContactNotifications = async (
         emailEnabled: row.notification_email_enabled,
         whatsappEnabled: row.notification_whatsapp_enabled,
         inAppEnabled: row.notification_in_app_enabled,
-      })),
-      ...(input.channels ? { channels: input.channels } : {}),
-      audienceLabel: 'Billing contact',
-      audienceSnapshot: { eventKey: input.eventKey, dueId },
-    })
+      }
 
-    eventCount += queued.eventId ? 1 : 0
-    audienceCount += queued.audienceCount
-    jobCount += queued.jobCount
+      for (const channel of getUserChannels(user, input.channels)) {
+        const address = channelAddress(user, channel)
+        if ((channel === 'EMAIL' || channel === 'WHATSAPP') && !address) {
+          continue
+        }
+
+        audienceRows.push({
+          notification_event_id: eventId,
+          target_user_id: user.id,
+          channel,
+          resolved_address: address,
+          audience_label: 'Billing contact',
+          filters_snapshot: { eventKey: input.eventKey, dueId },
+          target_user_status: 'ACTIVE',
+          preference_snapshot: {
+            preset: user.preferredNotificationChannels,
+            pushEnabled: user.pushEnabled,
+            emailEnabled: user.emailEnabled,
+            whatsappEnabled: user.whatsappEnabled,
+            inAppEnabled: user.inAppEnabled,
+          },
+          dedupe_key: createDedupeKey(
+            {
+              societyId: input.societyId,
+              eventKey: input.eventKey,
+              category: 'BILLING',
+              title: input.title,
+              body: '',
+              payload: eventMeta.payload,
+              idempotencyKey: eventMeta.idempotencyKey,
+              idempotencyWindowSeconds: eventMeta.windowSeconds,
+              users: [],
+            },
+            user.id,
+            channel,
+          ),
+          priority: eventMeta.priority,
+          job_payload: eventMeta.payload,
+        })
+      }
+    }
   }
 
-  return { eventCount, audienceCount, jobCount }
+  if (audienceRows.length === 0) {
+    return { eventCount: eventResult.rows.length, audienceCount: 0, jobCount: 0 }
+  }
+
+  const audienceResult = await client.query<{ id: string; dedupe_key: string }>(
+    `
+      with payload as (
+        select *
+        from jsonb_to_recordset($1::jsonb) as payload(
+          notification_event_id uuid,
+          target_user_id uuid,
+          channel text,
+          resolved_address text,
+          audience_label text,
+          filters_snapshot jsonb,
+          target_user_status text,
+          preference_snapshot jsonb,
+          dedupe_key text,
+          priority text,
+          job_payload jsonb
+        )
+      ),
+      inserted as (
+        insert into notification_audiences (
+          notification_event_id,
+          target_user_id,
+          channel,
+          resolved_address,
+          audience_label,
+          filters_snapshot,
+          target_user_status,
+          preference_snapshot
+        )
+        select
+          notification_event_id,
+          target_user_id,
+          channel::notification_channel,
+          resolved_address,
+          audience_label,
+          filters_snapshot,
+          target_user_status,
+          preference_snapshot
+        from payload
+        returning id, notification_event_id, target_user_id, channel
+      )
+      select inserted.id, payload.dedupe_key
+      from inserted
+      inner join payload
+        on payload.notification_event_id = inserted.notification_event_id
+       and payload.target_user_id = inserted.target_user_id
+       and payload.channel::notification_channel = inserted.channel
+    `,
+    [JSON.stringify(audienceRows)],
+  )
+  const audienceIdByDedupeKey = new Map(audienceResult.rows.map((row) => [row.dedupe_key, row.id]))
+  const jobRows = audienceRows
+    .map((row) => ({
+      notification_event_id: row.notification_event_id,
+      audience_id: audienceIdByDedupeKey.get(row.dedupe_key) ?? null,
+      channel: row.channel,
+      dedupe_key: row.dedupe_key,
+      priority: row.priority,
+      payload: row.job_payload,
+    }))
+    .filter((row) => row.audience_id)
+
+  if (jobRows.length === 0) {
+    return {
+      eventCount: eventResult.rows.length,
+      audienceCount: audienceResult.rows.length,
+      jobCount: 0,
+    }
+  }
+
+  const jobResult = await client.query<{ id: string }>(
+    `
+      insert into notification_jobs (
+        notification_event_id,
+        audience_id,
+        channel,
+        dedupe_key,
+        priority,
+        payload,
+        scheduled_for,
+        next_attempt_at
+      )
+      select
+        payload.notification_event_id,
+        payload.audience_id,
+        payload.channel::notification_channel,
+        payload.dedupe_key,
+        payload.priority::service_priority,
+        payload.payload,
+        null,
+        now()
+      from jsonb_to_recordset($1::jsonb) as payload(
+        notification_event_id uuid,
+        audience_id uuid,
+        channel text,
+        dedupe_key text,
+        priority text,
+        payload jsonb
+      )
+      on conflict (dedupe_key) do nothing
+      returning id
+    `,
+    [JSON.stringify(jobRows)],
+  )
+
+  return {
+    eventCount: eventResult.rows.length,
+    audienceCount: audienceResult.rows.length,
+    jobCount: jobResult.rowCount ?? 0,
+  }
 }
 
 export const sortChannelsByPriority = (channels: NotificationChannel[]) =>

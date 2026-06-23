@@ -11,10 +11,14 @@ type DueRow = {
   billing_period_id: string
   billing_period_label: string
   billing_period_due_date: string
+  billing_period_charge_type: string
+  billing_period_start_date: string
+  billing_period_end_date: string
   flat_id: string
   flat_number: string
   block_name: string
   unit_type: string
+  cam_advance_paid_until: string | null
   due_date: string
   base_amount: string
   late_fee_amount: string
@@ -116,10 +120,14 @@ export default defineEventHandler(async (event) => {
           md.billing_period_id,
           bp.label as billing_period_label,
           bp.due_date::text as billing_period_due_date,
+          bp.charge_type::text as billing_period_charge_type,
+          bp.start_date::text as billing_period_start_date,
+          bp.end_date::text as billing_period_end_date,
           md.flat_id,
           f.flat_number,
           b.name as block_name,
           f.unit_type,
+          f.cam_advance_paid_until::text,
           md.due_date::text,
           md.base_amount::text,
           md.late_fee_amount::text,
@@ -188,6 +196,9 @@ export default defineEventHandler(async (event) => {
       billingPeriodId: row.billing_period_id,
       billingPeriodLabel: row.billing_period_label,
       billingPeriodDueDate: row.billing_period_due_date,
+      billingPeriodChargeType: row.billing_period_charge_type as NonNullable<MaintenanceDue['billingPeriodChargeType']>,
+      billingPeriodStartDate: row.billing_period_start_date,
+      billingPeriodEndDate: row.billing_period_end_date,
       flatId: row.flat_id,
       flatNumber: row.flat_number,
       blockName: row.block_name,
@@ -203,6 +214,11 @@ export default defineEventHandler(async (event) => {
       chargeBreakdown: Array.isArray(row.charge_breakdown) ? row.charge_breakdown : [],
       generatedAt: row.generated_at,
       primaryResidentName: row.primary_resident_name,
+      isCamAdvanceCovered:
+        row.billing_period_charge_type === 'CAM' &&
+        row.cam_advance_paid_until != null &&
+        row.cam_advance_paid_until >= row.billing_period_end_date,
+      camAdvancePaidUntil: row.cam_advance_paid_until,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }

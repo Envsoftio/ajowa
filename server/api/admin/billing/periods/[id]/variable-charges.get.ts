@@ -15,6 +15,9 @@ type FlatChargeRow = {
   block_name: string
   unit_type: string
   area_sq_ft: string | null
+  cam_advance_paid_until: string | null
+  cam_advance_note: string | null
+  cam_advance_updated_at: string | null
   amount: string | null
   rate_per_sq_ft: string | null
   charge_breakdown: unknown
@@ -71,6 +74,9 @@ export default defineEventHandler(async (event) => {
         b.name as block_name,
         f.unit_type,
         f.area_sq_ft::text as area_sq_ft,
+        f.cam_advance_paid_until::text as cam_advance_paid_until,
+        f.cam_advance_note,
+        f.cam_advance_updated_at::text as cam_advance_updated_at,
         mc.amount::text,
         mc.rate_per_sq_ft::text,
         mc.charge_breakdown
@@ -107,6 +113,9 @@ export default defineEventHandler(async (event) => {
         blockName: row.block_name,
         unitType: row.unit_type,
         areaSqFt: readNumber(metadata, 'areaSqFt') ?? (row.area_sq_ft == null ? null : Number(row.area_sq_ft)),
+        camAdvancePaidUntil: row.cam_advance_paid_until,
+        camAdvanceNote: row.cam_advance_note,
+        camAdvanceUpdatedAt: row.cam_advance_updated_at,
         meterNo: readString(metadata, 'meterNo'),
         openingReading: readNumber(metadata, 'openingReading'),
         closingReading: readNumber(metadata, 'closingReading'),

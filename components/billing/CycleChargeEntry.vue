@@ -42,6 +42,9 @@ type VariableChargeEntry = {
   blockName: string
   unitType: string
   areaSqFt: number | null
+  camAdvancePaidUntil: string | null
+  camAdvanceNote: string | null
+  camAdvanceUpdatedAt: string | null
   meterNo: string | null
   openingReading: number | null
   closingReading: number | null
@@ -80,6 +83,8 @@ type GenerationResponse = {
   data: {
     generated: number
     skipped: number
+    advanceCoveredCount: number
+    overlapSkippedCount: number
     advanceAppliedCount: number
     advanceAppliedAmount: number
     dueIds: string[]
@@ -434,7 +439,7 @@ const flatOptions = computed(() =>
 
 const billDeliveryFlatOptions = computed(() =>
   chargeEntries.value
-    .filter((entry) => Number(entry.amount ?? 0) > 0)
+    .filter((entry) => Number(entry.amount ?? 0) > 0 && !isCamAdvanceCoveredForEntry(entry))
     .map((entry) => ({
       label: `${entry.blockName} ${entry.flatNumber} - ${entry.unitType}`,
       value: entry.flatId,
@@ -451,12 +456,20 @@ const filledChargeCount = computed(
 
 const billableFlatIds = computed(() =>
   chargeEntries.value
-    .filter((entry) => Number(entry.amount ?? 0) > 0)
+    .filter((entry) => Number(entry.amount ?? 0) > 0 && !isCamAdvanceCoveredForEntry(entry))
     .map((entry) => entry.flatId),
 )
 
 const camBillableEntries = computed(() =>
-  chargeEntries.value.filter((entry) => Number(entry.amount ?? 0) > 0),
+  chargeEntries.value.filter((entry) => Number(entry.amount ?? 0) > 0 && !isCamAdvanceCoveredForEntry(entry)),
+)
+
+const camAdvanceCoveredEntries = computed(() =>
+  chargeEntries.value.filter((entry) => isCamAdvanceCoveredForEntry(entry)),
+)
+
+const camRunGenerationEntries = computed(() =>
+  chargeEntries.value.filter((entry) => Number(entry.amount ?? 0) > 0 || isCamAdvanceCoveredForEntry(entry)),
 )
 
 const camRunGroups = computed(() => {
@@ -467,24 +480,31 @@ const camRunGroups = computed(() => {
       cycleLabel: string
       period: ReturnType<typeof getCamPeriodForCycle>
       entries: VariableChargeEntry[]
+      billableCount: number
+      advanceCoveredCount: number
       totalAmount: number
     }
   >()
 
-  for (const entry of camBillableEntries.value) {
+  for (const entry of camRunGenerationEntries.value) {
     const cycleMonths = getEntryCycleMultiplier(entry)
+    const isCovered = isCamAdvanceCoveredForEntry(entry)
     const current = groups.get(cycleMonths)
 
     if (current) {
       current.entries.push(entry)
-      current.totalAmount = roundChargeValue(current.totalAmount + Number(entry.amount ?? 0))
+      current.billableCount += isCovered ? 0 : Number(entry.amount ?? 0) > 0 ? 1 : 0
+      current.advanceCoveredCount += isCovered ? 1 : 0
+      current.totalAmount = roundChargeValue(current.totalAmount + (isCovered ? 0 : Number(entry.amount ?? 0)))
     } else {
       groups.set(cycleMonths, {
         cycleMonths,
         cycleLabel: getCycleLabel(cycleMonths),
         period: getCamPeriodForCycle(cycleMonths),
         entries: [entry],
-        totalAmount: Number(entry.amount ?? 0),
+        billableCount: isCovered || Number(entry.amount ?? 0) <= 0 ? 0 : 1,
+        advanceCoveredCount: isCovered ? 1 : 0,
+        totalAmount: isCovered ? 0 : Number(entry.amount ?? 0),
       })
     }
   }
@@ -494,6 +514,12 @@ const camRunGroups = computed(() => {
 
 const chargeTotal = computed(() =>
   chargeEntries.value.reduce((sum, entry) => sum + Number(entry.amount ?? 0), 0),
+)
+
+const billableChargeTotal = computed(() =>
+  chargeEntries.value
+    .filter((entry) => !isCamAdvanceCoveredForEntry(entry))
+    .reduce((sum, entry) => sum + Number(entry.amount ?? 0), 0),
 )
 
 const chargeUnitsTotal = computed(() =>
@@ -531,18 +557,20 @@ const buildCamGenerationProgressSteps = (
     cycleLabel: string
     period: ReturnType<typeof getCamPeriodForCycle>
     entries: VariableChargeEntry[]
+    billableCount: number
+    advanceCoveredCount: number
   }>,
 ): GenerationProgressStep[] => [
   {
     id: 'prepare-cam-run',
     label: 'Prepare CAM run',
-    detail: `Grouping ${formatUnit(camBillableEntries.value.length, 'flat')} into ${formatUnit(groups.length, 'cycle group')}.`,
+    detail: `Grouping ${formatUnit(camRunGenerationEntries.value.length, 'flat')} into ${formatUnit(groups.length, 'cycle group')}.`,
     status: 'pending',
   },
   ...groups.map((group) => ({
     id: getCamGenerationGroupStepId(group.cycleMonths),
     label: `${group.cycleLabel} CAM bills`,
-    detail: `${formatUnit(group.entries.length, 'flat')} - ${formatDate(group.period.startDate)} to ${formatDate(group.period.endDate)}.`,
+    detail: `${formatUnit(group.billableCount, 'bill')} - ${formatUnit(group.advanceCoveredCount, 'advance flat')} covered.`,
     status: 'pending' as const,
   })),
   {
@@ -719,6 +747,37 @@ const getRecordPaymentPeriod = (entry: Pick<VariableChargeEntry, 'cycleMultiplie
   ) ?? null
 }
 
+const getEntryGenerationPeriod = (entry: Pick<VariableChargeEntry, 'cycleMultiplier'>) =>
+  selectedPeriod.value ?? (props.camRunFlow ? getCamPeriodForCycle(getEntryCycleMultiplier(entry)) : null)
+
+const isCamAdvanceCoveredForEntry = (entry: Pick<VariableChargeEntry, 'cycleMultiplier' | 'camAdvancePaidUntil'>) => {
+  if (props.chargeType !== 'CAM' || !entry.camAdvancePaidUntil) return false
+
+  const period = getEntryGenerationPeriod(entry)
+  return Boolean(period && entry.camAdvancePaidUntil >= period.endDate)
+}
+
+const markEntryAdvancePaidThroughCycle = (entry: VariableChargeEntry) => {
+  const period = getEntryGenerationPeriod(entry)
+  if (!period) return
+
+  entry.camAdvancePaidUntil = period.endDate
+  entry.camAdvanceNote = `CAM paid through ${formatDate(period.endDate)}`
+}
+
+const clearEntryAdvanceCoverage = (entry: VariableChargeEntry) => {
+  entry.camAdvancePaidUntil = null
+  entry.camAdvanceNote = null
+}
+
+const updateEntryAdvancePaidUntil = (entry: VariableChargeEntry, value: unknown) => {
+  const nextValue = String(value || '').trim()
+  entry.camAdvancePaidUntil = nextValue || null
+  if (!entry.camAdvancePaidUntil) {
+    entry.camAdvanceNote = null
+  }
+}
+
 const getRecordPaymentRoute = (entry: VariableChargeEntry) => {
   const amount = Number(entry.amount ?? 0)
   const billingPeriodId = getRecordPaymentPeriod(entry)?.id ?? ''
@@ -744,6 +803,9 @@ const getRecordPaymentTitle = (entry: VariableChargeEntry) =>
 const normalizeChargeEntry = (entry: VariableChargeEntry): VariableChargeEntry => ({
   ...entry,
   areaSqFt: normalizeChargeNumber(entry.areaSqFt),
+  camAdvancePaidUntil: entry.camAdvancePaidUntil || null,
+  camAdvanceNote: entry.camAdvanceNote || null,
+  camAdvanceUpdatedAt: entry.camAdvanceUpdatedAt || null,
   meterNo: entry.meterNo ?? null,
   openingReading: normalizeChargeNumber(entry.openingReading),
   closingReading: normalizeChargeNumber(entry.closingReading),
@@ -987,6 +1049,9 @@ const loadVariableCharges = async () => {
           blockName: flat.blockName,
           unitType: flat.unitType,
           areaSqFt: flat.areaSqFt,
+          camAdvancePaidUntil: flat.camAdvancePaidUntil ?? null,
+          camAdvanceNote: flat.camAdvanceNote ?? null,
+          camAdvanceUpdatedAt: flat.camAdvanceUpdatedAt ?? null,
           meterNo: null,
           openingReading: null,
           closingReading: null,
@@ -1081,6 +1146,12 @@ const saveVariableCharges = async () => {
               : null,
             cycleLabel: props.showPerFlatCycle
               ? getCycleLabel(entry.cycleMultiplier ?? defaultCycleMonths.value)
+              : null,
+            camAdvancePaidUntil: props.chargeType === 'CAM'
+              ? entry.camAdvancePaidUntil || null
+              : null,
+            camAdvanceNote: props.chargeType === 'CAM'
+              ? entry.camAdvanceNote || null
               : null,
             amount: Number(entry.amount ?? 0),
           })),
@@ -1178,11 +1249,11 @@ const openGenerationDialog = async () => {
       return
     }
 
-    if (camBillableEntries.value.length === 0) {
+    if (camRunGenerationEntries.value.length === 0) {
       toast.add({
         severity: 'warn',
         summary: 'Apply defaults first',
-        detail: `Apply the CAM rate and cycles before generating ${props.chargeName} bills.`,
+        detail: `Apply the CAM rate or mark advance coverage before generating ${props.chargeName} bills.`,
         life: 10000,
       })
       return
@@ -1254,13 +1325,15 @@ const generateDues = async () => {
     try {
       let generated = 0
       let skipped = 0
+      let advanceCoveredCount = 0
+      let overlapSkippedCount = 0
       let advanceAppliedCount = 0
       let advanceAppliedAmount = 0
       const billSendTargets: GeneratedDueTarget[] = []
 
       startGenerationProgressStep(
         'prepare-cam-run',
-        `Preparing ${formatUnit(groups.length, 'cycle group')} from ${formatUnit(camBillableEntries.value.length, 'flat')}.`,
+        `Preparing ${formatUnit(groups.length, 'cycle group')} from ${formatUnit(camRunGenerationEntries.value.length, 'flat')}.`,
       )
       completeGenerationProgressStep(
         'prepare-cam-run',
@@ -1303,6 +1376,8 @@ const generateDues = async () => {
                 interestAmount: entry.interestAmount ?? 0,
                 cycleMultiplier: group.cycleMonths,
                 cycleLabel: group.cycleLabel,
+                camAdvancePaidUntil: entry.camAdvancePaidUntil || null,
+                camAdvanceNote: entry.camAdvanceNote || null,
                 amount: Number(entry.amount ?? 0),
               })),
             },
@@ -1310,7 +1385,7 @@ const generateDues = async () => {
         )
 
         updateGenerationProgressStep(groupStepId, {
-          detail: `Generating bill records for ${formatUnit(group.entries.length, 'flat')}.`,
+          detail: `Generating bill records for ${formatUnit(group.billableCount, 'flat')}.`,
         })
         const response = await api<GenerationResponse>('/api/admin/billing/dues', {
           method: 'POST',
@@ -1322,6 +1397,8 @@ const generateDues = async () => {
 
         generated += response.data.generated
         skipped += response.data.skipped
+        advanceCoveredCount += response.data.advanceCoveredCount
+        overlapSkippedCount += response.data.overlapSkippedCount
         advanceAppliedCount += response.data.advanceAppliedCount
         billSendTargets.push(...response.data.generatedDues, ...response.data.skippedDues)
         advanceAppliedAmount = roundChargeValue(
@@ -1332,6 +1409,12 @@ const generateDues = async () => {
           [
             `${response.data.generated} created`,
             `${response.data.skipped} skipped`,
+            response.data.advanceCoveredCount > 0
+              ? `${formatUnit(response.data.advanceCoveredCount, 'advance flat')} covered`
+              : '',
+            response.data.overlapSkippedCount > 0
+              ? `${formatUnit(response.data.overlapSkippedCount, 'overlap')} skipped`
+              : '',
             response.data.advanceAppliedAmount > 0
               ? `${formatMoney(response.data.advanceAppliedAmount)} advance applied`
               : '',
@@ -1370,6 +1453,12 @@ const generateDues = async () => {
         detail: [
           `${generated} created`,
           `${skipped} skipped`,
+          advanceCoveredCount > 0
+            ? `${formatUnit(advanceCoveredCount, 'advance flat')} covered`
+            : '',
+          overlapSkippedCount > 0
+            ? `${formatUnit(overlapSkippedCount, 'overlap')} skipped`
+            : '',
           advanceAppliedAmount > 0
             ? `${formatMoney(advanceAppliedAmount)} advance applied across ${formatUnit(advanceAppliedCount, 'flat')}`
             : '',
@@ -1549,8 +1638,12 @@ watch(
         </div>
         <div>
           <span>{{ amountSummaryLabel }}</span>
-          <strong>{{ formatMoney(chargeTotal) }}</strong>
-          <p>{{ formatUnit(filledChargeCount, 'flat') }} with saved amount.</p>
+          <strong>{{ formatMoney(camRunFlow ? billableChargeTotal : chargeTotal) }}</strong>
+          <p>
+            {{ camRunFlow
+              ? `${formatUnit(camBillableEntries.length, 'bill')} - ${formatUnit(camAdvanceCoveredEntries.length, 'advance flat')} covered`
+              : `${formatUnit(filledChargeCount, 'flat')} with saved amount.` }}
+          </p>
         </div>
         <div>
           <span>{{ camRunFlow ? 'Cycle split' : showPerFlatCycle ? 'Flat cycles' : 'Readings' }}</span>
@@ -1723,7 +1816,7 @@ watch(
             severity="secondary"
             outlined
             :loading="generating"
-            :disabled="loadingCharges || camBillableEntries.length === 0"
+            :disabled="loadingCharges || camRunGenerationEntries.length === 0"
             @click="openGenerationDialog"
           />
           <Button
@@ -1853,6 +1946,47 @@ watch(
                 fluid
               />
               <strong v-else>{{ formatMoney(Number(row.amount ?? 0)) }}</strong>
+            </template>
+          </Column>
+          <Column v-if="camRunFlow" header="Advance" style="min-width: 15rem">
+            <template #body="{ data: row }">
+              <div class="billing-advance-cell">
+                <div>
+                  <strong>
+                    {{ isCamAdvanceCoveredForEntry(row)
+                      ? `Paid until ${formatDate(row.camAdvancePaidUntil)}`
+                      : 'Not marked' }}
+                  </strong>
+                  <span>{{ isCamAdvanceCoveredForEntry(row) ? 'Covered' : 'Billable' }}</span>
+                </div>
+                <div class="billing-advance-actions">
+                  <InputText
+                    :model-value="row.camAdvancePaidUntil ?? ''"
+                    type="date"
+                    aria-label="CAM paid until"
+                    @update:model-value="(value) => updateEntryAdvancePaidUntil(row, value)"
+                  />
+                  <Button
+                    icon="pi pi-calendar-check"
+                    severity="secondary"
+                    text
+                    rounded
+                    aria-label="Mark paid through this cycle"
+                    title="Mark paid through this cycle"
+                    @click="markEntryAdvancePaidThroughCycle(row)"
+                  />
+                  <Button
+                    v-if="row.camAdvancePaidUntil"
+                    icon="pi pi-times"
+                    severity="secondary"
+                    text
+                    rounded
+                    aria-label="Clear CAM advance"
+                    title="Clear CAM advance"
+                    @click="clearEntryAdvanceCoverage(row)"
+                  />
+                </div>
+              </div>
             </template>
           </Column>
           <Column v-if="showConnectionLoad" header="Load" style="min-width: 8.5rem">
@@ -2025,11 +2159,11 @@ watch(
           <div>
             <span>Bills to create</span>
             <strong>{{ camBillableEntries.length }}</strong>
-            <small>{{ camRunGroups.length }} cycle group{{ camRunGroups.length === 1 ? '' : 's' }}</small>
+            <small>{{ formatUnit(camAdvanceCoveredEntries.length, 'advance flat') }} covered</small>
           </div>
           <div>
             <span>{{ amountSummaryLabel }}</span>
-            <strong>{{ formatMoney(chargeTotal) }}</strong>
+            <strong>{{ formatMoney(billableChargeTotal) }}</strong>
             <small>{{ cycleDistributionLabel }}</small>
           </div>
           <div>
@@ -2096,7 +2230,8 @@ watch(
             <span>{{ group.cycleLabel }}</span>
             <strong>{{ formatMoney(group.totalAmount) }}</strong>
             <p>
-              {{ formatUnit(group.entries.length, 'flat') }} -
+              {{ formatUnit(group.billableCount, 'bill') }} -
+              {{ formatUnit(group.advanceCoveredCount, 'advance flat') }} covered -
               {{ formatDate(group.period.startDate) }} to {{ formatDate(group.period.endDate) }}
             </p>
           </div>

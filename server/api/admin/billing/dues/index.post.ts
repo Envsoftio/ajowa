@@ -24,6 +24,7 @@ type FlatTarget = {
   unitType: string
   blockId: string
   areaSqFt: string | null
+  camAdvancePaidUntil: string | null
 }
 
 type ChargeConfig = {
@@ -38,8 +39,26 @@ type ChargeConfig = {
   charge_breakdown: ChargeBreakdownItem[]
 }
 
+type ExistingDueRow = {
+  id: string
+  flat_id: string
+}
+
+type OverlappingCamDueRow = ExistingDueRow & {
+  billing_period_label: string
+}
+
+type DueInsertPayload = {
+  flatId: string
+  baseAmount: number
+  totalAmount: number
+  chargeBreakdown: ChargeBreakdownItem[]
+}
+
 const flatNumberSortExpression =
   "coalesce(nullif(regexp_replace(f.flat_number, '\\D', '', 'g'), '')::integer, 2147483647)"
+
+const roundMoney = (value: number) => Math.round(value * 100) / 100
 
 export default defineEventHandler(async (event) => {
   const authMe = await requireRole(event, ['ADMIN'])
@@ -57,11 +76,12 @@ export default defineEventHandler(async (event) => {
       frequency: string
       start_date: string
       end_date: string
+      charge_type: string
       is_locked: boolean
       due_date: string
     }>(
       `
-        select id, label, frequency::text, start_date::text, end_date::text, is_locked, due_date::text
+        select id, label, frequency::text, start_date::text, end_date::text, charge_type::text, is_locked, due_date::text
         from billing_periods
         where id = $1 and society_id = $2
         limit 1
@@ -99,7 +119,8 @@ export default defineEventHandler(async (event) => {
           b.name as "blockName",
           f.unit_type as "unitType",
           b.id as "blockId",
-          f.area_sq_ft::text as "areaSqFt"
+          f.area_sq_ft::text as "areaSqFt",
+          f.cam_advance_paid_until::text as "camAdvancePaidUntil"
         from flats f
         inner join blocks b on b.id = f.block_id
         where f.society_id = $1
@@ -169,28 +190,72 @@ export default defineEventHandler(async (event) => {
       }
     }
 
+    const flatOrder = new Map(flatsResult.rows.map((flat, index) => [flat.flatId, index]))
+    const existingResult = await client.query<ExistingDueRow>(
+      `
+        select id, flat_id
+        from maintenance_dues
+        where billing_period_id = $1
+          and flat_id = any($2::uuid[])
+      `,
+      [body.billingPeriodId, flatsResult.rows.map((flat) => flat.flatId)],
+    )
+    const existingByFlatId = new Map(existingResult.rows.map((row) => [row.flat_id, row.id]))
+    const isCamPeriod = period.charge_type === 'CAM'
+    const advanceCoveredFlatIds = new Set(
+      isCamPeriod
+        ? flatsResult.rows
+            .filter((flat) => flat.camAdvancePaidUntil && flat.camAdvancePaidUntil >= period.end_date)
+            .map((flat) => flat.flatId)
+        : [],
+    )
+    const overlappingCamResult = isCamPeriod
+      ? await client.query<OverlappingCamDueRow>(
+          `
+            select distinct on (md.flat_id)
+              md.id,
+              md.flat_id,
+              bp.label as billing_period_label
+            from maintenance_dues md
+            inner join billing_periods bp on bp.id = md.billing_period_id
+            where md.society_id = $1
+              and md.flat_id = any($2::uuid[])
+              and md.billing_period_id <> $3
+              and bp.charge_type = 'CAM'
+              and md.status <> 'CANCELLED'
+              and daterange(bp.start_date, bp.end_date, '[]') && daterange($4::date, $5::date, '[]')
+            order by md.flat_id, bp.start_date asc, md.created_at asc
+          `,
+          [
+            authMe.user.societyId,
+            flatsResult.rows.map((flat) => flat.flatId),
+            body.billingPeriodId,
+            period.start_date,
+            period.end_date,
+          ],
+        )
+      : { rows: [] }
+    const overlappingCamByFlatId = new Map(overlappingCamResult.rows.map((row) => [row.flat_id, row]))
+    const insertPayload: DueInsertPayload[] = []
+
     // Generate dues
-    let generated = 0
-    let skipped = 0
     let advanceAppliedCount = 0
     let advanceAppliedAmount = 0
-    const generatedDueIds: string[] = []
-    const generatedDues: Array<{ dueId: string; flatId: string }> = []
-    const skippedDues: Array<{ dueId: string; flatId: string }> = []
+    let advanceCoveredCount = 0
+    let overlapSkippedCount = 0
 
     for (const flat of flatsResult.rows) {
-      // Check if due already exists for this flat + period
-      const existingDue = await client.query<{ id: string }>(
-        `select id from maintenance_dues where billing_period_id = $1 and flat_id = $2 limit 1`,
-        [body.billingPeriodId, flat.flatId],
-      )
+      if (advanceCoveredFlatIds.has(flat.flatId)) {
+        advanceCoveredCount += 1
+        continue
+      }
 
-      if (existingDue.rows[0]) {
-        skippedDues.push({
-          dueId: existingDue.rows[0].id,
-          flatId: flat.flatId,
-        })
-        skipped++
+      if (overlappingCamByFlatId.has(flat.flatId)) {
+        overlapSkippedCount += 1
+        continue
+      }
+
+      if (existingByFlatId.has(flat.flatId)) {
         continue
       }
 
@@ -220,37 +285,12 @@ export default defineEventHandler(async (event) => {
       if (breakdown.length === 0) {
         // No charges configured — create a default entry
         const defaultAmount = 2000 // fallback
-        const insertResult = await client.query<{ id: string }>(
-          `
-            insert into maintenance_dues (
-              society_id, billing_period_id, flat_id, due_date,
-              base_amount, late_fee_amount, waived_amount, paid_amount,
-              total_amount, balance_amount, status, charge_breakdown
-            )
-            values ($1, $2, $3, $4, $5, 0, 0, 0, $5, $5, 'OPEN', $6)
-            returning id
-          `,
-          [
-            authMe.user.societyId,
-            body.billingPeriodId,
-            flat.flatId,
-            periodDueDate,
-            defaultAmount,
-            JSON.stringify([{ label: 'Maintenance Charges', amount: defaultAmount }]),
-          ],
-        )
-        if (insertResult.rows[0]?.id) {
-          generatedDueIds.push(insertResult.rows[0].id)
-          generatedDues.push({
-            dueId: insertResult.rows[0].id,
-            flatId: flat.flatId,
-          })
-          const advanceResult = await consumeAdvanceCreditsForDueWithClient(client, insertResult.rows[0].id)
-          if (advanceResult.consumedAmount > 0) {
-            advanceAppliedCount += 1
-            advanceAppliedAmount = Math.round((advanceAppliedAmount + advanceResult.consumedAmount) * 100) / 100
-          }
-        }
+        insertPayload.push({
+          flatId: flat.flatId,
+          baseAmount: defaultAmount,
+          totalAmount: defaultAmount,
+          chargeBreakdown: [{ label: 'Maintenance Charges', amount: defaultAmount }],
+        })
       } else {
         if (hasUnresolvedAreaRateCharge(breakdown)) {
           throw new AppError({
@@ -262,44 +302,126 @@ export default defineEventHandler(async (event) => {
 
         const totalBase = breakdown.reduce((sum, item) => sum + item.amount, 0)
         const lateFee = 0
-        const totalAmount = Math.round((totalBase + lateFee) * 100) / 100
+        const totalAmount = roundMoney(totalBase + lateFee)
 
-        const insertResult = await client.query<{ id: string }>(
+        insertPayload.push({
+          flatId: flat.flatId,
+          baseAmount: roundMoney(totalBase),
+          totalAmount,
+          chargeBreakdown: breakdown,
+        })
+      }
+    }
+
+    const insertResult = insertPayload.length
+      ? await client.query<{ id: string; flat_id: string }>(
           `
             insert into maintenance_dues (
               society_id, billing_period_id, flat_id, due_date,
               base_amount, late_fee_amount, waived_amount, paid_amount,
               total_amount, balance_amount, status, charge_breakdown
             )
-            values ($1, $2, $3, $4, $5, $6, 0, 0, $7, $7, 'OPEN', $8)
-            returning id
+            select
+              $1,
+              $2,
+              payload.flat_id,
+              $3::date,
+              payload.base_amount,
+              0,
+              0,
+              0,
+              payload.total_amount,
+              payload.total_amount,
+              'OPEN',
+              payload.charge_breakdown
+            from jsonb_to_recordset($4::jsonb) as payload(
+              flat_id uuid,
+              base_amount numeric,
+              total_amount numeric,
+              charge_breakdown jsonb
+            )
+            on conflict (billing_period_id, flat_id) do nothing
+            returning id, flat_id
           `,
           [
             authMe.user.societyId,
             body.billingPeriodId,
-            flat.flatId,
             periodDueDate,
-            totalBase,
-            lateFee,
-            totalAmount,
-            JSON.stringify(breakdown),
+            JSON.stringify(insertPayload.map((payload) => ({
+              flat_id: payload.flatId,
+              base_amount: payload.baseAmount,
+              total_amount: payload.totalAmount,
+              charge_breakdown: payload.chargeBreakdown,
+            }))),
           ],
         )
-        if (insertResult.rows[0]?.id) {
-          generatedDueIds.push(insertResult.rows[0].id)
-          generatedDues.push({
-            dueId: insertResult.rows[0].id,
-            flatId: flat.flatId,
-          })
-          const advanceResult = await consumeAdvanceCreditsForDueWithClient(client, insertResult.rows[0].id)
-          if (advanceResult.consumedAmount > 0) {
-            advanceAppliedCount += 1
-            advanceAppliedAmount = Math.round((advanceAppliedAmount + advanceResult.consumedAmount) * 100) / 100
-          }
+      : { rows: [] }
+
+    const generatedDues = insertResult.rows
+      .map((row) => ({
+        dueId: row.id,
+        flatId: row.flat_id,
+      }))
+      .sort((a, b) => (flatOrder.get(a.flatId) ?? 0) - (flatOrder.get(b.flatId) ?? 0))
+    const generatedDueIds = generatedDues.map((due) => due.dueId)
+    const generatedFlatIds = new Set(generatedDues.map((due) => due.flatId))
+    const racedFlatIds = insertPayload
+      .map((payload) => payload.flatId)
+      .filter((flatId) => !generatedFlatIds.has(flatId))
+
+    if (racedFlatIds.length > 0) {
+      const racedResult = await client.query<ExistingDueRow>(
+        `
+          select id, flat_id
+          from maintenance_dues
+          where billing_period_id = $1
+            and flat_id = any($2::uuid[])
+        `,
+        [body.billingPeriodId, racedFlatIds],
+      )
+
+      for (const row of racedResult.rows) {
+        existingByFlatId.set(row.flat_id, row.id)
+      }
+    }
+
+    const skippedDues = flatsResult.rows
+      .map((flat) => {
+        if (advanceCoveredFlatIds.has(flat.flatId) || overlappingCamByFlatId.has(flat.flatId)) {
+          return null
+        }
+        const dueId = existingByFlatId.get(flat.flatId)
+        return dueId ? { dueId, flatId: flat.flatId } : null
+      })
+      .filter((due): due is { dueId: string; flatId: string } => Boolean(due))
+    const generated = generatedDues.length
+    const skipped = skippedDues.length + advanceCoveredCount + overlapSkippedCount
+
+    if (generatedDues.length > 0) {
+      const advanceCreditResult = await client.query<{ flat_id: string }>(
+        `
+          select distinct flat_id
+          from resident_advance_credits
+          where society_id = $1
+            and flat_id = any($2::uuid[])
+            and status = 'ACTIVE'
+            and current_balance > 0
+        `,
+        [authMe.user.societyId, generatedDues.map((due) => due.flatId)],
+      )
+      const flatIdsWithAdvanceCredit = new Set(advanceCreditResult.rows.map((row) => row.flat_id))
+
+      for (const due of generatedDues) {
+        if (!flatIdsWithAdvanceCredit.has(due.flatId)) {
+          continue
+        }
+
+        const advanceResult = await consumeAdvanceCreditsForDueWithClient(client, due.dueId)
+        if (advanceResult.consumedAmount > 0) {
+          advanceAppliedCount += 1
+          advanceAppliedAmount = roundMoney(advanceAppliedAmount + advanceResult.consumedAmount)
         }
       }
-
-      generated++
     }
 
     if (generated > 0) {
@@ -325,6 +447,8 @@ export default defineEventHandler(async (event) => {
           cycleLabel,
           generatedCount: generated,
           skippedCount: skipped,
+          advanceCoveredCount,
+          overlapSkippedCount,
           advanceAppliedCount,
           advanceAppliedAmount,
           flatIds: body.flatIds,
@@ -342,6 +466,8 @@ export default defineEventHandler(async (event) => {
     return createApiSuccess(event, {
       generated,
       skipped,
+      advanceCoveredCount,
+      overlapSkippedCount,
       advanceAppliedCount,
       advanceAppliedAmount,
       dueIds: generatedDueIds,

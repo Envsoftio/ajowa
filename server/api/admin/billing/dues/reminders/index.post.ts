@@ -19,11 +19,17 @@ export default defineEventHandler(async (event) => {
         select md.id
         from maintenance_dues md
         inner join billing_periods bp on bp.id = md.billing_period_id
+        inner join flats f on f.id = md.flat_id
         where md.society_id = $1
           and md.id = any($2::uuid[])
           and md.balance_amount > 0
           and md.status not in ('PAID', 'WAIVED', 'CANCELLED')
           and bp.is_locked = false
+          and not (
+            bp.charge_type = 'CAM'
+            and f.cam_advance_paid_until is not null
+            and f.cam_advance_paid_until >= bp.end_date
+          )
       `,
       [authMe.user.societyId, body.dueIds],
     )

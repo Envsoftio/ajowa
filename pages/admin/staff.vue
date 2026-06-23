@@ -42,7 +42,6 @@ const loginDialogVisible = ref(false)
 type StaffLoginDetails = {
   email: string
   temporaryPassword: string
-  loginUrl: string
   requiresPasswordChange: boolean
 }
 
@@ -272,7 +271,6 @@ const loginInstructions = computed(() => {
   }
 
   return [
-    `Login URL: ${loginDetails.value.loginUrl}`,
     `Email: ${loginDetails.value.email}`,
     `Temporary password: ${loginDetails.value.temporaryPassword}`,
     loginDetails.value.requiresPasswordChange
@@ -599,10 +597,6 @@ const roleAccessLabel = (role: StaffSummary['role']) => staffRoleAccessDescripti
           Share these details directly with the staff member. The password is only shown here.
         </div>
         <div class="staff-login-details">
-          <label>
-            <span>Login URL</span>
-            <strong>{{ loginDetails.loginUrl }}</strong>
-          </label>
           <label>
             <span>Email</span>
             <strong>{{ loginDetails.email }}</strong>

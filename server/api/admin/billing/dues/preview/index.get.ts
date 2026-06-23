@@ -20,6 +20,7 @@ type FlatTarget = {
   blockName: string
   unitType: string
   areaSqFt: string | null
+  camAdvancePaidUntil: string | null
 }
 
 type ChargeConfig = {
@@ -66,10 +67,11 @@ export default defineEventHandler(async (event) => {
     start_date: string
     end_date: string
     due_date: string
+    charge_type: string
     is_locked: boolean
   }>(
     `
-      select id, label, frequency::text, start_date::text, end_date::text, due_date::text, is_locked
+      select id, label, frequency::text, start_date::text, end_date::text, due_date::text, charge_type::text, is_locked
       from billing_periods
       where id = $1 and society_id = $2
       limit 1
@@ -101,7 +103,8 @@ export default defineEventHandler(async (event) => {
           f.flat_number as "flatNumber",
           b.name as "blockName",
           f.unit_type as "unitType",
-          f.area_sq_ft::text as "areaSqFt"
+          f.area_sq_ft::text as "areaSqFt",
+          f.cam_advance_paid_until::text as "camAdvancePaidUntil"
         from flats f
         inner join blocks b on b.id = f.block_id
         where f.society_id = $1
@@ -133,6 +136,37 @@ export default defineEventHandler(async (event) => {
   ])
 
   const existingFlatIds = new Set(existingResult.rows.map((row) => row.flat_id))
+  const isCamPeriod = period.charge_type === 'CAM'
+  const advanceCoveredFlatIds = new Set(
+    isCamPeriod
+      ? flatsResult.rows
+          .filter((flat) => flat.camAdvancePaidUntil && flat.camAdvancePaidUntil >= period.end_date)
+          .map((flat) => flat.flatId)
+      : [],
+  )
+  const overlappingCamResult = isCamPeriod && flatsResult.rows.length
+    ? await pool.query<{ flat_id: string }>(
+        `
+          select distinct md.flat_id
+          from maintenance_dues md
+          inner join billing_periods bp on bp.id = md.billing_period_id
+          where md.society_id = $1
+            and md.flat_id = any($2::uuid[])
+            and md.billing_period_id <> $3
+            and bp.charge_type = 'CAM'
+            and md.status <> 'CANCELLED'
+            and daterange(bp.start_date, bp.end_date, '[]') && daterange($4::date, $5::date, '[]')
+        `,
+        [
+          authMe.user.societyId,
+          flatsResult.rows.map((flat) => flat.flatId),
+          period.id,
+          period.start_date,
+          period.end_date,
+        ],
+      )
+    : { rows: [] }
+  const overlappingCamFlatIds = new Set(overlappingCamResult.rows.map((row) => row.flat_id))
   const defaultCharges: ChargeBreakdownItem[] = []
   const flatTypeCharges = new Map<string, ChargeBreakdownItem[]>()
   const flatOverrideCharges = new Map<string, ChargeBreakdownItem[]>()
@@ -178,8 +212,18 @@ export default defineEventHandler(async (event) => {
   const warnings: string[] = []
   let totalAmount = 0
   let skippedExisting = 0
+  let skippedAdvanceCovered = 0
+  let skippedOverlappingCam = 0
 
   for (const flat of flatsResult.rows) {
+    if (advanceCoveredFlatIds.has(flat.flatId)) {
+      skippedAdvanceCovered += 1
+      continue
+    }
+    if (overlappingCamFlatIds.has(flat.flatId)) {
+      skippedOverlappingCam += 1
+      continue
+    }
     if (existingFlatIds.has(flat.flatId)) {
       skippedExisting += 1
       continue
@@ -242,14 +286,21 @@ export default defineEventHandler(async (event) => {
   if (skippedExisting > 0) {
     warnings.push(`${skippedExisting} flat${skippedExisting === 1 ? '' : 's'} already have dues for this period and will be skipped.`)
   }
+  if (skippedAdvanceCovered > 0) {
+    warnings.push(`${skippedAdvanceCovered} CAM advance-paid flat${skippedAdvanceCovered === 1 ? '' : 's'} will be skipped.`)
+  }
+  if (skippedOverlappingCam > 0) {
+    warnings.push(`${skippedOverlappingCam} flat${skippedOverlappingCam === 1 ? '' : 's'} already have overlapping CAM dues and will be skipped.`)
+  }
 
   const preview: DueGenerationPreview & { skippedExisting: number; isLocked: boolean } = {
     billingPeriodId: period.id,
     billingPeriodLabel: period.label,
     billingPeriodDueDate: period.due_date,
+    billingPeriodChargeType: period.charge_type as NonNullable<DueGenerationPreview['billingPeriodChargeType']>,
     cycleMultiplier,
     cycleLabel,
-    totalFlats: flatsResult.rows.length - skippedExisting,
+    totalFlats: flatsResult.rows.length - skippedExisting - skippedAdvanceCovered - skippedOverlappingCam,
     totalAmount: Math.round(totalAmount * 100) / 100,
     flatTypeBreakdown: Array.from(breakdownMap.values()).map((item) => ({
       ...item,
@@ -257,6 +308,8 @@ export default defineEventHandler(async (event) => {
     })),
     warnings,
     skippedExisting,
+    skippedAdvanceCovered,
+    skippedOverlappingCam,
     isLocked: period.is_locked,
   }
 

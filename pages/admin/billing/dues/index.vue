@@ -118,7 +118,12 @@ const overdueOptions = [
 ]
 
 const isReminderEligible = (due: MaintenanceDue) =>
-  due.balanceAmount > 0 && !['PAID', 'WAIVED', 'CANCELLED'].includes(due.status)
+  due.balanceAmount > 0 &&
+  !due.isCamAdvanceCovered &&
+  !['PAID', 'WAIVED', 'CANCELLED'].includes(due.status)
+
+const canSendBill = (due: MaintenanceDue) =>
+  !due.isCamAdvanceCovered && due.status !== 'CANCELLED'
 
 const canRecordPayment = (due: MaintenanceDue) =>
   due.balanceAmount > 0 && !['PAID', 'WAIVED', 'CANCELLED'].includes(due.status)
@@ -153,7 +158,7 @@ const summary = computed(() => {
 const selectedReminderCount = computed(
   () => notificationSelectedDues.value.filter(isReminderEligible).length,
 )
-const selectedBillCount = computed(() => notificationSelectedDues.value.length)
+const selectedBillCount = computed(() => notificationSelectedDues.value.filter(canSendBill).length)
 
 const hasActiveFilters = computed(
   () =>
@@ -206,6 +211,9 @@ const notificationSelectedDues = computed(() =>
 )
 const selectedReminderDues = computed(() =>
   notificationSelectedDues.value.filter(isReminderEligible),
+)
+const selectedBillDues = computed(() =>
+  notificationSelectedDues.value.filter(canSendBill),
 )
 const notificationSelectionText = computed(() => {
   if (hasBulkSelection.value) {
@@ -373,7 +381,18 @@ const sendSelectedReminders = () =>
   )
 
 const openBillSend = (targets: MaintenanceDue[]) => {
-  billSendTargets.value = targets
+  const eligibleTargets = targets.filter(canSendBill)
+  if (eligibleTargets.length === 0) {
+    toast.add({
+      severity: 'info',
+      summary: 'No bills to send',
+      detail: 'Selected CAM dues are already covered by advance payment.',
+      life: 8000,
+    })
+    return
+  }
+
+  billSendTargets.value = eligibleTargets
   billChannels.value = ['EMAIL', 'WHATSAPP']
   billSendDialogVisible.value = true
 }
@@ -492,7 +511,7 @@ watch(
             outlined
             :loading="sendingBills"
             :disabled="selectedBillCount === 0"
-            @click="openBillSend(notificationSelectedDues)"
+            @click="openBillSend(selectedBillDues)"
           />
           <Button
             :label="
@@ -548,7 +567,7 @@ watch(
                 icon="pi pi-times"
                 severity="secondary"
                 outlined
-                :disabled="selectedBillCount === 0 && !hasBulkSelection"
+                :disabled="notificationSelectedDues.length === 0"
                 @click="clearNotificationSelection"
               />
             </div>
@@ -713,6 +732,9 @@ watch(
         <Column field="status" header="Status">
           <template #body="{ data: row }">
             <AppStatusBadge :status="row.status" />
+            <p v-if="row.isCamAdvanceCovered" class="table-muted">
+              CAM advance until {{ formatDate(row.camAdvancePaidUntil) }}
+            </p>
           </template>
         </Column>
         <Column header="Actions" style="width: 250px">
@@ -747,6 +769,7 @@ watch(
                 rounded
                 aria-label="Send bill"
                 title="Send bill"
+                :disabled="!canSendBill(row)"
                 @click="openBillSend([row])"
               />
               <Button
@@ -794,7 +817,12 @@ watch(
                 {{ due.billingPeriodLabel }} · Due {{ formatDate(due.dueDate) }}
               </p>
             </div>
-            <AppStatusBadge :status="due.status" />
+            <div>
+              <AppStatusBadge :status="due.status" />
+              <p v-if="due.isCamAdvanceCovered" class="table-muted">
+                CAM advance until {{ formatDate(due.camAdvancePaidUntil) }}
+              </p>
+            </div>
           </div>
           <div class="billing-balance-cell billing-balance-cell--card">
             <strong>{{ formatMoney(due.balanceAmount) }}</strong>
@@ -844,6 +872,7 @@ watch(
               size="small"
               severity="secondary"
               outlined
+              :disabled="!canSendBill(due)"
               @click="openBillSend([due])"
             />
             <Button

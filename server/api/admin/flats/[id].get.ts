@@ -16,6 +16,9 @@ type FlatDetailRow = {
   area_sq_ft: string | null
   occupancy_status: string
   is_active: boolean
+  cam_advance_paid_until: string | null
+  cam_advance_note: string | null
+  cam_advance_updated_at: string | null
   created_at: string
   updated_at: string
   total_due_amount: string
@@ -94,6 +97,9 @@ export default defineEventHandler(async (event) => {
           f.area_sq_ft::text,
           f.occupancy_status::text,
           f.is_active,
+          f.cam_advance_paid_until::text,
+          f.cam_advance_note,
+          f.cam_advance_updated_at::text,
           f.created_at::text,
           f.updated_at::text,
           coalesce(sum(md.total_amount), 0)::text as total_due_amount,
@@ -167,6 +173,9 @@ export default defineEventHandler(async (event) => {
     areaSqFt: row.area_sq_ft ? Number(row.area_sq_ft) : null,
     occupancyStatus: row.occupancy_status,
     isActive: row.is_active,
+    camAdvancePaidUntil: row.cam_advance_paid_until,
+    camAdvanceNote: row.cam_advance_note,
+    camAdvanceUpdatedAt: row.cam_advance_updated_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     duesSummary: {

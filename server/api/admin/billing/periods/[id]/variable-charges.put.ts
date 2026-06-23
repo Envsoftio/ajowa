@@ -31,6 +31,8 @@ const variableChargesSchema = z.object({
       interestAmount: z.coerce.number().min(0).nullable().optional(),
       cycleMultiplier: z.coerce.number().min(1).max(120).nullable().optional(),
       cycleLabel: z.string().trim().max(80).nullable().optional(),
+      camAdvancePaidUntil: z.string().date().nullable().optional(),
+      camAdvanceNote: z.string().trim().max(500).nullable().optional(),
       amount: z.coerce.number().min(0).nullable().optional(),
     }),
   ),
@@ -52,6 +54,8 @@ type NormalizedVariableChargeEntry = {
   interestAmount: number
   cycleMultiplier: number | null
   cycleLabel: string | null
+  camAdvancePaidUntil: string | null
+  camAdvanceNote: string | null
   amount: number
 }
 
@@ -162,6 +166,8 @@ const normalizeVariableChargeEntry = (
     interestAmount: roundVariableChargeMoney(Number(entry.interestAmount ?? 0)),
     cycleMultiplier,
     cycleLabel: normalizeOptionalText(entry.cycleLabel),
+    camAdvancePaidUntil: entry.camAdvancePaidUntil ?? null,
+    camAdvanceNote: normalizeOptionalText(entry.camAdvanceNote),
     amount: roundVariableChargeMoney(Math.max(0, computedAmount)),
   }
 }
@@ -316,6 +322,51 @@ export default defineEventHandler(async (event) => {
     const previousEntryCount = Number(beforeResult.rows[0]?.charge_count ?? 0)
     const previousTotalAmount = Number(beforeResult.rows[0]?.total_amount ?? 0)
 
+    if (chargeConfig.chargeType === 'CAM' && normalizedEntries.length > 0) {
+      await client.query(
+        `
+          update flats f
+          set
+            cam_advance_paid_until = payload.cam_advance_paid_until,
+            cam_advance_note = payload.cam_advance_note,
+            cam_advance_updated_at = case
+              when f.cam_advance_paid_until is distinct from payload.cam_advance_paid_until
+                or f.cam_advance_note is distinct from payload.cam_advance_note
+              then now()
+              else f.cam_advance_updated_at
+            end,
+            cam_advance_updated_by_user_id = case
+              when f.cam_advance_paid_until is distinct from payload.cam_advance_paid_until
+                or f.cam_advance_note is distinct from payload.cam_advance_note
+              then $3
+              else f.cam_advance_updated_by_user_id
+            end,
+            updated_at = case
+              when f.cam_advance_paid_until is distinct from payload.cam_advance_paid_until
+                or f.cam_advance_note is distinct from payload.cam_advance_note
+              then now()
+              else f.updated_at
+            end
+          from jsonb_to_recordset($2::jsonb) as payload(
+            flat_id uuid,
+            cam_advance_paid_until date,
+            cam_advance_note text
+          )
+          where f.society_id = $1
+            and f.id = payload.flat_id
+        `,
+        [
+          authMe.user.societyId,
+          JSON.stringify(normalizedEntries.map((entry) => ({
+            flat_id: entry.flatId,
+            cam_advance_paid_until: entry.camAdvancePaidUntil,
+            cam_advance_note: entry.camAdvanceNote,
+          }))),
+          authMe.user.id,
+        ],
+      )
+    }
+
     await client.query(
       `
         delete from maintenance_charges
@@ -404,6 +455,9 @@ export default defineEventHandler(async (event) => {
         chargeName: body.chargeName,
         chargeType: chargeConfig.chargeType,
         entryCount: persistedEntries.length,
+        camAdvanceMarkedCount: chargeConfig.chargeType === 'CAM'
+          ? normalizedEntries.filter((entry) => entry.camAdvancePaidUntil).length
+          : 0,
         totalAmount: persistedEntries.reduce(
           (sum, entry) => sum + entry.amount,
           0,

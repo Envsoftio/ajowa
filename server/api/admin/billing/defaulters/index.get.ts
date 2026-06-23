@@ -94,6 +94,11 @@ export default defineEventHandler(async (event) => {
       where md.society_id = $1
         and md.status in ('OPEN', 'PARTIALLY_PAID', 'OVERDUE')
         and md.balance_amount > 0
+        and not (
+          bp.charge_type = 'CAM'
+          and f.cam_advance_paid_until is not null
+          and f.cam_advance_paid_until >= bp.end_date
+        )
       order by md.balance_amount desc, b.name, f.flat_number
     `,
     [authMe.user.societyId],

@@ -15,6 +15,9 @@ type FlatRow = {
   area_sq_ft: string | null
   occupancy_status: string
   is_active: boolean
+  cam_advance_paid_until: string | null
+  cam_advance_note: string | null
+  cam_advance_updated_at: string | null
   created_at: string
   updated_at: string
   owner_count: string
@@ -93,6 +96,9 @@ export default defineEventHandler(async (event) => {
           f.area_sq_ft::text,
           f.occupancy_status::text,
           f.is_active,
+          f.cam_advance_paid_until::text,
+          f.cam_advance_note,
+          f.cam_advance_updated_at::text,
           f.created_at::text,
           f.updated_at::text,
           count(*) filter (where fr.relationship_type = 'OWNER' and fr.is_active = true)::text as owner_count,
@@ -130,6 +136,9 @@ export default defineEventHandler(async (event) => {
     areaSqFt: row.area_sq_ft ? Number(row.area_sq_ft) : null,
     occupancyStatus: row.occupancy_status,
     isActive: row.is_active,
+    camAdvancePaidUntil: row.cam_advance_paid_until,
+    camAdvanceNote: row.cam_advance_note,
+    camAdvanceUpdatedAt: row.cam_advance_updated_at,
     ownerCount: Number(row.owner_count),
     tenantCount: Number(row.tenant_count),
     createdAt: row.created_at,

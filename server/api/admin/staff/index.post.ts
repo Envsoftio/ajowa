@@ -5,7 +5,6 @@ import { createApiSuccess, readJsonBody, validateInput } from '~/server/utils/ap
 import { isEmailVerificationRequiredForRole, requirePermission } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
 import { AppError } from '~/server/utils/errors'
-import { buildAppUrl } from '~/server/utils/email'
 import { requiresTemporaryPasswordChangeForRole } from '~/shared/auth'
 import { normalizeRolePermissions, staffPermissions } from '~/shared/permissions'
 
@@ -111,26 +110,17 @@ export default defineEventHandler(async (event) => {
       ],
     )
 
-    const credential = await client.query<{ id: string }>(
+    const passwordHash = await hashPassword(temporaryPassword)
+    await client.query(
       `
-        select id
-        from auth_accounts
-        where provider_id = 'credential' and user_id = $1
-        limit 1
+        insert into auth_accounts (account_id, provider_id, user_id, password)
+        values ($1, 'credential', $2, $3)
+        on conflict (provider_id, account_id) do update
+          set password = excluded.password,
+              updated_at = now()
       `,
-      [authUserId],
+      [authUserId, authUserId, passwordHash],
     )
-
-    if (!credential.rows[0]?.id) {
-      const passwordHash = await hashPassword(temporaryPassword)
-      await client.query(
-        `
-          insert into auth_accounts (account_id, provider_id, user_id, password)
-          values ($1, 'credential', $2, $3)
-        `,
-        [authUserId, authUserId, passwordHash],
-      )
-    }
 
     await client.query('commit')
     return createApiSuccess(event, {
@@ -138,7 +128,6 @@ export default defineEventHandler(async (event) => {
       authUserId,
       email: body.email,
       temporaryPassword,
-      loginUrl: buildAppUrl('/login'),
       requiresPasswordChange,
     })
   } catch (error) {

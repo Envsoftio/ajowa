@@ -5,7 +5,6 @@ import { createApiSuccess, readJsonBody, validateInput } from '~/server/utils/ap
 import { requirePermission } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
 import { AppError } from '~/server/utils/errors'
-import { buildAppUrl } from '~/server/utils/email'
 import { requiresTemporaryPasswordChangeForRole } from '~/shared/auth'
 
 const schema = z.object({
@@ -92,7 +91,6 @@ export default defineEventHandler(async (event) => {
       authUserId: staffUser.auth_user_id,
       email: staffUser.email,
       temporaryPassword,
-      loginUrl: buildAppUrl('/login'),
       requiresPasswordChange,
     })
   } catch (error) {
