@@ -104,7 +104,7 @@ const regenerate = async (share: SharedReport) => {
 </script>
 
 <template>
-  <div class="landing-page">
+  <div class="landing-page shared-report-admin-page">
     <section class="list-page surface-card">
       <header class="list-page__header">
         <div>

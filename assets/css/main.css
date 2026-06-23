@@ -1657,9 +1657,78 @@ th.expense-summary-table__first-data-column {
   background: color-mix(in srgb, var(--color-bg) 72%, var(--color-surface));
 }
 
+.app-theme-dark
+  :is(
+    .report-workbook__header h1,
+    .report-workbook__metric strong,
+    .report-chart__row strong,
+    .shared-report-page h1,
+    .shared-report-page h3,
+    .shared-report-admin-page h1,
+    .shared-report-admin-page h2,
+    .shared-report-admin-page h3
+  ) {
+  color: var(--color-text);
+}
+
+.app-theme-dark
+  :is(
+    .report-workbook__header p,
+    .report-workbook__metric span,
+    .report-workbook__name-box,
+    .report-workbook__fx,
+    .report-chart__row span,
+    .shared-report-page p,
+    .shared-report-admin-page p,
+    .shared-report-admin-page .report-owner-cell span
+  ) {
+  color: var(--color-muted);
+}
+
+.app-theme-dark
+  :is(.report-page, .shared-report-page, .shared-report-admin-page)
+  .eyebrow {
+  color: #fde68a;
+}
+
+.app-theme-dark
+  :is(.report-page, .shared-report-page, .shared-report-admin-page)
+  .surface-card,
+.app-theme-dark .shared-report-panel {
+  border-color: rgba(237, 244, 248, 0.14);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.app-theme-dark
+  :is(.report-page, .shared-report-page, .shared-report-admin-page)
+  :is(
+    .p-inputtext,
+    .p-select,
+    .p-select-label,
+    .p-multiselect,
+    .p-multiselect-label,
+    .p-datepicker-input,
+    .p-button.p-button-outlined,
+    .p-button.p-button-outlined .p-button-label,
+    .p-button.p-button-outlined .p-button-icon
+  ) {
+  color: var(--color-text);
+}
+
+.app-theme-dark
+  :is(.report-page, .shared-report-page, .shared-report-admin-page)
+  :is(.p-datatable-thead > tr > th, .p-datatable-tbody > tr > td) {
+  color: var(--color-text);
+}
+
 .app-theme-dark td.expense-summary-table__first-data-column,
 .app-theme-dark th.expense-summary-table__first-data-column {
   background: var(--color-surface);
+}
+
+.app-theme-dark .expense-summary-table__link {
+  color: #fde68a;
 }
 
 .app-theme-dark .expense-summary-table tbody tr:hover td,

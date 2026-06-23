@@ -258,7 +258,7 @@ begin
   from journal_entries
   where id = v_entry_id;
 
-  if v_status <> 'POSTED' then
+  if v_status is distinct from 'POSTED' then
     return coalesce(new, old);
   end if;
 
@@ -703,7 +703,7 @@ create table transactions (
   reversed_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  check (amount > 0)
+  check (amount >= 0)
 );
 
 create table transaction_attachments (
@@ -747,7 +747,7 @@ create table journal_lines (
   amount numeric(10,2) not null,
   description text,
   created_at timestamptz not null default now(),
-  check (amount > 0),
+  check (amount >= 0),
   unique (journal_entry_id, line_no)
 );
 

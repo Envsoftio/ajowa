@@ -24,7 +24,7 @@ begin
   from journal_entries
   where id = v_entry_id;
 
-  if v_status <> 'POSTED' then
+  if v_status is distinct from 'POSTED' then
     return coalesce(new, old);
   end if;
 
@@ -48,11 +48,18 @@ begin
 end;
 $$;
 
+alter table transactions
+  drop constraint if exists transactions_amount_check,
+  add constraint transactions_amount_check check (amount >= 0);
+
+alter table journal_lines
+  drop constraint if exists journal_lines_amount_check,
+  add constraint journal_lines_amount_check check (amount >= 0);
+
 with seed_account_heads as (
   select *
   from (
     values
-      ('ASSET-HIST-IMPORT', 'Historical Import Clearing', 'ASSET', 'SYS-ASSET'),
       ('EXP-GENERAL', 'General Expense', 'EXPENSE', 'SYS-EXPENSE'),
       ('INC-MAINT', 'Maintenance Income', 'INCOME', 'SYS-INCOME'),
       ('INC-LATE-FEE', 'Late Fee Income', 'INCOME', 'SYS-INCOME')
@@ -170,8 +177,7 @@ do $$
 declare
   v_society_id uuid;
   v_admin_user_id uuid;
-  v_import_account_head_id uuid;
-  v_bank_account_id uuid;
+  v_bank_account_head_id uuid;
   v_row record;
   v_category_id uuid;
   v_category_account_head_id uuid;
@@ -180,7 +186,7 @@ declare
   v_journal_voucher text;
   v_voucher_number text;
   v_description text;
-  v_source_doc constant text := 'COLLECTION_EXPENSE DETAILS_APR 25_Month on month.docx';
+  v_source_doc constant text := 'expenses.xlsx and income.xlsx';
 begin
   select id
   into v_society_id
@@ -254,45 +260,14 @@ begin
   limit 1;
 
   select id
-  into v_import_account_head_id
+  into v_bank_account_head_id
   from account_heads
-  where code = 'ASSET-HIST-IMPORT'
+  where code = 'ASSET-BANK'
   limit 1;
 
-  insert into society_bank_accounts (
-    society_id,
-    account_head_id,
-    bank_name,
-    account_name,
-    account_number,
-    ifsc_code,
-    account_type,
-    branch_name,
-    is_default,
-    is_active
-  )
-  values (
-    v_society_id,
-    v_import_account_head_id,
-    'Historical Imports',
-    'AJOWA Historical Import Clearing',
-    'AJOWA-HISTORICAL-IMPORT',
-    'AJOWA000000',
-    'OTHER',
-    'Imported finance summary',
-    false,
-    true
-  )
-  on conflict (account_number, ifsc_code) do update
-    set society_id = excluded.society_id,
-        account_head_id = excluded.account_head_id,
-        bank_name = excluded.bank_name,
-        account_name = excluded.account_name,
-        account_type = excluded.account_type,
-        branch_name = excluded.branch_name,
-        is_active = true,
-        updated_at = now()
-  returning id into v_bank_account_id;
+  if v_bank_account_head_id is null then
+    raise exception 'Missing ASSET-BANK account head for finance summary import';
+  end if;
 
   create temporary table ajowa_finance_summary_months (
     source_section text not null,
@@ -441,7 +416,6 @@ begin
     join ajowa_finance_summary_months month_data
       on month_data.source_section = row_data.source_section
      and month_data.month_index = monthly_amount.month_index
-    where monthly_amount.amount > 0
     order by month_data.transaction_date, row_data.transaction_type, row_data.category_code
   loop
     select tc.id, tc.account_head_id
@@ -483,7 +457,6 @@ begin
         society_id,
         transaction_type,
         category_id,
-        bank_account_id,
         title,
         description,
         counterparty_name,
@@ -500,7 +473,6 @@ begin
         v_society_id,
         v_row.transaction_type::transaction_type,
         v_category_id,
-        v_bank_account_id,
         concat(v_row.category_name, ' - ', v_row.month_label),
         v_description,
         case when v_row.transaction_type = 'EXPENSE' then v_row.category_name else 'Imported collection summary' end,
@@ -566,7 +538,7 @@ begin
         (
           v_journal_entry_id,
           1,
-          case when v_row.transaction_type = 'EXPENSE' then v_category_account_head_id else v_import_account_head_id end,
+          case when v_row.transaction_type = 'EXPENSE' then v_category_account_head_id else v_bank_account_head_id end,
           'DEBIT',
           v_row.amount,
           v_description
@@ -574,7 +546,7 @@ begin
         (
           v_journal_entry_id,
           2,
-          case when v_row.transaction_type = 'EXPENSE' then v_import_account_head_id else v_category_account_head_id end,
+          case when v_row.transaction_type = 'EXPENSE' then v_bank_account_head_id else v_category_account_head_id end,
           'CREDIT',
           v_row.amount,
           v_description
