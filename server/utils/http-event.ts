@@ -1,3 +1,4 @@
+import { createError } from 'h3'
 import type { H3Event } from 'h3'
 
 type EventWithWebResponse = H3Event & {
@@ -68,19 +69,22 @@ export const setEventHeader = (
 }
 
 export const createEventError = (input: EventErrorInput) => {
-  const error = new Error(input.message ?? input.statusMessage ?? 'Request failed') as Error & {
+  const details: {
     statusCode: number
     statusMessage?: string
+    message: string
     data?: unknown
+  } = {
+    statusCode: input.statusCode,
+    message: input.message ?? input.statusMessage ?? 'Request failed',
   }
 
-  error.statusCode = input.statusCode
   if (input.statusMessage !== undefined) {
-    error.statusMessage = input.statusMessage
+    details.statusMessage = input.statusMessage
   }
   if (input.data !== undefined) {
-    error.data = input.data
+    details.data = input.data
   }
 
-  return error
+  return createError(details)
 }

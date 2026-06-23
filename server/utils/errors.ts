@@ -1,3 +1,4 @@
+import { HTTPError } from 'h3'
 import { createEventError } from './http-event'
 
 export type AppErrorCode =
@@ -15,16 +16,30 @@ export type AppErrorOptions = {
   details?: Record<string, unknown> | undefined
 }
 
-export class AppError extends Error {
+export class AppError extends HTTPError {
   code: AppErrorCode
-  statusCode: number
   details: Record<string, unknown> | undefined
 
   constructor(options: AppErrorOptions) {
-    super(options.message)
-    this.name = 'AppError'
+    const fieldErrors = options.details?.fieldErrors
+    const data = {
+      code: options.code,
+      message: options.message,
+      details: options.details,
+      fieldErrors:
+        fieldErrors && typeof fieldErrors === 'object'
+          ? (fieldErrors as Record<string, string[]>)
+          : undefined,
+    }
+
+    super({
+      statusCode: options.statusCode,
+      statusMessage: options.code,
+      message: options.message,
+      data,
+      unhandled: false,
+    })
     this.code = options.code
-    this.statusCode = options.statusCode
     this.details = options.details
   }
 }
