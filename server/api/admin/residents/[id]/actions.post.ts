@@ -181,6 +181,7 @@ export default defineEventHandler(async (event) => {
       )
 
       pendingInviteEmail = {
+        societyId: authMe.user.societyId,
         to: loginIdentity.email,
         subject: 'Your AJOWA invite is ready',
         template: 'invite-onboarding',

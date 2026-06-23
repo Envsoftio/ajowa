@@ -560,6 +560,7 @@ const createAuth = () => {
       minPasswordLength: 12,
       maxPasswordLength: 128,
       sendResetPassword: async ({ user, url }) => {
+        const appState = await loadAppUserByAuthUserId(user.id)
         await sendTemplatedEmail({
           to: user.email,
           subject: 'Reset your AJOWA password',
@@ -570,6 +571,7 @@ const createAuth = () => {
             actionUrl: url,
             expiresLabel: 'in 1 hour',
           },
+          ...(appState ? { societyId: appState.user.society_id } : {}),
         })
       },
       onPasswordReset: async ({ user }) => {
@@ -602,6 +604,7 @@ const createAuth = () => {
       sendOnSignIn: true,
       autoSignInAfterVerification: false,
       sendVerificationEmail: async ({ user, url }) => {
+        const appState = await loadAppUserByAuthUserId(user.id)
         await sendTemplatedEmail({
           to: user.email,
           subject: 'Verify your AJOWA email',
@@ -612,6 +615,7 @@ const createAuth = () => {
             actionUrl: url,
             expiresLabel: 'in 1 hour',
           },
+          ...(appState ? { societyId: appState.user.society_id } : {}),
         })
       },
       afterEmailVerification: async (user) => {
@@ -826,6 +830,7 @@ export const sendVerificationEmailToUser = async (user: {
   email: string
   name: string
 }) => {
+  const appState = await loadAppUserByAuthUserId(user.id)
   const runtimeConfig = getValidatedRuntimeConfig(useRuntimeConfig())
   const token = await createEmailVerificationToken(
     runtimeConfig.betterAuthSecret,
@@ -845,6 +850,7 @@ export const sendVerificationEmailToUser = async (user: {
       actionUrl,
       expiresLabel: 'in 1 hour',
     },
+    ...(appState ? { societyId: appState.user.society_id } : {}),
   })
 }
 

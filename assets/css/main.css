@@ -2706,6 +2706,58 @@ th.expense-summary-table__first-data-column {
   align-items: center;
 }
 
+.billing-advance-state {
+  display: grid;
+  gap: 0.35rem;
+  min-width: 11rem;
+  max-width: 18rem;
+}
+
+.billing-advance-state p {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.billing-advance-state--card {
+  max-width: none;
+  padding: 0.75rem;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+}
+
+.billing-advance-pill {
+  display: inline-flex;
+  width: fit-content;
+  min-height: 1.6rem;
+  align-items: center;
+  padding: 0.18rem 0.55rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-neutral-soft);
+  color: var(--color-text);
+  font-size: 0.76rem;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.billing-advance-state--covered .billing-advance-pill {
+  border-color: rgba(21, 128, 61, 0.22);
+  background: var(--color-success-soft);
+  color: var(--color-success);
+}
+
+.billing-advance-state--billable .billing-advance-pill {
+  border-color: rgba(180, 83, 9, 0.22);
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+
+.billing-advance-state--not-cam .billing-advance-pill {
+  color: var(--color-muted);
+}
+
 .billing-charge-tabs {
   justify-content: flex-start;
   padding: 0.25rem;

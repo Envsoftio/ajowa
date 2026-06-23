@@ -31,7 +31,42 @@ const settingSchema = z.object({
   criticalBypassQuietHours: z.boolean(),
 })
 
-const schema = z.object({ settings: z.array(settingSchema).min(1) })
+const emailSettingsSchema = z.object({
+  enabled: z.boolean(),
+  smtpHost: z.string().trim().max(255),
+  smtpPort: z.number().int().min(1).max(65535),
+  smtpUser: z.string().trim().max(255),
+  fromEmail: z.string().trim().max(254),
+  fromName: z.string().trim().max(120),
+}).superRefine((settings, ctx) => {
+  if (!settings.enabled) {
+    return
+  }
+
+  const requiredFields: Array<keyof typeof settings> = ['smtpHost', 'smtpUser', 'fromEmail', 'fromName']
+  for (const field of requiredFields) {
+    if (!String(settings[field]).trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [field],
+        message: 'Required when email notifications are enabled.',
+      })
+    }
+  }
+
+  if (settings.fromEmail && !z.string().email().safeParse(settings.fromEmail).success) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['fromEmail'],
+      message: 'From email must be a valid email address.',
+    })
+  }
+})
+
+const schema = z.object({
+  settings: z.array(settingSchema).min(1),
+  emailSettings: emailSettingsSchema.optional(),
+})
 
 export default defineEventHandler(async (event) => {
   const authMe = await requireRole(event, ['ADMIN', 'MANAGER'])
@@ -40,6 +75,43 @@ export default defineEventHandler(async (event) => {
 
   try {
     await client.query('begin')
+    if (body.emailSettings) {
+      await client.query(
+        `
+          insert into society_email_settings (
+            society_id,
+            enabled,
+            smtp_host,
+            smtp_port,
+            smtp_user,
+            from_email,
+            from_name,
+            updated_by_user_id
+          )
+          values ($1, $2, $3, $4, $5, $6, $7, $8)
+          on conflict (society_id) do update
+            set enabled = excluded.enabled,
+                smtp_host = excluded.smtp_host,
+                smtp_port = excluded.smtp_port,
+                smtp_user = excluded.smtp_user,
+                from_email = excluded.from_email,
+                from_name = excluded.from_name,
+                updated_by_user_id = excluded.updated_by_user_id,
+                updated_at = now()
+        `,
+        [
+          authMe.user.societyId,
+          body.emailSettings.enabled,
+          body.emailSettings.smtpHost,
+          body.emailSettings.smtpPort,
+          body.emailSettings.smtpUser,
+          body.emailSettings.fromEmail,
+          body.emailSettings.fromName,
+          authMe.user.id,
+        ],
+      )
+    }
+
     for (const setting of body.settings) {
       await client.query(
         `

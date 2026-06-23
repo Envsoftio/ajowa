@@ -244,6 +244,7 @@ const deliverShare = async (share: ShareRow, token: string, requestedChannels: D
       subject: `${sharedReportTypeLabels[share.report_type]} shared with you`,
       html: `<p>Hello ${share.owner_name},</p><p>A secure finance report is available until ${share.expires_at}.</p><p><a href="${link}">Open shared report</a></p>`,
       text: `Hello ${share.owner_name},\n\nOpen your secure finance report: ${link}\n\nThis link expires at ${share.expires_at}.`,
+      societyId: share.society_id,
     })
     if (response.delivered) {
       deliveredState = 'EMAILED'

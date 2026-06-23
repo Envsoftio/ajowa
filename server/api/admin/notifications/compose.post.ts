@@ -4,6 +4,32 @@ import { requireRole } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
 import { enqueueNotificationForAudience } from '~/server/utils/notifications'
 
+const audienceSchema = z.object({
+  scope: z.enum([
+    'ALL_ACTIVE_RESIDENTS',
+    'ACTIVE_PUSH_SUBSCRIBERS',
+    'BLOCKS',
+    'FLATS',
+    'USERS',
+    'OWNERS',
+    'OWNER_OF_FLAT',
+    'TENANTS',
+    'DEFAULTERS',
+    'BILLING_CONTACTS',
+  ]),
+  userIds: z.array(z.string().uuid()).optional(),
+  blockIds: z.array(z.string().uuid()).optional(),
+  flatIds: z.array(z.string().uuid()).optional(),
+}).superRefine((audience, ctx) => {
+  if (audience.scope === 'OWNER_OF_FLAT' && audience.flatIds?.length !== 1) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['flatIds'],
+      message: 'Select exactly one flat owner.',
+    })
+  }
+})
+
 const schema = z.object({
   title: z.string().min(3).max(180),
   body: z.string().min(3).max(4000),
@@ -18,22 +44,7 @@ const schema = z.object({
   ]).default('NOTICES_ANNOUNCEMENTS'),
   priority: z.enum(['LOW', 'MEDIUM', 'HIGH', 'EMERGENCY']).default('MEDIUM'),
   channels: z.array(z.enum(['PUSH', 'EMAIL', 'WHATSAPP', 'IN_APP'])).min(1),
-  audience: z.object({
-    scope: z.enum([
-      'ALL_ACTIVE_RESIDENTS',
-      'ACTIVE_PUSH_SUBSCRIBERS',
-      'BLOCKS',
-      'FLATS',
-      'USERS',
-      'OWNERS',
-      'TENANTS',
-      'DEFAULTERS',
-      'BILLING_CONTACTS',
-    ]),
-    userIds: z.array(z.string().uuid()).optional(),
-    blockIds: z.array(z.string().uuid()).optional(),
-    flatIds: z.array(z.string().uuid()).optional(),
-  }),
+  audience: audienceSchema,
   scheduleFor: z.string().datetime().nullable().optional(),
   draft: z.boolean().default(false),
   attachmentReference: z.string().max(500).nullable().optional(),

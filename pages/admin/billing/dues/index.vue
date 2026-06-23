@@ -58,6 +58,7 @@ const query = reactive({
   status: '',
   balance: '',
   overdue: '',
+  advance: '',
   sortBy: 'flatNumber',
   sortDirection: 'asc',
 })
@@ -70,6 +71,7 @@ const buildDueQuery = (overrides: Partial<typeof query> = {}) => ({
   status: query.status || undefined,
   balance: query.balance || undefined,
   overdue: query.overdue || undefined,
+  advance: query.advance || undefined,
   sortBy: query.sortBy,
   sortDirection: query.sortDirection,
 })
@@ -125,6 +127,12 @@ const overdueOptions = [
   { label: 'Overdue only', value: 'true' },
 ]
 
+const advanceOptions = [
+  { label: 'All advance states', value: '' },
+  { label: 'CAM advance covered', value: 'covered' },
+  { label: 'Billable / no advance', value: 'billable' },
+]
+
 const isReminderEligible = (due: MaintenanceDue) =>
   canManageDues.value &&
   due.balanceAmount > 0 &&
@@ -137,7 +145,9 @@ const canSendBill = (due: MaintenanceDue) =>
 
 const canRecordPayment = (due: MaintenanceDue) =>
   canManageBilling.value &&
-  due.balanceAmount > 0 && !['PAID', 'WAIVED', 'CANCELLED'].includes(due.status)
+  due.balanceAmount > 0 &&
+  !due.isCamAdvanceCovered &&
+  !['PAID', 'WAIVED', 'CANCELLED'].includes(due.status)
 
 const canWaiveDue = (due: MaintenanceDue) =>
   canManageDues.value && !['PAID', 'CANCELLED'].includes(due.status)
@@ -152,18 +162,61 @@ const getRecordPaymentRoute = (due: MaintenanceDue) => ({
   },
 })
 
+const isCamDue = (due: MaintenanceDue) => due.billingPeriodChargeType === 'CAM'
+
+const advanceStatusKind = (due: MaintenanceDue) => {
+  if (due.isCamAdvanceCovered) return 'covered'
+  if (isCamDue(due)) return 'billable'
+  return 'not-cam'
+}
+
+const advanceStatusLabel = (due: MaintenanceDue) => {
+  if (due.isCamAdvanceCovered) return 'Covered'
+  if (isCamDue(due)) return 'Billable'
+  return 'Not CAM'
+}
+
+const advanceStatusDetail = (due: MaintenanceDue) => {
+  if (due.isCamAdvanceCovered) {
+    return `Paid until ${formatDate(due.camAdvancePaidUntil)}. Bill and reminder actions are off.`
+  }
+  if (isCamDue(due)) return 'No advance coverage for this CAM period.'
+  return 'Advance coverage applies only to CAM bills.'
+}
+
+const getRecordPaymentTitle = (due: MaintenanceDue) => {
+  if (due.isCamAdvanceCovered) return 'No payment needed. CAM advance covers this period.'
+  if (due.balanceAmount <= 0) return 'No balance pending.'
+  if (['PAID', 'WAIVED', 'CANCELLED'].includes(due.status)) return 'Payment is unavailable for this status.'
+  return 'Record payment'
+}
+
+const getSendBillTitle = (due: MaintenanceDue) =>
+  due.isCamAdvanceCovered
+    ? 'Bill delivery is off because CAM advance covers this period.'
+    : 'Send bill'
+
+const getReminderTitle = (due: MaintenanceDue) => {
+  if (due.isCamAdvanceCovered) return 'Reminder is off because CAM advance covers this period.'
+  if (due.balanceAmount <= 0) return 'No balance pending.'
+  return `Send reminder for ${due.flatNumber || 'flat'} ${due.billingPeriodLabel || ''}`.trim()
+}
+
 const summary = computed(() => {
   const rows = dues.value
   const totalDue = rows.reduce((sum, row) => sum + row.totalAmount, 0)
   const totalPaid = rows.reduce((sum, row) => sum + row.paidAmount, 0)
   const totalBalance = rows.reduce((sum, row) => sum + row.balanceAmount, 0)
   const overdue = rows.filter((row) => row.status === 'OVERDUE').length
+  const advanceCoveredRows = rows.filter((row) => row.isCamAdvanceCovered)
 
   return {
     totalDue,
     totalPaid,
     totalBalance,
     overdue,
+    advanceCoveredCount: advanceCoveredRows.length,
+    advanceCoveredBalance: advanceCoveredRows.reduce((sum, row) => sum + row.balanceAmount, 0),
     collectionPercent:
       totalDue > 0 ? Math.round((totalPaid / totalDue) * 100) : 0,
   }
@@ -180,7 +233,8 @@ const hasActiveFilters = computed(
     Boolean(query.billingPeriodId) ||
     Boolean(query.status) ||
     Boolean(query.balance) ||
-    Boolean(query.overdue),
+    Boolean(query.overdue) ||
+    Boolean(query.advance),
 )
 
 const activePeriodLabel = computed(() => {
@@ -463,6 +517,7 @@ const resetFilters = () => {
   query.status = ''
   query.balance = ''
   query.overdue = ''
+  query.advance = ''
 }
 
 watch(
@@ -472,6 +527,7 @@ watch(
     query.status,
     query.balance,
     query.overdue,
+    query.advance,
   ].join('|'),
   () => {
     clearNotificationSelection()
@@ -493,9 +549,12 @@ watch(
         <p>{{ summary.collectionPercent }}% collection across visible rows.</p>
       </section>
       <section class="surface-card">
-        <p class="eyebrow">Balance</p>
+        <p class="eyebrow">Actionable balance</p>
         <h3>{{ formatMoney(summary.totalBalance) }}</h3>
-        <p>{{ summary.overdue }} overdue flats on this page.</p>
+        <p>
+          {{ summary.overdue }} overdue flats.
+          {{ summary.advanceCoveredCount }} CAM advance-covered rows are protected from bill and reminder actions.
+        </p>
       </section>
     </div>
 
@@ -604,6 +663,10 @@ watch(
             <dt>Can remind</dt>
             <dd>{{ selectedReminderCount }}</dd>
           </div>
+          <div>
+            <dt>CAM advance</dt>
+            <dd>{{ summary.advanceCoveredCount }}</dd>
+          </div>
         </dl>
       </div>
 
@@ -682,6 +745,21 @@ watch(
               placeholder="Overdue"
             />
           </label>
+          <label>
+            <span class="field-label">
+              Advance
+              <AppHelpIcon
+                text="Separate CAM rows that are covered by paid-until advance coverage from rows that still need billing action."
+              />
+            </span>
+            <Select
+              v-model="query.advance"
+              :options="advanceOptions"
+              option-label="label"
+              option-value="value"
+              placeholder="Advance"
+            />
+          </label>
         </div>
       </div>
 
@@ -714,6 +792,19 @@ watch(
           <template #body="{ data: row }">
             <span>{{ row.billingPeriodLabel }}</span>
             <p class="table-muted">Due {{ formatDate(row.dueDate) }}</p>
+          </template>
+        </Column>
+        <Column header="Advance" style="min-width: 13rem">
+          <template #body="{ data: row }">
+            <div
+              class="billing-advance-state"
+              :class="`billing-advance-state--${advanceStatusKind(row)}`"
+            >
+              <span class="billing-advance-pill">
+                {{ advanceStatusLabel(row) }}
+              </span>
+              <p>{{ advanceStatusDetail(row) }}</p>
+            </div>
           </template>
         </Column>
         <Column field="primaryResidentName" header="Billing contact">
@@ -750,9 +841,6 @@ watch(
         <Column field="status" header="Status">
           <template #body="{ data: row }">
             <AppStatusBadge :status="row.status" />
-            <p v-if="row.isCamAdvanceCovered" class="table-muted">
-              CAM advance until {{ formatDate(row.camAdvancePaidUntil) }}
-            </p>
           </template>
         </Column>
         <Column header="Actions" style="width: 250px">
@@ -766,8 +854,8 @@ watch(
                 severity="secondary"
                 text
                 rounded
-                aria-label="Record payment"
-                title="Record payment"
+                :aria-label="getRecordPaymentTitle(row)"
+                :title="getRecordPaymentTitle(row)"
                 :disabled="!canRecordPayment(row)"
               />
               <Button
@@ -787,8 +875,8 @@ watch(
                 severity="secondary"
                 text
                 rounded
-                aria-label="Send bill"
-                title="Send bill"
+                :aria-label="getSendBillTitle(row)"
+                :title="getSendBillTitle(row)"
                 :disabled="!canSendBill(row)"
                 @click="openBillSend([row])"
               />
@@ -807,8 +895,8 @@ watch(
                 severity="secondary"
                 text
                 rounded
-                :aria-label="`Send reminder for ${row.flatNumber || 'flat'} ${row.billingPeriodLabel || ''}`"
-                :title="`Send reminder for ${row.flatNumber || 'flat'} ${row.billingPeriodLabel || ''}`"
+                :aria-label="getReminderTitle(row)"
+                :title="getReminderTitle(row)"
                 :disabled="!isReminderEligible(row)"
                 @click="sendReminders([row.id])"
               />
@@ -841,10 +929,16 @@ watch(
             </div>
             <div>
               <AppStatusBadge :status="due.status" />
-              <p v-if="due.isCamAdvanceCovered" class="table-muted">
-                CAM advance until {{ formatDate(due.camAdvancePaidUntil) }}
-              </p>
             </div>
+          </div>
+          <div
+            class="billing-advance-state billing-advance-state--card"
+            :class="`billing-advance-state--${advanceStatusKind(due)}`"
+          >
+            <span class="billing-advance-pill">
+              {{ advanceStatusLabel(due) }}
+            </span>
+            <p>{{ advanceStatusDetail(due) }}</p>
           </div>
           <div class="billing-balance-cell billing-balance-cell--card">
             <strong>{{ formatMoney(due.balanceAmount) }}</strong>
@@ -877,6 +971,7 @@ watch(
               size="small"
               severity="secondary"
               outlined
+              :title="getRecordPaymentTitle(due)"
               :disabled="!canRecordPayment(due)"
             />
             <Button
@@ -896,6 +991,7 @@ watch(
               size="small"
               severity="secondary"
               outlined
+              :title="getSendBillTitle(due)"
               :disabled="!canSendBill(due)"
               @click="openBillSend([due])"
             />
@@ -914,6 +1010,7 @@ watch(
               size="small"
               severity="secondary"
               outlined
+              :title="getReminderTitle(due)"
               :disabled="!isReminderEligible(due)"
               @click="sendReminders([due.id])"
             />
@@ -946,6 +1043,10 @@ watch(
             {{ formatDate(selectedDue.dueDate) }}
           </p>
         </div>
+        <Message v-if="selectedDue.isCamAdvanceCovered" severity="success" :closable="false">
+          CAM advance covers this period through {{ formatDate(selectedDue.camAdvancePaidUntil) }}.
+          Bill delivery, reminders, and new payment capture are disabled for this due.
+        </Message>
         <AppDataTable
           :value="selectedDue.chargeBreakdown"
           responsive-layout="scroll"

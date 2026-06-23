@@ -1,9 +1,21 @@
 <script setup lang="ts">
+import type { PaginatedResponse } from '~/types/api'
+import type { FlatSummary } from '~/types/domain'
+
 definePageMeta({
   layout: 'admin',
   middleware: ['protected'],
   title: 'Notices',
 })
+
+type AudienceScope =
+  | 'ALL_ACTIVE_RESIDENTS'
+  | 'ACTIVE_PUSH_SUBSCRIBERS'
+  | 'OWNERS'
+  | 'OWNER_OF_FLAT'
+  | 'TENANTS'
+  | 'DEFAULTERS'
+  | 'BILLING_CONTACTS'
 
 type NoticeRow = {
   id: string
@@ -38,6 +50,7 @@ const rowAttachmentUploadingId = ref<string | null>(null)
 const attachmentAccept = 'application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,image/jpeg,image/png,image/webp'
 const attachmentAllowedMimeTypes = attachmentAccept.split(',')
 const attachmentMaxSizeBytes = 10 * 1024 * 1024
+const flatOwnerScope = 'OWNER_OF_FLAT' as const
 const form = reactive({
   title: '',
   summary: '',
@@ -46,7 +59,8 @@ const form = reactive({
   isPinned: false,
   publish: false,
   channels: ['IN_APP'] as string[],
-  audienceScope: 'ALL_ACTIVE_RESIDENTS',
+  audienceScope: 'ALL_ACTIVE_RESIDENTS' as AudienceScope,
+  flatId: null as string | null,
 })
 
 const { data, pending, refresh } = await useAsyncData('admin-notices', () =>
@@ -55,6 +69,58 @@ const { data, pending, refresh } = await useAsyncData('admin-notices', () =>
   }),
 )
 const rows = computed(() => data.value?.data.items ?? [])
+
+const channelOptions = [
+  { label: 'Push', value: 'PUSH' },
+  { label: 'Email', value: 'EMAIL' },
+  { label: 'WhatsApp', value: 'WHATSAPP' },
+  { label: 'In-app', value: 'IN_APP' },
+]
+
+const audienceOptions = [
+  { label: 'All active residents', value: 'ALL_ACTIVE_RESIDENTS' },
+  { label: 'Active push subscribers', value: 'ACTIVE_PUSH_SUBSCRIBERS' },
+  { label: 'All owners', value: 'OWNERS' },
+  { label: 'Single flat owner', value: flatOwnerScope },
+  { label: 'All tenants', value: 'TENANTS' },
+  { label: 'Defaulters', value: 'DEFAULTERS' },
+  { label: 'Billing contacts', value: 'BILLING_CONTACTS' },
+] satisfies { label: string; value: AudienceScope }[]
+
+const { data: flatsData } = await useAsyncData('notice-flat-owner-options', () =>
+  api<PaginatedResponse<FlatSummary>>('/api/admin/flats', {
+    query: {
+      page: 1,
+      pageSize: 2000,
+      sortBy: 'flatNumber',
+      sortDirection: 'asc',
+      'filters[isActive]': 'true',
+    },
+  }),
+)
+
+const flatOptions = computed(() =>
+  (flatsData.value?.data.items ?? []).map((flat) => {
+    const ownerCount = typeof flat.ownerCount === 'number' ? ` · ${flat.ownerCount} owner${flat.ownerCount === 1 ? '' : 's'}` : ''
+    return {
+      label: `${flat.blockName} ${flat.flatNumber}${ownerCount}`,
+      value: flat.id,
+    }
+  }),
+)
+
+watch(() => form.audienceScope, (scope) => {
+  if (scope !== flatOwnerScope) {
+    form.flatId = null
+  }
+})
+
+const buildAudience = () => {
+  if (form.audienceScope === flatOwnerScope) {
+    return { scope: form.audienceScope, flatIds: form.flatId ? [form.flatId] : [] }
+  }
+  return { scope: form.audienceScope }
+}
 
 const formatBytes = (value: number | null | undefined) => {
   const bytes = Number(value ?? 0)
@@ -173,6 +239,16 @@ const onRowAttachmentChange = async (event: Event) => {
 }
 
 const save = async () => {
+  if (form.audienceScope === flatOwnerScope && !form.flatId) {
+    toast.add({
+      severity: 'warn',
+      summary: 'Select a flat',
+      detail: 'Choose the flat whose owner should receive this notice.',
+      life: 10000,
+    })
+    return
+  }
+
   if (form.publish) {
     const confirmed = await confirmAction({
       header: 'Publish notice?',
@@ -197,7 +273,7 @@ const save = async () => {
       isPinned: form.isPinned,
       publish: form.publish,
       channels: form.channels,
-      audience: { scope: form.audienceScope },
+      audience: buildAudience(),
     },
   })
   await uploadAttachment(response.data.id)
@@ -210,6 +286,7 @@ const save = async () => {
   form.title = ''
   form.summary = ''
   form.body = ''
+  form.flatId = null
   clearAttachment()
   await refresh()
 }
@@ -260,8 +337,17 @@ const publish = async (notice: NoticeRow) => {
         <Textarea v-model="form.body" rows="6" placeholder="Notice details" />
         <div class="surface-grid">
           <Select v-model="form.priority" :options="['LOW', 'MEDIUM', 'HIGH', 'EMERGENCY']" />
-          <Select v-model="form.audienceScope" :options="['ALL_ACTIVE_RESIDENTS', 'ACTIVE_PUSH_SUBSCRIBERS', 'OWNERS', 'TENANTS', 'DEFAULTERS', 'BILLING_CONTACTS']" />
-          <MultiSelect v-model="form.channels" :options="[{ label: 'Push', value: 'PUSH' }, { label: 'Email', value: 'EMAIL' }, { label: 'WhatsApp', value: 'WHATSAPP' }, { label: 'In-app', value: 'IN_APP' }]" option-label="label" option-value="value" display="chip" />
+          <Select v-model="form.audienceScope" :options="audienceOptions" option-label="label" option-value="value" />
+          <Select
+            v-if="form.audienceScope === flatOwnerScope"
+            v-model="form.flatId"
+            :options="flatOptions"
+            option-label="label"
+            option-value="value"
+            filter
+            placeholder="Select flat owner"
+          />
+          <MultiSelect v-model="form.channels" :options="channelOptions" option-label="label" option-value="value" display="chip" />
         </div>
         <div class="admin-inline-actions">
           <ToggleSwitch v-model="form.isPinned" />

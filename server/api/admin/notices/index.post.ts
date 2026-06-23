@@ -12,6 +12,7 @@ const audienceSchema = z.object({
     'FLATS',
     'USERS',
     'OWNERS',
+    'OWNER_OF_FLAT',
     'TENANTS',
     'DEFAULTERS',
     'BILLING_CONTACTS',
@@ -19,6 +20,14 @@ const audienceSchema = z.object({
   userIds: z.array(z.string().uuid()).optional(),
   blockIds: z.array(z.string().uuid()).optional(),
   flatIds: z.array(z.string().uuid()).optional(),
+}).superRefine((audience, ctx) => {
+  if (audience.scope === 'OWNER_OF_FLAT' && audience.flatIds?.length !== 1) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['flatIds'],
+      message: 'Select exactly one flat owner.',
+    })
+  }
 })
 
 const schema = z.object({

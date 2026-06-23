@@ -1,6 +1,7 @@
 import { createApiSuccess } from '~/server/utils/api'
 import { requireRole } from '~/server/utils/auth'
-import { getEmailIntegrationStatus, getPushIntegrationStatus, getWhatsAppIntegrationStatus } from '~/server/utils/env'
+import { getPushIntegrationStatus, getWhatsAppIntegrationStatus } from '~/server/utils/env'
+import { getResolvedEmailIntegrationStatus, getResolvedEmailSettings } from '~/server/utils/email'
 import { queryRows } from '~/server/utils/database'
 
 export default defineEventHandler(async (event) => {
@@ -65,11 +66,15 @@ export default defineEventHandler(async (event) => {
     ),
   ])
 
-  const email = getEmailIntegrationStatus()
+  const [email, emailSettings] = await Promise.all([
+    getResolvedEmailIntegrationStatus(authMe.user.societyId),
+    getResolvedEmailSettings(authMe.user.societyId),
+  ])
   const whatsapp = getWhatsAppIntegrationStatus()
   const push = getPushIntegrationStatus()
 
   return createApiSuccess(event, {
+    emailSettings,
     providers: {
       email: { enabled: email.enabled, reason: email.enabled ? null : email.reason },
       whatsapp: { enabled: whatsapp.enabled, reason: whatsapp.enabled ? null : whatsapp.reason },

@@ -25,16 +25,38 @@ type Setting = {
   criticalBypassQuietHours: boolean
 }
 
+type EmailSettings = {
+  enabled: boolean
+  smtpHost: string
+  smtpPort: number
+  smtpUser: string
+  fromEmail: string
+  fromName: string
+  smtpPasswordConfigured: boolean
+  source: 'ENV' | 'SOCIETY'
+}
+
 const api = useApi()
 const toast = useToast()
 const settings = ref<Setting[]>([])
 const providers = ref<Record<string, { enabled: boolean; reason: string | null }>>({})
 const metrics = ref({ activePushSubscribers: 0, activeResidents: 0 })
+const emailSettings = reactive<EmailSettings>({
+  enabled: false,
+  smtpHost: '',
+  smtpPort: 587,
+  smtpUser: '',
+  fromEmail: '',
+  fromName: '',
+  smtpPasswordConfigured: false,
+  source: 'ENV',
+})
 const test = reactive({ channel: 'EMAIL', target: '' })
 const saving = ref(false)
+const verifying = ref(false)
 
 const load = async () => {
-  const response = await api<{ ok: true; data: { settings: Setting[]; providers: typeof providers.value; metrics: typeof metrics.value } }>('/api/admin/settings/notifications')
+  const response = await api<{ ok: true; data: { settings: Setting[]; providers: typeof providers.value; metrics: typeof metrics.value; emailSettings: EmailSettings } }>('/api/admin/settings/notifications')
   settings.value = response.data.settings.length
     ? response.data.settings
     : [
@@ -43,6 +65,7 @@ const load = async () => {
       ]
   providers.value = response.data.providers
   metrics.value = response.data.metrics
+  Object.assign(emailSettings, response.data.emailSettings)
 }
 
 await useAsyncData('admin-notification-settings', load)
@@ -50,7 +73,20 @@ await useAsyncData('admin-notification-settings', load)
 const save = async () => {
   saving.value = true
   try {
-    await api('/api/admin/settings/notifications', { method: 'PUT', body: { settings: settings.value } })
+    await api('/api/admin/settings/notifications', {
+      method: 'PUT',
+      body: {
+        settings: settings.value,
+        emailSettings: {
+          enabled: emailSettings.enabled,
+          smtpHost: emailSettings.smtpHost,
+          smtpPort: emailSettings.smtpPort,
+          smtpUser: emailSettings.smtpUser,
+          fromEmail: emailSettings.fromEmail,
+          fromName: emailSettings.fromName,
+        },
+      },
+    })
     toast.add({ severity: 'success', summary: 'Settings saved', life: 10000 })
     await load()
   } finally {
@@ -59,16 +95,21 @@ const save = async () => {
 }
 
 const verify = async () => {
-  const response = await api<{ ok: true; data: { ok: boolean; reason: string | null } }>('/api/admin/settings/notifications/verify', {
-    method: 'POST',
-    body: test,
-  })
-  toast.add({
-    severity: response.data.ok ? 'success' : 'warn',
-    summary: response.data.ok ? 'Verification sent' : 'Verification failed',
-    detail: response.data.reason ?? undefined,
-    life: 10000,
-  })
+  verifying.value = true
+  try {
+    const response = await api<{ ok: true; data: { ok: boolean; reason: string | null } }>('/api/admin/settings/notifications/verify', {
+      method: 'POST',
+      body: test,
+    })
+    toast.add({
+      severity: response.data.ok ? 'success' : 'warn',
+      summary: response.data.ok ? 'Verification sent' : 'Verification failed',
+      detail: response.data.reason ?? undefined,
+      life: 10000,
+    })
+  } finally {
+    verifying.value = false
+  }
 }
 </script>
 
@@ -102,11 +143,28 @@ const verify = async () => {
       </AppDataTable>
 
       <div class="admin-form-layout">
+        <h2>Email SMTP</h2>
+        <div class="admin-inline-actions">
+          <ToggleSwitch v-model="emailSettings.enabled" />
+          <span>Email notifications</span>
+          <Tag :value="emailSettings.smtpPasswordConfigured ? 'SMTP_PASS configured' : 'SMTP_PASS missing'" :severity="emailSettings.smtpPasswordConfigured ? 'success' : 'danger'" />
+          <Tag :value="emailSettings.source === 'SOCIETY' ? 'Admin settings' : 'Environment defaults'" severity="secondary" />
+        </div>
+        <div class="surface-grid">
+          <InputText v-model="emailSettings.smtpHost" placeholder="SMTP host" />
+          <InputNumber v-model="emailSettings.smtpPort" :min="1" :max="65535" placeholder="SMTP port" />
+          <InputText v-model="emailSettings.smtpUser" placeholder="SMTP user" />
+          <InputText v-model="emailSettings.fromEmail" placeholder="From email" />
+          <InputText v-model="emailSettings.fromName" placeholder="From name" />
+        </div>
+      </div>
+
+      <div class="admin-form-layout">
         <h2>Provider verification</h2>
         <div class="surface-grid">
           <Select v-model="test.channel" :options="['EMAIL', 'WHATSAPP', 'PUSH']" />
           <InputText v-model="test.target" placeholder="Email, WhatsApp number, or current user push" />
-          <Button label="Send test" icon="pi pi-send" severity="secondary" outlined @click="verify" />
+          <Button label="Send test" icon="pi pi-send" severity="secondary" outlined :loading="verifying" @click="verify" />
         </div>
       </div>
     </section>

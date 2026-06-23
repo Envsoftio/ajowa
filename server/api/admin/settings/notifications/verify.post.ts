@@ -12,6 +12,18 @@ const schema = z.object({
 export default defineEventHandler(async (event) => {
   const authMe = await requireRole(event, ['ADMIN', 'MANAGER'])
   const body = validateInput(schema, await readJsonBody(event))
+
+  if (body.channel !== 'PUSH') {
+    const result = await sendProviderVerification(null, {
+      channel: body.channel,
+      societyId: authMe.user.societyId,
+      target: body.target,
+      triggeredByUserId: authMe.user.id,
+    })
+
+    return createApiSuccess(event, result)
+  }
+
   const client = await getDatabasePool().connect()
 
   try {

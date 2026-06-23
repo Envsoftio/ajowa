@@ -90,6 +90,23 @@ export default defineEventHandler(async (event) => {
     values.push(today)
   }
 
+  const advanceFilter = query.filters.advance?.[0]
+  if (advanceFilter === 'covered') {
+    where.push(`
+      bp.charge_type = 'CAM'
+      and f.cam_advance_paid_until is not null
+      and f.cam_advance_paid_until >= bp.end_date
+    `)
+  } else if (advanceFilter === 'billable') {
+    where.push(`
+      not (
+        bp.charge_type = 'CAM'
+        and f.cam_advance_paid_until is not null
+        and f.cam_advance_paid_until >= bp.end_date
+      )
+    `)
+  }
+
   const blockFilter = query.filters.blockId?.[0]
   if (blockFilter) {
     values.push(blockFilter)
@@ -165,6 +182,7 @@ export default defineEventHandler(async (event) => {
       `
         select count(*)::text as count
         from maintenance_dues md
+        inner join billing_periods bp on bp.id = md.billing_period_id
         inner join flats f on f.id = md.flat_id
         inner join blocks b on b.id = f.block_id
         where ${whereSql}

@@ -13,6 +13,7 @@ type InviteEmailContext = {
 }
 
 export type PendingInviteEmail = {
+  societyId: string
   to: string
   subject: string
   template: 'invite-onboarding'
@@ -28,25 +29,60 @@ export type InviteEmailDelivery =
 const INVITE_EMAIL_FAILED_REASON =
   'Invite was created, but email delivery failed. Check SMTP settings and resend the invite.'
 
-const serializeEmailError = (error: unknown) => {
-  if (error instanceof Error) {
-    const details = error as Error & {
-      code?: unknown
-      command?: unknown
-      responseCode?: unknown
-    }
+const getEmailErrorMeta = (error: unknown) => {
+  const value = error as {
+    code?: unknown
+    command?: unknown
+    message?: unknown
+    response?: unknown
+    responseCode?: unknown
+  }
 
+  return {
+    code: typeof value.code === 'string' ? value.code : null,
+    command: typeof value.command === 'string' ? value.command : null,
+    message: error instanceof Error ? error.message : typeof value.message === 'string' ? value.message : null,
+    response: typeof value.response === 'string' ? value.response : null,
+    responseCode: typeof value.responseCode === 'number' ? value.responseCode : null,
+  }
+}
+
+const describeInviteEmailError = (error: unknown) => {
+  const meta = getEmailErrorMeta(error)
+  const message = meta.message ?? meta.response ?? INVITE_EMAIL_FAILED_REASON
+  const normalized = `${message} ${meta.response ?? ''}`.toLowerCase()
+
+  if (meta.responseCode === 553 || normalized.includes('sender is not allowed to relay')) {
+    return 'Invite was created, but SMTP rejected the sender address. Verify EMAIL_FROM is an approved ZeptoMail sender/domain, or change EMAIL_FROM to an approved address, then resend the invite.'
+  }
+
+  if (meta.responseCode === 535 || normalized.includes('authentication failed') || normalized.includes('invalid login')) {
+    return 'Invite was created, but SMTP authentication failed. Check SMTP_USER and SMTP_PASS, then resend the invite.'
+  }
+
+  if (meta.code === 'ECONNECTION' || meta.code === 'ETIMEDOUT' || meta.code === 'ESOCKET') {
+    return 'Invite was created, but the SMTP server could not be reached. Check SMTP_HOST, SMTP_PORT, and network access, then resend the invite.'
+  }
+
+  return message
+}
+
+const serializeEmailError = (error: unknown) => {
+  const meta = getEmailErrorMeta(error)
+
+  if (error instanceof Error) {
     return {
       name: error.name,
-      message: error.message,
+      message: meta.message,
       stack: error.stack,
-      code: details.code,
-      command: details.command,
-      responseCode: details.responseCode,
+      code: meta.code,
+      command: meta.command,
+      response: meta.response,
+      responseCode: meta.responseCode,
     }
   }
 
-  return { message: String(error) }
+  return meta
 }
 
 export const sendInviteEmailSafely = async (
@@ -61,6 +97,7 @@ export const sendInviteEmailSafely = async (
       subject: invite.subject,
       template: invite.template,
       context: invite.context,
+      societyId: invite.societyId,
     })
 
     if (result.delivered) {
@@ -88,7 +125,7 @@ export const sendInviteEmailSafely = async (
 
     return {
       delivered: false,
-      reason: INVITE_EMAIL_FAILED_REASON,
+      reason: describeInviteEmailError(error),
     }
   }
 }

@@ -68,6 +68,7 @@ export type NotificationAudienceFilter = {
     | 'FLATS'
     | 'USERS'
     | 'OWNERS'
+    | 'OWNER_OF_FLAT'
     | 'TENANTS'
     | 'DEFAULTERS'
     | 'BILLING_CONTACTS'
@@ -108,8 +109,28 @@ type AudienceUserRow = {
   notification_in_app_enabled: boolean
 }
 
+type NotificationEventSettingRow = {
+  push_enabled: boolean
+  email_enabled: boolean
+  whatsapp_enabled: boolean
+  in_app_enabled: boolean
+  retry_max_attempts: number
+  is_paused: boolean
+}
+
+type UserNotificationPreferenceRow = {
+  user_id: string
+  push_enabled: boolean
+  email_enabled: boolean
+  whatsapp_enabled: boolean
+  in_app_enabled: boolean
+  is_paused: boolean
+  allow_critical_bypass: boolean
+}
+
 type ClaimedJobRow = {
   id: string
+  society_id: string
   notification_event_id: string
   audience_id: string | null
   target_user_id: string | null
@@ -168,6 +189,9 @@ const priorityRank: Record<NotificationPriority, number> = {
   LOW: 3,
 }
 
+const defaultMaxAttempts = 3
+const notificationChannels: NotificationChannel[] = ['PUSH', 'EMAIL', 'WHATSAPP', 'IN_APP']
+
 const importedOwnerEmailExpression = (relationshipAlias: string) => `
   case
     when ${relationshipAlias}.import_metadata->>'relationshipSource' = 'OWNER'
@@ -225,6 +249,73 @@ export const normalizeWhatsAppNumber = (value: string | null | undefined) => {
   return null
 }
 
+const getProviderErrorMeta = (error: unknown) => {
+  const value = error as {
+    code?: unknown
+    command?: unknown
+    response?: unknown
+    responseCode?: unknown
+    message?: unknown
+  }
+
+  return {
+    code: typeof value.code === 'string' ? value.code : null,
+    command: typeof value.command === 'string' ? value.command : null,
+    message: error instanceof Error ? error.message : typeof value.message === 'string' ? value.message : null,
+    response: typeof value.response === 'string' ? value.response : null,
+    responseCode: typeof value.responseCode === 'number' ? value.responseCode : null,
+  }
+}
+
+const describeProviderError = (error: unknown) => {
+  const meta = getProviderErrorMeta(error)
+  const message = meta.message ?? meta.response ?? 'Provider request failed.'
+  const normalized = `${message} ${meta.response ?? ''}`.toLowerCase()
+
+  if (normalized.includes('timeout exceeded when trying to connect')) {
+    return 'Database connection pool timed out while reading notification email settings. Reuse the active database client for email settings lookups or increase DB_POOL_MAX.'
+  }
+
+  if (meta.responseCode === 553 || normalized.includes('sender is not allowed to relay')) {
+    return 'SMTP rejected the sender address. Verify EMAIL_FROM is an approved sender/domain for this SMTP account, or change EMAIL_FROM to an approved address.'
+  }
+
+  if (meta.responseCode === 535 || normalized.includes('authentication failed') || normalized.includes('invalid login')) {
+    return 'SMTP authentication failed. Check SMTP_USER and SMTP_PASS.'
+  }
+
+  if (
+    ['ECONNECTION', 'ETIMEDOUT', 'ESOCKET', 'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN'].includes(meta.code ?? '') ||
+    normalized.includes('connection timeout') ||
+    normalized.includes('greeting never received')
+  ) {
+    return 'SMTP server could not be reached. Check SMTP host, port, TLS mode, and network access from this runtime.'
+  }
+
+  return message
+}
+
+const isPermanentProviderError = (error: unknown) => {
+  const meta = getProviderErrorMeta(error)
+
+  if (meta.responseCode && meta.responseCode >= 400 && meta.responseCode < 500) {
+    return true
+  }
+
+  return meta.code === 'EENVELOPE'
+}
+
+const providerErrorResponseBody = (error: unknown) => {
+  const meta = getProviderErrorMeta(error)
+
+  return {
+    ...(meta.code ? { code: meta.code } : {}),
+    ...(meta.command ? { command: meta.command } : {}),
+    ...(meta.responseCode ? { responseCode: meta.responseCode } : {}),
+    ...(meta.response ? { response: meta.response } : {}),
+  }
+}
+
 const enabledForChannel = (user: NotificationUser, channel: NotificationChannel) => {
   if (user.isActive === false) return false
   if (channel === 'PUSH') return user.pushEnabled
@@ -239,10 +330,41 @@ const channelAddress = (user: NotificationUser, channel: NotificationChannel) =>
   return null
 }
 
-const getUserChannels = (user: NotificationUser, explicitChannels?: NotificationChannel[]) => {
+const enabledChannelsForSetting = (setting: NotificationEventSettingRow | null) => {
+  if (!setting || setting.is_paused) {
+    return setting ? [] : notificationChannels
+  }
+
+  return notificationChannels.filter((channel) => {
+    if (channel === 'PUSH') return setting.push_enabled
+    if (channel === 'EMAIL') return setting.email_enabled
+    if (channel === 'WHATSAPP') return setting.whatsapp_enabled
+    return setting.in_app_enabled
+  })
+}
+
+const getRequestedChannels = (
+  explicitChannels: NotificationChannel[] | undefined,
+  setting: NotificationEventSettingRow | null,
+) => {
+  const settingChannels = new Set(enabledChannelsForSetting(setting))
+  const requested = explicitChannels?.length ? explicitChannels : notificationChannels
+
+  return requested
+    .filter((channel) => settingChannels.has(channel))
+    .filter((channel, index, channels) => channels.indexOf(channel) === index)
+}
+
+const getUserChannels = (
+  user: NotificationUser,
+  explicitChannels?: NotificationChannel[],
+  setting: NotificationEventSettingRow | null = null,
+) => {
   const allowed = explicitChannels?.length ? explicitChannels : presetChannels[user.preferredNotificationChannels]
+  const settingChannels = new Set(enabledChannelsForSetting(setting))
 
   return allowed
+    .filter((channel) => settingChannels.has(channel))
     .filter((channel) => enabledForChannel(user, channel))
     .filter((channel, index, channels) => channels.indexOf(channel) === index)
 }
@@ -254,6 +376,87 @@ const createDedupeKey = (input: NotificationPayload, userId: string, channel: No
 }
 
 const getBackoffMinutes = (attemptCount: number) => Math.min(60, 2 ** Math.max(0, attemptCount - 1))
+
+const getNotificationEventSetting = async (
+  client: PoolClient,
+  input: Pick<NotificationPayload, 'societyId' | 'eventKey'>,
+) => {
+  const result = await client.query<NotificationEventSettingRow>(
+    `
+      select
+        push_enabled,
+        email_enabled,
+        whatsapp_enabled,
+        in_app_enabled,
+        retry_max_attempts,
+        channel_pause_until is not null and channel_pause_until > now() as is_paused
+      from notification_event_settings
+      where society_id = $1 and event_key = $2
+      limit 1
+    `,
+    [input.societyId, input.eventKey],
+  )
+
+  return result.rows[0] ?? null
+}
+
+const applyUserNotificationPreferences = async (
+  client: PoolClient,
+  input: Pick<NotificationPayload, 'societyId' | 'category' | 'priority'>,
+  users: NotificationUser[],
+) => {
+  if (users.length === 0) {
+    return users
+  }
+
+  const result = await client.query<UserNotificationPreferenceRow>(
+    `
+      select
+        user_id,
+        push_enabled,
+        email_enabled,
+        whatsapp_enabled,
+        in_app_enabled,
+        channel_paused_until is not null and channel_paused_until > now() as is_paused,
+        allow_critical_bypass
+      from user_notification_preferences
+      where society_id = $1
+        and event_category = $2
+        and user_id = any($3::uuid[])
+    `,
+    [input.societyId, input.category, users.map((user) => user.id)],
+  )
+  const preferences = new Map(result.rows.map((row) => [row.user_id, row]))
+
+  return users.map((user) => {
+    const preference = preferences.get(user.id)
+    if (!preference) {
+      return user
+    }
+
+    const isPaused =
+      preference.is_paused &&
+      !(input.priority === 'EMERGENCY' && preference.allow_critical_bypass)
+
+    if (isPaused) {
+      return {
+        ...user,
+        pushEnabled: false,
+        emailEnabled: false,
+        whatsappEnabled: false,
+        inAppEnabled: false,
+      }
+    }
+
+    return {
+      ...user,
+      pushEnabled: user.pushEnabled && preference.push_enabled,
+      emailEnabled: user.emailEnabled && preference.email_enabled,
+      whatsappEnabled: user.whatsappEnabled && preference.whatsapp_enabled,
+      inAppEnabled: user.inAppEnabled && preference.in_app_enabled,
+    }
+  })
+}
 
 const getEmailAttachmentsForJob = async (job: ClaimedJobRow) => {
   if (job.event_key !== 'maintenance_due.bill') {
@@ -289,7 +492,7 @@ export const resolveNotificationAudience = async (
     joins += " inner join push_subscriptions ps on ps.user_id = u.id and ps.status = 'ACTIVE'"
   }
 
-  if (['BLOCKS', 'FLATS', 'OWNERS', 'TENANTS', 'DEFAULTERS', 'BILLING_CONTACTS'].includes(filter.scope)) {
+  if (['BLOCKS', 'FLATS', 'OWNERS', 'OWNER_OF_FLAT', 'TENANTS', 'DEFAULTERS', 'BILLING_CONTACTS'].includes(filter.scope)) {
     joins += ' inner join flat_residents fr on fr.user_id = u.id and fr.is_active = true'
     joins += ' inner join flats f on f.id = fr.flat_id and f.is_active = true'
   }
@@ -305,6 +508,11 @@ export const resolveNotificationAudience = async (
   if (filter.scope === 'FLATS') {
     params.push(filter.flatIds ?? [])
     where.push(`f.id = any($${params.length}::uuid[])`)
+  }
+  if (filter.scope === 'OWNER_OF_FLAT') {
+    params.push(filter.flatIds ?? [])
+    where.push(`f.id = any($${params.length}::uuid[])`)
+    where.push("fr.relationship_type = 'OWNER'")
   }
   if (filter.scope === 'USERS') {
     params.push(filter.userIds ?? [])
@@ -348,7 +556,11 @@ export const enqueueNotificationForUsers = async (
   client: PoolClient,
   input: NotificationPayload,
 ) => {
-  const activeUsers = input.users.filter((user) => user.isActive !== false)
+  const [eventSetting, usersWithPreferences] = await Promise.all([
+    getNotificationEventSetting(client, input),
+    applyUserNotificationPreferences(client, input, input.users),
+  ])
+  const activeUsers = usersWithPreferences.filter((user) => user.isActive !== false)
 
   if (activeUsers.length === 0) {
     return { eventId: null, audienceCount: 0, jobCount: 0 }
@@ -356,7 +568,17 @@ export const enqueueNotificationForUsers = async (
 
   const scheduledFor = input.scheduledFor ?? null
   const eventStatus = scheduledFor ? 'SCHEDULED' : 'QUEUED'
-  const channelSnapshot = input.channels?.length ? input.channels : ['PUSH', 'EMAIL', 'WHATSAPP', 'IN_APP']
+  const channelSnapshot = getRequestedChannels(input.channels, eventSetting)
+  const queueableUsers = activeUsers
+    .map((user) => ({
+      user,
+      channels: getUserChannels(user, input.channels, eventSetting),
+    }))
+    .filter(({ channels }) => channels.length > 0)
+
+  if (queueableUsers.length === 0) {
+    return { eventId: null, audienceCount: 0, jobCount: 0 }
+  }
 
   const eventResult = await client.query<{ id: string }>(
     `
@@ -413,8 +635,8 @@ export const enqueueNotificationForUsers = async (
   let audienceCount = 0
   let jobCount = 0
 
-  for (const user of activeUsers) {
-    for (const channel of getUserChannels(user, input.channels)) {
+  for (const { user, channels } of queueableUsers) {
+    for (const channel of channels) {
       const address = channelAddress(user, channel)
       if ((channel === 'EMAIL' || channel === 'WHATSAPP') && !address) {
         continue
@@ -464,11 +686,12 @@ export const enqueueNotificationForUsers = async (
             channel,
             dedupe_key,
             priority,
+            max_attempts,
             payload,
             scheduled_for,
             next_attempt_at
           )
-          values ($1, $2, $3, $4, $5, $6::jsonb, $7, coalesce($7, now()))
+          values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, coalesce($8, now()))
           on conflict (dedupe_key) do nothing
           returning id
         `,
@@ -478,6 +701,7 @@ export const enqueueNotificationForUsers = async (
           channel,
           createDedupeKey(input, user.id, channel),
           input.priority ?? 'MEDIUM',
+          eventSetting?.retry_max_attempts ?? defaultMaxAttempts,
           JSON.stringify(input.payload ?? {}),
           scheduledFor,
         ],
@@ -546,6 +770,7 @@ export const claimNotificationJobs = async (
       )
       select
         claimed.id,
+        ne.society_id,
         claimed.notification_event_id,
         claimed.audience_id,
         na.target_user_id,
@@ -854,27 +1079,39 @@ const dispatchJob = async (
       }
     }
 
-    const result = await sendNotificationEmail({
-      to: job.resolved_address,
-      subject: title,
-      template,
-      context: {
-        title,
-        body,
-        actionUrl: typeof job.payload.deepLinkUrl === 'string' ? job.payload.deepLinkUrl : undefined,
-        actionLabel: 'Open in AJOWA',
-        ...job.payload,
-      },
-      ...(attachments ? { attachments } : {}),
-    })
+    try {
+      const result = await sendNotificationEmail({
+        to: job.resolved_address,
+        subject: title,
+        template,
+        context: {
+          title,
+          body,
+          actionUrl: typeof job.payload.deepLinkUrl === 'string' ? job.payload.deepLinkUrl : undefined,
+          actionLabel: 'Open in AJOWA',
+          ...job.payload,
+        },
+        ...(attachments ? { attachments } : {}),
+        societyId: job.society_id,
+        client,
+      })
 
-    return {
-      ok: result.delivered,
-      providerName: 'SMTP',
-      providerMessageId: result.delivered ? result.providerMessageId : null,
-      responseBody: result.delivered ? { response: result.response } : {},
-      ...(result.delivered ? {} : { failureReason: result.reason }),
-      permanentFailure: !result.delivered,
+      return {
+        ok: result.delivered,
+        providerName: 'SMTP',
+        providerMessageId: result.delivered ? result.providerMessageId : null,
+        responseBody: result.delivered ? { response: result.response } : {},
+        ...(result.delivered || !result.reason ? {} : { failureReason: result.reason }),
+        permanentFailure: !result.delivered,
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        providerName: 'SMTP',
+        failureReason: describeProviderError(error),
+        responseBody: providerErrorResponseBody(error),
+        permanentFailure: isPermanentProviderError(error),
+      }
     }
   }
 
@@ -914,7 +1151,18 @@ export const dispatchNotificationJobs = async (
 
   for (const job of jobs) {
     const attemptNumber = job.attempt_count + 1
-    const result = await dispatchJob(client, job)
+    let result: ProviderSendResult
+    try {
+      result = await dispatchJob(client, job)
+    } catch (error) {
+      result = {
+        ok: false,
+        providerName: job.channel,
+        failureReason: describeProviderError(error),
+        responseBody: providerErrorResponseBody(error),
+        permanentFailure: isPermanentProviderError(error),
+      }
+    }
     const nextStatus = result.ok ? (job.channel === 'IN_APP' ? 'DELIVERED' : 'SENT') : 'FAILED'
     const shouldRetry = !result.ok && !result.permanentFailure && attemptNumber < job.max_attempts
     const finalStatus = shouldRetry ? 'RETRYING' : nextStatus
@@ -1023,7 +1271,7 @@ export const dispatchNotificationJobs = async (
 }
 
 export const sendProviderVerification = async (
-  client: PoolClient,
+  client: PoolClient | null,
   input: {
     channel: Exclude<NotificationChannel, 'IN_APP'>
     societyId: string
@@ -1033,17 +1281,27 @@ export const sendProviderVerification = async (
   },
 ) => {
   if (input.channel === 'EMAIL') {
-    const result = await sendEmail({
-      to: input.target,
-      subject: 'AJOWA email verification',
-      html: '<h1>AJOWA email verification</h1><p>This confirms SMTP notification delivery is configured.</p>',
-      text: 'AJOWA email verification\n\nThis confirms SMTP notification delivery is configured.',
-    })
+    try {
+      const result = await sendEmail({
+        to: input.target,
+        subject: 'AJOWA email verification',
+        html: '<h1>AJOWA email verification</h1><p>This confirms SMTP notification delivery is configured.</p>',
+        text: 'AJOWA email verification\n\nThis confirms SMTP notification delivery is configured.',
+        societyId: input.societyId,
+        ...(client ? { client } : {}),
+      })
 
-    return {
-      ok: result.delivered,
-      providerMessageId: result.delivered ? result.providerMessageId : null,
-      reason: result.delivered ? null : result.reason,
+      return {
+        ok: result.delivered,
+        providerMessageId: result.delivered ? result.providerMessageId : null,
+        reason: result.delivered ? null : result.reason,
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        providerMessageId: null,
+        reason: describeProviderError(error),
+      }
     }
   }
 
@@ -1063,8 +1321,13 @@ export const sendProviderVerification = async (
     return { ok: result.ok, providerMessageId: result.providerMessageId ?? null, reason: result.failureReason ?? null }
   }
 
+  if (!client) {
+    return { ok: false, providerMessageId: null, reason: 'Push verification requires a database connection.' }
+  }
+
   const job: ClaimedJobRow = {
     id: input.pushSubscriptionId ?? randomUUID(),
+    society_id: input.societyId,
     notification_event_id: randomUUID(),
     audience_id: null,
     target_user_id: input.triggeredByUserId,

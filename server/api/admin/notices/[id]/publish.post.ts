@@ -3,6 +3,7 @@ import { createApiSuccess, readJsonBody, validateInput } from '~/server/utils/ap
 import { requireRole } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
 import { enqueueNotificationForAudience } from '~/server/utils/notifications'
+import type { NotificationAudienceFilter } from '~/server/utils/notifications'
 
 const schema = z.object({
   channels: z.array(z.enum(['PUSH', 'EMAIL', 'WHATSAPP', 'IN_APP'])).min(1),
@@ -24,12 +25,7 @@ export default defineEventHandler(async (event) => {
       summary: string | null
       body: string
       priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'EMERGENCY'
-      audience_filter: {
-        scope: 'ALL_ACTIVE_RESIDENTS'
-        userIds?: string[]
-        blockIds?: string[]
-        flatIds?: string[]
-      }
+      audience_filter: NotificationAudienceFilter
     }>(
       `
         select title, summary, body, priority::text, audience_filter

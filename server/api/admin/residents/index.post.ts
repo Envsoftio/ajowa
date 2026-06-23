@@ -159,6 +159,7 @@ const insertInviteIfRequested = async ({
   )
 
   return {
+    societyId,
     to: email,
     subject: 'Your AJOWA invite is ready',
     template: 'invite-onboarding',
