@@ -200,14 +200,29 @@ export default defineEventHandler(async (event) => {
       `,
       [body.billingPeriodId, flatsResult.rows.map((flat) => flat.flatId)],
     )
-    const existingByFlatId = new Map(existingResult.rows.map((row) => [row.flat_id, row.id]))
     const isCamPeriod = period.charge_type === 'CAM'
+    const advanceCoverageResult = isCamPeriod
+      ? await client.query<{ flat_id: string }>(
+          `
+            select distinct flat_id
+            from cam_advance_coverages
+            where society_id = $1
+              and flat_id = any($2::uuid[])
+              and is_active = true
+              and covered_from <= $3::date
+              and covered_until >= $4::date
+          `,
+          [
+            authMe.user.societyId,
+            flatsResult.rows.map((flat) => flat.flatId),
+            period.start_date,
+            period.end_date,
+          ],
+        )
+      : { rows: [] }
+    const existingByFlatId = new Map(existingResult.rows.map((row) => [row.flat_id, row.id]))
     const advanceCoveredFlatIds = new Set(
-      isCamPeriod
-        ? flatsResult.rows
-            .filter((flat) => flat.camAdvancePaidUntil && flat.camAdvancePaidUntil >= period.end_date)
-            .map((flat) => flat.flatId)
-        : [],
+      advanceCoverageResult.rows.map((row) => row.flat_id),
     )
     const overlappingCamResult = isCamPeriod
       ? await client.query<OverlappingCamDueRow>(

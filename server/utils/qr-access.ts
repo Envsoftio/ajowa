@@ -155,7 +155,10 @@ export const getCurrentBillingPeriodId = async (client: PoolClient, societyId: s
       where bp.society_id = $1
         and bp.start_date <= (now() at time zone sp.timezone)::date
         and bp.end_date >= (now() at time zone sp.timezone)::date
-      order by bp.start_date desc
+      order by
+        case when bp.charge_type = 'CAM' then 0 else 1 end,
+        bp.start_date desc,
+        bp.end_date asc
       limit 1
     `,
     [societyId],
@@ -285,12 +288,28 @@ export const recomputeUserAccess = async (
           [billingPeriodId, flatIds],
         )
       : { rows: [] as DueAccessRow[] }
+    const covered = flatIds.length
+      ? await client.query<{ flat_id: string }>(
+          `
+            select distinct coverage.flat_id
+            from cam_advance_coverages coverage
+            inner join billing_periods bp on bp.id = $1 and bp.society_id = coverage.society_id
+            where coverage.flat_id = any($2::uuid[])
+              and coverage.is_active = true
+              and bp.charge_type = 'CAM'
+              and coverage.covered_from <= bp.start_date
+              and coverage.covered_until >= bp.end_date
+          `,
+          [billingPeriodId, flatIds],
+        )
+      : { rows: [] as Array<{ flat_id: string }> }
 
     const dueByFlat = new Map(dues.rows.map((row) => [row.flat_id, row]))
+    const coveredFlatIds = new Set(covered.rows.map((row) => row.flat_id))
     const unpaidLabels = accessRows
       .filter((flat) => {
         const due = dueByFlat.get(flat.flat_id)
-        return !due || !['PAID', 'WAIVED'].includes(due.status)
+        return !coveredFlatIds.has(flat.flat_id) && (!due || !['PAID', 'WAIVED'].includes(due.status))
       })
       .map((flat) => flat.label)
 

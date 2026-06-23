@@ -452,6 +452,7 @@ type MaintenanceBillDueRow = {
   billing_contact_name: string | null
   billing_contact_email: string | null
   billing_contact_mobile: string | null
+  bank_accounts: unknown
   bank_name: string | null
   account_name: string | null
   account_number: string | null
@@ -504,6 +505,79 @@ const sanitizeBillFileSegment = (value: string) =>
     .replace(/[^a-z0-9._-]+/gi, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 120)
+
+type SocietyBankAccountForPdf = {
+  bankName: string
+  accountName: string
+  accountNumber: string
+  ifscCode: string
+  branchName: string | null
+  upiId: string | null
+}
+
+const normalizeSocietyBankAccounts = (value: unknown): SocietyBankAccountForPdf[] => {
+  let raw = value
+
+  if (typeof value === 'string') {
+    try {
+      raw = JSON.parse(value)
+    } catch {
+      return []
+    }
+  }
+
+  if (!Array.isArray(raw)) {
+    return []
+  }
+
+  return raw
+    .map((item) => {
+      if (!item || typeof item !== 'object') {
+        return null
+      }
+
+      const row = item as Record<string, unknown>
+      const bankName = typeof row.bankName === 'string' ? row.bankName.trim() : ''
+      const accountName = typeof row.accountName === 'string' ? row.accountName.trim() : ''
+      const accountNumber = typeof row.accountNumber === 'string' ? row.accountNumber.trim() : ''
+      const ifscCode = typeof row.ifscCode === 'string' ? row.ifscCode.trim() : ''
+      const branchName = typeof row.branchName === 'string' ? row.branchName.trim() : null
+      const upiId = typeof row.upiId === 'string' ? row.upiId.trim() : null
+
+      if (!bankName || !accountName || !accountNumber || !ifscCode) {
+        return null
+      }
+
+      return { bankName, accountName, accountNumber, ifscCode, branchName, upiId }
+    })
+    .filter((account): account is SocietyBankAccountForPdf => Boolean(account))
+}
+
+const getSocietyBankAccountsForPdf = (
+  due: MaintenanceBillDueRow,
+): SocietyBankAccountForPdf[] => {
+  const bankAccounts = normalizeSocietyBankAccounts(due.bank_accounts)
+  if (bankAccounts.length > 0) {
+    return bankAccounts
+  }
+
+  if (!due.bank_name) {
+    return []
+  }
+
+  if (!due.account_number || !due.ifsc_code) {
+    return []
+  }
+
+  return [{
+    bankName: due.bank_name,
+    accountName: due.account_name ?? due.society_name,
+    accountNumber: due.account_number,
+    ifscCode: due.ifsc_code,
+    branchName: due.branch_name,
+    upiId: due.upi_id,
+  }]
+}
 
 const normalizeBillChargeBreakdown = (
   value: unknown,
@@ -691,7 +765,8 @@ export const getMaintenanceBillData = async (
         bank.account_number,
         bank.ifsc_code,
         bank.branch_name,
-        bank.upi_id
+        bank.upi_id,
+        bank_accounts.bank_accounts
       from maintenance_dues md
       inner join society_profile sp on sp.id = md.society_id
       inner join billing_periods bp on bp.id = md.billing_period_id
@@ -724,6 +799,26 @@ export const getMaintenanceBillData = async (
         order by is_default desc, created_at asc
         limit 1
       ) bank on true
+      left join lateral (
+        select
+          coalesce(
+            jsonb_agg(
+              jsonb_build_object(
+                'bankName', ba.bank_name,
+                'accountName', ba.account_name,
+                'accountNumber', ba.account_number,
+                'ifscCode', ba.ifsc_code,
+                'branchName', ba.branch_name,
+                'upiId', ba.upi_id
+              )
+              order by ba.is_default desc, ba.created_at asc
+            ),
+            '[]'::jsonb
+          ) as bank_accounts
+        from society_bank_accounts ba
+        where ba.society_id = sp.id
+          and ba.is_active = true
+      ) bank_accounts on true
       where ${filters.join(' and ')}
       limit 1
     `,
@@ -832,6 +927,7 @@ export const generateMaintenanceBillPdf = async (
   const maintenanceAmount = sumBillCharges(invoiceCharges)
   const dgAmount = sumBillCharges(dgCharges)
   const invoiceStampImage = getSocietyStampImage()
+  const societyBankAccounts = getSocietyBankAccountsForPdf(due)
 
   const buildChargeRows = (charges: ChargeBreakdownItem[]) => charges.map((charge) => {
     const isAreaRate = charge.calculationMethod === 'AREA_RATE'
@@ -858,21 +954,49 @@ export const generateMaintenanceBillPdf = async (
     ]
   })
 
-  const bankRows = due.bank_name
-    ? [
-        [{ text: 'Bank Name', style: 'labelCell' }, { text: due.bank_name, style: 'valueCell' }],
-        [{ text: 'Account Name', style: 'labelCell' }, { text: due.account_name ?? due.society_name, style: 'valueCell' }],
-        [{ text: 'Account No.', style: 'labelCell' }, { text: due.account_number ?? '-', style: 'valueCell' }],
-        [{ text: 'IFSC', style: 'labelCell' }, { text: due.ifsc_code ?? '-', style: 'valueCell' }],
-        [{ text: 'Branch', style: 'labelCell' }, { text: due.branch_name ?? '-', style: 'valueCell' }],
-        [{ text: 'UPI', style: 'labelCell' }, { text: due.upi_id ?? '-', style: 'valueCell' }],
-      ]
+  const bankRows = societyBankAccounts.length > 0
+    ? societyBankAccounts.flatMap((account, index) => [
+      [
+        {
+          text: societyBankAccounts.length > 1
+            ? `Society Bank Details ${index + 1}`
+            : 'Society Bank Details',
+          style: 'labelCell',
+          colSpan: 2,
+        },
+        {},
+      ],
+      [
+        { text: 'Bank', style: 'labelCell' },
+        { text: account.bankName, style: 'valueCell' },
+      ],
+      [
+        { text: 'Account Name', style: 'labelCell' },
+        { text: account.accountName, style: 'valueCell' },
+      ],
+      [
+        { text: 'Account No.', style: 'labelCell' },
+        { text: account.accountNumber, style: 'valueCell' },
+      ],
+      [
+        { text: 'IFSC', style: 'labelCell' },
+        { text: account.ifscCode, style: 'valueCell' },
+      ],
+      [
+        { text: 'Branch', style: 'labelCell' },
+        { text: account.branchName ?? '-', style: 'valueCell' },
+      ],
+      [
+        { text: 'UPI', style: 'labelCell' },
+        { text: account.upiId ?? '-', style: 'valueCell' },
+      ],
+    ])
     : [
-        [
-          { text: 'Payment Details', style: 'labelCell' },
-          { text: 'Contact the society office for bank or UPI payment details.', style: 'valueCell' },
-        ],
-      ]
+      [
+        { text: 'Payment Details', style: 'labelCell' },
+        { text: 'Contact the society office for bank or UPI payment details.', style: 'valueCell' },
+      ],
+    ]
 
   const dgOuterLayout = {
     hLineWidth: () => 0.9,
@@ -1086,12 +1210,19 @@ export const generateMaintenanceBillPdf = async (
     const optionalNumber = (value: number | null | undefined) =>
       value == null ? '-' : formatBillPlainNumber(value)
 
-    const bankDetails = [
-      `${due.bank_name ?? 'BANK'} A/C NO -- ${due.account_number ?? '-'}`,
-      `Branch Address -- ${due.branch_name ?? '-'}`,
-      `IFSC CODE: -- ${due.ifsc_code ?? '-'}`,
-      due.upi_id ? `UPI ID: -- ${due.upi_id}` : '',
-    ].filter(Boolean).join('\n')
+    const bankDetails = societyBankAccounts.length > 0
+      ? societyBankAccounts
+        .map((account, index) => [
+          societyBankAccounts.length > 1
+            ? `Society Bank Details ${index + 1}`
+            : 'Society Bank Details',
+          `${account.bankName} A/C NO -- ${account.accountNumber}`,
+          `Branch Address -- ${account.branchName ?? '-'}`,
+          `IFSC CODE: -- ${account.ifscCode}`,
+          account.upiId ? `UPI ID: -- ${account.upiId}` : '',
+        ].filter(Boolean).join('\n'))
+        .join('\n\n')
+      : `Bank Name: -- ${due.society_name}\nA/C No: -- -\nIFSC CODE: -- -`
 
     const addressParts = (due.society_address || '')
       .split(',')
@@ -1244,7 +1375,7 @@ export const generateMaintenanceBillPdf = async (
                           { text: 'TERMS & CONDITION: -\n', bold: true, italics: true },
                           `In-case the user fails to pay the bill on or before due date indicated in bill, this will be deemed to be a notice and maintenance services to the user shall without prejudice to the right of ${due.society_name} management to recover such charges as of the bill by suit, be disconnected after the expiry of ten days of the due date mentioned in the bill without any further notice to the user. Services shall not be resume unless until the amount shown in the bill together with late fee for the billing period not paid by user.\n\n`,
                           'A charge of Rs. 1000/- shall be levied in case of every dishonoured Cheque.\n',
-                          `Payment will be accepted by Account payee Cheque/Draft only in favour of "${due.account_name ?? due.society_name}"\n`,
+          `Payment will be accepted by Account payee Cheque/Draft only in favour of "${(societyBankAccounts[0] ?? null)?.accountName ?? due.society_name}"\n`,
                           'Payment can be made by Cash/IMPS/NEFT/RTGS/QR Scanner at the following: -',
                         ],
                         style: 'dgTerms',

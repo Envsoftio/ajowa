@@ -263,18 +263,27 @@ const getBillingReconciliation = async (societyId: string, startDate: string, en
       with dues as (
         select
           coalesce(sum(md.paid_amount), 0) as paid,
-          coalesce(sum(md.balance_amount) filter (where md.status in ('OPEN', 'PARTIALLY_PAID', 'OVERDUE')), 0) as balance
+          coalesce(sum(md.balance_amount) filter (
+            where md.status in ('OPEN', 'PARTIALLY_PAID', 'OVERDUE')
+              and not (
+                bp.charge_type = 'CAM'
+                and exists (
+                  select 1
+                  from cam_advance_coverages coverage
+                  where coverage.society_id = bp.society_id
+                    and coverage.flat_id = f.id
+                    and coverage.is_active = true
+                    and coverage.covered_from <= bp.start_date
+                    and coverage.covered_until >= bp.end_date
+                )
+              )
+          ), 0) as balance
         from maintenance_dues md
         join billing_periods bp on bp.id = md.billing_period_id
         join flats f on f.id = md.flat_id
         where md.society_id = $1
           and bp.start_date <= $3
           and bp.end_date >= $2
-          and not (
-            bp.charge_type = 'CAM'
-            and f.cam_advance_paid_until is not null
-            and f.cam_advance_paid_until >= bp.end_date
-          )
       ),
       allocations as (
         select coalesce(sum(pa.allocated_amount), 0) as allocated
@@ -684,8 +693,15 @@ const buildDefaulterReport = async ({ societyId, filters, exportMode }: ReportQu
     'md.balance_amount > 0',
     `not (
       bp.charge_type = 'CAM'
-      and f.cam_advance_paid_until is not null
-      and f.cam_advance_paid_until >= bp.end_date
+      and exists (
+        select 1
+        from cam_advance_coverages coverage
+        where coverage.society_id = bp.society_id
+          and coverage.flat_id = f.id
+          and coverage.is_active = true
+          and coverage.covered_from <= bp.start_date
+          and coverage.covered_until >= bp.end_date
+      )
     )`,
   ]
   if (filters.flatId) {

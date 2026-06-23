@@ -141,16 +141,18 @@ const isReminderEligible = (due: MaintenanceDue) =>
 
 const canSendBill = (due: MaintenanceDue) =>
   canManageDues.value &&
+  !due.isAdvanceCoverageRow &&
   !due.isCamAdvanceCovered && due.status !== 'CANCELLED'
 
 const canRecordPayment = (due: MaintenanceDue) =>
   canManageBilling.value &&
   due.balanceAmount > 0 &&
+  !due.isAdvanceCoverageRow &&
   !due.isCamAdvanceCovered &&
   !['PAID', 'WAIVED', 'CANCELLED'].includes(due.status)
 
 const canWaiveDue = (due: MaintenanceDue) =>
-  canManageDues.value && !['PAID', 'CANCELLED'].includes(due.status)
+  canManageDues.value && !due.isAdvanceCoverageRow && !due.isCamAdvanceCovered && !['PAID', 'CANCELLED'].includes(due.status)
 
 const getRecordPaymentRoute = (due: MaintenanceDue) => ({
   path: '/admin/payments/new',
@@ -163,28 +165,34 @@ const getRecordPaymentRoute = (due: MaintenanceDue) => ({
 })
 
 const isCamDue = (due: MaintenanceDue) => due.billingPeriodChargeType === 'CAM'
+const isCoverageRow = (due: MaintenanceDue) => Boolean(due.isAdvanceCoverageRow)
 
 const advanceStatusKind = (due: MaintenanceDue) => {
-  if (due.isCamAdvanceCovered) return 'covered'
+  if (isCoverageRow(due) || due.isCamAdvanceCovered) return 'covered'
   if (isCamDue(due)) return 'billable'
   return 'not-cam'
 }
 
 const advanceStatusLabel = (due: MaintenanceDue) => {
+  if (isCoverageRow(due)) return 'Coverage marker'
   if (due.isCamAdvanceCovered) return 'Covered'
   if (isCamDue(due)) return 'Billable'
   return 'Not CAM'
 }
 
 const advanceStatusDetail = (due: MaintenanceDue) => {
+  if (isCoverageRow(due))
+    return 'This row is a CAM coverage marker only. No bill or payment action is available.'
   if (due.isCamAdvanceCovered) {
-    return `Paid until ${formatDate(due.camAdvancePaidUntil)}. Bill and reminder actions are off.`
+    return `Covered ${formatDate(due.camAdvanceCoveredFrom)} to ${formatDate(due.camAdvancePaidUntil)}. Bill and reminder actions are off.`
   }
   if (isCamDue(due)) return 'No advance coverage for this CAM period.'
   return 'Advance coverage applies only to CAM bills.'
 }
 
 const getRecordPaymentTitle = (due: MaintenanceDue) => {
+  if (isCoverageRow(due))
+    return 'No payment needed. This is a CAM coverage marker, not a payable due.'
   if (due.isCamAdvanceCovered) return 'No payment needed. CAM advance covers this period.'
   if (due.balanceAmount <= 0) return 'No balance pending.'
   if (['PAID', 'WAIVED', 'CANCELLED'].includes(due.status)) return 'Payment is unavailable for this status.'
@@ -192,11 +200,12 @@ const getRecordPaymentTitle = (due: MaintenanceDue) => {
 }
 
 const getSendBillTitle = (due: MaintenanceDue) =>
-  due.isCamAdvanceCovered
-    ? 'Bill delivery is off because CAM advance covers this period.'
+  isCoverageRow(due) || due.isCamAdvanceCovered
+    ? 'Bill delivery is off because this CAM period is already covered.'
     : 'Send bill'
 
 const getReminderTitle = (due: MaintenanceDue) => {
+  if (isCoverageRow(due)) return 'Reminder is off for CAM coverage marker rows.'
   if (due.isCamAdvanceCovered) return 'Reminder is off because CAM advance covers this period.'
   if (due.balanceAmount <= 0) return 'No balance pending.'
   return `Send reminder for ${due.flatNumber || 'flat'} ${due.billingPeriodLabel || ''}`.trim()
@@ -204,10 +213,11 @@ const getReminderTitle = (due: MaintenanceDue) => {
 
 const summary = computed(() => {
   const rows = dues.value
-  const totalDue = rows.reduce((sum, row) => sum + row.totalAmount, 0)
-  const totalPaid = rows.reduce((sum, row) => sum + row.paidAmount, 0)
-  const totalBalance = rows.reduce((sum, row) => sum + row.balanceAmount, 0)
-  const overdue = rows.filter((row) => row.status === 'OVERDUE').length
+  const billRows = rows.filter((row) => !row.isAdvanceCoverageRow)
+  const totalDue = billRows.reduce((sum, row) => sum + row.totalAmount, 0)
+  const totalPaid = billRows.reduce((sum, row) => sum + row.paidAmount, 0)
+  const totalBalance = billRows.reduce((sum, row) => sum + row.balanceAmount, 0)
+  const overdue = billRows.filter((row) => row.status === 'OVERDUE').length
   const advanceCoveredRows = rows.filter((row) => row.isCamAdvanceCovered)
 
   return {
@@ -253,7 +263,9 @@ const topOutstandingDue = computed(
 )
 
 const paymentProgress = (due: MaintenanceDue) =>
-  due.totalAmount > 0
+  due.isCamAdvanceCovered
+    ? 100
+    : due.totalAmount > 0
     ? Math.min(100, Math.round((due.paidAmount / due.totalAmount) * 100))
     : 0
 
@@ -348,8 +360,8 @@ const selectAllMatchingDues = async () => {
     bulkSelectedDues.value = await fetchAllMatchingDues()
     toast.add({
       severity: 'success',
-      summary: 'All matching dues selected',
-      detail: `${bulkSelectedDues.value.length} due${bulkSelectedDues.value.length === 1 ? '' : 's'} selected across all pages.`,
+      summary: 'All matching records selected',
+      detail: `${bulkSelectedDues.value.length} billing record${bulkSelectedDues.value.length === 1 ? '' : 's'} selected across all pages.`,
       life: 8000,
     })
   } finally {
@@ -541,21 +553,42 @@ watch(
       <section class="surface-card">
         <p class="eyebrow">Visible due</p>
         <h3>{{ formatMoney(summary.totalDue) }}</h3>
-        <p>{{ totalRecords }} due rows match the current filters.</p>
+        <p>{{ totalRecords }} billing records match the current filters.</p>
       </section>
       <section class="surface-card">
         <p class="eyebrow">Collected</p>
         <h3>{{ formatMoney(summary.totalPaid) }}</h3>
-        <p>{{ summary.collectionPercent }}% collection across visible rows.</p>
+        <p>{{ summary.collectionPercent }}% collection across generated bills.</p>
       </section>
       <section class="surface-card">
         <p class="eyebrow">Actionable balance</p>
         <h3>{{ formatMoney(summary.totalBalance) }}</h3>
         <p>
           {{ summary.overdue }} overdue flats.
-          {{ summary.advanceCoveredCount }} CAM advance-covered rows are protected from bill and reminder actions.
+          {{ summary.advanceCoveredCount }} CAM advance rows are non-billable (they are either covered bill rows or coverage markers).
         </p>
       </section>
+    </div>
+
+    <div class="admin-page-guide">
+      <h2>How to read this list</h2>
+      <p>
+        CAM advance coverage appears in dues in two ways: normal bill rows and
+        non-billable coverage markers.
+      </p>
+      <ol>
+        <li>
+          Regular rows are actual payable dues created by billing period generation.
+        </li>
+        <li>
+          Coverage marker rows are inserted for flats already covered by advance CAM and
+          should not receive bill send, reminder, or payment actions.
+        </li>
+        <li>
+          Use the CAM advance filter below to isolate billable rows or already covered
+          rows quickly.
+        </li>
+      </ol>
     </div>
 
     <section class="list-page surface-card">
@@ -749,7 +782,7 @@ watch(
             <span class="field-label">
               Advance
               <AppHelpIcon
-                text="Separate CAM rows that are covered by paid-until advance coverage from rows that still need billing action."
+                text="Separate CAM-advance non-billable coverage rows from billable rows."
               />
             </span>
             <Select
@@ -831,7 +864,7 @@ watch(
           <template #body="{ data: row }">
             <div class="billing-balance-cell">
               <strong>{{ formatMoney(row.balanceAmount) }}</strong>
-              <span>{{ paymentProgress(row) }}% paid</span>
+              <span>{{ row.isCamAdvanceCovered ? 'Covered' : `${paymentProgress(row)}% paid` }}</span>
               <div class="billing-progress-track">
                 <span :style="{ width: `${paymentProgress(row)}%` }" />
               </div>
@@ -840,7 +873,10 @@ watch(
         </Column>
         <Column field="status" header="Status">
           <template #body="{ data: row }">
-            <AppStatusBadge :status="row.status" />
+            <span v-if="row.isCamAdvanceCovered" class="billing-advance-pill">
+              {{ isCoverageRow(row) ? 'Coverage marker' : 'Covered' }}
+            </span>
+            <AppStatusBadge v-else :status="row.status" />
           </template>
         </Column>
         <Column header="Actions" style="width: 250px">
@@ -859,6 +895,7 @@ watch(
                 :disabled="!canRecordPayment(row)"
               />
               <Button
+                v-if="!row.isAdvanceCoverageRow"
                 as="a"
                 :href="`/api/admin/billing/dues/${row.id}/bill`"
                 target="_blank"
@@ -928,7 +965,10 @@ watch(
               </p>
             </div>
             <div>
-              <AppStatusBadge :status="due.status" />
+            <span v-if="due.isCamAdvanceCovered" class="billing-advance-pill">
+              {{ isCoverageRow(due) ? 'Coverage marker' : 'Covered' }}
+            </span>
+              <AppStatusBadge v-else :status="due.status" />
             </div>
           </div>
           <div
@@ -942,7 +982,10 @@ watch(
           </div>
           <div class="billing-balance-cell billing-balance-cell--card">
             <strong>{{ formatMoney(due.balanceAmount) }}</strong>
-            <span>
+            <span v-if="due.isCamAdvanceCovered">
+              {{ isCoverageRow(due) ? 'Coverage marker row' : 'Covered by CAM advance' }}
+            </span>
+            <span v-else>
               {{ formatMoney(due.paidAmount) }} paid of
               {{ formatMoney(due.totalAmount) }}
             </span>
@@ -975,6 +1018,7 @@ watch(
               :disabled="!canRecordPayment(due)"
             />
             <Button
+              v-if="!due.isAdvanceCoverageRow"
               as="a"
               :href="`/api/admin/billing/dues/${due.id}/bill`"
               target="_blank"
@@ -1043,9 +1087,19 @@ watch(
             {{ formatDate(selectedDue.dueDate) }}
           </p>
         </div>
-        <Message v-if="selectedDue.isCamAdvanceCovered" severity="success" :closable="false">
-          CAM advance covers this period through {{ formatDate(selectedDue.camAdvancePaidUntil) }}.
-          Bill delivery, reminders, and new payment capture are disabled for this due.
+        <Message
+          v-if="selectedDue.isAdvanceCoverageRow"
+          severity="info"
+          :closable="false"
+        >
+          This is a CAM coverage marker row for audit. It does not represent an
+          outstanding bill, and bill/reminder/payment actions are intentionally
+          disabled for this row.
+        </Message>
+        <Message v-else-if="selectedDue.isCamAdvanceCovered" severity="success" :closable="false">
+          CAM advance covers this period from {{ formatDate(selectedDue.camAdvanceCoveredFrom) }}
+          through {{ formatDate(selectedDue.camAdvancePaidUntil) }}.
+          Bill delivery, reminders, and new payment capture are disabled for this CAM period.
         </Message>
         <AppDataTable
           :value="selectedDue.chargeBreakdown"

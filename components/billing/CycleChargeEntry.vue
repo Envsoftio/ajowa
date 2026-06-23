@@ -42,6 +42,7 @@ type VariableChargeEntry = {
   blockName: string
   unitType: string
   areaSqFt: number | null
+  camAdvanceCoveredFrom: string | null
   camAdvancePaidUntil: string | null
   camAdvanceNote: string | null
   camAdvanceUpdatedAt: string | null
@@ -208,7 +209,11 @@ const getBillingPeriodMonthSpan = (startDate: string, endDate: string) => {
   const start = new Date(`${startDate}T00:00:00Z`)
   const end = new Date(`${endDate}T00:00:00Z`)
 
-  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) {
+  if (
+    Number.isNaN(start.getTime()) ||
+    Number.isNaN(end.getTime()) ||
+    end < start
+  ) {
     return 1
   }
 
@@ -222,8 +227,8 @@ const getBillingPeriodMonthSpan = (startDate: string, endDate: string) => {
 
 const getFrequencyMonthCount = (period: BillingPeriod | null) =>
   period
-    ? frequencyMonthMultipliers[period.frequency] ??
-      getBillingPeriodMonthSpan(period.startDate, period.endDate)
+    ? (frequencyMonthMultipliers[period.frequency] ??
+      getBillingPeriodMonthSpan(period.startDate, period.endDate))
     : 1
 
 const getFrequencyLabel = (frequency: BillingFrequency) =>
@@ -235,13 +240,17 @@ const getFrequencyLabel = (frequency: BillingFrequency) =>
 const getCycleLabel = (months: number | null | undefined) => {
   const normalized = Math.max(1, Number(months ?? 1))
   const option = cycleOptions.find((item) => item.value === normalized)
-  return option?.label ?? `${normalized} ${normalized === 1 ? 'month' : 'months'}`
+  return (
+    option?.label ?? `${normalized} ${normalized === 1 ? 'month' : 'months'}`
+  )
 }
 
 const toDateInput = (date: Date) => date.toISOString().slice(0, 10)
 
 const addDays = (date: Date, days: number) => {
-  const copy = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()))
+  const copy = new Date(
+    Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
+  )
   copy.setUTCDate(copy.getUTCDate() + days)
   return copy
 }
@@ -264,7 +273,12 @@ const parseMonthInput = (value: string) => {
   const year = Number(yearText)
   const month = Number(monthText)
 
-  if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
+  if (
+    !Number.isInteger(year) ||
+    !Number.isInteger(month) ||
+    month < 1 ||
+    month > 12
+  ) {
     return startOfNextMonth()
   }
 
@@ -282,7 +296,10 @@ const formatSuggestedCycleLabel = (startDate: Date, endDate: Date) => {
     timeZone: 'UTC',
   })
 
-  if (startDate.getUTCMonth() === endDate.getUTCMonth() && startDate.getUTCFullYear() === endDate.getUTCFullYear()) {
+  if (
+    startDate.getUTCMonth() === endDate.getUTCMonth() &&
+    startDate.getUTCFullYear() === endDate.getUTCFullYear()
+  ) {
     return endLabel
   }
 
@@ -290,8 +307,12 @@ const formatSuggestedCycleLabel = (startDate: Date, endDate: Date) => {
 }
 
 const asyncKey = `billing-${props.mode.toLowerCase()}-charge-entry`
-const periodChargeType = computed<BillingPeriodChargeType>(() =>
-  props.periodChargeType ?? (props.chargeType === 'DG_SET' || props.chargeType === 'CAM' ? props.chargeType : 'GENERAL'),
+const periodChargeType = computed<BillingPeriodChargeType>(
+  () =>
+    props.periodChargeType ??
+    (props.chargeType === 'DG_SET' || props.chargeType === 'CAM'
+      ? props.chargeType
+      : 'GENERAL'),
 )
 
 const {
@@ -321,11 +342,17 @@ const defaultRatePerSqFt = ref<number | null>(props.defaultRatePerSqFt)
 const defaultFlatAmount = ref<number | null>(props.defaultFlatAmount)
 const defaultConnectionLoad = ref(props.defaultConnectionLoad)
 const camRunStartMonth = ref(toMonthInput(startOfNextMonth()))
-const camRunDueDate = ref(toDateInput(new Date(Date.UTC(
-  startOfNextMonth().getUTCFullYear(),
-  startOfNextMonth().getUTCMonth(),
-  10,
-))))
+const camRunDueDate = ref(
+  toDateInput(
+    new Date(
+      Date.UTC(
+        startOfNextMonth().getUTCFullYear(),
+        startOfNextMonth().getUTCMonth(),
+        10,
+      ),
+    ),
+  ),
+)
 const loadingCharges = ref(false)
 const savingCharges = ref(false)
 const periodDialogVisible = ref(false)
@@ -338,7 +365,9 @@ const periodForm = reactive({
   dueDate: '',
 })
 const generationDialogVisible = ref(false)
-const generationPreview = ref<(DueGenerationPreview & { skippedExisting: number; isLocked: boolean }) | null>(null)
+const generationPreview = ref<
+  (DueGenerationPreview & { skippedExisting: number; isLocked: boolean }) | null
+>(null)
 const loadingGenerationPreview = ref(false)
 const selectedFlatIds = ref<string[]>([])
 const generating = ref(false)
@@ -356,16 +385,24 @@ const billChannelOptions: Array<{ label: string; value: BillChannel }> = [
 ]
 
 const selectedPeriod = computed(
-  () => periods.value.find((period) => period.id === selectedPeriodId.value) ?? null,
+  () =>
+    periods.value.find((period) => period.id === selectedPeriodId.value) ??
+    null,
 )
 
 const defaultCycleMonths = computed(() =>
-  props.camRunFlow ? Math.max(1, props.defaultCycleMonths) : selectedCycleMonths.value,
+  props.camRunFlow
+    ? Math.max(1, props.defaultCycleMonths)
+    : selectedCycleMonths.value,
 )
 
-const selectedCycleMonths = computed(() => getFrequencyMonthCount(selectedPeriod.value))
+const selectedCycleMonths = computed(() =>
+  getFrequencyMonthCount(selectedPeriod.value),
+)
 
-const camRunStartDate = computed(() => startOfMonth(parseMonthInput(camRunStartMonth.value)))
+const camRunStartDate = computed(() =>
+  startOfMonth(parseMonthInput(camRunStartMonth.value)),
+)
 const camRunDueDateLabel = computed(() => formatDate(camRunDueDate.value))
 
 const getCycleFrequency = (cycleMonths: number): BillingFrequency => {
@@ -399,16 +436,17 @@ const periodFormCycleMonths = computed(
       : 1),
 )
 
-const periodFormCycleSummary = computed(() =>
-  `${periodFormCycleMonths.value} ${periodFormCycleMonths.value === 1 ? 'month' : 'months'} - ${formatDate(periodForm.startDate)} to ${formatDate(periodForm.endDate)}`,
+const periodFormCycleSummary = computed(
+  () =>
+    `${periodFormCycleMonths.value} ${periodFormCycleMonths.value === 1 ? 'month' : 'months'} - ${formatDate(periodForm.startDate)} to ${formatDate(periodForm.endDate)}`,
 )
 
 const selectedCycleLabel = computed(() =>
   props.camRunFlow
     ? `CAM run from ${formatDate(toDateInput(camRunStartDate.value))}; due ${camRunDueDateLabel.value}`
     : selectedPeriod.value
-    ? `${getFrequencyLabel(selectedPeriod.value.frequency)} - ${formatDate(selectedPeriod.value.startDate)} to ${formatDate(selectedPeriod.value.endDate)}`
-    : 'Create or select a billing period',
+      ? `${getFrequencyLabel(selectedPeriod.value.frequency)} - ${formatDate(selectedPeriod.value.startDate)} to ${formatDate(selectedPeriod.value.endDate)}`
+      : 'Create or select a billing period',
 )
 
 const periodOptions = computed(() =>
@@ -439,29 +477,42 @@ const flatOptions = computed(() =>
 
 const billDeliveryFlatOptions = computed(() =>
   chargeEntries.value
-    .filter((entry) => Number(entry.amount ?? 0) > 0 && !isCamAdvanceCoveredForEntry(entry))
+    .filter(
+      (entry) =>
+        Number(entry.amount ?? 0) > 0 && !isCamAdvanceCoveredForEntry(entry),
+    )
     .map((entry) => ({
       label: `${entry.blockName} ${entry.flatNumber} - ${entry.unitType}`,
       value: entry.flatId,
     })),
 )
 
-const selectedBillDeliveryCount = computed(() =>
-  billDeliveryFlatOptions.value.filter((option) => billDeliveryFlatIds.value.includes(option.value)).length,
+const selectedBillDeliveryCount = computed(
+  () =>
+    billDeliveryFlatOptions.value.filter((option) =>
+      billDeliveryFlatIds.value.includes(option.value),
+    ).length,
 )
 
 const filledChargeCount = computed(
-  () => chargeEntries.value.filter((entry) => Number(entry.amount ?? 0) > 0).length,
+  () =>
+    chargeEntries.value.filter((entry) => Number(entry.amount ?? 0) > 0).length,
 )
 
 const billableFlatIds = computed(() =>
   chargeEntries.value
-    .filter((entry) => Number(entry.amount ?? 0) > 0 && !isCamAdvanceCoveredForEntry(entry))
+    .filter(
+      (entry) =>
+        Number(entry.amount ?? 0) > 0 && !isCamAdvanceCoveredForEntry(entry),
+    )
     .map((entry) => entry.flatId),
 )
 
 const camBillableEntries = computed(() =>
-  chargeEntries.value.filter((entry) => Number(entry.amount ?? 0) > 0 && !isCamAdvanceCoveredForEntry(entry)),
+  chargeEntries.value.filter(
+    (entry) =>
+      Number(entry.amount ?? 0) > 0 && !isCamAdvanceCoveredForEntry(entry),
+  ),
 )
 
 const camAdvanceCoveredEntries = computed(() =>
@@ -469,7 +520,10 @@ const camAdvanceCoveredEntries = computed(() =>
 )
 
 const camRunGenerationEntries = computed(() =>
-  chargeEntries.value.filter((entry) => Number(entry.amount ?? 0) > 0 || isCamAdvanceCoveredForEntry(entry)),
+  chargeEntries.value.filter(
+    (entry) =>
+      Number(entry.amount ?? 0) > 0 || isCamAdvanceCoveredForEntry(entry),
+  ),
 )
 
 const camRunGroups = computed(() => {
@@ -493,9 +547,15 @@ const camRunGroups = computed(() => {
 
     if (current) {
       current.entries.push(entry)
-      current.billableCount += isCovered ? 0 : Number(entry.amount ?? 0) > 0 ? 1 : 0
+      current.billableCount += isCovered
+        ? 0
+        : Number(entry.amount ?? 0) > 0
+          ? 1
+          : 0
       current.advanceCoveredCount += isCovered ? 1 : 0
-      current.totalAmount = roundChargeValue(current.totalAmount + (isCovered ? 0 : Number(entry.amount ?? 0)))
+      current.totalAmount = roundChargeValue(
+        current.totalAmount + (isCovered ? 0 : Number(entry.amount ?? 0)),
+      )
     } else {
       groups.set(cycleMonths, {
         cycleMonths,
@@ -509,11 +569,16 @@ const camRunGroups = computed(() => {
     }
   }
 
-  return Array.from(groups.values()).sort((a, b) => a.cycleMonths - b.cycleMonths)
+  return Array.from(groups.values()).sort(
+    (a, b) => a.cycleMonths - b.cycleMonths,
+  )
 })
 
 const chargeTotal = computed(() =>
-  chargeEntries.value.reduce((sum, entry) => sum + Number(entry.amount ?? 0), 0),
+  chargeEntries.value.reduce(
+    (sum, entry) => sum + Number(entry.amount ?? 0),
+    0,
+  ),
 )
 
 const billableChargeTotal = computed(() =>
@@ -523,7 +588,10 @@ const billableChargeTotal = computed(() =>
 )
 
 const chargeUnitsTotal = computed(() =>
-  chargeEntries.value.reduce((sum, entry) => sum + Number(entry.consumedUnits ?? 0), 0),
+  chargeEntries.value.reduce(
+    (sum, entry) => sum + Number(entry.consumedUnits ?? 0),
+    0,
+  ),
 )
 
 const chargeAreaTotal = computed(() =>
@@ -538,7 +606,9 @@ const cycleDistributionLabel = computed(() => {
   for (const entry of chargeEntries.value) {
     if (Number(entry.amount ?? 0) <= 0) continue
 
-    const label = getCycleLabel(entry.cycleMultiplier ?? defaultCycleMonths.value)
+    const label = getCycleLabel(
+      entry.cycleMultiplier ?? defaultCycleMonths.value,
+    )
     counts.set(label, (counts.get(label) ?? 0) + 1)
   }
 
@@ -549,7 +619,8 @@ const cycleDistributionLabel = computed(() => {
     .join(', ')
 })
 
-const getCamGenerationGroupStepId = (cycleMonths: number) => `cam-cycle-${cycleMonths}`
+const getCamGenerationGroupStepId = (cycleMonths: number) =>
+  `cam-cycle-${cycleMonths}`
 
 const buildCamGenerationProgressSteps = (
   groups: Array<{
@@ -575,7 +646,9 @@ const buildCamGenerationProgressSteps = (
   })),
   {
     id: 'bill-delivery',
-    label: sendBillsAfterGeneration.value ? 'Queue bill delivery' : 'Skip bill delivery',
+    label: sendBillsAfterGeneration.value
+      ? 'Queue bill delivery'
+      : 'Skip bill delivery',
     detail: sendBillsAfterGeneration.value
       ? `Preparing ${formatUnit(selectedBillDeliveryCount.value, 'bill')} for ${billChannels.value.join(', ')}.`
       : 'Bills will be generated without notifications.',
@@ -598,7 +671,9 @@ const buildStandardGenerationProgressSteps = (): GenerationProgressStep[] => [
   },
   {
     id: 'bill-delivery',
-    label: sendBillsAfterGeneration.value ? 'Queue bill delivery' : 'Skip bill delivery',
+    label: sendBillsAfterGeneration.value
+      ? 'Queue bill delivery'
+      : 'Skip bill delivery',
     detail: sendBillsAfterGeneration.value
       ? `Preparing ${formatUnit(selectedBillDeliveryCount.value, 'bill')} for ${billChannels.value.join(', ')}.`
       : 'Bills will be generated without notifications.',
@@ -661,7 +736,8 @@ const resetGenerationProgress = () => {
 
 const setGenerationProgressSteps = (steps: GenerationProgressStep[]) => {
   generationProgressSteps.value = steps
-  activeGenerationStepId.value = steps.find((step) => step.status === 'active')?.id ?? null
+  activeGenerationStepId.value =
+    steps.find((step) => step.status === 'active')?.id ?? null
 }
 
 const updateGenerationProgressStep = (
@@ -675,7 +751,9 @@ const updateGenerationProgressStep = (
 
 const startGenerationProgressStep = (id: string, detail?: string) => {
   if (activeGenerationStepId.value && activeGenerationStepId.value !== id) {
-    updateGenerationProgressStep(activeGenerationStepId.value, { status: 'done' })
+    updateGenerationProgressStep(activeGenerationStepId.value, {
+      status: 'done',
+    })
   }
 
   activeGenerationStepId.value = id
@@ -697,7 +775,9 @@ const completeGenerationProgressStep = (id: string, detail?: string) => {
 }
 
 const failActiveGenerationProgressStep = (detail: string) => {
-  const fallbackStep = generationProgressSteps.value.find((step) => step.status !== 'done')
+  const fallbackStep = generationProgressSteps.value.find(
+    (step) => step.status !== 'done',
+  )
   const stepId = activeGenerationStepId.value ?? fallbackStep?.id
 
   if (!stepId) return
@@ -718,14 +798,18 @@ const normalizeChargeNumber = (value: number | null | undefined) => {
 const roundChargeValue = (value: number) => Math.round(value * 100) / 100
 const roundAreaRateChargeValue = (value: number) => Math.ceil(value)
 
-const getEntryCycleMultiplier = (entry: Pick<VariableChargeEntry, 'cycleMultiplier'>) =>
+const getEntryCycleMultiplier = (
+  entry: Pick<VariableChargeEntry, 'cycleMultiplier'>,
+) =>
   Math.max(
     1,
     normalizeChargeNumber(entry.cycleMultiplier) ??
       (props.showPerFlatCycle ? defaultCycleMonths.value : 1),
   )
 
-const getDefaultAmountForEntry = (entry: Pick<VariableChargeEntry, 'cycleMultiplier'>) => {
+const getDefaultAmountForEntry = (
+  entry: Pick<VariableChargeEntry, 'cycleMultiplier'>,
+) => {
   const defaultAmount = normalizeChargeNumber(defaultFlatAmount.value)
   if (defaultAmount == null) return null
 
@@ -734,48 +818,46 @@ const getDefaultAmountForEntry = (entry: Pick<VariableChargeEntry, 'cycleMultipl
     : defaultAmount
 }
 
-const getRecordPaymentPeriod = (entry: Pick<VariableChargeEntry, 'cycleMultiplier'>) => {
+const getRecordPaymentPeriod = (
+  entry: Pick<VariableChargeEntry, 'cycleMultiplier'>,
+) => {
   if (selectedPeriod.value) return selectedPeriod.value
   if (!props.camRunFlow) return null
 
   const camPeriod = getCamPeriodForCycle(getEntryCycleMultiplier(entry))
-  return periods.value.find(
-    (period) =>
-      period.chargeType === periodChargeType.value &&
-      period.startDate === camPeriod.startDate &&
-      period.endDate === camPeriod.endDate,
-  ) ?? null
+  return (
+    periods.value.find(
+      (period) =>
+        period.chargeType === periodChargeType.value &&
+        period.startDate === camPeriod.startDate &&
+        period.endDate === camPeriod.endDate,
+    ) ?? null
+  )
 }
 
-const getEntryGenerationPeriod = (entry: Pick<VariableChargeEntry, 'cycleMultiplier'>) =>
-  selectedPeriod.value ?? (props.camRunFlow ? getCamPeriodForCycle(getEntryCycleMultiplier(entry)) : null)
+const getEntryGenerationPeriod = (
+  entry: Pick<VariableChargeEntry, 'cycleMultiplier'>,
+) =>
+  selectedPeriod.value ??
+  (props.camRunFlow
+    ? getCamPeriodForCycle(getEntryCycleMultiplier(entry))
+    : null)
 
-const isCamAdvanceCoveredForEntry = (entry: Pick<VariableChargeEntry, 'cycleMultiplier' | 'camAdvancePaidUntil'>) => {
+const isCamAdvanceCoveredForEntry = (
+  entry: Pick<
+    VariableChargeEntry,
+    'cycleMultiplier' | 'camAdvanceCoveredFrom' | 'camAdvancePaidUntil'
+  >,
+) => {
   if (props.chargeType !== 'CAM' || !entry.camAdvancePaidUntil) return false
 
   const period = getEntryGenerationPeriod(entry)
-  return Boolean(period && entry.camAdvancePaidUntil >= period.endDate)
-}
-
-const markEntryAdvancePaidThroughCycle = (entry: VariableChargeEntry) => {
-  const period = getEntryGenerationPeriod(entry)
-  if (!period) return
-
-  entry.camAdvancePaidUntil = period.endDate
-  entry.camAdvanceNote = `CAM paid through ${formatDate(period.endDate)}`
-}
-
-const clearEntryAdvanceCoverage = (entry: VariableChargeEntry) => {
-  entry.camAdvancePaidUntil = null
-  entry.camAdvanceNote = null
-}
-
-const updateEntryAdvancePaidUntil = (entry: VariableChargeEntry, value: unknown) => {
-  const nextValue = String(value || '').trim()
-  entry.camAdvancePaidUntil = nextValue || null
-  if (!entry.camAdvancePaidUntil) {
-    entry.camAdvanceNote = null
-  }
+  const coveredFrom = entry.camAdvanceCoveredFrom ?? '0001-01-01'
+  return Boolean(
+    period &&
+    coveredFrom <= period.startDate &&
+    entry.camAdvancePaidUntil >= period.endDate,
+  )
 }
 
 const getRecordPaymentRoute = (entry: VariableChargeEntry) => {
@@ -793,16 +875,20 @@ const getRecordPaymentRoute = (entry: VariableChargeEntry) => {
 }
 
 const canRecordPaymentForEntry = (entry: VariableChargeEntry) =>
-  Number(entry.amount ?? 0) > 0 && Number(getRecordPaymentPeriod(entry)?.dueCount ?? 0) > 0
+  Number(entry.amount ?? 0) > 0 &&
+  Number(getRecordPaymentPeriod(entry)?.dueCount ?? 0) > 0
 
 const getRecordPaymentTitle = (entry: VariableChargeEntry) =>
   getRecordPaymentPeriod(entry)
     ? 'Record payment for this bill'
     : 'Record payment for this flat'
 
-const normalizeChargeEntry = (entry: VariableChargeEntry): VariableChargeEntry => ({
+const normalizeChargeEntry = (
+  entry: VariableChargeEntry,
+): VariableChargeEntry => ({
   ...entry,
   areaSqFt: normalizeChargeNumber(entry.areaSqFt),
+  camAdvanceCoveredFrom: entry.camAdvanceCoveredFrom || null,
   camAdvancePaidUntil: entry.camAdvancePaidUntil || null,
   camAdvanceNote: entry.camAdvanceNote || null,
   camAdvanceUpdatedAt: entry.camAdvanceUpdatedAt || null,
@@ -829,7 +915,9 @@ const normalizeChargeEntry = (entry: VariableChargeEntry): VariableChargeEntry =
 })
 
 const hasReadingInput = (entry: VariableChargeEntry) =>
-  entry.openingReading != null || entry.closingReading != null || entry.consumedUnits != null
+  entry.openingReading != null ||
+  entry.closingReading != null ||
+  entry.consumedUnits != null
 
 const recalculateCharge = (entry: VariableChargeEntry) => {
   if (props.showAreaRate) {
@@ -840,7 +928,9 @@ const recalculateCharge = (entry: VariableChargeEntry) => {
 
     if (areaSqFt != null && areaSqFt > 0 && ratePerSqFt != null) {
       entry.ratePerSqFt = ratePerSqFt
-      entry.amount = roundAreaRateChargeValue(areaSqFt * ratePerSqFt * getEntryCycleMultiplier(entry))
+      entry.amount = roundAreaRateChargeValue(
+        areaSqFt * ratePerSqFt * getEntryCycleMultiplier(entry),
+      )
     } else if (!props.allowManualAmount) {
       entry.amount = null
     }
@@ -927,7 +1017,9 @@ const resetPeriodForm = () => {
   periodForm.dueDate = ''
 }
 
-const applySuggestedPeriod = (frequency: BillingFrequency = props.defaultPeriodFrequency) => {
+const applySuggestedPeriod = (
+  frequency: BillingFrequency = props.defaultPeriodFrequency,
+) => {
   const latestPeriod = periods.value
     .slice()
     .sort(
@@ -941,7 +1033,9 @@ const applySuggestedPeriod = (frequency: BillingFrequency = props.defaultPeriodF
   const monthStart = startOfMonth(start)
   const monthCount = frequencyMonthMultipliers[frequency] ?? 1
   const monthEnd = endOfMonth(addMonths(monthStart, monthCount - 1))
-  const dueDate = new Date(Date.UTC(monthEnd.getUTCFullYear(), monthEnd.getUTCMonth() + 1, 10))
+  const dueDate = new Date(
+    Date.UTC(monthEnd.getUTCFullYear(), monthEnd.getUTCMonth() + 1, 10),
+  )
 
   periodForm.frequency = frequency
   periodForm.label = `${props.mode === 'CAM' ? 'CAM' : 'DG Set'} - ${formatSuggestedCycleLabel(monthStart, monthEnd)}`
@@ -970,13 +1064,16 @@ const createPeriod = async () => {
   savingPeriod.value = true
 
   try {
-    const response = await api<PeriodCreateResponse>('/api/admin/billing/periods', {
-      method: 'POST',
-      body: {
-        ...periodForm,
-        chargeType: periodChargeType.value,
+    const response = await api<PeriodCreateResponse>(
+      '/api/admin/billing/periods',
+      {
+        method: 'POST',
+        body: {
+          ...periodForm,
+          chargeType: periodChargeType.value,
+        },
       },
-    })
+    )
 
     selectedPeriodId.value = response.data.id
     periodDialogVisible.value = false
@@ -992,7 +1089,9 @@ const createPeriod = async () => {
   }
 }
 
-const ensureCamRunPeriod = async (period: ReturnType<typeof getCamPeriodForCycle>) => {
+const ensureCamRunPeriod = async (
+  period: ReturnType<typeof getCamPeriodForCycle>,
+) => {
   const existing = periods.value.find(
     (item) =>
       item.chargeType === periodChargeType.value &&
@@ -1003,13 +1102,16 @@ const ensureCamRunPeriod = async (period: ReturnType<typeof getCamPeriodForCycle
   if (existing) return existing.id
 
   try {
-    const response = await api<PeriodCreateResponse>('/api/admin/billing/periods', {
-      method: 'POST',
-      body: {
-        ...period,
-        chargeType: periodChargeType.value,
+    const response = await api<PeriodCreateResponse>(
+      '/api/admin/billing/periods',
+      {
+        method: 'POST',
+        body: {
+          ...period,
+          chargeType: periodChargeType.value,
+        },
       },
-    })
+    )
 
     await refreshPeriods()
     return response.data.id
@@ -1049,6 +1151,7 @@ const loadVariableCharges = async () => {
           blockName: flat.blockName,
           unitType: flat.unitType,
           areaSqFt: flat.areaSqFt,
+          camAdvanceCoveredFrom: flat.camAdvanceCoveredFrom ?? null,
           camAdvancePaidUntil: flat.camAdvancePaidUntil ?? null,
           camAdvanceNote: flat.camAdvanceNote ?? null,
           camAdvanceUpdatedAt: flat.camAdvanceUpdatedAt ?? null,
@@ -1131,7 +1234,7 @@ const saveVariableCharges = async () => {
             flatId: entry.flatId,
             areaSqFt: props.showAreaRate ? entry.areaSqFt : null,
             ratePerSqFt: props.showAreaRate
-              ? entry.ratePerSqFt ?? defaultRatePerSqFt.value
+              ? (entry.ratePerSqFt ?? defaultRatePerSqFt.value)
               : null,
             meterNo: props.showAreaRate ? null : entry.meterNo || null,
             openingReading: props.showAreaRate ? null : entry.openingReading,
@@ -1146,12 +1249,6 @@ const saveVariableCharges = async () => {
               : null,
             cycleLabel: props.showPerFlatCycle
               ? getCycleLabel(entry.cycleMultiplier ?? defaultCycleMonths.value)
-              : null,
-            camAdvancePaidUntil: props.chargeType === 'CAM'
-              ? entry.camAdvancePaidUntil || null
-              : null,
-            camAdvanceNote: props.chargeType === 'CAM'
-              ? entry.camAdvanceNote || null
               : null,
             amount: Number(entry.amount ?? 0),
           })),
@@ -1183,12 +1280,15 @@ const loadGenerationPreview = async () => {
   loadingGenerationPreview.value = true
 
   try {
-    const response = await api<PreviewResponse>('/api/admin/billing/dues/preview', {
-      query: {
-        billingPeriodId: selectedPeriod.value.id,
-        flatIds: selectedFlatIds.value.join(','),
+    const response = await api<PreviewResponse>(
+      '/api/admin/billing/dues/preview',
+      {
+        query: {
+          billingPeriodId: selectedPeriod.value.id,
+          flatIds: selectedFlatIds.value.join(','),
+        },
       },
-    })
+    )
 
     generationPreview.value = response.data
   } finally {
@@ -1202,7 +1302,9 @@ const resetBillDeliveryOptions = (flatIds: string[]) => {
   billDeliveryFlatIds.value = [...flatIds]
 }
 
-const sendGeneratedBillNotifications = async (targets: GeneratedDueTarget[]) => {
+const sendGeneratedBillNotifications = async (
+  targets: GeneratedDueTarget[],
+) => {
   if (!sendBillsAfterGeneration.value) {
     return null
   }
@@ -1220,13 +1322,16 @@ const sendGeneratedBillNotifications = async (targets: GeneratedDueTarget[]) => 
     return { eligible: 0, jobCount: 0 }
   }
 
-  const response = await api<BillSendResponse>('/api/admin/billing/dues/send-bills', {
-    method: 'POST',
-    body: {
-      dueIds,
-      channels: billChannels.value,
+  const response = await api<BillSendResponse>(
+    '/api/admin/billing/dues/send-bills',
+    {
+      method: 'POST',
+      body: {
+        dueIds,
+        channels: billChannels.value,
+      },
     },
-  })
+  )
 
   return response.data
 }
@@ -1253,14 +1358,16 @@ const openGenerationDialog = async () => {
       toast.add({
         severity: 'warn',
         summary: 'Apply defaults first',
-        detail: `Apply the CAM rate or mark advance coverage before generating ${props.chargeName} bills.`,
+        detail: `Apply the CAM rate before generating ${props.chargeName} bills. Manage prepaid coverage in CAM Advance first.`,
         life: 10000,
       })
       return
     }
 
     generationPreview.value = null
-    resetBillDeliveryOptions(camBillableEntries.value.map((entry) => entry.flatId))
+    resetBillDeliveryOptions(
+      camBillableEntries.value.map((entry) => entry.flatId),
+    )
     generationDialogVisible.value = true
     return
   }
@@ -1376,8 +1483,6 @@ const generateDues = async () => {
                 interestAmount: entry.interestAmount ?? 0,
                 cycleMultiplier: group.cycleMonths,
                 cycleLabel: group.cycleLabel,
-                camAdvancePaidUntil: entry.camAdvancePaidUntil || null,
-                camAdvanceNote: entry.camAdvanceNote || null,
                 amount: Number(entry.amount ?? 0),
               })),
             },
@@ -1387,20 +1492,26 @@ const generateDues = async () => {
         updateGenerationProgressStep(groupStepId, {
           detail: `Generating bill records for ${formatUnit(group.billableCount, 'flat')}.`,
         })
-        const response = await api<GenerationResponse>('/api/admin/billing/dues', {
-          method: 'POST',
-          body: {
-            billingPeriodId: periodId,
-            flatIds: group.entries.map((entry) => entry.flatId),
+        const response = await api<GenerationResponse>(
+          '/api/admin/billing/dues',
+          {
+            method: 'POST',
+            body: {
+              billingPeriodId: periodId,
+              flatIds: group.entries.map((entry) => entry.flatId),
+            },
           },
-        })
+        )
 
         generated += response.data.generated
         skipped += response.data.skipped
         advanceCoveredCount += response.data.advanceCoveredCount
         overlapSkippedCount += response.data.overlapSkippedCount
         advanceAppliedCount += response.data.advanceAppliedCount
-        billSendTargets.push(...response.data.generatedDues, ...response.data.skippedDues)
+        billSendTargets.push(
+          ...response.data.generatedDues,
+          ...response.data.skippedDues,
+        )
         advanceAppliedAmount = roundChargeValue(
           advanceAppliedAmount + response.data.advanceAppliedAmount,
         )
@@ -1418,7 +1529,9 @@ const generateDues = async () => {
             response.data.advanceAppliedAmount > 0
               ? `${formatMoney(response.data.advanceAppliedAmount)} advance applied`
               : '',
-          ].filter(Boolean).join(', ') + '.',
+          ]
+            .filter(Boolean)
+            .join(', ') + '.',
         )
       }
 
@@ -1450,22 +1563,25 @@ const generateDues = async () => {
       toast.add({
         severity: 'success',
         summary: 'CAM bills generated',
-        detail: [
-          `${generated} created`,
-          `${skipped} skipped`,
-          advanceCoveredCount > 0
-            ? `${formatUnit(advanceCoveredCount, 'advance flat')} covered`
-            : '',
-          overlapSkippedCount > 0
-            ? `${formatUnit(overlapSkippedCount, 'overlap')} skipped`
-            : '',
-          advanceAppliedAmount > 0
-            ? `${formatMoney(advanceAppliedAmount)} advance applied across ${formatUnit(advanceAppliedCount, 'flat')}`
-            : '',
-          sentBills
-            ? `${sentBills.jobCount} delivery job${sentBills.jobCount === 1 ? '' : 's'} queued`
-            : '',
-        ].filter(Boolean).join(', ') + '.',
+        detail:
+          [
+            `${generated} created`,
+            `${skipped} skipped`,
+            advanceCoveredCount > 0
+              ? `${formatUnit(advanceCoveredCount, 'advance flat')} covered`
+              : '',
+            overlapSkippedCount > 0
+              ? `${formatUnit(overlapSkippedCount, 'overlap')} skipped`
+              : '',
+            advanceAppliedAmount > 0
+              ? `${formatMoney(advanceAppliedAmount)} advance applied across ${formatUnit(advanceAppliedCount, 'flat')}`
+              : '',
+            sentBills
+              ? `${sentBills.jobCount} delivery job${sentBills.jobCount === 1 ? '' : 's'} queued`
+              : '',
+          ]
+            .filter(Boolean)
+            .join(', ') + '.',
         life: 10000,
       })
 
@@ -1495,7 +1611,9 @@ const generateDues = async () => {
       method: 'POST',
       body: {
         billingPeriodId: selectedPeriod.value.id,
-        flatIds: selectedFlatIds.value.length ? selectedFlatIds.value : undefined,
+        flatIds: selectedFlatIds.value.length
+          ? selectedFlatIds.value
+          : undefined,
       },
     })
     completeGenerationProgressStep(
@@ -1523,16 +1641,19 @@ const generateDues = async () => {
     toast.add({
       severity: 'success',
       summary: 'Bills generated',
-      detail: [
-        `${response.data.generated} created`,
-        `${response.data.skipped} skipped`,
-        response.data.advanceAppliedAmount > 0
-          ? `${formatMoney(response.data.advanceAppliedAmount)} advance applied`
-          : '',
-        sentBills
-          ? `${sentBills.jobCount} delivery job${sentBills.jobCount === 1 ? '' : 's'} queued`
-          : '',
-      ].filter(Boolean).join(', ') + '.',
+      detail:
+        [
+          `${response.data.generated} created`,
+          `${response.data.skipped} skipped`,
+          response.data.advanceAppliedAmount > 0
+            ? `${formatMoney(response.data.advanceAppliedAmount)} advance applied`
+            : '',
+          sentBills
+            ? `${sentBills.jobCount} delivery job${sentBills.jobCount === 1 ? '' : 's'} queued`
+            : '',
+        ]
+          .filter(Boolean)
+          .join(', ') + '.',
       life: 10000,
     })
 
@@ -1575,8 +1696,12 @@ watch(
       return
     }
 
-    if (!selectedPeriodId.value || !items.some((period) => period.id === selectedPeriodId.value)) {
-      selectedPeriodId.value = items.find((period) => !period.isLocked)?.id ?? items[0]?.id ?? ''
+    if (
+      !selectedPeriodId.value ||
+      !items.some((period) => period.id === selectedPeriodId.value)
+    ) {
+      selectedPeriodId.value =
+        items.find((period) => !period.isLocked)?.id ?? items[0]?.id ?? ''
     }
   },
   { immediate: true },
@@ -1584,11 +1709,9 @@ watch(
 
 watch(camRunStartMonth, (value) => {
   const startDate = parseMonthInput(value)
-  camRunDueDate.value = toDateInput(new Date(Date.UTC(
-    startDate.getUTCFullYear(),
-    startDate.getUTCMonth(),
-    10,
-  )))
+  camRunDueDate.value = toDateInput(
+    new Date(Date.UTC(startDate.getUTCFullYear(), startDate.getUTCMonth(), 10)),
+  )
 })
 
 watch(
@@ -1632,24 +1755,49 @@ watch(
         <div>
           <span>{{ camRunFlow ? 'Start month' : 'Selected period' }}</span>
           <strong>
-            {{ camRunFlow ? formatDate(toDateInput(camRunStartDate)) : selectedPeriod?.label ?? 'No period selected' }}
+            {{
+              camRunFlow
+                ? formatDate(toDateInput(camRunStartDate))
+                : (selectedPeriod?.label ?? 'No period selected')
+            }}
           </strong>
           <p>{{ selectedCycleLabel }}</p>
         </div>
         <div>
           <span>{{ amountSummaryLabel }}</span>
-          <strong>{{ formatMoney(camRunFlow ? billableChargeTotal : chargeTotal) }}</strong>
+          <strong>{{
+            formatMoney(camRunFlow ? billableChargeTotal : chargeTotal)
+          }}</strong>
           <p>
-            {{ camRunFlow
-              ? `${formatUnit(camBillableEntries.length, 'bill')} - ${formatUnit(camAdvanceCoveredEntries.length, 'advance flat')} covered`
-              : `${formatUnit(filledChargeCount, 'flat')} with saved amount.` }}
+            {{
+              camRunFlow
+                ? `${formatUnit(camBillableEntries.length, 'bill')} - ${formatUnit(camAdvanceCoveredEntries.length, 'advance flat')} covered`
+                : `${formatUnit(filledChargeCount, 'flat')} with saved amount.`
+            }}
           </p>
         </div>
         <div>
-          <span>{{ camRunFlow ? 'Cycle split' : showPerFlatCycle ? 'Flat cycles' : 'Readings' }}</span>
-          <strong v-if="showPerFlatCycle">{{ filledChargeCount }} configured</strong>
-          <strong v-else>{{ formatNumber(chargeUnitsTotal) }} {{ unitsSummaryLabel }}</strong>
-          <p>{{ showPerFlatCycle ? cycleDistributionLabel : `${selectedCycleMonths} ${selectedCycleMonths === 1 ? 'month' : 'months'} in this period.` }}</p>
+          <span>{{
+            camRunFlow
+              ? 'Cycle split'
+              : showPerFlatCycle
+                ? 'Flat cycles'
+                : 'Readings'
+          }}</span>
+          <strong v-if="showPerFlatCycle"
+            >{{ filledChargeCount }} configured</strong
+          >
+          <strong v-else
+            >{{ formatNumber(chargeUnitsTotal) }}
+            {{ unitsSummaryLabel }}</strong
+          >
+          <p>
+            {{
+              showPerFlatCycle
+                ? cycleDistributionLabel
+                : `${selectedCycleMonths} ${selectedCycleMonths === 1 ? 'month' : 'months'} in this period.`
+            }}
+          </p>
         </div>
       </div>
     </section>
@@ -1659,11 +1807,13 @@ watch(
         <div>
           <h1>{{ title }}</h1>
           <p>
-            {{ camRunFlow
-              ? 'Choose the start month, apply quarterly CAM defaults, adjust monthly or yearly flats, then generate bills.'
-              : showAreaRate
-                ? 'Create or select a charge period, apply the CAM rate by flat area and cycle, then save.'
-              : 'Create or select a charge period, enter per-flat readings or amounts, then save.' }}
+            {{
+              camRunFlow
+                ? 'Choose the start month, apply quarterly CAM defaults, adjust monthly or yearly flats, then generate bills.'
+                : showAreaRate
+                  ? 'Create or select a charge period, apply the CAM rate by flat area and cycle, then save.'
+                  : 'Create or select a charge period, enter per-flat readings or amounts, then save.'
+            }}
           </p>
         </div>
         <div class="list-page__exports">
@@ -1682,21 +1832,27 @@ watch(
         <label v-if="camRunFlow">
           <span class="field-label">
             Start month
-            <AppHelpIcon text="The month from which this CAM invoice run begins. Internal periods are created per flat cycle." />
+            <AppHelpIcon
+              text="The month from which this CAM invoice run begins. Internal periods are created per flat cycle."
+            />
           </span>
           <InputText v-model="camRunStartMonth" type="month" />
         </label>
         <label v-if="camRunFlow">
           <span class="field-label">
             Due date
-            <AppHelpIcon text="Payment deadline shown on all CAM bills generated from this run." />
+            <AppHelpIcon
+              text="Payment deadline shown on all CAM bills generated from this run."
+            />
           </span>
           <InputText v-model="camRunDueDate" type="date" />
         </label>
         <label v-if="!camRunFlow" class="list-page__search">
           <span class="field-label">
             Charge period
-            <AppHelpIcon text="Select the period for this CAM or DG Set charge run. Create it here when needed." />
+            <AppHelpIcon
+              text="Select the period for this CAM or DG Set charge run. Create it here when needed."
+            />
           </span>
           <Select
             v-model="selectedPeriodId"
@@ -1724,8 +1880,12 @@ watch(
       <Message v-if="!camRunFlow && selectedPeriod?.isLocked" severity="warn">
         This charge period is locked. Unlock it before changing saved charges.
       </Message>
-      <Message v-else-if="!camRunFlow && (selectedPeriod?.dueCount ?? 0) > 0" severity="warn">
-        Bills already exist for this charge period. Saved changes will not alter already-generated dues.
+      <Message
+        v-else-if="!camRunFlow && (selectedPeriod?.dueCount ?? 0) > 0"
+        severity="warn"
+      >
+        Bills already exist for this charge period. Saved changes will not alter
+        already-generated dues.
       </Message>
 
       <section class="billing-variable-charge-panel">
@@ -1734,18 +1894,27 @@ watch(
             <p class="eyebrow">{{ chargeName }}</p>
             <h3>Per-flat entries</h3>
             <p>
-              {{ showAreaRate
-                ? 'CAM is calculated from each flat area, the monthly sq ft rate, and the selected flat cycle.'
-                : 'Opening and closing readings calculate units automatically. You can also enter direct amounts where applicable.' }}
+              {{
+                showAreaRate
+                  ? 'CAM is calculated from each flat area, the monthly sq ft rate, and the selected flat cycle.'
+                  : 'Opening and closing readings calculate units automatically. You can also enter direct amounts where applicable.'
+              }}
+            </p>
+            <p v-if="camRunFlow">
+              CAM advance coverage is managed in
+              <NuxtLink to="/admin/billing/cam-advance">CAM Advance</NuxtLink>.
+              Covered periods are skipped during CAM bill generation.
             </p>
           </div>
           <div>
             <strong>{{ formatMoney(chargeTotal) }}</strong>
             <span>
               {{ formatUnit(filledChargeCount, 'flat') }} -
-              {{ showAreaRate
-                ? `${formatNumber(chargeAreaTotal)} sq ft`
-                : `${formatNumber(chargeUnitsTotal)} ${unitsSummaryLabel}` }}
+              {{
+                showAreaRate
+                  ? `${formatNumber(chargeAreaTotal)} sq ft`
+                  : `${formatNumber(chargeUnitsTotal)} ${unitsSummaryLabel}`
+              }}
             </span>
           </div>
         </header>
@@ -1754,7 +1923,9 @@ watch(
           <label v-if="allowManualAmount">
             <span class="field-label">
               {{ defaultAmountLabel }}
-              <AppHelpIcon text="Applied to rows without readings or an existing amount." />
+              <AppHelpIcon
+                text="Applied to rows without readings or an existing amount."
+              />
             </span>
             <InputNumber
               v-model="defaultFlatAmount"
@@ -1766,7 +1937,9 @@ watch(
           <label v-if="showAreaRate">
             <span class="field-label">
               {{ defaultRateLabel }}
-              <AppHelpIcon text="Monthly CAM rate multiplied by flat area and selected cycle." />
+              <AppHelpIcon
+                text="Monthly CAM rate multiplied by flat area and selected cycle."
+              />
             </span>
             <InputNumber
               v-model="defaultRatePerSqFt"
@@ -1778,7 +1951,9 @@ watch(
           <label v-else>
             <span class="field-label">
               {{ defaultRateLabel }}
-              <AppHelpIcon text="Used when a flat row does not already have its own rate." />
+              <AppHelpIcon
+                text="Used when a flat row does not already have its own rate."
+              />
             </span>
             <InputNumber
               v-model="defaultRatePerUnit"
@@ -1790,7 +1965,9 @@ watch(
           <label v-if="showConnectionLoad">
             <span class="field-label">
               Connection load
-              <AppHelpIcon text="Printed on rows that do not have a custom connection load." />
+              <AppHelpIcon
+                text="Printed on rows that do not have a custom connection load."
+              />
             </span>
             <InputText v-model="defaultConnectionLoad" />
           </label>
@@ -1805,10 +1982,21 @@ watch(
 
         <div class="billing-variable-charge-toolbar">
           <span>
-            {{ camRunFlow
-              ? 'CAM periods are created internally by each flat cycle.'
-              : selectedPeriod?.label ?? 'No period selected' }}
+            {{
+              camRunFlow
+                ? 'CAM periods are created internally by each flat cycle.'
+                : (selectedPeriod?.label ?? 'No period selected')
+            }}
           </span>
+          <Button
+            v-if="camRunFlow"
+            label="Manage CAM advance coverage"
+            icon="pi pi-calendar"
+            severity="secondary"
+            outlined
+            as="router-link"
+            to="/admin/billing/cam-advance"
+          />
           <Button
             v-if="camRunFlow"
             label="Generate CAM bills"
@@ -1826,13 +2014,18 @@ watch(
             severity="secondary"
             outlined
             :loading="savingCharges"
-            :disabled="!selectedPeriod || selectedPeriod.isLocked || invalidChargeEntries.length > 0"
+            :disabled="
+              !selectedPeriod ||
+              selectedPeriod.isLocked ||
+              invalidChargeEntries.length > 0
+            "
             @click="saveVariableCharges"
           />
         </div>
 
         <Message v-if="invalidChargeEntries.length > 0" severity="warn">
-          {{ formatUnit(invalidChargeEntries.length, 'flat') }} has closing reading below opening reading.
+          {{ formatUnit(invalidChargeEntries.length, 'flat') }} has closing
+          reading below opening reading.
         </Message>
 
         <AppSkeletonState v-if="loadingCharges" />
@@ -1854,10 +2047,16 @@ watch(
           </Column>
           <Column v-if="showAreaRate" header="Area" style="min-width: 7rem">
             <template #body="{ data: row }">
-              <strong>{{ row.areaSqFt ? `${formatNumber(row.areaSqFt)} sq ft` : '-' }}</strong>
+              <strong>{{
+                row.areaSqFt ? `${formatNumber(row.areaSqFt)} sq ft` : '-'
+              }}</strong>
             </template>
           </Column>
-          <Column v-if="showPerFlatCycle" header="Cycle" style="min-width: 9rem">
+          <Column
+            v-if="showPerFlatCycle"
+            header="Cycle"
+            style="min-width: 9rem"
+          >
             <template #body="{ data: row }">
               <Select
                 :model-value="row.cycleMultiplier ?? defaultCycleMonths"
@@ -1869,12 +2068,20 @@ watch(
               />
             </template>
           </Column>
-          <Column v-if="!showAreaRate" :header="meterLabel" style="min-width: 8rem">
+          <Column
+            v-if="!showAreaRate"
+            :header="meterLabel"
+            style="min-width: 8rem"
+          >
             <template #body="{ data: row }">
               <InputText v-model="row.meterNo" placeholder="Optional" fluid />
             </template>
           </Column>
-          <Column v-if="!showAreaRate" header="Opening" style="min-width: 7.5rem">
+          <Column
+            v-if="!showAreaRate"
+            header="Opening"
+            style="min-width: 7.5rem"
+          >
             <template #body="{ data: row }">
               <InputNumber
                 v-model="row.openingReading"
@@ -1886,7 +2093,11 @@ watch(
               />
             </template>
           </Column>
-          <Column v-if="!showAreaRate" header="Closing" style="min-width: 7.5rem">
+          <Column
+            v-if="!showAreaRate"
+            header="Closing"
+            style="min-width: 7.5rem"
+          >
             <template #body="{ data: row }">
               <InputNumber
                 v-model="row.closingReading"
@@ -1906,12 +2117,18 @@ watch(
                 :max-fraction-digits="2"
                 placeholder="0"
                 fluid
-                :disabled="row.openingReading != null && row.closingReading != null"
+                :disabled="
+                  row.openingReading != null && row.closingReading != null
+                "
                 @update:model-value="recalculateCharge(row)"
               />
             </template>
           </Column>
-          <Column v-if="showAreaRate" header="Rate/sq ft/month" style="min-width: 9rem">
+          <Column
+            v-if="showAreaRate"
+            header="Rate/sq ft/month"
+            style="min-width: 9rem"
+          >
             <template #body="{ data: row }">
               <InputNumber
                 v-model="row.ratePerSqFt"
@@ -1948,50 +2165,17 @@ watch(
               <strong v-else>{{ formatMoney(Number(row.amount ?? 0)) }}</strong>
             </template>
           </Column>
-          <Column v-if="camRunFlow" header="Advance" style="min-width: 15rem">
+          <Column
+            v-if="showConnectionLoad"
+            header="Load"
+            style="min-width: 8.5rem"
+          >
             <template #body="{ data: row }">
-              <div class="billing-advance-cell">
-                <div>
-                  <strong>
-                    {{ isCamAdvanceCoveredForEntry(row)
-                      ? `Paid until ${formatDate(row.camAdvancePaidUntil)}`
-                      : 'Not marked' }}
-                  </strong>
-                  <span>{{ isCamAdvanceCoveredForEntry(row) ? 'Covered' : 'Billable' }}</span>
-                </div>
-                <div class="billing-advance-actions">
-                  <InputText
-                    :model-value="row.camAdvancePaidUntil ?? ''"
-                    type="date"
-                    aria-label="CAM paid until"
-                    @update:model-value="(value) => updateEntryAdvancePaidUntil(row, value)"
-                  />
-                  <Button
-                    icon="pi pi-calendar-check"
-                    severity="secondary"
-                    text
-                    rounded
-                    aria-label="Mark paid through this cycle"
-                    title="Mark paid through this cycle"
-                    @click="markEntryAdvancePaidThroughCycle(row)"
-                  />
-                  <Button
-                    v-if="row.camAdvancePaidUntil"
-                    icon="pi pi-times"
-                    severity="secondary"
-                    text
-                    rounded
-                    aria-label="Clear CAM advance"
-                    title="Clear CAM advance"
-                    @click="clearEntryAdvanceCoverage(row)"
-                  />
-                </div>
-              </div>
-            </template>
-          </Column>
-          <Column v-if="showConnectionLoad" header="Load" style="min-width: 8.5rem">
-            <template #body="{ data: row }">
-              <InputText v-model="row.connectionLoad" placeholder="4 KW (5KVA)" fluid />
+              <InputText
+                v-model="row.connectionLoad"
+                placeholder="4 KW (5KVA)"
+                fluid
+              />
             </template>
           </Column>
           <Column header="Payment" style="width: 5rem">
@@ -2029,7 +2213,9 @@ watch(
           </div>
           <div class="billing-cycle-presets">
             <Button
-              v-for="option in frequencyOptions.filter((item) => item.value !== 'CUSTOM')"
+              v-for="option in frequencyOptions.filter(
+                (item) => item.value !== 'CUSTOM',
+              )"
               :key="option.value"
               type="button"
               :label="option.label"
@@ -2049,7 +2235,9 @@ watch(
           <label class="admin-form-grid__full">
             <span class="field-label">
               Period name
-              <AppHelpIcon text="Readable name shown on bills, such as CAM - July - September 2026." />
+              <AppHelpIcon
+                text="Readable name shown on bills, such as CAM - July - September 2026."
+              />
             </span>
             <InputText v-model="periodForm.label" required />
           </label>
@@ -2136,7 +2324,10 @@ watch(
           <li
             v-for="step in generationProgressSteps"
             :key="step.id"
-            :class="['billing-generation-progress__step', `billing-generation-progress__step--${step.status}`]"
+            :class="[
+              'billing-generation-progress__step',
+              `billing-generation-progress__step--${step.status}`,
+            ]"
           >
             <span class="billing-generation-progress__icon">
               <i :class="getGenerationStepIcon(step.status)" />
@@ -2159,7 +2350,12 @@ watch(
           <div>
             <span>Bills to create</span>
             <strong>{{ camBillableEntries.length }}</strong>
-            <small>{{ formatUnit(camAdvanceCoveredEntries.length, 'advance flat') }} covered</small>
+            <small
+              >{{
+                formatUnit(camAdvanceCoveredEntries.length, 'advance flat')
+              }}
+              covered</small
+            >
           </div>
           <div>
             <span>{{ amountSummaryLabel }}</span>
@@ -2169,12 +2365,17 @@ watch(
           <div>
             <span>Default cycle</span>
             <strong>{{ getCycleLabel(defaultCycleMonths) }}</strong>
-            <small>{{ formatMoney(Number(defaultRatePerSqFt ?? 0)) }} / sq ft / month</small>
+            <small
+              >{{ formatMoney(Number(defaultRatePerSqFt ?? 0)) }} / sq ft /
+              month</small
+            >
           </div>
         </div>
 
         <Message severity="info">
-          CAM bills will be grouped internally by cycle. Monthly flats get a monthly period, quarterly flats get a 3 month period, and yearly advance flats get a 12 month period.
+          CAM bills will be grouped internally by cycle. Monthly flats get a
+          monthly period, quarterly flats get a 3 month period, and yearly
+          advance flats get a 12 month period.
         </Message>
 
         <section class="billing-delivery-panel">
@@ -2183,13 +2384,18 @@ watch(
               <strong>Send bills after generation</strong>
               <small>Owner contacts only</small>
             </span>
-            <ToggleSwitch v-model="sendBillsAfterGeneration" :disabled="generating" />
+            <ToggleSwitch
+              v-model="sendBillsAfterGeneration"
+              :disabled="generating"
+            />
           </label>
           <div v-if="sendBillsAfterGeneration" class="admin-form-grid">
             <label>
               <span class="field-label">
                 Channels
-                <AppHelpIcon text="Email includes the PDF attachment. WhatsApp, push, and in-app messages include the bill link." />
+                <AppHelpIcon
+                  text="Email includes the PDF attachment. WhatsApp, push, and in-app messages include the bill link."
+                />
               </span>
               <MultiSelect
                 v-model="billChannels"
@@ -2204,7 +2410,9 @@ watch(
             <label class="admin-form-grid__full">
               <span class="field-label">
                 Bills
-                <AppHelpIcon text="Bills are sent from due IDs resolved to owner contacts for the matching flat." />
+                <AppHelpIcon
+                  text="Bills are sent from due IDs resolved to owner contacts for the matching flat."
+                />
               </span>
               <MultiSelect
                 v-model="billDeliveryFlatIds"
@@ -2223,16 +2431,16 @@ watch(
         </section>
 
         <div class="billing-cycle-guide">
-          <div
-            v-for="group in camRunGroups"
-            :key="group.cycleMonths"
-          >
+          <div v-for="group in camRunGroups" :key="group.cycleMonths">
             <span>{{ group.cycleLabel }}</span>
             <strong>{{ formatMoney(group.totalAmount) }}</strong>
             <p>
               {{ formatUnit(group.billableCount, 'bill') }} -
-              {{ formatUnit(group.advanceCoveredCount, 'advance flat') }} covered -
-              {{ formatDate(group.period.startDate) }} to {{ formatDate(group.period.endDate) }}
+              {{
+                formatUnit(group.advanceCoveredCount, 'advance flat')
+              }}
+              covered - {{ formatDate(group.period.startDate) }} to
+              {{ formatDate(group.period.endDate) }}
             </p>
           </div>
         </div>
@@ -2252,7 +2460,8 @@ watch(
             :disabled="
               generating ||
               camRunGroups.length === 0 ||
-              (sendBillsAfterGeneration && (billChannels.length === 0 || selectedBillDeliveryCount === 0))
+              (sendBillsAfterGeneration &&
+                (billChannels.length === 0 || selectedBillDeliveryCount === 0))
             "
             @click="generateDues"
           />
@@ -2261,7 +2470,8 @@ watch(
       <div v-else class="admin-form-layout">
         <AppSkeletonState v-if="loadingGenerationPreview" />
         <Message v-else-if="!generationPreview" severity="warn">
-          Select at least one flat with saved charges to preview bill generation.
+          Select at least one flat with saved charges to preview bill
+          generation.
         </Message>
         <template v-else>
           <div class="billing-generation-summary">
@@ -2278,7 +2488,9 @@ watch(
             <div>
               <span>{{ amountSummaryLabel }}</span>
               <strong>{{ formatMoney(generationChargeTotal) }}</strong>
-              <small>{{ formatUnit(selectedFlatIds.length, 'selected flat') }}</small>
+              <small>{{
+                formatUnit(selectedFlatIds.length, 'selected flat')
+              }}</small>
             </div>
             <div>
               <span>Total</span>
@@ -2290,7 +2502,9 @@ watch(
           <label>
             <span class="field-label">
               Flats
-              <AppHelpIcon text="By default this includes flats with a saved amount on this page. Change the selection for a limited run." />
+              <AppHelpIcon
+                text="By default this includes flats with a saved amount on this page. Change the selection for a limited run."
+              />
             </span>
             <MultiSelect
               v-model="selectedFlatIds"
@@ -2324,13 +2538,18 @@ watch(
                 <strong>Send bills after generation</strong>
                 <small>Owner contacts only</small>
               </span>
-              <ToggleSwitch v-model="sendBillsAfterGeneration" :disabled="generating" />
+              <ToggleSwitch
+                v-model="sendBillsAfterGeneration"
+                :disabled="generating"
+              />
             </label>
             <div v-if="sendBillsAfterGeneration" class="admin-form-grid">
               <label>
                 <span class="field-label">
                   Channels
-                  <AppHelpIcon text="Email includes the PDF attachment. WhatsApp, push, and in-app messages include the bill link." />
+                  <AppHelpIcon
+                    text="Email includes the PDF attachment. WhatsApp, push, and in-app messages include the bill link."
+                  />
                 </span>
                 <MultiSelect
                   v-model="billChannels"
@@ -2345,7 +2564,9 @@ watch(
               <label class="admin-form-grid__full">
                 <span class="field-label">
                   Bills
-                  <AppHelpIcon text="Bills are sent from due IDs resolved to owner contacts for the matching flat." />
+                  <AppHelpIcon
+                    text="Bills are sent from due IDs resolved to owner contacts for the matching flat."
+                  />
                 </span>
                 <MultiSelect
                   v-model="billDeliveryFlatIds"
@@ -2376,14 +2597,18 @@ watch(
             :label="camRunFlow ? 'Generate CAM bills' : 'Generate bills'"
             icon="pi pi-bolt"
             :loading="generating"
-            :disabled="camRunFlow
-              ? generating || camRunGroups.length === 0
-              : generating ||
-                !generationPreview ||
-                generationPreview.isLocked ||
-                generationPreview.totalFlats === 0 ||
-                selectedFlatIds.length === 0 ||
-                (sendBillsAfterGeneration && (billChannels.length === 0 || selectedBillDeliveryCount === 0))"
+            :disabled="
+              camRunFlow
+                ? generating || camRunGroups.length === 0
+                : generating ||
+                  !generationPreview ||
+                  generationPreview.isLocked ||
+                  generationPreview.totalFlats === 0 ||
+                  selectedFlatIds.length === 0 ||
+                  (sendBillsAfterGeneration &&
+                    (billChannels.length === 0 ||
+                      selectedBillDeliveryCount === 0))
+            "
             @click="generateDues"
           />
         </div>

@@ -9,6 +9,7 @@ import { enqueueNotificationForUsers, resolveNotificationAudience } from './noti
 import { createPdfBuffer, getSocietyStampImage } from './pdf'
 import { recomputeUserAccess } from './qr-access'
 import { uploadPrivateFile } from './storage'
+import { setCamAdvanceCoverageForPeriod } from './cam-advance'
 
 export const allocationModeSchema = z.enum(['OLDEST_UNPAID_FIRST', 'SELECTED_PERIODS', 'TENURE_PACK'])
 
@@ -150,6 +151,7 @@ const syncFlatCamAdvancePaidUntil = async (client: PoolClient, dueId: string, st
   const result = await client.query<{
     society_id: string
     flat_id: string
+    start_date: string
     end_date: string
     charge_type: string
   }>(
@@ -157,6 +159,7 @@ const syncFlatCamAdvancePaidUntil = async (client: PoolClient, dueId: string, st
       select
         md.society_id,
         md.flat_id,
+        bp.start_date::text,
         bp.end_date::text,
         bp.charge_type::text
       from maintenance_dues md
@@ -169,36 +172,16 @@ const syncFlatCamAdvancePaidUntil = async (client: PoolClient, dueId: string, st
   const row = result.rows[0]
   if (!row || row.charge_type !== 'CAM') return
 
-  await client.query(
-    `
-      update flats
-      set
-        cam_advance_paid_until = case
-          when cam_advance_paid_until is null or cam_advance_paid_until < $3::date then $3::date
-          else cam_advance_paid_until
-        end,
-        cam_advance_note = case
-          when cam_advance_paid_until is null or cam_advance_paid_until < $3::date then $4
-          else cam_advance_note
-        end,
-        cam_advance_updated_at = case
-          when cam_advance_paid_until is null or cam_advance_paid_until < $3::date then now()
-          else cam_advance_updated_at
-        end,
-        updated_at = case
-          when cam_advance_paid_until is null or cam_advance_paid_until < $3::date then now()
-          else updated_at
-        end
-      where society_id = $1
-        and id = $2
-    `,
-    [
-      row.society_id,
-      row.flat_id,
-      row.end_date,
-      `Auto-marked from paid CAM bill through ${formatReceiptDate(row.end_date)}.`,
-    ],
-  )
+  await setCamAdvanceCoverageForPeriod(client, {
+    societyId: row.society_id,
+    flatId: row.flat_id,
+    coveredFrom: row.start_date,
+    coveredUntil: row.end_date,
+    source: 'PAYMENT',
+    reference: `maintenance_due:${dueId}`,
+    notes: `Auto-marked from paid CAM bill through ${formatReceiptDate(row.end_date)}.`,
+    actorUserId: null,
+  })
 }
 
 const getPaymentPolicy = async (client: PoolClient, societyId: string) => {

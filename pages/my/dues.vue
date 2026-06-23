@@ -39,7 +39,7 @@ const advanceStatusLabel = (due: MaintenanceDue) => {
 
 const advanceStatusDetail = (due: MaintenanceDue) => {
   if (due.isCamAdvanceCovered) {
-    return `Paid until ${formatDate(due.camAdvancePaidUntil)}. No payment is needed for this CAM period.`
+    return `Covered ${formatDate(due.camAdvanceCoveredFrom)} to ${formatDate(due.camAdvancePaidUntil)}. No payment is needed for this CAM period.`
   }
   if (isCamDue(due)) return 'No advance coverage for this CAM period.'
   return 'Advance coverage applies only to CAM bills.'
@@ -56,12 +56,13 @@ const getPayTitle = (due: MaintenanceDue) => {
 }
 
 const summary = computed(() => {
-  const totalDue = dues.value.reduce((sum, due) => sum + due.totalAmount, 0)
-  const totalPaid = dues.value.reduce((sum, due) => sum + due.paidAmount, 0)
-  const totalBalance = dues.value
+  const billRows = dues.value.filter((due) => !due.isAdvanceCoverageRow)
+  const totalDue = billRows.reduce((sum, due) => sum + due.totalAmount, 0)
+  const totalPaid = billRows.reduce((sum, due) => sum + due.paidAmount, 0)
+  const totalBalance = billRows
     .filter((due) => !due.isCamAdvanceCovered)
     .reduce((sum, due) => sum + due.balanceAmount, 0)
-  const overdueCount = dues.value.filter((due) => due.status === 'OVERDUE').length
+  const overdueCount = billRows.filter((due) => due.status === 'OVERDUE').length
   const advanceCoveredCount = dues.value.filter((due) => due.isCamAdvanceCovered).length
 
   return { totalDue, totalPaid, totalBalance, overdueCount, advanceCoveredCount }
@@ -117,8 +118,8 @@ const openBreakdown = (due: MaintenanceDue) => {
         <p class="eyebrow">Current balance</p>
         <h3>{{ formatMoney(summary.totalBalance) }}</h3>
         <p>
-          {{ summary.overdueCount }} overdue due rows across linked flats.
-          {{ summary.advanceCoveredCount }} CAM advance-covered rows are already covered.
+          {{ summary.overdueCount }} overdue bills across linked flats.
+          {{ summary.advanceCoveredCount }} CAM advance-covered records are already covered.
         </p>
       </section>
       <section class="surface-card">
@@ -204,13 +205,17 @@ const openBreakdown = (due: MaintenanceDue) => {
             </Column>
             <Column field="status" header="Status">
               <template #body="{ data: row }">
-                <AppStatusBadge :status="row.status" />
+                <span v-if="row.isCamAdvanceCovered" class="billing-advance-pill">
+                  Covered
+                </span>
+                <AppStatusBadge v-else :status="row.status" />
               </template>
             </Column>
             <Column header="Actions" style="width: 150px">
               <template #body="{ data: row }">
                 <div class="admin-inline-actions">
                   <Button
+                    v-if="!row.isAdvanceCoverageRow"
                     as="a"
                     :href="`/api/my/dues/${row.id}/bill`"
                     target="_blank"
@@ -266,8 +271,9 @@ const openBreakdown = (due: MaintenanceDue) => {
           <strong>{{ formatMoney(selectedDue.balanceAmount) }}</strong>
         </div>
         <Message v-if="selectedDue.isCamAdvanceCovered" severity="success" :closable="false">
-          CAM advance covers this period through {{ formatDate(selectedDue.camAdvancePaidUntil) }}.
-          No payment is needed for this due.
+          CAM advance covers this period from {{ formatDate(selectedDue.camAdvanceCoveredFrom) }}
+          through {{ formatDate(selectedDue.camAdvancePaidUntil) }}.
+          No payment is needed for this CAM period.
         </Message>
         <Message v-else-if="!selectedDue.canPayNow" severity="info">
           Payment access is limited to the billing contact and configured resident relationship policy.

@@ -78,6 +78,7 @@ export type FlatSummary = AuditFields & {
   areaSqFt: number | null
   occupancyStatus: string
   isActive: boolean
+  camAdvanceCoveredFrom?: string | null
   camAdvancePaidUntil?: string | null
   camAdvanceNote?: string | null
   camAdvanceUpdatedAt?: string | null
@@ -478,6 +479,30 @@ export type MaintenanceCharge = AuditFields & {
   isActive: boolean
 }
 
+export type CamAdvanceCoverageSource =
+  | 'MANUAL'
+  | 'PAYMENT'
+  | 'IMPORT'
+  | 'OPENING_BALANCE'
+  | 'LEGACY_MARKER'
+
+export type CamAdvanceCoverage = AuditFields & {
+  id: string
+  societyId: string
+  flatId: string
+  flatNumber: string
+  blockName: string
+  unitType: string
+  coveredFrom: string
+  coveredUntil: string
+  amount: number | null
+  source: CamAdvanceCoverageSource
+  reference: string | null
+  notes: string | null
+  isActive: boolean
+  primaryResidentName: string | null
+}
+
 export type DueStatus = 'DRAFT' | 'OPEN' | 'PARTIALLY_PAID' | 'PAID' | 'WAIVED' | 'OVERDUE' | 'CANCELLED'
 
 export type MaintenanceDue = AuditFields & {
@@ -505,6 +530,9 @@ export type MaintenanceDue = AuditFields & {
   generatedAt: string
   primaryResidentName: string | null
   isCamAdvanceCovered?: boolean
+  isAdvanceCoverageRow?: boolean
+  camAdvanceCoverageId?: string | null
+  camAdvanceCoveredFrom?: string | null
   camAdvancePaidUntil?: string | null
   relationshipType?: string
   isBillingContact?: boolean

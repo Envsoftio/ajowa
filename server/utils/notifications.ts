@@ -1457,8 +1457,15 @@ export const enqueueDueBillingContactNotifications = async (
         and (fr.is_billing_contact = true or fr.is_primary_contact = true)
         and not (
           bp.charge_type = 'CAM'
-          and f.cam_advance_paid_until is not null
-          and f.cam_advance_paid_until >= bp.end_date
+          and exists (
+            select 1
+            from cam_advance_coverages coverage
+            where coverage.society_id = bp.society_id
+              and coverage.flat_id = f.id
+              and coverage.is_active = true
+              and coverage.covered_from <= bp.start_date
+              and coverage.covered_until >= bp.end_date
+          )
         )
       order by md.id, u.id, fr.is_billing_contact desc, fr.is_primary_contact desc
     `,

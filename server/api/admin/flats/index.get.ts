@@ -15,6 +15,7 @@ type FlatRow = {
   area_sq_ft: string | null
   occupancy_status: string
   is_active: boolean
+  cam_advance_covered_from: string | null
   cam_advance_paid_until: string | null
   cam_advance_note: string | null
   cam_advance_updated_at: string | null
@@ -96,8 +97,9 @@ export default defineEventHandler(async (event) => {
           f.area_sq_ft::text,
           f.occupancy_status::text,
           f.is_active,
-          f.cam_advance_paid_until::text,
-          f.cam_advance_note,
+          coverage.covered_from::text as cam_advance_covered_from,
+          coalesce(coverage.covered_until::text, f.cam_advance_paid_until::text) as cam_advance_paid_until,
+          coalesce(coverage.notes, f.cam_advance_note) as cam_advance_note,
           f.cam_advance_updated_at::text,
           f.created_at::text,
           f.updated_at::text,
@@ -106,8 +108,17 @@ export default defineEventHandler(async (event) => {
         from flats f
         inner join blocks b on b.id = f.block_id
         left join flat_residents fr on fr.flat_id = f.id
+        left join lateral (
+          select covered_from, covered_until, notes
+          from cam_advance_coverages coverage
+          where coverage.society_id = f.society_id
+            and coverage.flat_id = f.id
+            and coverage.is_active = true
+          order by coverage.covered_until desc, coverage.updated_at desc, coverage.created_at desc
+          limit 1
+        ) coverage on true
         where ${whereSql}
-        group by f.id, b.id
+        group by f.id, b.id, coverage.covered_from, coverage.covered_until, coverage.notes
         order by ${orderSql}
         limit $${values.length - 1}
         offset $${values.length}
@@ -136,6 +147,7 @@ export default defineEventHandler(async (event) => {
     areaSqFt: row.area_sq_ft ? Number(row.area_sq_ft) : null,
     occupancyStatus: row.occupancy_status,
     isActive: row.is_active,
+    camAdvanceCoveredFrom: row.cam_advance_covered_from,
     camAdvancePaidUntil: row.cam_advance_paid_until,
     camAdvanceNote: row.cam_advance_note,
     camAdvanceUpdatedAt: row.cam_advance_updated_at,

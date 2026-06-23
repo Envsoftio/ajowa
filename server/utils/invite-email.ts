@@ -1,4 +1,5 @@
 import type { H3Event } from 'h3'
+import type { PoolClient } from 'pg'
 import { sendTemplatedEmail } from './email'
 import { getRequestLogger } from './logging'
 
@@ -88,6 +89,7 @@ const serializeEmailError = (error: unknown) => {
 export const sendInviteEmailSafely = async (
   event: H3Event,
   invite: PendingInviteEmail,
+  client?: PoolClient | null,
 ): Promise<InviteEmailDelivery> => {
   const logger = getRequestLogger(event)
 
@@ -98,6 +100,7 @@ export const sendInviteEmailSafely = async (
       template: invite.template,
       context: invite.context,
       societyId: invite.societyId,
+      ...(client ? { client } : {}),
     })
 
     if (result.delivered) {

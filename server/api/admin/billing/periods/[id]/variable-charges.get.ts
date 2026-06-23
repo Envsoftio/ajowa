@@ -4,6 +4,7 @@ import { requireRole } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
 import { getQuerySafe, readUuidParam } from '~/server/utils/master-data'
 import { AppError } from '~/server/utils/errors'
+import { camAdvanceCoverageLateralSql } from '~/server/utils/cam-advance'
 
 const querySchema = z.object({
   chargeName: z.string().trim().min(1).max(80).optional().default('DG Set'),
@@ -15,6 +16,7 @@ type FlatChargeRow = {
   block_name: string
   unit_type: string
   area_sq_ft: string | null
+  cam_advance_covered_from: string | null
   cam_advance_paid_until: string | null
   cam_advance_note: string | null
   cam_advance_updated_at: string | null
@@ -74,14 +76,19 @@ export default defineEventHandler(async (event) => {
         b.name as block_name,
         f.unit_type,
         f.area_sq_ft::text as area_sq_ft,
-        f.cam_advance_paid_until::text as cam_advance_paid_until,
-        f.cam_advance_note,
+        coverage.covered_from::text as cam_advance_covered_from,
+        coverage.covered_until::text as cam_advance_paid_until,
+        coverage.notes as cam_advance_note,
         f.cam_advance_updated_at::text as cam_advance_updated_at,
         mc.amount::text,
         mc.rate_per_sq_ft::text,
         mc.charge_breakdown
       from flats f
       inner join blocks b on b.id = f.block_id
+      inner join billing_periods bp on bp.id = $2 and bp.society_id = f.society_id
+      left join lateral (
+        ${camAdvanceCoverageLateralSql('f', 'bp')}
+      ) coverage on true
       left join maintenance_charges mc
         on mc.society_id = f.society_id
        and mc.billing_period_id = $2
@@ -113,6 +120,7 @@ export default defineEventHandler(async (event) => {
         blockName: row.block_name,
         unitType: row.unit_type,
         areaSqFt: readNumber(metadata, 'areaSqFt') ?? (row.area_sq_ft == null ? null : Number(row.area_sq_ft)),
+        camAdvanceCoveredFrom: row.cam_advance_covered_from,
         camAdvancePaidUntil: row.cam_advance_paid_until,
         camAdvanceNote: row.cam_advance_note,
         camAdvanceUpdatedAt: row.cam_advance_updated_at,

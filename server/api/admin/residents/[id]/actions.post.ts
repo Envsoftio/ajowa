@@ -215,7 +215,7 @@ export default defineEventHandler(async (event) => {
     committed = true
 
     const emailDelivery = pendingInviteEmail
-      ? await sendInviteEmailSafely(event, pendingInviteEmail)
+      ? await sendInviteEmailSafely(event, pendingInviteEmail, client)
       : null
 
     return createApiSuccess(event, {

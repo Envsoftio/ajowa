@@ -116,6 +116,7 @@ export const shellNavigation: Record<AppShellType, AppNavGroup[]> = {
       icon: 'pi pi-wallet',
       items: [
         { label: 'CAM Charges', to: '/admin/billing/cam', icon: 'pi pi-percentage' },
+        { label: 'CAM Advance', to: '/admin/billing/cam-advance', icon: 'pi pi-calendar-clock' },
         { label: 'DG Set Charges', to: '/admin/billing/dg-set', icon: 'pi pi-bolt' },
         { label: 'Dues', to: '/admin/billing/dues', icon: 'pi pi-wallet' },
         { label: 'Defaulters', to: '/admin/billing/defaulters', icon: 'pi pi-exclamation-triangle' },

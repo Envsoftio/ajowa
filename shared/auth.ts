@@ -99,6 +99,7 @@ export const getAdminRoutePermission = (path: string) => {
   if (
     pathname.startsWith('/admin/billing/periods') ||
     pathname.startsWith('/admin/billing/charges') ||
+    pathname.startsWith('/admin/billing/cam-advance') ||
     pathname.startsWith('/admin/billing/cam') ||
     pathname.startsWith('/admin/billing/dg-set')
   ) {
