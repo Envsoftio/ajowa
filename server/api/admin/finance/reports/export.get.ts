@@ -51,10 +51,10 @@ export default defineEventHandler(async (event) => {
     checksum: createHash('sha256').update(buffer).digest('hex'),
   })
 
-  setHeader(event, 'content-type', mimeType)
-  setHeader(event, 'content-disposition', `attachment; filename="${fileName}"`)
-  setHeader(event, 'x-report-generation-ms', String(report.performanceMs))
-  setHeader(event, 'x-storage-object-key', storageObjectKey)
+  setEventHeader(event, 'content-type', mimeType)
+  setEventHeader(event, 'content-disposition', `attachment; filename="${fileName}"`)
+  setEventHeader(event, 'x-report-generation-ms', String(report.performanceMs))
+  setEventHeader(event, 'x-storage-object-key', storageObjectKey)
 
   return buffer
 })

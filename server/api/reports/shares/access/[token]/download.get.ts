@@ -12,7 +12,7 @@ export default defineEventHandler(async (event) => {
     return createApiSuccess(event, result)
   }
 
-  const buffer = await generateReportPdf(result.report)
+  const buffer = await generateReportPdf(result.report, result.share.societyId)
   const fileName = buildReportFilename(result.report, 'pdf')
   const storageObjectKey = createStorageObjectKey({
     recordType: 'shared-report-export',

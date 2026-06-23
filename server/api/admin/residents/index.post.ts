@@ -1,10 +1,11 @@
 import { createApiSuccess, readJsonBody } from '~/server/utils/api'
 import { createInviteToken, requireRole } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
-import { buildAppUrl, sendTemplatedEmail } from '~/server/utils/email'
+import { buildAppUrl } from '~/server/utils/email'
 import { hashPassword } from 'better-auth/crypto'
 import type { PoolClient } from 'pg'
 import { AppError } from '~/server/utils/errors'
+import { sendInviteEmailSafely, type PendingInviteEmail } from '~/server/utils/invite-email'
 import {
   ensureResidentRelationshipsAreValid,
   residentSchema,
@@ -109,9 +110,10 @@ const insertInviteIfRequested = async ({
   relationshipType: string | null
   flatIds: string[]
   flatLabels: string[]
-}) => {
+}): Promise<PendingInviteEmail> => {
   const { token, tokenHash } = createInviteToken()
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+  const inviteUrl = buildAppUrl('/accept-invite', { token })
 
   await client.query(
     `
@@ -156,20 +158,22 @@ const insertInviteIfRequested = async ({
     ],
   )
 
-  await sendTemplatedEmail({
+  return {
     to: email,
     subject: 'Your AJOWA invite is ready',
     template: 'invite-onboarding',
+    inviteUrl,
+    expiresAt: expiresAt.toISOString(),
     context: {
       title: 'Accept your AJOWA invite',
       name: fullName,
-      actionUrl: buildAppUrl('/accept-invite', { token }),
+      actionUrl: inviteUrl,
       expiresLabel: expiresAt.toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }),
       inviterName: 'AJOWA Admin',
       roleLabel: role.replace('_', ' ').toLowerCase(),
       details: flatLabels.length > 0 ? `Assigned flats: ${flatLabels.join(', ')}.` : 'Complete onboarding to activate access.',
     },
-  })
+  }
 }
 
 export default defineEventHandler(async (event) => {
@@ -179,6 +183,8 @@ export default defineEventHandler(async (event) => {
   ensureResidentRelationshipsAreValid(body)
   const pool = getDatabasePool()
   const client = await pool.connect()
+  let committed = false
+  let pendingInviteEmail: PendingInviteEmail | null = null
 
   try {
     await client.query('begin')
@@ -333,7 +339,7 @@ export default defineEventHandler(async (event) => {
         [body.relationships.map((item) => item.flatId)],
       )
 
-      await insertInviteIfRequested({
+      pendingInviteEmail = await insertInviteIfRequested({
         client,
         actorUserId: authMe.user.id,
         societyId: authMe.user.societyId,
@@ -364,9 +370,29 @@ export default defineEventHandler(async (event) => {
     })
 
     await client.query('commit')
-    return createApiSuccess(event, { id: userId, authUserId })
+    committed = true
+
+    const emailDelivery = pendingInviteEmail
+      ? await sendInviteEmailSafely(event, pendingInviteEmail)
+      : null
+
+    return createApiSuccess(event, {
+      id: userId,
+      authUserId,
+      ...(pendingInviteEmail
+        ? {
+            invite: {
+              inviteUrl: pendingInviteEmail.inviteUrl,
+              expiresAt: pendingInviteEmail.expiresAt,
+              emailDelivery,
+            },
+          }
+        : {}),
+    })
   } catch (error) {
-    await client.query('rollback')
+    if (!committed) {
+      await client.query('rollback')
+    }
     throw error
   } finally {
     client.release()

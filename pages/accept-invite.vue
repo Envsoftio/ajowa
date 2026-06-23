@@ -71,6 +71,10 @@ const submit = async () => {
       data: {
         email: string
         requiresEmailVerification: boolean
+        verificationEmailDelivery?: {
+          delivered: boolean
+          reason?: string
+        } | null
       }
     }>('/api/auth/accept-invite', {
       method: 'POST',
@@ -82,13 +86,18 @@ const submit = async () => {
         password: form.password,
       },
     })
+    const verificationEmail = response.data.verificationEmailDelivery
+    const verificationWarning =
+      verificationEmail && !verificationEmail.delivered
+        ? (verificationEmail.reason ?? 'Your account is ready, but verification email delivery failed.')
+        : ''
 
     toast.add({
-      severity: 'success',
+      severity: verificationWarning ? 'warn' : 'success',
       summary: 'Invite accepted',
-      detail: response.data.requiresEmailVerification
+      detail: verificationWarning || (response.data.requiresEmailVerification
         ? 'Your account is ready. Verify your email after you sign in.'
-        : 'Your account is ready. You can sign in now.',
+        : 'Your account is ready. You can sign in now.'),
       life: 10000,
     })
     await navigateTo('/login')

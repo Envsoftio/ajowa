@@ -43,6 +43,16 @@ type ResidentSaveResponse = {
   id: string
   authUserId?: string
   updated?: boolean
+  invite?: InviteDeliveryResponse
+}
+
+type InviteDeliveryResponse = {
+  inviteUrl: string
+  expiresAt: string
+  emailDelivery?: {
+    delivered: boolean
+    reason?: string
+  } | null
 }
 
 type ResidentFileUploadResponse = {
@@ -528,6 +538,7 @@ const submit = async () => {
 
     let residentId = selectedResident.value?.id ?? ''
     let createdResident = false
+    let inviteDeliveryWarning = ''
 
     if (selectedResident.value) {
       await api(`/api/admin/residents/${selectedResident.value.id}`, {
@@ -541,6 +552,11 @@ const submit = async () => {
       })
       residentId = response.data.id
       createdResident = true
+
+      const inviteDelivery = response.data.invite?.emailDelivery
+      if (inviteDelivery && !inviteDelivery.delivered) {
+        inviteDeliveryWarning = inviteDelivery.reason ?? 'Invite was created, but email delivery failed.'
+      }
     }
 
     try {
@@ -564,9 +580,9 @@ const submit = async () => {
     }
 
     toast.add({
-      severity: 'success',
-      summary: 'Saved',
-      detail: selectedResident.value ? 'Resident updated.' : 'Resident created.',
+      severity: inviteDeliveryWarning ? 'warn' : 'success',
+      summary: inviteDeliveryWarning ? 'Resident created' : 'Saved',
+      detail: inviteDeliveryWarning || (selectedResident.value ? 'Resident updated.' : 'Resident created.'),
       life: 10000,
     })
     closeDialog()

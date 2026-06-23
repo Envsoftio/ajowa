@@ -4,7 +4,8 @@ import {
   createInviteToken,
   requireRole,
 } from '~/server/utils/auth'
-import { sendTemplatedEmail, buildAppUrl } from '~/server/utils/email'
+import { buildAppUrl } from '~/server/utils/email'
+import { sendInviteEmailSafely, type PendingInviteEmail } from '~/server/utils/invite-email'
 import { getDatabasePool } from '~/server/utils/database'
 
 const schema = z.object({
@@ -70,10 +71,12 @@ export default defineEventHandler(async (event) => {
     ],
   )
 
-  await sendTemplatedEmail({
+  const pendingInviteEmail: PendingInviteEmail = {
     to: body.email,
     subject: 'Your AJOWA invite is ready',
     template: 'invite-onboarding',
+    inviteUrl,
+    expiresAt: expiresAt.toISOString(),
     context: {
       title: 'Accept your AJOWA invite',
       name: body.fullName ?? body.email,
@@ -88,10 +91,12 @@ export default defineEventHandler(async (event) => {
             ? `Assigned departments: ${departmentNames.join(', ')}.`
             : 'Use the link below to finish onboarding.',
     },
-  })
+  }
+  const emailDelivery = await sendInviteEmailSafely(event, pendingInviteEmail)
 
   return createApiSuccess(event, {
     expiresAt: expiresAt.toISOString(),
     inviteUrl,
+    emailDelivery,
   })
 })

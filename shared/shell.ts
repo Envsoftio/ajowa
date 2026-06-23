@@ -129,9 +129,6 @@ export const shellNavigation: Record<AppShellType, AppNavGroup[]> = {
         { label: 'Accounts', to: '/admin/finance/accounts', icon: 'pi pi-sitemap' },
         { label: 'Categories', to: '/admin/finance/categories', icon: 'pi pi-tags' },
         { label: 'Transactions', to: '/admin/finance/transactions', icon: 'pi pi-receipt' },
-        { label: 'Journals', to: '/admin/finance/journals', icon: 'pi pi-book' },
-        { label: 'Period Close', to: '/admin/finance/period-close', icon: 'pi pi-lock' },
-        { label: 'Reconciliation', to: '/admin/finance/reconciliation', icon: 'pi pi-verified' },
       ],
     },
     {

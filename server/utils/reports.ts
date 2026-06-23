@@ -1,13 +1,11 @@
-import pdfMake from 'pdfmake/build/pdfmake.js'
-import pdfFonts from 'pdfmake/build/vfs_fonts.js'
 import * as XLSX from 'xlsx/xlsx.mjs'
 import { z } from 'zod'
 import { AppError } from './errors'
 import { getDatabasePool } from './database'
-
-pdfMake.vfs = pdfFonts?.pdfMake?.vfs ?? pdfFonts?.vfs
+import { createPdfBuffer, getSocietyStampImage } from './pdf'
 
 export const reportTypes = [
+  'expense-summary',
   'resident-payment-ledger',
   'collection',
   'defaulter',
@@ -84,6 +82,7 @@ const reportTypeSchema = z.enum(reportTypes)
 const sharedReportTypeSchema = z.enum(sharedReportTypes)
 
 export const reportLabels: Record<ReportType, string> = {
+  'expense-summary': 'Expense Summary',
   'resident-payment-ledger': 'Resident Payment Ledger',
   collection: 'Collection Report',
   defaulter: 'Defaulter List',
@@ -117,6 +116,34 @@ const addMonths = (date: Date, months: number) => {
 const startOfMonth = (date: Date) => new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1))
 
 const endOfMonth = (date: Date) => new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0))
+
+const parseDateUtc = (value: string) => {
+  const [year, month, day] = value.split('-').map(Number)
+  return new Date(Date.UTC(year ?? 1970, (month ?? 1) - 1, day ?? 1))
+}
+
+const monthKey = (date: Date) => `m${date.getUTCFullYear()}_${String(date.getUTCMonth() + 1).padStart(2, '0')}`
+
+const formatMonthLabel = (date: Date, month: 'short' | 'long' = 'short') =>
+  new Intl.DateTimeFormat('en-US', { month, year: 'numeric', timeZone: 'UTC' })
+    .format(date)
+    .toUpperCase()
+
+const buildMonthBuckets = (startDate: string, endDate: string) => {
+  const end = startOfMonth(parseDateUtc(endDate))
+  const buckets: Array<{ key: string; label: string; date: Date }> = []
+  let cursor = startOfMonth(parseDateUtc(startDate))
+
+  while (cursor <= end) {
+    buckets.push({ key: monthKey(cursor), label: formatMonthLabel(cursor), date: cursor })
+    cursor = addMonths(cursor, 1)
+  }
+
+  return buckets
+}
+
+const expenseSummaryTitle = (startDate: string, endDate: string) =>
+  `SUMMARY OF EXPENSES : ${formatMonthLabel(parseDateUtc(startDate), 'long')} TO ${formatMonthLabel(parseDateUtc(endDate), 'long')}`
 
 const normalizeDateRange = (query: Record<string, unknown>) => {
   const mode = String(query.periodMode ?? 'MONTHLY') as ReportFilters['periodMode']
@@ -209,7 +236,7 @@ const addSearch = (params: unknown[], filters: string[], columns: string[], sear
   filters.push(`(${columns.map((column) => `lower(coalesce(${column}, '')) like $${params.length}`).join(' or ')})`)
 }
 
-const getSocietyInfo = async (societyId: string): Promise<SocietyInfo> => {
+export const getSocietyInfo = async (societyId: string): Promise<SocietyInfo> => {
   const result = await getDatabasePool().query<{ name: string; code: string; address: string }>(
     `
       select
@@ -223,62 +250,6 @@ const getSocietyInfo = async (societyId: string): Promise<SocietyInfo> => {
     [societyId],
   )
   return result.rows[0] ?? { name: 'AJOWA', code: 'AJOWA', address: '' }
-}
-
-const getFinanceReconciliation = async (societyId: string, startDate: string, endDate: string) => {
-  const result = await getDatabasePool().query<{
-    transaction_income: string
-    transaction_expense: string
-    journal_income: string
-    journal_expense: string
-  }>(
-    `
-      with transaction_totals as (
-        select
-          coalesce(sum(amount) filter (where transaction_type = 'INCOME'), 0) as income,
-          coalesce(sum(amount) filter (where transaction_type = 'EXPENSE'), 0) as expense
-        from transactions
-        where society_id = $1
-          and status = 'POSTED'
-          and transaction_date between $2 and $3
-      ),
-      journal_totals as (
-        select
-          coalesce(sum(jl.amount) filter (where ah.head_type = 'INCOME'), 0) as income,
-          coalesce(sum(jl.amount) filter (where ah.head_type = 'EXPENSE'), 0) as expense
-        from journal_entries je
-        join journal_lines jl on jl.journal_entry_id = je.id
-        join account_heads ah on ah.id = jl.account_head_id
-        where je.society_id = $1
-          and je.status = 'POSTED'
-          and je.entry_date between $2 and $3
-      )
-      select
-        tt.income::text as transaction_income,
-        tt.expense::text as transaction_expense,
-        jt.income::text as journal_income,
-        jt.expense::text as journal_expense
-      from transaction_totals tt cross join journal_totals jt
-    `,
-    [societyId, startDate, endDate],
-  )
-  const row = result.rows[0]
-  if (!row) return []
-
-  return [
-    {
-      label: 'Income against journals',
-      expected: money(row.transaction_income),
-      actual: money(row.journal_income),
-      variance: money(row.transaction_income) - money(row.journal_income),
-    },
-    {
-      label: 'Expense against journals',
-      expected: money(row.transaction_expense),
-      actual: money(row.journal_expense),
-      variance: money(row.transaction_expense) - money(row.journal_expense),
-    },
-  ]
 }
 
 const getBillingReconciliation = async (societyId: string, startDate: string, endDate: string) => {
@@ -340,6 +311,96 @@ const getBillingReconciliation = async (societyId: string, startDate: string, en
       variance: 0,
     },
   ]
+}
+
+const buildExpenseSummaryReport = async ({ societyId, filters }: ReportQueryContext) => {
+  const buckets = buildMonthBuckets(filters.startDate, filters.endDate)
+  const params: unknown[] = [societyId, filters.startDate, filters.endDate]
+  const where = [
+    't.society_id = $1',
+    "t.transaction_type = 'EXPENSE'",
+    "t.status = 'POSTED'",
+    't.transaction_date between $2 and $3',
+  ]
+
+  if (filters.categoryId) {
+    params.push(filters.categoryId)
+    where.push(`t.category_id = $${params.length}`)
+  }
+  addSearch(params, where, ['tc.name', 'tc.category_group', 't.title', 't.counterparty_name', 't.voucher_number'], filters.search)
+
+  const result = await getDatabasePool().query<{
+    category_id: string
+    description: string
+    category_group: string
+    month_start: string
+    amount: string
+  }>(
+    `
+      select
+        tc.id as category_id,
+        tc.name as description,
+        tc.category_group,
+        date_trunc('month', t.transaction_date)::date::text as month_start,
+        sum(t.amount)::text as amount
+      from transactions t
+      join transaction_categories tc on tc.id = t.category_id
+      where ${where.join(' and ')}
+      group by tc.id, tc.category_group, tc.name, date_trunc('month', t.transaction_date)::date
+      order by tc.category_group asc, tc.name asc
+    `,
+    params,
+  )
+
+  const rowsByDescription = new Map<string, Record<string, unknown>>()
+  const totals = Object.fromEntries(buckets.map((bucket) => [bucket.key, 0])) as Record<string, number>
+
+  for (const row of result.rows) {
+    const key = row.category_id
+    const bucketKey = monthKey(parseDateUtc(row.month_start))
+    const amount = money(row.amount)
+    if (!rowsByDescription.has(key)) {
+      rowsByDescription.set(key, {
+        description: row.description.toUpperCase(),
+        categoryId: row.category_id,
+        total: 0,
+        ...Object.fromEntries(buckets.map((bucket) => [bucket.key, 0])),
+      })
+    }
+
+    const item = rowsByDescription.get(key)!
+    item[bucketKey] = Number(item[bucketKey] ?? 0) + amount
+    item.total = Number(item.total ?? 0) + amount
+    if (bucketKey in totals) totals[bucketKey] = (totals[bucketKey] ?? 0) + amount
+  }
+
+  const rows = Array.from(rowsByDescription.values())
+  const grandTotal = buckets.reduce((sum, bucket) => sum + (totals[bucket.key] ?? 0), 0)
+  rows.push({
+    description: 'TOTAL AMOUNT',
+    categoryId: null,
+    ...totals,
+    total: grandTotal,
+  })
+
+  return {
+    columns: [
+      { key: 'description', label: 'DESCRIPTION' },
+      ...buckets.map((bucket) => ({ key: bucket.key, label: bucket.label, type: 'money' as const })),
+      { key: 'total', label: 'TOTAL', type: 'money' as const },
+    ] satisfies ReportColumn[],
+    rows,
+    summary: {
+      totalExpense: grandTotal,
+      categoryCount: Math.max(rows.length - 1, 0),
+      monthCount: buckets.length,
+    },
+    chart: buckets.map((bucket, index) => ({
+      label: bucket.label,
+      value: totals[bucket.key] ?? 0,
+      color: chartColor(index),
+    })),
+  }
 }
 
 const buildFinanceTransactionReport = async ({ societyId, filters, exportMode }: ReportQueryContext) => {
@@ -918,6 +979,7 @@ const buildNotificationReport = async ({ societyId, filters, exportMode }: Repor
 type ReportPayload = Pick<ReportData, 'columns' | 'rows' | 'summary' | 'chart'>
 
 const buildPayload = async (context: ReportQueryContext): Promise<ReportPayload> => {
+  if (context.filters.reportType === 'expense-summary') return buildExpenseSummaryReport(context)
   if (context.filters.reportType === 'resident-payment-ledger') return buildPaymentLedgerReport(context)
   if (context.filters.reportType === 'collection') return buildCollectionReport(context)
   if (context.filters.reportType === 'defaulter') return buildDefaulterReport(context)
@@ -940,12 +1002,14 @@ export const buildReport = async (context: ReportQueryContext): Promise<ReportDa
   const reconciliation =
     context.filters.reportType === 'collection' || context.filters.reportType === 'defaulter'
       ? await getBillingReconciliation(context.societyId, context.filters.startDate, context.filters.endDate)
-      : await getFinanceReconciliation(context.societyId, context.filters.startDate, context.filters.endDate)
+      : []
   const performanceMs = Math.round(performance.now() - started)
 
   return {
     reportType: context.filters.reportType,
-    title: reportLabels[context.filters.reportType],
+    title: context.filters.reportType === 'expense-summary'
+      ? expenseSummaryTitle(context.filters.startDate, context.filters.endDate)
+      : reportLabels[context.filters.reportType],
     generatedAt: new Date().toISOString(),
     filters: context.filters,
     ...payload,
@@ -968,7 +1032,27 @@ const summaryRows = (summary: ReportData['summary']) =>
     Value: value,
   }))
 
+const generateExpenseSummaryWorkbook = (report: ReportData) => {
+  const workbook = XLSX.utils.book_new()
+  const table = [
+    [report.title],
+    report.columns.map((column) => column.label),
+    ...report.rows.map((row) => report.columns.map((column) => formatCell(column, row[column.key]))),
+  ]
+  const sheet = XLSX.utils.aoa_to_sheet(table)
+  sheet['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: Math.max(report.columns.length - 1, 0) } }]
+  sheet['!cols'] = report.columns.map((column, index) => ({
+    wch: index === 0 ? 42 : column.key === 'total' ? 16 : 14,
+  }))
+  XLSX.utils.book_append_sheet(workbook, sheet, 'Expense Summary')
+  return Buffer.from(XLSX.write(workbook, { bookType: 'xlsx', type: 'buffer' }))
+}
+
 export const generateReportWorkbook = (report: ReportData) => {
+  if (report.reportType === 'expense-summary') {
+    return generateExpenseSummaryWorkbook(report)
+  }
+
   const workbook = XLSX.utils.book_new()
   const rows = report.rows.map((row) =>
     Object.fromEntries(report.columns.map((column) => [column.label, formatCell(column, row[column.key])])),
@@ -997,6 +1081,7 @@ const formatPdfValue = (column: ReportColumn, value: unknown) => {
 
 export const generateReportPdf = async (report: ReportData, societyId?: string) => {
   const society = societyId ? await getSocietyInfo(societyId) : { name: 'AJOWA', code: 'AJOWA', address: '' }
+  const reportStampImage = getSocietyStampImage()
   const tableBody: unknown[][] = [
     report.columns.map((column) => ({ text: column.label, style: 'tableHeader' })),
     ...report.rows.map((row) => report.columns.map((column) => ({ text: formatPdfValue(column, row[column.key]), style: 'tableCell' }))),
@@ -1029,6 +1114,37 @@ export const generateReportPdf = async (report: ReportData, societyId?: string) 
         layout: 'lightHorizontalLines',
       },
       { text: `Rows: ${report.rowCount} | Generated in ${report.performanceMs} ms`, style: 'footerNote' },
+      {
+        columns: [
+          {
+            stack: [
+              ...(reportStampImage
+                ? [
+                    {
+                      image: reportStampImage,
+                      fit: [112, 70],
+                      margin: [0, 0, 0, 4],
+                    },
+                  ]
+                : []),
+              {
+                text: [
+                  `${society.name}\n`,
+                  'Authorised Signatory',
+                ],
+                style: 'signature',
+              },
+            ],
+          },
+          {
+            text: 'This is a system-generated society finance report.',
+            style: 'footerNote',
+            alignment: 'right',
+          },
+        ],
+        columnGap: 16,
+        margin: [0, 16, 0, 0],
+      },
     ],
     styles: {
       brand: { fontSize: 10, color: '#0f766e', bold: true, margin: [0, 0, 0, 4] },
@@ -1038,19 +1154,12 @@ export const generateReportPdf = async (report: ReportData, societyId?: string) 
       tableHeader: { bold: true, fontSize: 8, color: '#ffffff', fillColor: '#2a3f54' },
       tableCell: { fontSize: 7, color: '#2f4050' },
       footerNote: { fontSize: 8, color: '#768390', margin: [0, 12, 0, 0] },
+      signature: { fontSize: 8, color: '#111827', bold: true },
     },
     defaultStyle: { font: 'Roboto' },
   }
 
-  return await new Promise<Buffer>((resolve, reject) => {
-    pdfMake.createPdf(docDefinition).getBuffer((buffer: Buffer) => {
-      try {
-        resolve(Buffer.from(buffer))
-      } catch (error) {
-        reject(error)
-      }
-    })
-  })
+  return await createPdfBuffer(docDefinition)
 }
 
 export const buildReportFilename = (report: ReportData, extension: string) =>

@@ -3,7 +3,9 @@ import type {
   BankAccount,
   BillingPeriod,
   FinanceCategory,
+  FinanceLifecycleStatus,
   FinanceTransaction,
+  FinanceTransactionType,
   SocietyProfile,
 } from '~/types/domain'
 
@@ -28,9 +30,7 @@ type PeriodsResponse = { ok: true; data: { items: BillingPeriod[] } }
 type SocietyResponse = { ok: true; data: SocietyProfile }
 
 const api = useApi()
-const toast = useToast()
-const confirmAction = useAppConfirm()
-const { reasonDialog, requestReason, acceptReason, cancelReason } = useAppReasonDialog()
+const route = useRoute()
 const { filters, query, resetFilters, applyQuickFilter } =
   useFinanceTransactionFilters()
 const { formatMoney } = useFinanceFormatters()
@@ -39,6 +39,59 @@ const page = ref(1)
 const pageSize = ref(20)
 const sortBy = ref('transactionDate')
 const sortDirection = ref<'asc' | 'desc'>('desc')
+
+const transactionTypeValues: FinanceTransactionType[] = ['INCOME', 'EXPENSE']
+const statusValues: FinanceLifecycleStatus[] = [
+  'DRAFT',
+  'PENDING_REVIEW',
+  'POSTED',
+  'REJECTED',
+  'RETURNED',
+  'REVERSED',
+  'CANCELLED',
+]
+
+const queryText = (value: unknown) => {
+  const first = Array.isArray(value) ? value[0] : value
+  return typeof first === 'string' ? first : ''
+}
+
+const queryNumber = (value: unknown) => {
+  const text = queryText(value)
+  if (!text) return null
+
+  const number = Number(text)
+  return Number.isFinite(number) ? number : null
+}
+
+const applyRouteFilters = (routeQuery: Record<string, unknown>) => {
+  const transactionType = queryText(routeQuery.transactionType).toUpperCase()
+  const status = queryText(routeQuery.status).toUpperCase()
+  const attachment = queryText(routeQuery.attachment)
+
+  filters.search = queryText(routeQuery.search)
+  filters.transactionType = transactionTypeValues.includes(transactionType as FinanceTransactionType)
+    ? (transactionType as FinanceTransactionType)
+    : ''
+  filters.status = statusValues.includes(status as FinanceLifecycleStatus)
+    ? (status as FinanceLifecycleStatus)
+    : ''
+  filters.categoryId = queryText(routeQuery.categoryId)
+  filters.bankAccountId = queryText(routeQuery.bankAccountId)
+  filters.billingPeriodId = queryText(routeQuery.billingPeriodId)
+  filters.dateFrom = queryText(routeQuery.dateFrom)
+  filters.dateTo = queryText(routeQuery.dateTo)
+  filters.minAmount = queryNumber(routeQuery.minAmount)
+  filters.maxAmount = queryNumber(routeQuery.maxAmount)
+  filters.counterparty = queryText(routeQuery.counterparty)
+  filters.attachment =
+    attachment === 'present' || attachment === 'missing' ? attachment : ''
+  filters.mode = queryText(routeQuery.mode)
+  filters.voucherNumber = queryText(routeQuery.voucherNumber)
+  filters.highValueOnly = queryText(routeQuery.highValueOnly) === 'true'
+}
+
+applyRouteFilters(route.query)
 
 const { data: categoriesData } = await useAsyncData(
   'finance-transactions-categories',
@@ -81,7 +134,6 @@ const loadTransactions = () =>
 const {
   data: transactionsData,
   pending,
-  refresh,
 } = await useAsyncData('finance-transactions-list', loadTransactions, {
   watch: [query, page, pageSize, sortBy, sortDirection, highValueThreshold],
 })
@@ -96,9 +148,7 @@ const kpis = computed(() => ({
   expense: transactions.value
     .filter((item) => item.transactionType === 'EXPENSE')
     .reduce((sum, item) => sum + item.amount, 0),
-  pending: transactions.value.filter((item) =>
-    ['DRAFT', 'PENDING_REVIEW', 'RETURNED'].includes(item.status),
-  ).length,
+  entryCount: transactions.value.length,
   missingAttachments: transactions.value.filter(
     (item) => item.attachmentRequired && !item.hasAttachments,
   ).length,
@@ -107,6 +157,14 @@ const kpis = computed(() => ({
 watch(query, () => {
   page.value = 1
 })
+
+watch(
+  () => route.query,
+  (routeQuery) => {
+    applyRouteFilters(routeQuery)
+    page.value = 1
+  },
+)
 
 const onPage = (event: { page: number; rows: number }) => {
   page.value = event.page + 1
@@ -120,66 +178,6 @@ const onSort = (event: { sortField?: string; sortOrder?: number }) => {
   sortDirection.value = event.sortOrder === 1 ? 'asc' : 'desc'
 }
 
-const approve = async (transaction: FinanceTransaction) => {
-  const confirmed = await confirmAction({
-    header: 'Approve transaction?',
-    message: `Approve and post ${transaction.title}? This will create journal entries.`,
-    icon: 'pi pi-check-circle',
-    acceptLabel: 'Approve',
-    acceptSeverity: 'success',
-  })
-
-  if (!confirmed) {
-    return
-  }
-
-  await api(`/api/admin/finance/transactions/${transaction.id}/approve`, {
-    method: 'POST',
-  })
-  toast.add({ severity: 'success', summary: 'Posted', life: 10000 })
-  await refresh()
-}
-
-const reject = async (
-  transaction: FinanceTransaction,
-  returnForCorrection = false,
-) => {
-  const reason = await requestReason({
-    header: returnForCorrection ? 'Return transaction?' : 'Reject transaction?',
-    message: returnForCorrection
-      ? `Add a reason for returning ${transaction.title}.`
-      : `Add a reason for rejecting ${transaction.title}.`,
-    acceptLabel: returnForCorrection ? 'Return' : 'Reject',
-    acceptSeverity: returnForCorrection ? 'warn' : 'danger',
-  })
-
-  if (!reason) return
-
-  await api(`/api/admin/finance/transactions/${transaction.id}/reject`, {
-    method: 'POST',
-    body: { reason, returnForCorrection },
-  })
-  toast.add({ severity: 'success', summary: 'Updated', life: 10000 })
-  await refresh()
-}
-
-const reverse = async (transaction: FinanceTransaction) => {
-  const reason = await requestReason({
-    header: 'Reverse transaction?',
-    message: `Add a reason for reversing ${transaction.title}. A counter-entry journal will be posted.`,
-    acceptLabel: 'Reverse',
-    acceptSeverity: 'danger',
-  })
-
-  if (!reason) return
-
-  await api(`/api/admin/finance/transactions/${transaction.id}/reverse`, {
-    method: 'POST',
-    body: { reason },
-  })
-  toast.add({ severity: 'success', summary: 'Reversed', life: 10000 })
-  await refresh()
-}
 </script>
 
 <template>
@@ -196,9 +194,9 @@ const reverse = async (transaction: FinanceTransaction) => {
         <p>Visible expenses in the current result set.</p>
       </section>
       <section class="surface-card">
-        <p class="eyebrow">Review</p>
-        <h3>{{ kpis.pending }}</h3>
-        <p>Draft, returned, or pending entries.</p>
+        <p class="eyebrow">Entries</p>
+        <h3>{{ kpis.entryCount }}</h3>
+        <p>Visible entries in the current result set.</p>
       </section>
       <section class="surface-card">
         <p class="eyebrow">Missing files</p>
@@ -211,7 +209,7 @@ const reverse = async (transaction: FinanceTransaction) => {
       <header class="list-page__header">
         <div>
           <h1>Finance transactions</h1>
-          <p>Review income, expenses, attachments, journals, and audit trail.</p>
+          <p>Review income, expenses, attachments, and audit trail.</p>
         </div>
         <div class="list-page__exports">
           <Button
@@ -248,23 +246,7 @@ const reverse = async (transaction: FinanceTransaction) => {
         :total-records="totalRecords"
         @page="onPage"
         @sort="onSort"
-        @approve="approve"
-        @return-for-correction="reject($event, true)"
-        @reject="reject"
-        @reverse="reverse"
       />
     </section>
-
-    <AppReasonDialog
-      v-model:visible="reasonDialog.visible"
-      v-model:reason="reasonDialog.reason"
-      :header="reasonDialog.header"
-      :message="reasonDialog.message"
-      :accept-label="reasonDialog.acceptLabel"
-      :accept-severity="reasonDialog.acceptSeverity"
-      :placeholder="reasonDialog.placeholder"
-      @accept="acceptReason"
-      @cancel="cancelReason"
-    />
   </div>
 </template>

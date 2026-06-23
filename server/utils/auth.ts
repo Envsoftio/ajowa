@@ -835,7 +835,7 @@ export const sendVerificationEmailToUser = async (user: {
   )
   const actionUrl = buildAppUrl('/verify-email', { token })
 
-  await sendTemplatedEmail({
+  return sendTemplatedEmail({
     to: user.email,
     subject: 'Verify your AJOWA email',
     template: 'verify-email',

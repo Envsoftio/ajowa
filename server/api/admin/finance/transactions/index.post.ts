@@ -29,7 +29,7 @@ export default defineEventHandler(async (event) => {
       actorUserId: authMe.user.id,
       actorAuthUserId: authMe.authUser.id,
       action: 'CREATED',
-      eventKey: result.status === 'POSTED' ? 'finance.transactions.posted' : 'finance.transactions.created',
+      eventKey: 'finance.transactions.created',
       afterState: { ...input, status: result.status } as unknown as Record<string, unknown>,
       relatedEntities: [{ entityTable: 'transactions', entityId: result.id, entityLabel: input.title }],
     })

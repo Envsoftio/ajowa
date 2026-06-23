@@ -3,8 +3,9 @@ import { z } from 'zod'
 import { createApiSuccess, readJsonBody, validateInput } from '~/server/utils/api'
 import { createInviteToken, requireRole } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
-import { buildAppUrl, sendTemplatedEmail } from '~/server/utils/email'
+import { buildAppUrl } from '~/server/utils/email'
 import { AppError } from '~/server/utils/errors'
+import { sendInviteEmailSafely, type PendingInviteEmail } from '~/server/utils/invite-email'
 import { readUuidParam, writeMasterAudit } from '~/server/utils/master-data'
 
 const actionSchema = z.object({
@@ -26,6 +27,8 @@ export default defineEventHandler(async (event) => {
   const body = validateInput(actionSchema, await readJsonBody(event))
   const pool = getDatabasePool()
   const client = await pool.connect()
+  let committed = false
+  let pendingInviteEmail: PendingInviteEmail | null = null
 
   try {
     await client.query('begin')
@@ -142,6 +145,7 @@ export default defineEventHandler(async (event) => {
       }
 
       const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+      const inviteUrl = buildAppUrl('/accept-invite', { token })
       await client.query(
         `
           insert into auth_invites (
@@ -155,9 +159,10 @@ export default defineEventHandler(async (event) => {
             flat_labels,
             token_hash,
             invited_by_user_id,
-            expires_at
+            expires_at,
+            accepted_by_auth_user_id
           )
-          values ($1, $2, $3, $4, $5, $6, $7::uuid[], $8::text[], $9, $10, $11)
+          values ($1, $2, $3, $4, $5, $6, $7::uuid[], $8::text[], $9, $10, $11, $12)
         `,
         [
           authMe.user.societyId,
@@ -171,23 +176,26 @@ export default defineEventHandler(async (event) => {
           tokenHash,
           authMe.user.id,
           expiresAt.toISOString(),
+          loginIdentity.authUserId,
         ],
       )
 
-      await sendTemplatedEmail({
+      pendingInviteEmail = {
         to: loginIdentity.email,
         subject: 'Your AJOWA invite is ready',
         template: 'invite-onboarding',
+        inviteUrl,
+        expiresAt: expiresAt.toISOString(),
         context: {
           title: 'Accept your AJOWA invite',
           name: resident.full_name,
-          actionUrl: buildAppUrl('/accept-invite', { token }),
+          actionUrl: inviteUrl,
           expiresLabel: expiresAt.toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }),
           inviterName: authMe.user.fullName,
           roleLabel: resident.role.replace('_', ' ').toLowerCase(),
           details: flatResult.rows.length > 0 ? `Assigned flats: ${flatResult.rows.map((item) => item.label).join(', ')}.` : 'Finish onboarding to activate access.',
         },
-      })
+      }
     }
 
     await writeMasterAudit({
@@ -203,9 +211,29 @@ export default defineEventHandler(async (event) => {
     })
 
     await client.query('commit')
-    return createApiSuccess(event, { id, action: body.action })
+    committed = true
+
+    const emailDelivery = pendingInviteEmail
+      ? await sendInviteEmailSafely(event, pendingInviteEmail)
+      : null
+
+    return createApiSuccess(event, {
+      id,
+      action: body.action,
+      ...(pendingInviteEmail
+        ? {
+            invite: {
+              inviteUrl: pendingInviteEmail.inviteUrl,
+              expiresAt: pendingInviteEmail.expiresAt,
+              emailDelivery,
+            },
+          }
+        : {}),
+    })
   } catch (error) {
-    await client.query('rollback')
+    if (!committed) {
+      await client.query('rollback')
+    }
     throw error
   } finally {
     client.release()

@@ -36,9 +36,9 @@ const isHighValue = computed(
         <dt>Account</dt>
         <dd>{{ accountName ?? '-' }}</dd>
       </div>
-      <div>
+      <div v-if="billingPeriodLabel">
         <dt>Period</dt>
-        <dd>{{ billingPeriodLabel ?? 'Not allocated' }}</dd>
+        <dd>{{ billingPeriodLabel }}</dd>
       </div>
       <div>
         <dt>Attachment</dt>

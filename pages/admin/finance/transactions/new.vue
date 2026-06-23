@@ -134,14 +134,14 @@ const refresh = async () => {
 
     <section v-else-if="success" class="surface-card finance-success">
       <p class="eyebrow">Saved</p>
-      <h1>Transaction recorded</h1>
+      <h1>Entry saved</h1>
       <dl>
         <div>
-          <dt>Transaction</dt>
+          <dt>Entry</dt>
           <dd>{{ success.id }}</dd>
         </div>
         <div>
-          <dt>Journal status</dt>
+          <dt>Status</dt>
           <dd><StatusTag :status="success.status" /></dd>
         </div>
         <div>

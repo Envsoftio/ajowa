@@ -91,6 +91,8 @@ export const transactionSchema = z.object({
   submitForPosting: z.boolean().default(true),
 })
 
+export const transactionUpdateSchema = transactionSchema.omit({ submitForPosting: true })
+
 export const financeDecisionSchema = z.object({
   reason: z.string().trim().min(3).max(500),
 })
@@ -111,6 +113,7 @@ export type BankAccountInput = z.infer<typeof bankAccountSchema>
 export type BankAccountUpdateInput = z.infer<typeof bankAccountUpdateSchema>
 export type CategoryInput = z.infer<typeof categorySchema>
 export type TransactionInput = z.infer<typeof transactionSchema>
+export type TransactionUpdateInput = z.infer<typeof transactionUpdateSchema>
 
 export type AccountHeadRow = {
   id: string
@@ -349,17 +352,6 @@ export const mapReconciliationAccountRow = (row: ReconciliationAccountRow): Reco
 
 const roundMoney = (value: number) => Math.round(value * 100) / 100
 
-const getFinancePolicy = async (client: PoolClient, societyId: string) => {
-  const result = await client.query<{ settings: Record<string, unknown> }>(
-    'select settings from society_profile where id = $1 limit 1',
-    [societyId],
-  )
-  const settings = result.rows[0]?.settings ?? {}
-  return {
-    financeApprovalRequired: Boolean(settings.financeApprovalRequired ?? true),
-  }
-}
-
 export const nextJournalVoucherNumber = async (client: PoolClient, dateValue: string) => {
   const year = new Date(`${dateValue}T00:00:00.000Z`).getUTCFullYear()
   const result = await client.query<{ value: string }>(
@@ -394,6 +386,61 @@ const assertNoClosedPeriodOverlap = async (
       message: 'This date range overlaps an already closed financial period.',
     })
   }
+}
+
+export const validateFinanceTransactionContext = async (
+  client: PoolClient,
+  societyId: string,
+  input: { transactionType: 'INCOME' | 'EXPENSE'; categoryId: string; bankAccountId: string },
+) => {
+  const result = await client.query<{
+    category_id: string
+    category_name: string
+    category_type: 'INCOME' | 'EXPENSE'
+    category_active: boolean
+    bank_account_id: string
+    bank_account_name: string
+    bank_active: boolean
+  }>(
+    `
+      select
+        tc.id as category_id,
+        tc.name as category_name,
+        tc.transaction_type::text as category_type,
+        tc.is_active as category_active,
+        ba.id as bank_account_id,
+        ba.account_name as bank_account_name,
+        ba.is_active as bank_active
+      from transaction_categories tc
+      cross join society_bank_accounts ba
+      where tc.id = $2
+        and (tc.society_id = $1 or tc.society_id is null)
+        and ba.id = $3
+        and ba.society_id = $1
+      limit 1
+    `,
+    [societyId, input.categoryId, input.bankAccountId],
+  )
+  const row = result.rows[0]
+
+  if (!row) {
+    throw new AppError({ code: 'NOT_FOUND', statusCode: 404, message: 'Category or bank account was not found.' })
+  }
+  if (row.category_type !== input.transactionType) {
+    throw new AppError({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message: `${row.category_type.toLowerCase()} categories cannot be used for ${input.transactionType.toLowerCase()} transactions.`,
+    })
+  }
+  if (!row.category_active) {
+    throw new AppError({ code: 'CONFLICT', statusCode: 409, message: 'Inactive categories cannot be used.' })
+  }
+  if (!row.bank_active) {
+    throw new AppError({ code: 'CONFLICT', statusCode: 409, message: 'Inactive bank or cash accounts cannot be used.' })
+  }
+
+  return row
 }
 
 const loadPostingContext = async (
@@ -579,14 +626,8 @@ export const createFinanceTransaction = async (
     actorRole: string
   },
 ) => {
-  await loadPostingContext(client, input.societyId, input)
-  const policy = await getFinancePolicy(client, input.societyId)
-  const submitForPosting = input.submitForPosting ?? true
-  const status = !submitForPosting
-    ? 'DRAFT'
-    : policy.financeApprovalRequired && input.actorRole === 'MANAGER'
-      ? 'PENDING_REVIEW'
-      : 'POSTED'
+  await validateFinanceTransactionContext(client, input.societyId, input)
+  const status = input.submitForPosting === false ? 'DRAFT' : 'POSTED'
 
   const result = await client.query<{ id: string }>(
     `
@@ -603,9 +644,29 @@ export const createFinanceTransaction = async (
         transaction_date,
         amount,
         status,
-        created_by_user_id
+        created_by_user_id,
+        approved_by_user_id,
+        approved_at,
+        posted_at
       )
-      values ($1, $2::transaction_type, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::finance_lifecycle_status, $13)
+      values (
+        $1,
+        $2::transaction_type,
+        $3,
+        $4,
+        $5,
+        $6,
+        $7,
+        $8,
+        $9,
+        $10,
+        $11,
+        $12::finance_lifecycle_status,
+        $13,
+        case when $12::finance_lifecycle_status = 'POSTED' then $13 else null end,
+        case when $12::finance_lifecycle_status = 'POSTED' then now() else null end,
+        case when $12::finance_lifecycle_status = 'POSTED' then now() else null end
+      )
       returning id
     `,
     [
@@ -627,24 +688,6 @@ export const createFinanceTransaction = async (
   const transactionId = result.rows[0]?.id
   if (!transactionId) {
     throw new AppError({ code: 'INTERNAL_ERROR', statusCode: 500, message: 'Transaction creation failed.' })
-  }
-
-  if (status === 'POSTED') {
-    const postInput: Parameters<typeof postJournalForTransaction>[1] = {
-      societyId: input.societyId,
-      transactionId,
-      transactionType: input.transactionType,
-      categoryId: input.categoryId,
-      bankAccountId: input.bankAccountId,
-      transactionDate: input.transactionDate,
-      amount: input.amount,
-      description: input.description ?? input.title,
-      postedByUserId: input.actorUserId,
-    }
-    if (input.billingPeriodId !== undefined) {
-      postInput.billingPeriodId = input.billingPeriodId
-    }
-    await postJournalForTransaction(client, postInput)
   }
 
   return { id: transactionId, status }

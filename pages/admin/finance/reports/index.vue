@@ -11,6 +11,7 @@ type ReportColumn = { key: string; label: string; type?: string }
 type ReportResponse = {
   ok: true
   data: {
+    reportType: string
     title: string
     generatedAt: string
     columns: ReportColumn[]
@@ -30,18 +31,11 @@ const api = useApi()
 const { formatMoney, formatDate, formatDateTime } = useFinanceFormatters()
 
 const reportOptions = [
-  { label: 'Resident payment ledger', value: 'resident-payment-ledger', excel: false },
-  { label: 'Collection report', value: 'collection', excel: true },
-  { label: 'Defaulter list', value: 'defaulter', excel: true },
+  { label: 'Expense summary', value: 'expense-summary', excel: true },
   { label: 'Income and expense', value: 'income-expense', excel: true },
-  { label: 'P&L statement', value: 'profit-loss', excel: false },
   { label: 'Category expenses', value: 'category-expense', excel: true },
   { label: 'Vendor expenses', value: 'vendor-expense', excel: true },
   { label: 'Missing attachments', value: 'attachment-missing', excel: true },
-  { label: 'Pending review/rejected', value: 'pending-review', excel: true },
-  { label: 'Gate access log', value: 'gate-access', excel: true },
-  { label: 'Service requests', value: 'service-requests', excel: true },
-  { label: 'Notification campaigns', value: 'notification-campaign', excel: true },
 ]
 const periodOptions = [
   { label: 'Monthly', value: 'MONTHLY' },
@@ -52,12 +46,14 @@ const periodOptions = [
 ]
 
 const today = new Date()
-const firstDay = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10)
-const lastDay = new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().slice(0, 10)
+const toInputDate = (date: Date) =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+const firstDay = toInputDate(new Date(today.getFullYear(), today.getMonth() - 11, 1))
+const lastDay = toInputDate(new Date(today.getFullYear(), today.getMonth() + 1, 0))
 
 const filters = reactive({
-  reportType: 'income-expense',
-  periodMode: 'MONTHLY',
+  reportType: 'expense-summary',
+  periodMode: 'YEARLY',
   startDate: firstDay,
   endDate: lastDay,
   flatId: null as string | null,
@@ -96,6 +92,76 @@ const owners = computed(() => ownersData.value?.data.items ?? [])
 const flatOptions = computed(() => flats.value.map((flat) => ({ label: `${flat.blockName} ${flat.flatNumber}`, value: flat.id })))
 const ownerOptions = computed(() => owners.value.map((owner) => ({ label: owner.fullName, value: owner.id })))
 const activeReport = computed(() => reportOptions.find((item) => item.value === filters.reportType))
+const isExpenseSummary = computed(() => report.value?.reportType === 'expense-summary')
+
+const summaryLabel = (key: string) =>
+  key.replace(/([A-Z])/g, ' $1').replace(/^./, (letter) => letter.toUpperCase())
+
+const columnLetter = (index: number) => {
+  let value = ''
+  let cursor = index + 1
+  while (cursor > 0) {
+    const remainder = (cursor - 1) % 26
+    value = String.fromCharCode(65 + remainder) + value
+    cursor = Math.floor((cursor - 1) / 26)
+  }
+  return value
+}
+
+const toUtcDate = (year: number, month: number, day: number) =>
+  new Date(Date.UTC(year, month, day)).toISOString().slice(0, 10)
+
+const clampToReportRange = (range: { dateFrom: string; dateTo: string }) => ({
+  dateFrom: range.dateFrom < filters.startDate ? filters.startDate : range.dateFrom,
+  dateTo: range.dateTo > filters.endDate ? filters.endDate : range.dateTo,
+})
+
+const monthRangeFromColumn = (columnKey: string) => {
+  const match = /^m(\d{4})_(\d{2})$/.exec(columnKey)
+  if (!match) return null
+
+  const year = Number(match[1])
+  const monthIndex = Number(match[2]) - 1
+  return clampToReportRange({
+    dateFrom: toUtcDate(year, monthIndex, 1),
+    dateTo: toUtcDate(year, monthIndex + 1, 0),
+  })
+}
+
+const expenseEntryLink = (row: Record<string, unknown>, column: ReportColumn) => {
+  if (!isExpenseSummary.value) return null
+
+  const valueForLink = column.key === 'description' ? row.total : row[column.key]
+  if (Number(valueForLink ?? 0) <= 0) return null
+
+  const range =
+    column.key === 'total' || column.key === 'description'
+      ? { dateFrom: filters.startDate, dateTo: filters.endDate }
+      : monthRangeFromColumn(column.key)
+  if (!range) return null
+
+  const queryParams: Record<string, string> = {
+    transactionType: 'EXPENSE',
+    status: 'POSTED',
+    dateFrom: range.dateFrom,
+    dateTo: range.dateTo,
+    pageSize: '100',
+  }
+  if (typeof row.categoryId === 'string') {
+    queryParams.categoryId = row.categoryId
+  }
+  if (filters.search) {
+    queryParams.search = filters.search
+  }
+
+  return {
+    path: '/admin/finance/transactions',
+    query: queryParams,
+  }
+}
+
+const expenseEntryTarget = (row: Record<string, unknown>, column: ReportColumn) =>
+  expenseEntryLink(row, column) ?? '/admin/finance/transactions'
 
 const formatSummaryValue = (value: number | string) =>
   typeof value === 'number' ? formatMoney(value) : value
@@ -118,22 +184,30 @@ const exportUrl = (format: 'pdf' | 'xlsx') => {
 </script>
 
 <template>
-  <div class="landing-page">
-    <div class="surface-grid">
-      <section v-for="[key, value] in summaryEntries" :key="key" class="surface-card">
-        <p class="eyebrow">{{ key.replace(/([A-Z])/g, ' $1') }}</p>
-        <h3>{{ formatSummaryValue(value) }}</h3>
-        <p>{{ report?.title }}</p>
-      </section>
-    </div>
-
-    <section class="list-page surface-card">
-      <header class="list-page__header">
+  <div class="landing-page report-page">
+    <section class="report-workbook">
+      <header class="list-page__header report-workbook__header">
         <div>
           <h1>Finance reports</h1>
           <p>{{ report?.title ?? 'Loading report' }} · {{ report?.performanceMs ?? 0 }} ms</p>
         </div>
         <div class="list-page__exports">
+          <Button
+            as="router-link"
+            to="/admin/finance/transactions/new?type=expense"
+            label="Add expense"
+            icon="pi pi-minus-circle"
+            severity="secondary"
+            outlined
+          />
+          <Button
+            as="router-link"
+            to="/admin/finance/transactions/new?type=income"
+            label="Add income"
+            icon="pi pi-plus-circle"
+            severity="secondary"
+            outlined
+          />
           <Button as="a" :href="exportUrl('pdf')" label="PDF" icon="pi pi-file-pdf" target="_blank" />
           <Button
             as="a"
@@ -149,7 +223,7 @@ const exportUrl = (format: 'pdf' | 'xlsx') => {
         </div>
       </header>
 
-      <div class="list-page__toolbar">
+      <div class="list-page__toolbar report-workbook__ribbon">
         <label>
           <span>Report</span>
           <Select v-model="filters.reportType" :options="reportOptions" option-label="label" option-value="value" />
@@ -181,7 +255,20 @@ const exportUrl = (format: 'pdf' | 'xlsx') => {
         <Button icon="pi pi-refresh" severity="secondary" outlined title="Refresh" @click="() => refresh()" />
       </div>
 
-      <div class="report-chart">
+      <div class="report-workbook__metrics">
+        <div v-for="[key, value] in summaryEntries" :key="key" class="report-workbook__metric">
+          <span>{{ summaryLabel(key) }}</span>
+          <strong>{{ formatSummaryValue(value) }}</strong>
+        </div>
+      </div>
+
+      <div class="report-workbook__formula">
+        <span class="report-workbook__name-box">A1</span>
+        <span class="report-workbook__fx">fx</span>
+        <span>{{ report?.title ?? '' }}</span>
+      </div>
+
+      <div class="report-chart report-workbook__chart">
         <div v-for="item in report?.chart ?? []" :key="item.label" class="report-chart__row">
           <span>{{ item.label }}</span>
           <div class="report-chart__track">
@@ -191,7 +278,64 @@ const exportUrl = (format: 'pdf' | 'xlsx') => {
         </div>
       </div>
 
-      <AppDataTable :value="rows" :loading="pending" responsive-layout="scroll" class="list-page__table" scrollable scroll-height="32rem">
+      <div v-if="isExpenseSummary" class="expense-summary-table">
+        <table>
+          <thead>
+            <tr class="expense-summary-table__letters">
+              <th class="expense-summary-table__corner" />
+              <th
+                v-for="(column, columnIndex) in columns"
+                :key="`letter-${column.key}`"
+                :class="{ 'expense-summary-table__first-data-column': columnIndex === 0 }"
+              >
+                {{ columnLetter(columnIndex) }}
+              </th>
+            </tr>
+            <tr class="expense-summary-table__headers">
+              <th class="expense-summary-table__row-header">1</th>
+              <th
+                v-for="(column, columnIndex) in columns"
+                :key="column.key"
+                :class="{ 'expense-summary-table__first-data-column': columnIndex === 0 }"
+              >
+                {{ column.label }}
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="(row, index) in rows"
+              :key="String(row.description ?? index)"
+              :class="{ 'expense-summary-table__total': row.description === 'TOTAL AMOUNT' }"
+            >
+              <th class="expense-summary-table__row-header" scope="row">
+                {{ index + 2 }}
+              </th>
+              <td
+                v-for="(column, columnIndex) in columns"
+                :key="column.key"
+                :class="{
+                  'expense-summary-table__amount': column.type === 'money',
+                  'expense-summary-table__first-data-column': columnIndex === 0,
+                }"
+              >
+                <NuxtLink
+                  v-if="expenseEntryLink(row, column)"
+                  :to="expenseEntryTarget(row, column)"
+                  class="expense-summary-table__link"
+                >
+                  {{ formatCell(column, row[column.key]) }}
+                </NuxtLink>
+                <span v-else>
+                  {{ formatCell(column, row[column.key]) }}
+                </span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <AppDataTable v-else :value="rows" :loading="pending" responsive-layout="scroll" class="list-page__table" scrollable scroll-height="32rem">
         <Column v-for="column in columns" :key="column.key" :field="column.key" :header="column.label">
           <template #body="{ data: row }">
             {{ formatCell(column, row[column.key]) }}
@@ -199,7 +343,7 @@ const exportUrl = (format: 'pdf' | 'xlsx') => {
         </Column>
       </AppDataTable>
 
-      <AppDataTable :value="report?.reconciliation ?? []" responsive-layout="scroll">
+      <AppDataTable v-if="(report?.reconciliation ?? []).length > 0" :value="report?.reconciliation ?? []" responsive-layout="scroll">
         <Column field="label" header="Reconciliation" />
         <Column field="expected" header="Expected">
           <template #body="{ data: row }">{{ formatMoney(row.expected) }}</template>

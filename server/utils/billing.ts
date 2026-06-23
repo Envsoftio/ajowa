@@ -1,39 +1,10 @@
-import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
-import pdfMake from 'pdfmake/build/pdfmake.js'
-import pdfFonts from 'pdfmake/build/vfs_fonts.js'
 import * as QRCode from 'qrcode'
 import { z } from 'zod'
 import type { ChargeBreakdownItem } from '~/types/domain'
 import { AppError } from './errors'
 import { getDatabasePool } from './database'
 import { normalizeSocietySettings } from './master-data'
-
-pdfMake.vfs = pdfFonts?.pdfMake?.vfs ?? pdfFonts?.vfs
-
-const invoiceStampAssetPath = 'images/ajowa-stamp-signature.jpeg'
-let cachedInvoiceStampImage: string | null | undefined
-
-const getInvoiceStampImage = () => {
-  if (cachedInvoiceStampImage !== undefined) return cachedInvoiceStampImage
-
-  const candidates = [
-    join(process.cwd(), 'public', invoiceStampAssetPath),
-    join(process.cwd(), '.output', 'public', invoiceStampAssetPath),
-    join(process.cwd(), '..', 'public', invoiceStampAssetPath),
-  ]
-  const stampPath = candidates.find((candidate) => existsSync(candidate))
-
-  try {
-    cachedInvoiceStampImage = stampPath
-      ? `data:image/jpeg;base64,${readFileSync(stampPath).toString('base64')}`
-      : null
-  } catch {
-    cachedInvoiceStampImage = null
-  }
-
-  return cachedInvoiceStampImage
-}
+import { createPdfBuffer, getSocietyStampImage } from './pdf'
 
 export const chargeBreakdownItemSchema = z.object({
   label: z.string().trim().min(1).max(200),
@@ -860,7 +831,7 @@ export const generateMaintenanceBillPdf = async (
   const hasSeparateDgBill = dgCharges.length > 0
   const maintenanceAmount = sumBillCharges(invoiceCharges)
   const dgAmount = sumBillCharges(dgCharges)
-  const invoiceStampImage = getInvoiceStampImage()
+  const invoiceStampImage = getSocietyStampImage()
 
   const buildChargeRows = (charges: ChargeBreakdownItem[]) => charges.map((charge) => {
     const isAreaRate = charge.calculationMethod === 'AREA_RATE'
@@ -1416,15 +1387,7 @@ export const generateMaintenanceBillPdf = async (
     defaultStyle: { font: 'Roboto' },
   }
 
-  const buffer = await new Promise<Buffer>((resolve, reject) => {
-    pdfMake.createPdf(docDefinition).getBuffer((pdfBuffer: Buffer) => {
-      try {
-        resolve(Buffer.from(pdfBuffer))
-      } catch (error) {
-        reject(error)
-      }
-    })
-  })
+  const buffer = await createPdfBuffer(docDefinition)
 
   return {
     buffer,

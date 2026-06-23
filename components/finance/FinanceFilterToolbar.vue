@@ -31,11 +31,7 @@ const typeOptions = [
 const statusOptions = [
   { label: 'All statuses', value: '' },
   { label: 'Draft', value: 'DRAFT' },
-  { label: 'Pending review', value: 'PENDING_REVIEW' },
-  { label: 'Posted', value: 'POSTED' },
-  { label: 'Returned', value: 'RETURNED' },
-  { label: 'Rejected', value: 'REJECTED' },
-  { label: 'Reversed', value: 'REVERSED' },
+  { label: 'Recorded', value: 'POSTED' },
 ]
 
 const attachmentOptions = [
@@ -70,7 +66,6 @@ const categoryOptions = computed(() => [
       <Button label="Expenses" severity="secondary" outlined @click="emit('quick', 'expenses')" />
       <Button label="Income" severity="secondary" outlined @click="emit('quick', 'income')" />
       <Button label="This Month" severity="secondary" outlined @click="emit('quick', 'this-month')" />
-      <Button label="Pending Review" severity="secondary" outlined @click="emit('quick', 'pending')" />
       <Button label="Missing Attachment" severity="secondary" outlined @click="emit('quick', 'missing')" />
       <Button
         label="High Value"
@@ -130,22 +125,6 @@ const categoryOptions = computed(() => [
               ...accounts.map((account) => ({
                 label: account.accountName,
                 value: account.id,
-              })),
-            ]"
-            option-label="label"
-            option-value="value"
-            filter
-          />
-        </label>
-        <label>
-          <span class="field-label">Period</span>
-          <Select
-            v-model="filters.billingPeriodId"
-            :options="[
-              { label: 'All periods', value: '' },
-              ...periods.map((period) => ({
-                label: period.label,
-                value: period.id,
               })),
             ]"
             option-label="label"

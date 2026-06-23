@@ -1,6 +1,4 @@
 import { createHmac } from 'node:crypto'
-import pdfMake from 'pdfmake/build/pdfmake.js'
-import pdfFonts from 'pdfmake/build/vfs_fonts.js'
 import type { PoolClient } from 'pg'
 import { z } from 'zod'
 import { AppError } from './errors'
@@ -8,10 +6,9 @@ import { getDatabasePool, queryRows } from './database'
 import { computeDueAmounts, todayDate } from './billing'
 import { getValidatedRuntimeConfig } from './env'
 import { enqueueNotificationForUsers, resolveNotificationAudience } from './notifications'
+import { createPdfBuffer, getSocietyStampImage } from './pdf'
 import { recomputeUserAccess } from './qr-access'
 import { uploadPrivateFile } from './storage'
-
-pdfMake.vfs = pdfFonts?.pdfMake?.vfs ?? pdfFonts?.vfs
 
 export const allocationModeSchema = z.enum(['OLDEST_UNPAID_FIRST', 'SELECTED_PERIODS', 'TENURE_PACK'])
 
@@ -847,6 +844,7 @@ export const generatePaymentReceiptPdf = async (
 
   const reference = payment.utr_reference || payment.bank_reference || '-'
   const flatLabel = [payment.block_name, payment.flat_number].filter(Boolean).join(' ') || '-'
+  const receiptStampImage = getSocietyStampImage()
   const allocationBody: unknown[][] = [
     [
       { text: 'Period', style: 'tableHeader' },
@@ -933,8 +931,35 @@ export const generatePaymentReceiptPdf = async (
         layout: 'lightHorizontalLines',
       },
       {
-        text: 'This is a system-generated receipt for society maintenance records.',
-        style: 'footerNote',
+        columns: [
+          {
+            stack: [
+              ...(receiptStampImage
+                ? [
+                    {
+                      image: receiptStampImage,
+                      fit: [124, 76],
+                      margin: [0, 0, 0, 4],
+                    },
+                  ]
+                : []),
+              {
+                text: [
+                  `${payment.society_name}\n`,
+                  'Authorised Signatory',
+                ],
+                style: 'signature',
+              },
+            ],
+          },
+          {
+            text: 'This is a system-generated receipt for society maintenance records.',
+            style: 'footerNote',
+            alignment: 'right',
+          },
+        ],
+        columnGap: 16,
+        margin: [0, 20, 0, 0],
       },
     ],
     styles: {
@@ -948,20 +973,13 @@ export const generatePaymentReceiptPdf = async (
       tableHeader: { bold: true, fontSize: 8, color: '#ffffff', fillColor: '#2a3f54' },
       tableCell: { fontSize: 8, color: '#2f4050' },
       tableCellRight: { fontSize: 8, color: '#2f4050', alignment: 'right' },
-      footerNote: { fontSize: 8, color: '#6b7280', margin: [0, 16, 0, 0] },
+      signature: { fontSize: 8, color: '#111827', bold: true },
+      footerNote: { fontSize: 8, color: '#6b7280', italics: true },
     },
     defaultStyle: { font: 'Roboto' },
   }
 
-  const buffer = await new Promise<Buffer>((resolve, reject) => {
-    pdfMake.createPdf(docDefinition).getBuffer((pdfBuffer: Buffer) => {
-      try {
-        resolve(Buffer.from(pdfBuffer))
-      } catch (error) {
-        reject(error)
-      }
-    })
-  })
+  const buffer = await createPdfBuffer(docDefinition)
 
   return {
     buffer,

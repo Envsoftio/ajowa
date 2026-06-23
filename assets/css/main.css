@@ -1397,6 +1397,282 @@ a {
   min-width: 0.2rem;
 }
 
+.report-page {
+  gap: 0.85rem;
+}
+
+.report-workbook {
+  display: grid;
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid #c8d2dc;
+  background: #ffffff;
+  box-shadow: var(--shadow-sm);
+}
+
+.report-workbook__header {
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid #c8d2dc;
+  background: #f7f9fb;
+}
+
+.report-workbook__ribbon {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 10.5rem), 1fr));
+  margin: 0;
+  padding: 0.75rem 1rem;
+  border-block: 0 1px;
+  border-color: #d7e0e8;
+  background: #eef4f8;
+}
+
+.report-workbook__metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr));
+  border-bottom: 1px solid #d7e0e8;
+  background: #fbfcfd;
+}
+
+.report-workbook__metric {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+  padding: 0.55rem 0.8rem;
+  border-right: 1px solid #d7e0e8;
+}
+
+.report-workbook__metric span {
+  color: #64748b;
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.report-workbook__metric strong {
+  color: #0f172a;
+  font-size: 1rem;
+  overflow-wrap: anywhere;
+}
+
+.report-workbook__formula {
+  display: grid;
+  grid-template-columns: 4.25rem 2.75rem minmax(0, 1fr);
+  align-items: center;
+  min-height: 2.2rem;
+  border-bottom: 1px solid #c8d2dc;
+  background: #ffffff;
+  color: #334155;
+  font-size: 0.86rem;
+}
+
+.report-workbook__formula > span {
+  min-width: 0;
+  padding: 0.45rem 0.65rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.report-workbook__name-box,
+.report-workbook__fx {
+  border-right: 1px solid #d7e0e8;
+  color: #64748b;
+  font-weight: 700;
+  text-align: center;
+}
+
+.report-workbook__fx {
+  font-style: italic;
+}
+
+.report-workbook__chart {
+  gap: 0;
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid #d7e0e8;
+  background: #fbfcfd;
+}
+
+.report-workbook__chart .report-chart__row {
+  grid-template-columns: minmax(8rem, 0.24fr) minmax(10rem, 1fr) minmax(7rem, auto);
+  padding: 0.35rem 0;
+  border-bottom: 1px solid #edf2f7;
+}
+
+.report-workbook__chart .report-chart__row:last-child {
+  border-bottom: 0;
+}
+
+.report-workbook__chart .report-chart__track {
+  height: 0.55rem;
+  background: #ffffff;
+}
+
+.expense-summary-table {
+  max-height: min(68vh, 46rem);
+  overflow-x: auto;
+  overflow-y: auto;
+  border: 0;
+  background: #ffffff;
+}
+
+.expense-summary-table table {
+  width: 100%;
+  min-width: 64rem;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.expense-summary-table th,
+.expense-summary-table td {
+  height: 2.15rem;
+  padding: 0.38rem 0.55rem;
+  border-right: 1px solid #d7e0e8;
+  border-bottom: 1px solid #d7e0e8;
+  background: #ffffff;
+  color: #0f172a;
+  font-size: 0.84rem;
+  white-space: nowrap;
+}
+
+.expense-summary-table th {
+  font-weight: 800;
+  text-align: right;
+}
+
+.expense-summary-table thead th {
+  position: sticky;
+  z-index: 4;
+  background: #eef3f7;
+  color: #334155;
+}
+
+.expense-summary-table__letters th {
+  top: 0;
+  height: 1.65rem;
+  padding-block: 0.2rem;
+  color: #475569;
+  font-size: 0.72rem;
+  text-align: center;
+}
+
+.expense-summary-table__headers th {
+  top: 1.65rem;
+  background: #f8fafc;
+  color: #0f172a;
+  font-size: 0.76rem;
+  text-align: right;
+}
+
+.expense-summary-table__corner,
+.expense-summary-table__row-header {
+  position: sticky;
+  left: 0;
+  z-index: 5;
+  width: 3rem;
+  min-width: 3rem;
+  max-width: 3rem;
+  background: #eef3f7;
+  color: #64748b;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.expense-summary-table tbody .expense-summary-table__row-header {
+  z-index: 2;
+}
+
+.expense-summary-table__first-data-column {
+  position: sticky;
+  left: 3rem;
+  z-index: 3;
+  min-width: 18rem;
+  max-width: 28rem;
+}
+
+td.expense-summary-table__first-data-column,
+th.expense-summary-table__first-data-column {
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  background: #ffffff;
+}
+
+.expense-summary-table thead .expense-summary-table__first-data-column {
+  background: #f8fafc;
+  z-index: 6;
+}
+
+.expense-summary-table__amount {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.expense-summary-table__link {
+  display: block;
+  color: #1d4ed8;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.expense-summary-table__link:hover {
+  text-decoration: underline;
+}
+
+.expense-summary-table tbody tr:hover td,
+.expense-summary-table tbody tr:hover .expense-summary-table__row-header {
+  background: #f1f7ff;
+}
+
+.expense-summary-table__total td {
+  background: #edf2f7;
+  font-weight: 800;
+}
+
+.expense-summary-table__total .expense-summary-table__row-header,
+.expense-summary-table__total .expense-summary-table__first-data-column {
+  background: #edf2f7;
+}
+
+.app-theme-dark .report-workbook,
+.app-theme-dark .report-workbook__header,
+.app-theme-dark .report-workbook__ribbon,
+.app-theme-dark .report-workbook__metrics,
+.app-theme-dark .report-workbook__formula,
+.app-theme-dark .report-workbook__chart,
+.app-theme-dark .expense-summary-table,
+.app-theme-dark .expense-summary-table th,
+.app-theme-dark .expense-summary-table td {
+  border-color: rgba(148, 163, 184, 0.34);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.app-theme-dark .report-workbook__header,
+.app-theme-dark .report-workbook__ribbon,
+.app-theme-dark .report-workbook__metrics,
+.app-theme-dark .report-workbook__chart,
+.app-theme-dark .expense-summary-table thead th,
+.app-theme-dark .expense-summary-table__corner,
+.app-theme-dark .expense-summary-table__row-header {
+  background: color-mix(in srgb, var(--color-bg) 72%, var(--color-surface));
+}
+
+.app-theme-dark td.expense-summary-table__first-data-column,
+.app-theme-dark th.expense-summary-table__first-data-column {
+  background: var(--color-surface);
+}
+
+.app-theme-dark .expense-summary-table tbody tr:hover td,
+.app-theme-dark .expense-summary-table tbody tr:hover .expense-summary-table__row-header {
+  background: color-mix(in srgb, var(--color-brand-soft) 40%, var(--color-surface));
+}
+
+.app-theme-dark .expense-summary-table__total td,
+.app-theme-dark .expense-summary-table__total .expense-summary-table__row-header,
+.app-theme-dark .expense-summary-table__total .expense-summary-table__first-data-column {
+  background: color-mix(in srgb, var(--color-bg) 60%, var(--color-surface));
+}
+
 .shared-report-panel {
   display: grid;
   gap: 1rem;

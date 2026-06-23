@@ -11,6 +11,7 @@ import type {
 
 const props = defineProps<{
   initialType: FinanceTransactionType
+  transaction?: FinanceTransaction | null
   categories: FinanceCategory[]
   bankAccounts: BankAccount[]
   periods: BillingPeriod[]
@@ -19,9 +20,10 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   created: [payload: { id: string; status: string; attachmentUploaded: boolean }]
+  updated: [payload: { id: string; status: string; attachmentUploaded: boolean }]
 }>()
 
-type CreateResponse = { ok: true; data: { id: string; status: string } }
+type SaveResponse = { ok: true; data: { id: string; status: string } }
 type TransactionsResponse = { ok: true; data: { items: FinanceTransaction[] } }
 
 const api = useApi()
@@ -37,6 +39,7 @@ const paymentModes: Array<{ label: string; value: FinancePaymentMode }> = [
   { label: 'Card', value: 'CARD' },
   { label: 'Other', value: 'OTHER' },
 ]
+const paymentModeValues = paymentModes.map((mode) => mode.value)
 
 const form = reactive({
   transactionType: props.initialType,
@@ -57,9 +60,88 @@ const form = reactive({
   internalNotes: '',
 })
 
+const isEditing = computed(() => Boolean(props.transaction))
 const saving = ref(false)
 const duplicateWarnings = ref<FinanceTransaction[]>([])
 const highValueConfirmed = ref(false)
+let hydratingTransaction = false
+
+const splitDescriptionMetadata = (value: string | null) => {
+  const metadata = {
+    description: '',
+    mode: 'BANK_TRANSFER' as FinancePaymentMode,
+    utrNumber: '',
+    chequeNumber: '',
+    chequeDate: '',
+    tags: '',
+    internalNotes: '',
+  }
+  const notes: string[] = []
+
+  for (const line of (value ?? '').split('\n')) {
+    const trimmed = line.trim()
+    if (!trimmed) continue
+
+    const [label = '', ...rest] = trimmed.split(':')
+    const content = rest.join(':').trim()
+    const normalizedLabel = label.toLowerCase()
+
+    if (normalizedLabel === 'mode' && paymentModeValues.includes(content as FinancePaymentMode)) {
+      metadata.mode = content as FinancePaymentMode
+    } else if (normalizedLabel === 'utr') {
+      metadata.utrNumber = content
+    } else if (normalizedLabel === 'cheque') {
+      metadata.chequeNumber = content
+    } else if (normalizedLabel === 'cheque date') {
+      metadata.chequeDate = content
+    } else if (normalizedLabel === 'tags') {
+      metadata.tags = content
+    } else if (normalizedLabel === 'internal notes') {
+      metadata.internalNotes = content
+    } else {
+      notes.push(line)
+    }
+  }
+
+  metadata.description = notes.join('\n').trim()
+  return metadata
+}
+
+const hydrateTransaction = (transaction: FinanceTransaction) => {
+  const metadata = splitDescriptionMetadata(transaction.description)
+  hydratingTransaction = true
+  form.transactionType = transaction.transactionType
+  form.categoryId = transaction.categoryId
+  form.bankAccountId = transaction.bankAccountId ?? ''
+  form.billingPeriodId = transaction.billingPeriodId
+  form.title = transaction.title
+  form.description = metadata.description
+  form.counterpartyName = transaction.counterpartyName ?? ''
+  form.voucherNumber = transaction.voucherNumber ?? ''
+  form.transactionDate = transaction.transactionDate
+  form.amount = transaction.amount
+  form.mode = metadata.mode
+  form.utrNumber = metadata.utrNumber
+  form.chequeNumber = metadata.chequeNumber
+  form.chequeDate = metadata.chequeDate
+  form.tags = metadata.tags
+  form.internalNotes = metadata.internalNotes
+  clearAttachment()
+  highValueConfirmed.value = false
+  nextTick(() => {
+    hydratingTransaction = false
+  })
+}
+
+watch(
+  () => props.transaction,
+  (transaction) => {
+    if (transaction) {
+      hydrateTransaction(transaction)
+    }
+  },
+  { immediate: true },
+)
 
 const selectedCategory = computed(
   () =>
@@ -84,6 +166,7 @@ const requiresAttachment = computed(
       Boolean(selectedCategory.value?.requiresAttachment)),
 )
 
+const hasExistingAttachment = computed(() => Boolean(props.transaction?.hasAttachments))
 const periodLocked = computed(() => Boolean(selectedPeriod.value?.isLocked))
 
 const duplicateKey = computed(() =>
@@ -133,6 +216,7 @@ const chooseDefaultCategory = () => {
 watch(
   () => form.transactionType,
   () => {
+    if (hydratingTransaction) return
     chooseDefaultCategory()
     chooseSafeDefaultAccount()
     highValueConfirmed.value = false
@@ -161,7 +245,9 @@ watch(duplicateKey, async () => {
       },
     },
   )
-  duplicateWarnings.value = response.data.items
+  duplicateWarnings.value = response.data.items.filter(
+    (item) => item.id !== props.transaction?.id,
+  )
 })
 
 const validate = (submitForPosting: boolean) => {
@@ -194,12 +280,12 @@ const validate = (submitForPosting: boolean) => {
     })
     return false
   }
-  if (requiresAttachment.value && !attachment.value) {
+  if (requiresAttachment.value && !attachment.value && !hasExistingAttachment.value) {
     toast.add({
       severity: submitForPosting ? 'error' : 'warn',
       summary: 'Attachment missing',
       detail: submitForPosting
-        ? 'This expense requires an invoice before posting or review.'
+        ? 'This expense requires an invoice before saving.'
         : 'Draft saved without an invoice will remain visibly incomplete.',
       life: 10000,
     })
@@ -215,7 +301,7 @@ const validate = (submitForPosting: boolean) => {
     toast.add({
       severity: 'warn',
       summary: 'High value confirmation',
-      detail: 'Review the amount and click Post / Submit again to confirm.',
+      detail: 'Review the amount and click Save again to confirm.',
       life: 10000,
     })
     return false
@@ -229,22 +315,28 @@ const submit = async (submitForPosting: boolean) => {
 
   saving.value = true
   try {
-    const response = await api<CreateResponse>('/api/admin/finance/transactions', {
-      method: 'POST',
-      body: {
-        transactionType: form.transactionType,
-        categoryId: form.categoryId,
-        bankAccountId: form.bankAccountId,
-        billingPeriodId: form.billingPeriodId || null,
-        title: form.title.trim(),
-        description: descriptionWithMetadata.value || null,
-        counterpartyName: form.counterpartyName || null,
-        voucherNumber: form.voucherNumber || null,
-        transactionDate: form.transactionDate,
-        amount: form.amount,
-        submitForPosting,
+    const body = {
+      transactionType: form.transactionType,
+      categoryId: form.categoryId,
+      bankAccountId: form.bankAccountId,
+      billingPeriodId: form.billingPeriodId || null,
+      title: form.title.trim(),
+      description: descriptionWithMetadata.value || null,
+      counterpartyName: form.counterpartyName || null,
+      voucherNumber: form.voucherNumber || null,
+      transactionDate: form.transactionDate,
+      amount: form.amount,
+      ...(!isEditing.value ? { submitForPosting } : {}),
+    }
+    const response = await api<SaveResponse>(
+      isEditing.value
+        ? `/api/admin/finance/transactions/${props.transaction?.id}`
+        : '/api/admin/finance/transactions',
+      {
+        method: isEditing.value ? 'PATCH' : 'POST',
+        body,
       },
-    })
+    )
 
     let attachmentUploaded = false
     if (attachment.value) {
@@ -260,11 +352,17 @@ const submit = async (submitForPosting: boolean) => {
       localStorage.setItem(storageKey, form.bankAccountId)
     }
 
-    emit('created', {
+    const payload = {
       id: response.data.id,
       status: response.data.status,
       attachmentUploaded,
-    })
+    }
+
+    if (isEditing.value) {
+      emit('updated', payload)
+    } else {
+      emit('created', payload)
+    }
   } finally {
     saving.value = false
   }
@@ -276,9 +374,17 @@ const submit = async (submitForPosting: boolean) => {
     <section class="surface-card admin-form-section finance-entry-form">
       <div class="admin-form-section__header">
         <div>
-          <p class="eyebrow">Entry</p>
+          <p class="eyebrow">Simple entry</p>
           <h1>
-            {{ form.transactionType === 'EXPENSE' ? 'Add expense' : 'Add income' }}
+            {{
+              isEditing
+                ? form.transactionType === 'EXPENSE'
+                  ? 'Edit expense'
+                  : 'Edit income'
+                : form.transactionType === 'EXPENSE'
+                  ? 'Add expense'
+                  : 'Add income'
+            }}
           </h1>
         </div>
         <TransactionTypeToggle v-model="form.transactionType" />
@@ -346,33 +452,9 @@ const submit = async (submitForPosting: boolean) => {
             option-value="value"
           />
         </label>
-        <label v-if="['BANK_TRANSFER', 'UPI', 'CARD'].includes(form.mode)">
-          <span class="field-label">UTR / bank reference</span>
-          <InputText v-model="form.utrNumber" />
-        </label>
-        <label v-if="form.mode === 'CHEQUE'">
-          <span class="field-label">Cheque number</span>
-          <InputText v-model="form.chequeNumber" />
-        </label>
-        <label v-if="form.mode === 'CHEQUE'">
-          <span class="field-label">Cheque date</span>
-          <InputText v-model="form.chequeDate" type="date" />
-        </label>
-        <label>
-          <span class="field-label">Billing period</span>
-          <BillingPeriodAllocator v-model="form.billingPeriodId" :periods="periods" />
-        </label>
-        <label>
-          <span class="field-label">Tags</span>
-          <InputText v-model="form.tags" placeholder="Comma separated" />
-        </label>
         <label class="admin-form-grid__full">
-          <span class="field-label">Description</span>
+          <span class="field-label">Notes</span>
           <Textarea v-model="form.description" rows="3" auto-resize />
-        </label>
-        <label class="admin-form-grid__full">
-          <span class="field-label">Internal notes</span>
-          <Textarea v-model="form.internalNotes" rows="2" auto-resize />
         </label>
       </div>
     </section>
@@ -389,14 +471,13 @@ const submit = async (submitForPosting: boolean) => {
         :amount="form.amount"
         :category="selectedCategory"
         :account-name="selectedAccount?.accountName ?? null"
-        :billing-period-label="selectedPeriod?.label ?? null"
-        :attachment-present="Boolean(attachment)"
+        :billing-period-label="null"
+        :attachment-present="Boolean(attachment) || hasExistingAttachment"
         :high-value-threshold="policy.highValueThreshold"
       />
       <TransactionActionBar
         form-mode
         :saving="saving"
-        @save-draft="submit(false)"
         @submit-for-review="submit(true)"
       />
     </aside>

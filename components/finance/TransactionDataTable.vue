@@ -11,10 +11,6 @@ defineProps<{
 const emit = defineEmits([
   'page',
   'sort',
-  'approve',
-  'returnForCorrection',
-  'reject',
-  'reverse',
 ])
 
 const { formatMoney, formatDate } = useFinanceFormatters()
@@ -73,8 +69,7 @@ const { formatMoney, formatDate } = useFinanceFormatters()
         />
       </template>
     </Column>
-    <Column field="journalVoucherNumber" header="Journal" />
-    <Column header="Actions" style="width: 230px">
+    <Column header="Actions" style="width: 80px">
       <template #body="{ data: row }">
         <div class="admin-inline-actions" style="gap: 0.15rem">
           <Button
@@ -86,46 +81,6 @@ const { formatMoney, formatDate } = useFinanceFormatters()
             severity="secondary"
             :aria-label="`View ${row.title}`"
             :title="`View ${row.title}`"
-          />
-          <Button
-            v-if="['DRAFT', 'PENDING_REVIEW', 'RETURNED'].includes(row.status)"
-            icon="pi pi-check"
-            severity="success"
-            text
-            rounded
-            :aria-label="`Approve ${row.title}`"
-            :title="`Approve ${row.title}`"
-            @click="emit('approve', row)"
-          />
-          <Button
-            v-if="['DRAFT', 'PENDING_REVIEW', 'RETURNED'].includes(row.status)"
-            icon="pi pi-replay"
-            severity="secondary"
-            text
-            rounded
-            :aria-label="`Return ${row.title}`"
-            :title="`Return ${row.title}`"
-            @click="emit('returnForCorrection', row)"
-          />
-          <Button
-            v-if="['DRAFT', 'PENDING_REVIEW', 'RETURNED'].includes(row.status)"
-            icon="pi pi-times"
-            severity="danger"
-            text
-            rounded
-            :aria-label="`Reject ${row.title}`"
-            :title="`Reject ${row.title}`"
-            @click="emit('reject', row)"
-          />
-          <Button
-            v-if="row.status === 'POSTED'"
-            icon="pi pi-undo"
-            severity="danger"
-            text
-            rounded
-            :aria-label="`Reverse ${row.title}`"
-            :title="`Reverse ${row.title}`"
-            @click="emit('reverse', row)"
           />
         </div>
       </template>

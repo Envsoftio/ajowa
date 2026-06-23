@@ -20,7 +20,7 @@ export const appStatusMap: Record<string, AppStatusConfig> = {
   due: { label: 'Due', severity: 'warn', tone: 'warning' },
   pending: { label: 'Pending', severity: 'warn', tone: 'warning' },
   pending_review: { label: 'Pending Review', severity: 'warn', tone: 'warning' },
-  posted: { label: 'Posted', severity: 'success', tone: 'success' },
+  posted: { label: 'Recorded', severity: 'success', tone: 'success' },
   returned: { label: 'Returned', severity: 'warn', tone: 'warning' },
   rejected: { label: 'Rejected', severity: 'danger', tone: 'danger' },
   reversed: { label: 'Reversed', severity: 'danger', tone: 'danger' },

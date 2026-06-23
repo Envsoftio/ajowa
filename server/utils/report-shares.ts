@@ -23,6 +23,7 @@ type PublicShareState = 'OK' | 'INVALID' | 'EXPIRED' | 'REVOKED' | 'CONSUMED'
 
 export type SharedReportLinkSummary = {
   id: string
+  societyId: string
   ownerName: string
   ownerEmail: string
   flatLabel: string
@@ -103,6 +104,7 @@ const resolveStatus = (row: Pick<ShareRow, 'expires_at' | 'revoked_at' | 'consum
 
 const mapShareRow = (row: ShareRow): SharedReportLinkSummary => ({
   id: row.id,
+  societyId: row.society_id,
   ownerName: row.owner_name,
   ownerEmail: row.owner_email,
   flatLabel: row.flat_label ?? '-',

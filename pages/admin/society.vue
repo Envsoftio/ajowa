@@ -1,5 +1,10 @@
 <script setup lang="ts">
-import type { SocietyProfile } from '~/types/domain'
+import type {
+  AccountHead,
+  BankAccount,
+  BankAccountType,
+  SocietyProfile,
+} from '~/types/domain'
 
 definePageMeta({
   layout: 'admin',
@@ -13,6 +18,28 @@ const toast = useToast()
 const { data, pending, refresh } = await useAsyncData(
   'admin-society-profile',
   () => api<{ ok: true; data: SocietyProfile }>('/api/admin/society/profile'),
+)
+
+type AccountsResponse = { ok: true; data: { items: AccountHead[] } }
+type BankAccountsResponse = { ok: true; data: { items: BankAccount[] } }
+
+const { data: accountData, pending: accountsPending } = await useAsyncData(
+  'admin-society-asset-accounts',
+  () =>
+    api<AccountsResponse>('/api/admin/finance/accounts', {
+      query: {
+        headType: 'ASSET',
+        isActive: 'true',
+      },
+    }),
+)
+
+const {
+  data: bankAccountData,
+  pending: bankAccountsPending,
+  refresh: refreshBankAccounts,
+} = await useAsyncData('admin-society-bank-accounts', () =>
+  api<BankAccountsResponse>('/api/admin/finance/bank-accounts'),
 )
 
 const form = reactive({
@@ -40,6 +67,26 @@ const form = reactive({
   },
 })
 
+const bankForm = reactive<{
+  bankName: string
+  accountName: string
+  accountNumber: string
+  ifscCode: string
+  accountType: BankAccountType
+  branchName: string
+  upiId: string
+  accountHeadId: string
+}>({
+  bankName: '',
+  accountName: '',
+  accountNumber: '',
+  ifscCode: '',
+  accountType: 'CURRENT',
+  branchName: '',
+  upiId: '',
+  accountHeadId: '',
+})
+
 watchEffect(() => {
   const profile = data.value?.data
 
@@ -61,6 +108,7 @@ watchEffect(() => {
 })
 
 const saving = ref(false)
+const savingBankDetails = ref(false)
 
 const emptyTextMarkers = new Set(['', 'NA', 'N/A', 'NIL', '-', '--'])
 const billingTenures = [
@@ -80,6 +128,13 @@ const notificationScopes = [
   'ADMIN_AND_MANAGER',
   'CONFIGURABLE',
 ] as const
+const bankAccountTypes: { label: string; value: BankAccountType }[] = [
+  { label: 'Savings', value: 'SAVINGS' },
+  { label: 'Current', value: 'CURRENT' },
+  { label: 'Cash credit', value: 'CASH_CREDIT' },
+  { label: 'Overdraft', value: 'OVERDRAFT' },
+  { label: 'Other', value: 'OTHER' },
+]
 
 type SocietyField =
   | 'name'
@@ -100,6 +155,40 @@ type SocietyField =
   | 'settings.lateFeePerDay'
 
 const fieldErrors = ref<Partial<Record<SocietyField, string>>>({})
+
+const assetAccountOptions = computed(() =>
+  (accountData.value?.data.items ?? []).map((account) => ({
+    label: `${'  '.repeat(account.level)}${account.code} - ${account.name}`,
+    value: account.id,
+  })),
+)
+
+const bankAccounts = computed(() => bankAccountData.value?.data.items ?? [])
+const societyPaymentAccount = computed(
+  () =>
+    bankAccounts.value.find(
+      (account) => account.isDefault && account.isActive,
+    ) ??
+    bankAccounts.value.find((account) => account.isActive) ??
+    bankAccounts.value[0] ??
+    null,
+)
+
+watch(
+  [societyPaymentAccount, assetAccountOptions],
+  ([account, accountOptions]) => {
+    bankForm.bankName = account?.bankName ?? ''
+    bankForm.accountName = account?.accountName ?? ''
+    bankForm.accountNumber = ''
+    bankForm.ifscCode = account?.ifscCode ?? ''
+    bankForm.accountType = account?.accountType ?? 'CURRENT'
+    bankForm.branchName = account?.branchName ?? ''
+    bankForm.upiId = account?.upiId ?? ''
+    bankForm.accountHeadId =
+      account?.accountHeadId ?? accountOptions[0]?.value ?? ''
+  },
+  { immediate: true },
+)
 
 const nullableText = (value: unknown) => {
   const trimmed = typeof value === 'string' ? value.trim() : ''
@@ -131,7 +220,11 @@ const fieldError = (field: SocietyField) => fieldErrors.value[field]
 const isNullableMarker = (value: unknown) =>
   typeof value !== 'string' || emptyTextMarkers.has(value.trim().toUpperCase())
 
-const optionalTextLengthValid = (field: SocietyField, value: unknown, maxLength: number) => {
+const optionalTextLengthValid = (
+  field: SocietyField,
+  value: unknown,
+  maxLength: number,
+) => {
   if (isNullableMarker(value)) {
     return
   }
@@ -141,7 +234,12 @@ const optionalTextLengthValid = (field: SocietyField, value: unknown, maxLength:
   }
 }
 
-const requireText = (field: SocietyField, value: unknown, label: string, minLength: number) => {
+const requireText = (
+  field: SocietyField,
+  value: unknown,
+  label: string,
+  minLength: number,
+) => {
   const text = typeof value === 'string' ? value.trim() : ''
 
   if (text.length < minLength) {
@@ -160,7 +258,11 @@ const requireEnum = <T extends readonly string[]>(
   }
 }
 
-const requireNonNegativeNumber = (field: SocietyField, value: unknown, label: string) => {
+const requireNonNegativeNumber = (
+  field: SocietyField,
+  value: unknown,
+  label: string,
+) => {
   const number = Number(value)
 
   if (!Number.isFinite(number) || number < 0) {
@@ -168,12 +270,55 @@ const requireNonNegativeNumber = (field: SocietyField, value: unknown, label: st
   }
 }
 
-const requireNonNegativeInteger = (field: SocietyField, value: unknown, label: string) => {
+const requireNonNegativeInteger = (
+  field: SocietyField,
+  value: unknown,
+  label: string,
+) => {
   const number = Number(value)
 
   if (!Number.isInteger(number) || number < 0) {
     setFieldError(field, `${label} must be a whole number zero or more.`)
   }
+}
+
+const validateBankDetailsForm = () => {
+  const bankName = bankForm.bankName.trim()
+  const accountName = bankForm.accountName.trim()
+  const accountNumber = bankForm.accountNumber.trim()
+  const ifscCode = bankForm.ifscCode.trim()
+
+  if (!bankForm.accountHeadId) {
+    toast.add({
+      severity: 'warn',
+      summary: 'Asset account required',
+      detail: 'Create or choose an Asset account before saving bank details.',
+      life: 10000,
+    })
+    return false
+  }
+
+  if (bankName.length < 2 || accountName.length < 2 || ifscCode.length < 4) {
+    toast.add({
+      severity: 'warn',
+      summary: 'Check bank details',
+      detail: 'Bank, account name, and IFSC are required.',
+      life: 10000,
+    })
+    return false
+  }
+
+  if (!societyPaymentAccount.value && accountNumber.length < 4) {
+    toast.add({
+      severity: 'warn',
+      summary: 'Account number required',
+      detail: 'Enter the account number for the society payment account.',
+      life: 10000,
+    })
+    return false
+  }
+
+  return true
 }
 
 const validateProfileForm = () => {
@@ -198,13 +343,21 @@ const validateProfileForm = () => {
 
   if (typeof contactEmail === 'string') {
     if (contactEmail.length > 254) {
-      setFieldError('contactEmail', 'Keep contact email to 254 characters or fewer.')
+      setFieldError(
+        'contactEmail',
+        'Keep contact email to 254 characters or fewer.',
+      )
     } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail)) {
       setFieldError('contactEmail', 'Enter a valid contact email.')
     }
   }
 
-  requireEnum('settings.billingTenure', form.settings.billingTenure, billingTenures, 'billing tenure')
+  requireEnum(
+    'settings.billingTenure',
+    form.settings.billingTenure,
+    billingTenures,
+    'billing tenure',
+  )
   requireEnum(
     'settings.excessPaymentHandling',
     form.settings.excessPaymentHandling,
@@ -222,8 +375,16 @@ const validateProfileForm = () => {
     form.settings.highValueThreshold,
     'High-value threshold',
   )
-  requireNonNegativeInteger('settings.graceDays', form.settings.graceDays, 'Grace days')
-  requireNonNegativeNumber('settings.lateFeePerDay', form.settings.lateFeePerDay, 'Late fee per day')
+  requireNonNegativeInteger(
+    'settings.graceDays',
+    form.settings.graceDays,
+    'Grace days',
+  )
+  requireNonNegativeNumber(
+    'settings.lateFeePerDay',
+    form.settings.lateFeePerDay,
+    'Late fee per day',
+  )
 
   const firstError = Object.values(fieldErrors.value)[0]
 
@@ -292,6 +453,59 @@ const submit = async () => {
     saving.value = false
   }
 }
+
+const submitBankDetails = async () => {
+  if (!validateBankDetailsForm()) {
+    return
+  }
+
+  savingBankDetails.value = true
+
+  try {
+    const payload: Record<string, unknown> = {
+      bankName: bankForm.bankName.trim(),
+      accountName: bankForm.accountName.trim(),
+      accountNumber: bankForm.accountNumber.trim(),
+      ifscCode: bankForm.ifscCode.trim().toUpperCase(),
+      accountType: bankForm.accountType,
+      branchName: nullableText(bankForm.branchName),
+      upiId: nullableText(bankForm.upiId),
+      accountHeadId: bankForm.accountHeadId,
+      isDefault: true,
+      isActive: true,
+    }
+
+    if (societyPaymentAccount.value && !bankForm.accountNumber.trim()) {
+      delete payload.accountNumber
+    }
+
+    if (societyPaymentAccount.value) {
+      await api(
+        `/api/admin/finance/bank-accounts/${societyPaymentAccount.value.id}`,
+        {
+          method: 'PATCH',
+          body: payload,
+        },
+      )
+    } else {
+      await api('/api/admin/finance/bank-accounts', {
+        method: 'POST',
+        body: payload,
+      })
+    }
+
+    toast.add({
+      severity: 'success',
+      summary: 'Saved',
+      detail:
+        'Society bank details were saved for bills and payment collection.',
+      life: 10000,
+    })
+    await refreshBankAccounts()
+  } finally {
+    savingBankDetails.value = false
+  }
+}
 </script>
 
 <template>
@@ -313,8 +527,13 @@ const submit = async () => {
         <div class="admin-form-grid">
           <label>
             <span>Name</span>
-            <InputText v-model="form.name" :invalid="Boolean(fieldError('name'))" />
-            <small v-if="fieldError('name')" class="field-error">{{ fieldError('name') }}</small>
+            <InputText
+              v-model="form.name"
+              :invalid="Boolean(fieldError('name'))"
+            />
+            <small v-if="fieldError('name')" class="field-error">{{
+              fieldError('name')
+            }}</small>
           </label>
           <label>
             <span>Registration number</span>
@@ -323,12 +542,21 @@ const submit = async () => {
               maxlength="150"
               :invalid="Boolean(fieldError('registrationNumber'))"
             />
-            <small v-if="fieldError('registrationNumber')" class="field-error">{{ fieldError('registrationNumber') }}</small>
+            <small
+              v-if="fieldError('registrationNumber')"
+              class="field-error"
+              >{{ fieldError('registrationNumber') }}</small
+            >
           </label>
           <label class="admin-form-grid__full">
             <span>Address line 1</span>
-            <InputText v-model="form.addressLine1" :invalid="Boolean(fieldError('addressLine1'))" />
-            <small v-if="fieldError('addressLine1')" class="field-error">{{ fieldError('addressLine1') }}</small>
+            <InputText
+              v-model="form.addressLine1"
+              :invalid="Boolean(fieldError('addressLine1'))"
+            />
+            <small v-if="fieldError('addressLine1')" class="field-error">{{
+              fieldError('addressLine1')
+            }}</small>
           </label>
           <label class="admin-form-grid__full">
             <span>Address line 2</span>
@@ -337,27 +565,50 @@ const submit = async () => {
               maxlength="300"
               :invalid="Boolean(fieldError('addressLine2'))"
             />
-            <small v-if="fieldError('addressLine2')" class="field-error">{{ fieldError('addressLine2') }}</small>
+            <small v-if="fieldError('addressLine2')" class="field-error">{{
+              fieldError('addressLine2')
+            }}</small>
           </label>
           <label>
             <span>City</span>
-            <InputText v-model="form.city" :invalid="Boolean(fieldError('city'))" />
-            <small v-if="fieldError('city')" class="field-error">{{ fieldError('city') }}</small>
+            <InputText
+              v-model="form.city"
+              :invalid="Boolean(fieldError('city'))"
+            />
+            <small v-if="fieldError('city')" class="field-error">{{
+              fieldError('city')
+            }}</small>
           </label>
           <label>
             <span>State</span>
-            <InputText v-model="form.state" :invalid="Boolean(fieldError('state'))" />
-            <small v-if="fieldError('state')" class="field-error">{{ fieldError('state') }}</small>
+            <InputText
+              v-model="form.state"
+              :invalid="Boolean(fieldError('state'))"
+            />
+            <small v-if="fieldError('state')" class="field-error">{{
+              fieldError('state')
+            }}</small>
           </label>
           <label>
             <span>Pincode</span>
-            <InputText v-model="form.pincode" maxlength="30" :invalid="Boolean(fieldError('pincode'))" />
-            <small v-if="fieldError('pincode')" class="field-error">{{ fieldError('pincode') }}</small>
+            <InputText
+              v-model="form.pincode"
+              maxlength="30"
+              :invalid="Boolean(fieldError('pincode'))"
+            />
+            <small v-if="fieldError('pincode')" class="field-error">{{
+              fieldError('pincode')
+            }}</small>
           </label>
           <label>
             <span>Timezone</span>
-            <InputText v-model="form.timezone" :invalid="Boolean(fieldError('timezone'))" />
-            <small v-if="fieldError('timezone')" class="field-error">{{ fieldError('timezone') }}</small>
+            <InputText
+              v-model="form.timezone"
+              :invalid="Boolean(fieldError('timezone'))"
+            />
+            <small v-if="fieldError('timezone')" class="field-error">{{
+              fieldError('timezone')
+            }}</small>
           </label>
           <label>
             <span>Contact email</span>
@@ -367,7 +618,9 @@ const submit = async () => {
               maxlength="254"
               :invalid="Boolean(fieldError('contactEmail'))"
             />
-            <small v-if="fieldError('contactEmail')" class="field-error">{{ fieldError('contactEmail') }}</small>
+            <small v-if="fieldError('contactEmail')" class="field-error">{{
+              fieldError('contactEmail')
+            }}</small>
           </label>
           <label>
             <span>Contact phone</span>
@@ -376,7 +629,9 @@ const submit = async () => {
               maxlength="40"
               :invalid="Boolean(fieldError('contactPhone'))"
             />
-            <small v-if="fieldError('contactPhone')" class="field-error">{{ fieldError('contactPhone') }}</small>
+            <small v-if="fieldError('contactPhone')" class="field-error">{{
+              fieldError('contactPhone')
+            }}</small>
           </label>
         </div>
       </section>
@@ -409,7 +664,11 @@ const submit = async () => {
               :options="[...excessPaymentHandlingOptions]"
               :invalid="Boolean(fieldError('settings.excessPaymentHandling'))"
             />
-            <small v-if="fieldError('settings.excessPaymentHandling')" class="field-error">{{ fieldError('settings.excessPaymentHandling') }}</small>
+            <small
+              v-if="fieldError('settings.excessPaymentHandling')"
+              class="field-error"
+              >{{ fieldError('settings.excessPaymentHandling') }}</small
+            >
           </label>
           <!-- TODO: Re-enable when notificationScope restricts notification send/configure permissions. -->
           <!--
@@ -446,7 +705,11 @@ const submit = async () => {
               fluid
               :invalid="Boolean(fieldError('settings.graceDays'))"
             />
-            <small v-if="fieldError('settings.graceDays')" class="field-error">{{ fieldError('settings.graceDays') }}</small>
+            <small
+              v-if="fieldError('settings.graceDays')"
+              class="field-error"
+              >{{ fieldError('settings.graceDays') }}</small
+            >
           </label>
           <label>
             <span>Late fee per day</span>
@@ -457,7 +720,11 @@ const submit = async () => {
               fluid
               :invalid="Boolean(fieldError('settings.lateFeePerDay'))"
             />
-            <small v-if="fieldError('settings.lateFeePerDay')" class="field-error">{{ fieldError('settings.lateFeePerDay') }}</small>
+            <small
+              v-if="fieldError('settings.lateFeePerDay')"
+              class="field-error"
+              >{{ fieldError('settings.lateFeePerDay') }}</small
+            >
           </label>
         </div>
 
@@ -481,6 +748,93 @@ const submit = async () => {
             <ToggleSwitch v-model="form.settings.attachmentsRequired" />
           </label>
           -->
+        </div>
+      </section>
+    </form>
+
+    <form
+      class="admin-form-layout"
+      novalidate
+      @submit.prevent="submitBankDetails"
+    >
+      <section class="surface-card admin-form-section">
+        <div class="admin-form-section__header">
+          <div>
+            <p class="eyebrow">Payments</p>
+            <h2>Society bank details</h2>
+          </div>
+          <div class="admin-inline-actions">
+            <Button
+              as="router-link"
+              to="/admin/finance/accounts"
+              type="button"
+              label="All accounts"
+              icon="pi pi-sitemap"
+              severity="secondary"
+              outlined
+            />
+            <Button
+              type="submit"
+              label="Save bank details"
+              icon="pi pi-save"
+              :loading="
+                savingBankDetails || bankAccountsPending || accountsPending
+              "
+            />
+          </div>
+        </div>
+
+        <div class="admin-form-grid">
+          <label>
+            <span>Bank</span>
+            <InputText v-model="bankForm.bankName" required />
+          </label>
+          <label>
+            <span>Account name</span>
+            <InputText v-model="bankForm.accountName" required />
+          </label>
+          <label>
+            <span>Account number</span>
+            <InputText
+              v-model="bankForm.accountNumber"
+              :required="!societyPaymentAccount"
+              :placeholder="
+                societyPaymentAccount ? 'Leave blank to keep existing' : ''
+              "
+            />
+          </label>
+          <label>
+            <span>IFSC</span>
+            <InputText v-model="bankForm.ifscCode" required />
+          </label>
+          <label>
+            <span>Account type</span>
+            <Select
+              v-model="bankForm.accountType"
+              :options="bankAccountTypes"
+              option-label="label"
+              option-value="value"
+            />
+          </label>
+          <label>
+            <span>Mapped Asset account</span>
+            <Select
+              v-model="bankForm.accountHeadId"
+              :options="assetAccountOptions"
+              option-label="label"
+              option-value="value"
+              required
+              placeholder="Choose Asset account"
+            />
+          </label>
+          <label>
+            <span>Branch</span>
+            <InputText v-model="bankForm.branchName" />
+          </label>
+          <label>
+            <span>UPI ID</span>
+            <InputText v-model="bankForm.upiId" />
+          </label>
         </div>
       </section>
     </form>

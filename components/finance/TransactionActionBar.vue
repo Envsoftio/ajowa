@@ -16,11 +16,7 @@ const emit = defineEmits<{
   reverse: []
 }>()
 
-const canReview = computed(() =>
-  props.transaction
-    ? ['DRAFT', 'PENDING_REVIEW', 'RETURNED'].includes(props.transaction.status)
-    : false,
-)
+void props
 </script>
 
 <template>
@@ -28,56 +24,10 @@ const canReview = computed(() =>
     <template v-if="formMode">
       <Button
         type="button"
-        label="Save Draft"
-        icon="pi pi-save"
-        severity="secondary"
-        outlined
-        :loading="saving"
-        @click="emit('saveDraft')"
-      />
-      <Button
-        type="button"
-        label="Post / Submit"
+        label="Save"
         icon="pi pi-send"
         :loading="saving"
         @click="emit('submitForReview')"
-      />
-    </template>
-    <template v-else-if="transaction">
-      <Button
-        v-if="canReview"
-        type="button"
-        icon="pi pi-check"
-        label="Approve"
-        severity="success"
-        @click="emit('approve')"
-      />
-      <Button
-        v-if="canReview"
-        type="button"
-        icon="pi pi-replay"
-        label="Return"
-        severity="secondary"
-        outlined
-        @click="emit('return')"
-      />
-      <Button
-        v-if="canReview"
-        type="button"
-        icon="pi pi-times"
-        label="Reject"
-        severity="danger"
-        outlined
-        @click="emit('reject')"
-      />
-      <Button
-        v-if="transaction.status === 'POSTED'"
-        type="button"
-        icon="pi pi-undo"
-        label="Reverse"
-        severity="danger"
-        outlined
-        @click="emit('reverse')"
       />
     </template>
   </div>

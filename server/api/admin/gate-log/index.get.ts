@@ -4,6 +4,8 @@ import { requireRole } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
 import { setEventHeader } from '~/server/utils/http-event'
 import { getQuerySafe } from '~/server/utils/master-data'
+import { createPdfBuffer, getSocietyStampImage } from '~/server/utils/pdf'
+import { getSocietyInfo } from '~/server/utils/reports'
 
 type GateLogRow = {
   id: string
@@ -17,7 +19,6 @@ type GateLogRow = {
 }
 
 const csvEscape = (value: unknown) => `"${String(value ?? '').replaceAll('"', '""')}"`
-const pdfEscape = (value: string) => value.replaceAll('\\', '\\\\').replaceAll('(', '\\(').replaceAll(')', '\\)')
 
 const mapExportRow = (row: GateLogRow) => ({
   'Scanned at': row.scanned_at,
@@ -29,44 +30,101 @@ const mapExportRow = (row: GateLogRow) => ({
   Gate: row.gate_name,
 })
 
-const buildSimplePdf = (rows: GateLogRow[]) => {
-  const lines = [
-    'AJOWA Gate Log',
-    `Generated at ${new Date().toISOString()}`,
-    '',
-    ...rows.slice(0, 80).map((row) =>
-      [
-        row.scanned_at,
-        row.scan_result,
-        row.resident_name ?? 'Unknown resident',
-        row.flat_label ?? 'No flat',
-        row.guard_name ?? 'Unknown guard',
-        row.denial_reason ?? '',
-      ].join(' | '),
-    ),
+const buildGateLogPdf = async (rows: GateLogRow[], societyId: string) => {
+  const society = await getSocietyInfo(societyId)
+  const stampImage = getSocietyStampImage()
+  const body: unknown[][] = [
+    [
+      { text: 'Scanned at', style: 'tableHeader' },
+      { text: 'Result', style: 'tableHeader' },
+      { text: 'Resident', style: 'tableHeader' },
+      { text: 'Flat', style: 'tableHeader' },
+      { text: 'Guard', style: 'tableHeader' },
+      { text: 'Reason', style: 'tableHeader' },
+      { text: 'Gate', style: 'tableHeader' },
+    ],
+    ...rows.map((row) => [
+      { text: row.scanned_at, style: 'tableCell' },
+      { text: row.scan_result, style: 'tableCell' },
+      { text: row.resident_name ?? '-', style: 'tableCell' },
+      { text: row.flat_label ?? '-', style: 'tableCell' },
+      { text: row.guard_name ?? '-', style: 'tableCell' },
+      { text: row.denial_reason ?? '-', style: 'tableCell' },
+      { text: row.gate_name ?? '-', style: 'tableCell' },
+    ]),
   ]
-  const textOps = lines
-    .map((line, index) => `${index === 0 ? '40 790 Td' : '0 -14 Td'} (${pdfEscape(line.slice(0, 150))}) Tj`)
-    .join('\n')
-  const stream = `BT /F1 10 Tf ${textOps} ET`
-  const objects = [
-    '1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj',
-    '2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj',
-    '3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >> endobj',
-    '4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj',
-    `5 0 obj << /Length ${Buffer.byteLength(stream)} >> stream\n${stream}\nendstream endobj`,
-  ]
-  let pdf = '%PDF-1.4\n'
-  const offsets = [0]
-  for (const object of objects) {
-    offsets.push(Buffer.byteLength(pdf))
-    pdf += `${object}\n`
+
+  if (body.length === 1) {
+    body.push([
+      { text: 'No gate log records found for the selected filters.', colSpan: 7, style: 'tableCell' },
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+    ])
   }
-  const xrefOffset = Buffer.byteLength(pdf)
-  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`
-  pdf += offsets.slice(1).map((offset) => `${String(offset).padStart(10, '0')} 00000 n \n`).join('')
-  pdf += `trailer << /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`
-  return Buffer.from(pdf)
+
+  return await createPdfBuffer({
+    pageOrientation: 'landscape',
+    pageMargins: [28, 42, 28, 36],
+    content: [
+      { text: society.name, style: 'brand' },
+      { text: society.address, style: 'subtle' },
+      { text: 'Gate Log', style: 'title' },
+      { text: `Generated ${new Date().toISOString()} | Rows: ${rows.length}`, style: 'subtle', margin: [0, 0, 0, 12] },
+      {
+        table: {
+          headerRows: 1,
+          widths: ['15%', '10%', '16%', '12%', '14%', '*', '10%'],
+          body,
+        },
+        layout: 'lightHorizontalLines',
+      },
+      {
+        columns: [
+          {
+            stack: [
+              ...(stampImage
+                ? [
+                    {
+                      image: stampImage,
+                      fit: [112, 70],
+                      margin: [0, 0, 0, 4],
+                    },
+                  ]
+                : []),
+              {
+                text: [
+                  `${society.name}\n`,
+                  'Authorised Signatory',
+                ],
+                style: 'signature',
+              },
+            ],
+          },
+          {
+            text: 'This is a system-generated gate access report.',
+            style: 'footerNote',
+            alignment: 'right',
+          },
+        ],
+        columnGap: 16,
+        margin: [0, 16, 0, 0],
+      },
+    ],
+    styles: {
+      brand: { fontSize: 10, color: '#0f766e', bold: true, margin: [0, 0, 0, 4] },
+      title: { fontSize: 18, bold: true, color: '#2f4050', margin: [0, 10, 0, 4] },
+      subtle: { fontSize: 8, color: '#768390' },
+      tableHeader: { bold: true, fontSize: 8, color: '#ffffff', fillColor: '#2a3f54' },
+      tableCell: { fontSize: 7, color: '#2f4050' },
+      signature: { fontSize: 8, color: '#111827', bold: true },
+      footerNote: { fontSize: 8, color: '#768390', italics: true },
+    },
+    defaultStyle: { font: 'Roboto' },
+  })
 }
 
 export default defineEventHandler(async (event) => {
@@ -138,7 +196,7 @@ export default defineEventHandler(async (event) => {
   if (query.export === 'pdf') {
     setEventHeader(event, 'content-type', 'application/pdf')
     setEventHeader(event, 'content-disposition', 'attachment; filename="gate-log.pdf"')
-    return buildSimplePdf(result.rows)
+    return await buildGateLogPdf(result.rows, authMe.user.societyId)
   }
 
   if (query.export === 'excel' || query.export === 'xlsx') {

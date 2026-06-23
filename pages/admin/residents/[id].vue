@@ -13,6 +13,19 @@ type ResidentAction =
   | 'DEACTIVATE_LOGIN'
   | 'RESET_ONBOARDING'
 
+type ResidentActionResponse = {
+  id: string
+  action: ResidentAction
+  invite?: {
+    inviteUrl: string
+    expiresAt: string
+    emailDelivery?: {
+      delivered: boolean
+      reason?: string
+    } | null
+  }
+}
+
 type DocumentField =
   | 'profileImagePath'
   | 'governmentIdDocumentPath'
@@ -189,15 +202,20 @@ const runAction = async (action: ResidentAction) => {
   runningAction.value = action
 
   try {
-    await api(`/api/admin/residents/${residentId.value}/actions`, {
+    const response = await api<{ ok: true; data: ResidentActionResponse }>(`/api/admin/residents/${residentId.value}/actions`, {
       method: 'POST',
       body: { action },
     })
+    const inviteDelivery = response.data.invite?.emailDelivery
+    const inviteDeliveryWarning =
+      inviteDelivery && !inviteDelivery.delivered
+        ? (inviteDelivery.reason ?? 'Invite was created, but email delivery failed.')
+        : ''
 
     toast.add({
-      severity: 'success',
-      summary: 'Action completed',
-      detail: action.replaceAll('_', ' ').toLowerCase(),
+      severity: inviteDeliveryWarning ? 'warn' : 'success',
+      summary: inviteDeliveryWarning ? 'Invite created' : 'Action completed',
+      detail: inviteDeliveryWarning || action.replaceAll('_', ' ').toLowerCase(),
       life: 10000,
     })
     await refresh()
