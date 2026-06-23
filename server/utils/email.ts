@@ -55,7 +55,7 @@ export type ResolvedEmailSettings = {
   fromEmail: string
   fromName: string
   smtpPasswordConfigured: boolean
-  source: 'ENV' | 'SOCIETY'
+  source: 'SOCIETY' | 'UNCONFIGURED'
 }
 
 type EmailDeliverySettings = ResolvedEmailSettings & {
@@ -111,14 +111,23 @@ const tryReadTemplate = async (relativePath: string) => {
   }
 }
 
+const isZeptoMailHost = (value: string) => value.toLowerCase().includes('zeptomail')
+const SMTP_SSL_PORT = 465
+const SMTP_STARTTLS_PORT = 587
+const ZEPTOMAIL_SUPPORTED_SMTP_PORTS = new Set([SMTP_SSL_PORT, SMTP_STARTTLS_PORT])
+
 const getTransporter = (settings: EmailDeliverySettings) =>
   nodemailer.createTransport({
     host: settings.smtpHost,
     port: settings.smtpPort,
-    secure: settings.smtpPort === 465,
+    secure: settings.smtpPort === SMTP_SSL_PORT,
+    requireTLS: settings.smtpPort === SMTP_STARTTLS_PORT,
     auth: {
       user: settings.smtpUser,
       pass: settings.smtpPass,
+    },
+    tls: {
+      minVersion: 'TLSv1.2',
     },
   })
 
@@ -128,17 +137,30 @@ const getRuntimeEmailSettings = (): EmailDeliverySettings => {
   const runtimeConfig = getValidatedRuntimeConfig(useRuntimeConfig())
 
   return {
-    enabled: runtimeConfig.emailNotificationsEnabled,
-    smtpHost: runtimeConfig.smtp.host,
-    smtpPort: runtimeConfig.smtp.port,
-    smtpUser: runtimeConfig.smtp.user,
+    enabled: false,
+    smtpHost: '',
+    smtpPort: 587,
+    smtpUser: '',
     smtpPass: runtimeConfig.smtp.pass,
-    fromEmail: runtimeConfig.emailFrom,
-    fromName: runtimeConfig.emailFromName,
+    fromEmail: '',
+    fromName: '',
     smtpPasswordConfigured: runtimeConfig.smtp.pass.trim().length > 0,
-    source: 'ENV',
+    source: 'UNCONFIGURED',
   }
 }
+
+const getUnconfiguredSocietyEmailSettings = (
+  runtimeSettings: EmailDeliverySettings,
+): ResolvedEmailSettings => ({
+  enabled: false,
+  smtpHost: '',
+  smtpPort: 587,
+  smtpUser: '',
+  fromEmail: '',
+  fromName: '',
+  smtpPasswordConfigured: runtimeSettings.smtpPasswordConfigured,
+  source: 'UNCONFIGURED',
+})
 
 export const getResolvedEmailSettings = async (
   societyId?: string | null,
@@ -170,8 +192,7 @@ export const getResolvedEmailSettings = async (
   const row = result.rows[0]
 
   if (!row) {
-    const { smtpPass: _smtpPass, ...publicSettings } = runtimeSettings
-    return publicSettings
+    return getUnconfiguredSocietyEmailSettings(runtimeSettings)
   }
 
   return {
@@ -238,6 +259,20 @@ export const getResolvedEmailIntegrationStatus = async (
     return {
       enabled: false,
       reason: 'Email notifications are misconfigured. From email must be a verified sender address.',
+    }
+  }
+
+  if (isZeptoMailHost(settings.smtpHost) && !ZEPTOMAIL_SUPPORTED_SMTP_PORTS.has(settings.smtpPort)) {
+    return {
+      enabled: false,
+      reason: 'ZeptoMail SMTP supports only port 465 with SSL or port 587 with TLS. Port 25 is not supported.',
+    }
+  }
+
+  if (isZeptoMailHost(settings.smtpHost) && settings.smtpUser.trim() !== 'emailapikey') {
+    return {
+      enabled: false,
+      reason: 'ZeptoMail SMTP requires SMTP user "emailapikey". Save "emailapikey" as the SMTP user in notification settings and keep the API key in SMTP_PASS.',
     }
   }
 
@@ -320,7 +355,10 @@ export const sendEmail = async ({
   const settings = await getEmailDeliverySettings(societyId, client)
   const transporter = getTransporter(settings)
   const response = await transporter.sendMail({
-    from: `"${settings.fromName}" <${settings.fromEmail}>`,
+    from: {
+      name: settings.fromName,
+      address: settings.fromEmail,
+    },
     to,
     subject,
     html,

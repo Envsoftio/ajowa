@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { PoolClient } from 'pg'
 import webpush from 'web-push'
 import { generateMaintenanceBillPdf } from './billing'
-import { buildAppUrl, sendEmail, sendNotificationEmail } from './email'
+import { buildAppUrl, getResolvedEmailSettings, sendEmail, sendNotificationEmail } from './email'
 import { getPushIntegrationStatus, getValidatedRuntimeConfig, getWhatsAppIntegrationStatus } from './env'
 
 export type NotificationChannel = 'PUSH' | 'EMAIL' | 'WHATSAPP' | 'IN_APP'
@@ -267,7 +267,32 @@ const getProviderErrorMeta = (error: unknown) => {
   }
 }
 
-const describeProviderError = (error: unknown) => {
+type ProviderErrorContext = {
+  emailSettings?: {
+    source: 'SOCIETY' | 'UNCONFIGURED'
+    smtpHost: string
+    smtpPort: number
+    fromEmail: string
+    smtpUser: string
+  } | null
+}
+
+const savedEmailSettingsLabel = 'notification email settings'
+
+const emailProviderDiagnostic = (settings?: ProviderErrorContext['emailSettings']) => {
+  if (!settings) {
+    return ''
+  }
+
+  const parts = [
+    settings.smtpHost.trim() ? `${settings.smtpHost.trim()}:${settings.smtpPort}` : null,
+    settings.smtpUser.trim() ? `SMTP user ${settings.smtpUser.trim()}` : null,
+  ].filter(Boolean)
+
+  return parts.length ? ` The request used ${parts.join(' with ')}.` : ''
+}
+
+const describeProviderError = (error: unknown, context: ProviderErrorContext = {}) => {
   const meta = getProviderErrorMeta(error)
   const message = meta.message ?? meta.response ?? 'Provider request failed.'
   const normalized = `${message} ${meta.response ?? ''}`.toLowerCase()
@@ -277,11 +302,16 @@ const describeProviderError = (error: unknown) => {
   }
 
   if (meta.responseCode === 553 || normalized.includes('sender is not allowed to relay')) {
-    return 'SMTP rejected the sender address. Verify EMAIL_FROM is an approved sender/domain for this SMTP account, or change EMAIL_FROM to an approved address.'
+    const settings = context.emailSettings
+    const fromEmail = settings?.fromEmail.trim()
+
+    return `SMTP rejected the saved From email${fromEmail ? ` (${fromEmail})` : ''}. Approve this sender/domain for the SMTP account, or change the From email in /admin/settings/notifications to an approved address.${emailProviderDiagnostic(settings)}`
   }
 
   if (meta.responseCode === 535 || normalized.includes('authentication failed') || normalized.includes('invalid login')) {
-    return 'SMTP authentication failed. Check SMTP_USER and SMTP_PASS.'
+    const smtpUser = context.emailSettings?.smtpUser.trim()
+
+    return `SMTP authentication failed. Check the SMTP user${smtpUser ? ` (${smtpUser})` : ''} in ${savedEmailSettingsLabel} and SMTP_PASS in the environment.${emailProviderDiagnostic(context.emailSettings)}`
   }
 
   if (
@@ -289,10 +319,31 @@ const describeProviderError = (error: unknown) => {
     normalized.includes('connection timeout') ||
     normalized.includes('greeting never received')
   ) {
-    return 'SMTP server could not be reached. Check SMTP host, port, TLS mode, and network access from this runtime.'
+    return `SMTP server could not be reached. Check the SMTP host and port in ${savedEmailSettingsLabel}, TLS mode, and network access from this runtime.${emailProviderDiagnostic(context.emailSettings)}`
   }
 
   return message
+}
+
+const getEmailProviderErrorContext = async (
+  societyId: string,
+  client?: PoolClient | null,
+): Promise<ProviderErrorContext> => {
+  try {
+    const settings = await getResolvedEmailSettings(societyId, client)
+
+    return {
+      emailSettings: {
+        source: settings.source,
+        smtpHost: settings.smtpHost,
+        smtpPort: settings.smtpPort,
+        fromEmail: settings.fromEmail,
+        smtpUser: settings.smtpUser,
+      },
+    }
+  } catch {
+    return {}
+  }
 }
 
 const isPermanentProviderError = (error: unknown) => {
@@ -1105,10 +1156,12 @@ const dispatchJob = async (
         permanentFailure: !result.delivered,
       }
     } catch (error) {
+      const context = await getEmailProviderErrorContext(job.society_id, client)
+
       return {
         ok: false,
         providerName: 'SMTP',
-        failureReason: describeProviderError(error),
+        failureReason: describeProviderError(error, context),
         responseBody: providerErrorResponseBody(error),
         permanentFailure: isPermanentProviderError(error),
       }
@@ -1297,10 +1350,12 @@ export const sendProviderVerification = async (
         reason: result.delivered ? null : result.reason,
       }
     } catch (error) {
+      const context = await getEmailProviderErrorContext(input.societyId, client)
+
       return {
         ok: false,
         providerMessageId: null,
-        reason: describeProviderError(error),
+        reason: describeProviderError(error, context),
       }
     }
   }

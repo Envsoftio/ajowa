@@ -33,7 +33,7 @@ type EmailSettings = {
   fromEmail: string
   fromName: string
   smtpPasswordConfigured: boolean
-  source: 'ENV' | 'SOCIETY'
+  source: 'SOCIETY' | 'UNCONFIGURED'
 }
 
 const api = useApi()
@@ -49,11 +49,15 @@ const emailSettings = reactive<EmailSettings>({
   fromEmail: '',
   fromName: '',
   smtpPasswordConfigured: false,
-  source: 'ENV',
+  source: 'UNCONFIGURED',
 })
 const test = reactive({ channel: 'EMAIL', target: '' })
 const saving = ref(false)
 const verifying = ref(false)
+
+const emailSettingsSourceLabel = computed(() =>
+  emailSettings.source === 'SOCIETY' ? 'Admin settings' : 'Not saved',
+)
 
 const load = async () => {
   const response = await api<{ ok: true; data: { settings: Setting[]; providers: typeof providers.value; metrics: typeof metrics.value; emailSettings: EmailSettings } }>('/api/admin/settings/notifications')
@@ -70,7 +74,7 @@ const load = async () => {
 
 await useAsyncData('admin-notification-settings', load)
 
-const save = async () => {
+const persistSettings = async (options: { showToast?: boolean } = {}) => {
   saving.value = true
   try {
     await api('/api/admin/settings/notifications', {
@@ -87,16 +91,24 @@ const save = async () => {
         },
       },
     })
-    toast.add({ severity: 'success', summary: 'Settings saved', life: 10000 })
+    if (options.showToast !== false) {
+      toast.add({ severity: 'success', summary: 'Settings saved', life: 10000 })
+    }
     await load()
   } finally {
     saving.value = false
   }
 }
 
+const save = () => persistSettings()
+
 const verify = async () => {
   verifying.value = true
   try {
+    if (test.channel === 'EMAIL') {
+      await persistSettings({ showToast: false })
+    }
+
     const response = await api<{ ok: true; data: { ok: boolean; reason: string | null } }>('/api/admin/settings/notifications/verify', {
       method: 'POST',
       body: test,
@@ -148,7 +160,7 @@ const verify = async () => {
           <ToggleSwitch v-model="emailSettings.enabled" />
           <span>Email notifications</span>
           <Tag :value="emailSettings.smtpPasswordConfigured ? 'SMTP_PASS configured' : 'SMTP_PASS missing'" :severity="emailSettings.smtpPasswordConfigured ? 'success' : 'danger'" />
-          <Tag :value="emailSettings.source === 'SOCIETY' ? 'Admin settings' : 'Environment defaults'" severity="secondary" />
+          <Tag :value="emailSettingsSourceLabel" severity="secondary" />
         </div>
         <div class="surface-grid">
           <InputText v-model="emailSettings.smtpHost" placeholder="SMTP host" />
@@ -164,7 +176,7 @@ const verify = async () => {
         <div class="surface-grid">
           <Select v-model="test.channel" :options="['EMAIL', 'WHATSAPP', 'PUSH']" />
           <InputText v-model="test.target" placeholder="Email, WhatsApp number, or current user push" />
-          <Button label="Send test" icon="pi pi-send" severity="secondary" outlined :loading="verifying" @click="verify" />
+          <Button label="Send test" icon="pi pi-send" severity="secondary" outlined :loading="verifying" :disabled="saving || !test.target.trim()" @click="verify" />
         </div>
       </div>
     </section>

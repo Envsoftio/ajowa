@@ -53,15 +53,15 @@ const describeInviteEmailError = (error: unknown) => {
   const normalized = `${message} ${meta.response ?? ''}`.toLowerCase()
 
   if (meta.responseCode === 553 || normalized.includes('sender is not allowed to relay')) {
-    return 'Invite was created, but SMTP rejected the sender address. Verify EMAIL_FROM is an approved ZeptoMail sender/domain, or change EMAIL_FROM to an approved address, then resend the invite.'
+    return 'Invite was created, but SMTP rejected the saved From email. Approve that sender/domain for the SMTP account, or update the From email in notification settings, then resend the invite.'
   }
 
   if (meta.responseCode === 535 || normalized.includes('authentication failed') || normalized.includes('invalid login')) {
-    return 'Invite was created, but SMTP authentication failed. Check SMTP_USER and SMTP_PASS, then resend the invite.'
+    return 'Invite was created, but SMTP authentication failed. Check the saved SMTP user in notification settings and SMTP_PASS in the environment, then resend the invite.'
   }
 
   if (meta.code === 'ECONNECTION' || meta.code === 'ETIMEDOUT' || meta.code === 'ESOCKET') {
-    return 'Invite was created, but the SMTP server could not be reached. Check SMTP_HOST, SMTP_PORT, and network access, then resend the invite.'
+    return 'Invite was created, but the SMTP server could not be reached. Check the saved SMTP host and port in notification settings, plus network access, then resend the invite.'
   }
 
   return message

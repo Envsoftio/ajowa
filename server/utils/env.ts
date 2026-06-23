@@ -1,26 +1,5 @@
 import { z } from 'zod'
 
-const smtpConfigSchema = z.object({
-  host: z.string().min(1, 'SMTP_HOST is required'),
-  port: z.number().int().positive('SMTP_PORT must be a positive integer'),
-  user: z.string().min(1, 'SMTP_USER is required'),
-  pass: z.string().min(1, 'SMTP_PASS is required'),
-})
-
-const emailFromSchema = z
-  .string()
-  .email('EMAIL_FROM must be a valid email address')
-  .refine(
-    (value) => !value.toLowerCase().endsWith('@example.com'),
-    'EMAIL_FROM must be a verified sender address, not the example.com placeholder',
-  )
-
-const emailIntegrationSchema = z.object({
-  smtp: smtpConfigSchema,
-  emailFrom: emailFromSchema,
-  emailFromName: z.string().min(1, 'EMAIL_FROM_NAME is required'),
-})
-
 const whatsappIntegrationSchema = z.object({
   provider: z.string().min(1, 'WHATSAPP_PROVIDER is required'),
   apiUrl: z.string().url('WHATSAPP_API_URL must be a valid URL'),
@@ -40,14 +19,8 @@ const runtimeConfigSchema = z.object({
   betterAuthSecret: z.string().min(1, 'BETTER_AUTH_SECRET is required'),
   betterAuthUrl: z.string().url('BETTER_AUTH_URL must be a valid URL'),
   smtp: z.object({
-    host: z.string(),
-    port: z.number().int().nonnegative('SMTP_PORT must be a valid number'),
-    user: z.string(),
     pass: z.string(),
   }),
-  emailFrom: z.string(),
-  emailFromName: z.string(),
-  emailNotificationsEnabled: z.boolean(),
   whatsappProvider: z.string(),
   whatsappApiUrl: z.string(),
   whatsappApiKey: z.string(),
@@ -75,15 +48,6 @@ const runtimeConfigSchema = z.object({
 })
 
 const OPTIONAL_INTEGRATION_REQUIREMENTS = {
-  email: [
-    'EMAIL_NOTIFICATIONS_ENABLED=true',
-    'SMTP_HOST',
-    'SMTP_PORT',
-    'SMTP_USER',
-    'SMTP_PASS',
-    'EMAIL_FROM',
-    'EMAIL_FROM_NAME',
-  ],
   whatsapp: [
     'WHATSAPP_NOTIFICATIONS_ENABLED=true',
     'WHATSAPP_PROVIDER',
@@ -100,7 +64,6 @@ const OPTIONAL_INTEGRATION_REQUIREMENTS = {
 } as const
 
 export type ValidatedRuntimeConfig = z.infer<typeof runtimeConfigSchema>
-export type EmailIntegrationConfig = z.infer<typeof emailIntegrationSchema>
 export type WhatsAppIntegrationConfig = z.infer<typeof whatsappIntegrationSchema>
 export type PushIntegrationConfig = z.infer<typeof pushIntegrationSchema>
 
@@ -161,24 +124,6 @@ export const getValidatedRuntimeConfig = (config: Record<string, unknown>) => {
 
   validatedConfig = runtimeConfigSchema.parse(config)
   return validatedConfig
-}
-
-export const getEmailIntegrationStatus = (
-  config: Record<string, unknown> = useRuntimeConfig(),
-): OptionalIntegrationStatus<EmailIntegrationConfig> => {
-  const runtimeConfig = getValidatedRuntimeConfig(config)
-
-  return validateOptionalIntegration(
-    runtimeConfig.emailNotificationsEnabled,
-    'Email notifications',
-    OPTIONAL_INTEGRATION_REQUIREMENTS.email,
-    emailIntegrationSchema,
-    {
-      smtp: runtimeConfig.smtp,
-      emailFrom: runtimeConfig.emailFrom,
-      emailFromName: runtimeConfig.emailFromName,
-    },
-  )
 }
 
 export const getWhatsAppIntegrationStatus = (

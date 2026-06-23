@@ -1,5 +1,4 @@
 import {
-  getEmailIntegrationStatus,
   getPushIntegrationStatus,
   getValidatedRuntimeConfig,
   getWhatsAppIntegrationStatus,
@@ -9,7 +8,6 @@ export default defineNitroPlugin(() => {
   try {
     const runtimeConfig = getValidatedRuntimeConfig(useRuntimeConfig())
     const integrationStatuses = [
-      getEmailIntegrationStatus(runtimeConfig),
       getWhatsAppIntegrationStatus(runtimeConfig),
       getPushIntegrationStatus(runtimeConfig),
     ]
