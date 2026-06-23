@@ -105,7 +105,7 @@ export const getAdminRoutePermission = (path: string) => {
     return 'billing.manage'
   }
   if (pathname.startsWith('/admin/billing/dues')) {
-    return 'dues.manage'
+    return 'billing.view'
   }
   if (pathname.startsWith('/admin/billing/defaulters')) {
     return 'defaulters.view'

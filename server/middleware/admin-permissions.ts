@@ -40,7 +40,7 @@ const getAdminApiPermission = (path: string, method: string): StaffPermission | 
     return 'residents.manage'
   }
   if (path.startsWith('/api/admin/billing/periods') || path.startsWith('/api/admin/billing/charges')) {
-    return 'billing.manage'
+    return method === 'GET' ? 'billing.view' : 'billing.manage'
   }
   if (path.startsWith('/api/admin/billing/defaulters')) {
     return 'defaulters.view'

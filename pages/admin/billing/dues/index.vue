@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { DataTablePageEvent } from 'primevue/datatable'
+import type { StaffPermission } from '~/shared/permissions'
 import type { BillingPeriod, MaintenanceDue } from '~/types/domain'
 
 definePageMeta({
@@ -26,7 +27,14 @@ type NotificationQueueResponse = {
 
 const api = useApi()
 const toast = useToast()
+const authStore = useAuthStore()
 const notificationBatchSize = 500
+
+const hasPermission = (permission: StaffPermission) =>
+  authStore.me?.user.permissions.includes(permission) ?? false
+
+const canManageBilling = computed(() => hasPermission('billing.manage'))
+const canManageDues = computed(() => hasPermission('dues.manage'))
 
 const formatMoney = (value: number) =>
   new Intl.NumberFormat('en-IN', {
@@ -118,15 +126,21 @@ const overdueOptions = [
 ]
 
 const isReminderEligible = (due: MaintenanceDue) =>
+  canManageDues.value &&
   due.balanceAmount > 0 &&
   !due.isCamAdvanceCovered &&
   !['PAID', 'WAIVED', 'CANCELLED'].includes(due.status)
 
 const canSendBill = (due: MaintenanceDue) =>
+  canManageDues.value &&
   !due.isCamAdvanceCovered && due.status !== 'CANCELLED'
 
 const canRecordPayment = (due: MaintenanceDue) =>
+  canManageBilling.value &&
   due.balanceAmount > 0 && !['PAID', 'WAIVED', 'CANCELLED'].includes(due.status)
+
+const canWaiveDue = (due: MaintenanceDue) =>
+  canManageDues.value && !['PAID', 'CANCELLED'].includes(due.status)
 
 const getRecordPaymentRoute = (due: MaintenanceDue) => ({
   path: '/admin/payments/new',
@@ -300,6 +314,7 @@ const openBreakdown = (due: MaintenanceDue) => {
 }
 
 const openWaiver = (due: MaintenanceDue) => {
+  if (!canManageDues.value) return
   waiverTarget.value = due
   waiverReason.value = ''
   waiverDialogVisible.value = true
@@ -332,7 +347,7 @@ const submitWaiver = async () => {
 }
 
 const sendReminders = async (dueIds: string[]) => {
-  if (dueIds.length === 0) return
+  if (!canManageDues.value || dueIds.length === 0) return
   const bulkReminderIds = new Set(selectedReminderDues.value.map((due) => due.id))
   const isBulkReminderSend =
     hasBulkSelection.value &&
@@ -381,6 +396,7 @@ const sendSelectedReminders = () =>
   )
 
 const openBillSend = (targets: MaintenanceDue[]) => {
+  if (!canManageDues.value) return
   const eligibleTargets = targets.filter(canSendBill)
   if (eligibleTargets.length === 0) {
     toast.add({
@@ -501,6 +517,7 @@ watch(
             @click="() => refresh()"
           />
           <Button
+            v-if="canManageDues"
             :label="
               selectedBillCount > 0
                 ? `Send ${selectedBillCount} bill${selectedBillCount === 1 ? '' : 's'}`
@@ -514,6 +531,7 @@ watch(
             @click="openBillSend(selectedBillDues)"
           />
           <Button
+            v-if="canManageDues"
             :label="
               selectedReminderCount > 0
                 ? `Remind ${selectedReminderCount}`
@@ -550,7 +568,7 @@ watch(
           <p v-else>
             No outstanding balance is visible with the current filters.
           </p>
-          <div class="billing-selection-actions">
+          <div v-if="canManageDues" class="billing-selection-actions">
             <p>{{ notificationSelectionText }}</p>
             <div class="admin-inline-actions">
               <Button
@@ -578,11 +596,11 @@ watch(
             <dt>Rows shown</dt>
             <dd>{{ dues.length }} / {{ totalRecords }}</dd>
           </div>
-          <div>
+          <div v-if="canManageDues">
             <dt>Selected</dt>
             <dd>{{ selectedBillCount }}</dd>
           </div>
-          <div>
+          <div v-if="canManageDues">
             <dt>Can remind</dt>
             <dd>{{ selectedReminderCount }}</dd>
           </div>
@@ -685,7 +703,7 @@ watch(
           }
         "
       >
-        <Column selection-mode="multiple" header-style="width: 3rem" />
+        <Column v-if="canManageDues" selection-mode="multiple" header-style="width: 3rem" />
         <Column field="flatNumber" header="Flat">
           <template #body="{ data: row }">
             <strong>{{ row.blockName }} {{ row.flatNumber }}</strong>
@@ -741,6 +759,7 @@ watch(
           <template #body="{ data: row }">
             <div class="admin-inline-actions">
               <Button
+                v-if="canManageBilling"
                 as="router-link"
                 :to="getRecordPaymentRoute(row)"
                 icon="pi pi-credit-card"
@@ -763,6 +782,7 @@ watch(
                 title="Open bill PDF"
               />
               <Button
+                v-if="canManageDues"
                 icon="pi pi-envelope"
                 severity="secondary"
                 text
@@ -782,6 +802,7 @@ watch(
                 @click="openBreakdown(row)"
               />
               <Button
+                v-if="canManageDues"
                 icon="pi pi-send"
                 severity="secondary"
                 text
@@ -792,6 +813,7 @@ watch(
                 @click="sendReminders([row.id])"
               />
               <Button
+                v-if="canManageDues"
                 :icon="row.status === 'WAIVED' ? 'pi pi-undo' : 'pi pi-ban'"
                 severity="secondary"
                 text
@@ -800,7 +822,7 @@ watch(
                   row.status === 'WAIVED' ? 'Remove waiver' : 'Waive due'
                 "
                 :title="row.status === 'WAIVED' ? 'Remove waiver' : 'Waive due'"
-                :disabled="row.status === 'PAID' || row.status === 'CANCELLED'"
+                :disabled="!canWaiveDue(row)"
                 @click="openWaiver(row)"
               />
             </div>
@@ -847,6 +869,7 @@ watch(
           </div>
           <div class="admin-inline-actions">
             <Button
+              v-if="canManageBilling"
               as="router-link"
               :to="getRecordPaymentRoute(due)"
               label="Record"
@@ -867,6 +890,7 @@ watch(
               outlined
             />
             <Button
+              v-if="canManageDues"
               label="Send bill"
               icon="pi pi-envelope"
               size="small"
@@ -884,6 +908,7 @@ watch(
               @click="openBreakdown(due)"
             />
             <Button
+              v-if="canManageDues"
               label="Remind"
               icon="pi pi-send"
               size="small"
@@ -893,12 +918,13 @@ watch(
               @click="sendReminders([due.id])"
             />
             <Button
+              v-if="canManageDues"
               :label="due.status === 'WAIVED' ? 'Undo waiver' : 'Waive'"
               :icon="due.status === 'WAIVED' ? 'pi pi-undo' : 'pi pi-ban'"
               size="small"
               severity="secondary"
               outlined
-              :disabled="due.status === 'PAID' || due.status === 'CANCELLED'"
+              :disabled="!canWaiveDue(due)"
               @click="openWaiver(due)"
             />
           </div>

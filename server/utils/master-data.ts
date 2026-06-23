@@ -309,7 +309,9 @@ export const normalizeSocietySettings = (
   }
 }
 
-export const ensureResidentRelationshipsAreValid = (input: ResidentInput) => {
+export const ensureResidentRelationshipsAreValid = (input: {
+  relationships: ResidentInput['relationships']
+}) => {
   const primaryContactCounts = new Map<string, number>()
   const billingContactCounts = new Map<string, number>()
   const activeTenantCounts = new Map<string, number>()

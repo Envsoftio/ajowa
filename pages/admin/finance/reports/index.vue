@@ -111,13 +111,14 @@ const columnLetter = (index: number) => {
 const toUtcDate = (year: number, month: number, day: number) =>
   new Date(Date.UTC(year, month, day)).toISOString().slice(0, 10)
 
-const clampToReportRange = (range: { dateFrom: string; dateTo: string }) => ({
+const clampToReportRange = (range: { dateFrom: string; dateTo: string; label: string }) => ({
   dateFrom: range.dateFrom < filters.startDate ? filters.startDate : range.dateFrom,
   dateTo: range.dateTo > filters.endDate ? filters.endDate : range.dateTo,
+  label: range.label,
 })
 
-const monthRangeFromColumn = (columnKey: string) => {
-  const match = /^m(\d{4})_(\d{2})$/.exec(columnKey)
+const monthRangeFromColumn = (column: ReportColumn) => {
+  const match = /^m(\d{4})_(\d{2})$/.exec(column.key)
   if (!match) return null
 
   const year = Number(match[1])
@@ -125,19 +126,32 @@ const monthRangeFromColumn = (columnKey: string) => {
   return clampToReportRange({
     dateFrom: toUtcDate(year, monthIndex, 1),
     dateTo: toUtcDate(year, monthIndex + 1, 0),
+    label: column.label,
   })
 }
 
-const expenseEntryLink = (row: Record<string, unknown>, column: ReportColumn) => {
-  if (!isExpenseSummary.value) return null
+const isTotalExpenseRow = (row: Record<string, unknown>) =>
+  String(row.description ?? '') === 'TOTAL AMOUNT'
 
-  const valueForLink = column.key === 'description' ? row.total : row[column.key]
-  if (Number(valueForLink ?? 0) <= 0) return null
+const expenseDrilldownLabel = (row: Record<string, unknown>, column: ReportColumn, rangeLabel: string) => {
+  const rowLabel = isTotalExpenseRow(row)
+    ? 'All expenses'
+    : String(row.description ?? 'Expenses')
+
+  return `${rowLabel} - ${column.key === 'total' ? 'selected range' : rangeLabel}`
+}
+
+const expenseEntryLink = (row: Record<string, unknown>, column: ReportColumn) => {
+  if (!isExpenseSummary.value || column.type !== 'money') return null
+
+  const valueForLink = row[column.key]
+  const amount = Number(valueForLink ?? 0)
+  if (!Number.isFinite(amount) || amount <= 0) return null
 
   const range =
-    column.key === 'total' || column.key === 'description'
-      ? { dateFrom: filters.startDate, dateTo: filters.endDate }
-      : monthRangeFromColumn(column.key)
+    column.key === 'total'
+      ? { dateFrom: filters.startDate, dateTo: filters.endDate, label: 'selected range' }
+      : monthRangeFromColumn(column)
   if (!range) return null
 
   const queryParams: Record<string, string> = {
@@ -145,7 +159,10 @@ const expenseEntryLink = (row: Record<string, unknown>, column: ReportColumn) =>
     status: 'POSTED',
     dateFrom: range.dateFrom,
     dateTo: range.dateTo,
-    pageSize: '100',
+    pageSize: '2000',
+    source: 'report',
+    reportDrilldown: expenseDrilldownLabel(row, column, range.label),
+    reportAmount: String(amount),
   }
   if (typeof row.categoryId === 'string') {
     queryParams.categoryId = row.categoryId

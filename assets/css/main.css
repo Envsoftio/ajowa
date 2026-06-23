@@ -1397,6 +1397,40 @@ a {
   min-width: 0.2rem;
 }
 
+.report-drilldown-context {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0.85rem 0;
+  padding: 0.85rem 1rem;
+  border: 1px solid color-mix(in srgb, var(--color-brand) 28%, var(--color-border));
+  background: color-mix(in srgb, var(--color-brand) 8%, var(--color-surface));
+}
+
+.report-drilldown-context h2,
+.report-drilldown-context p {
+  margin: 0;
+}
+
+.report-drilldown-context h2 {
+  color: var(--color-text);
+  font-size: 1rem;
+  letter-spacing: 0;
+}
+
+.report-drilldown-context p:not(.eyebrow) {
+  color: var(--color-muted);
+  font-size: 0.86rem;
+}
+
+.report-drilldown-context strong {
+  color: var(--color-text);
+  font-size: 1.05rem;
+  font-variant-numeric: tabular-nums;
+}
+
 .report-page {
   gap: 0.85rem;
 }

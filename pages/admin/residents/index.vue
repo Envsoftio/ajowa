@@ -841,7 +841,7 @@ const relationshipSeverity = (type: string) => {
             </label>
             <label>
               <span>Email</span>
-              <InputText v-model="form.email" type="email" required />
+              <InputText v-model="form.email" type="email" :required="!selectedResident || form.canLogin" />
             </label>
             <label>
               <span>Notification preset</span>

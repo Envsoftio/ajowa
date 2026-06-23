@@ -33,7 +33,7 @@ const api = useApi()
 const route = useRoute()
 const { filters, query, resetFilters, applyQuickFilter } =
   useFinanceTransactionFilters()
-const { formatMoney } = useFinanceFormatters()
+const { formatMoney, formatDate } = useFinanceFormatters()
 
 const page = ref(1)
 const pageSize = ref(20)
@@ -89,6 +89,11 @@ const applyRouteFilters = (routeQuery: Record<string, unknown>) => {
   filters.mode = queryText(routeQuery.mode)
   filters.voucherNumber = queryText(routeQuery.voucherNumber)
   filters.highValueOnly = queryText(routeQuery.highValueOnly) === 'true'
+
+  const routePageSize = queryNumber(routeQuery.pageSize)
+  if (routePageSize && routePageSize > 0) {
+    pageSize.value = Math.min(routePageSize, 2000)
+  }
 }
 
 applyRouteFilters(route.query)
@@ -131,15 +136,65 @@ const loadTransactions = () =>
     },
   })
 
+const transactionsListKey = computed(() =>
+  [
+    'finance-transactions-list',
+    query.value,
+    page.value,
+    pageSize.value,
+    sortBy.value,
+    sortDirection.value,
+    highValueThreshold.value,
+  ]
+    .map((item) => JSON.stringify(item))
+    .join(':'),
+)
+
 const {
   data: transactionsData,
   pending,
-} = await useAsyncData('finance-transactions-list', loadTransactions, {
-  watch: [query, page, pageSize, sortBy, sortDirection, highValueThreshold],
+} = await useAsyncData(transactionsListKey, loadTransactions, {
+  watch: [transactionsListKey],
 })
 
 const transactions = computed(() => transactionsData.value?.data.items ?? [])
 const totalRecords = computed(() => transactionsData.value?.data.total ?? 0)
+const reportRouteMatchesFilters = () => {
+  const transactionType = queryText(route.query.transactionType).toUpperCase()
+  const status = queryText(route.query.status).toUpperCase()
+
+  return filters.transactionType === transactionType &&
+    filters.status === status &&
+    filters.categoryId === queryText(route.query.categoryId) &&
+    filters.dateFrom === queryText(route.query.dateFrom) &&
+    filters.dateTo === queryText(route.query.dateTo) &&
+    filters.search === queryText(route.query.search) &&
+    filters.bankAccountId === queryText(route.query.bankAccountId) &&
+    filters.billingPeriodId === queryText(route.query.billingPeriodId) &&
+    filters.minAmount === queryNumber(route.query.minAmount) &&
+    filters.maxAmount === queryNumber(route.query.maxAmount) &&
+    filters.counterparty === queryText(route.query.counterparty) &&
+    filters.attachment === queryText(route.query.attachment) &&
+    filters.mode === queryText(route.query.mode) &&
+    filters.voucherNumber === queryText(route.query.voucherNumber) &&
+    filters.highValueOnly === (queryText(route.query.highValueOnly) === 'true')
+}
+
+const reportDrilldown = computed(() => {
+  if (queryText(route.query.source) !== 'report') return null
+  if (!reportRouteMatchesFilters()) return null
+
+  const amount = queryNumber(route.query.reportAmount)
+  const dateText = filters.dateFrom && filters.dateTo
+    ? `${formatDate(filters.dateFrom)} to ${formatDate(filters.dateTo)}`
+    : ''
+
+  return {
+    label: queryText(route.query.reportDrilldown) || 'Report selection',
+    amount,
+    dateText,
+  }
+})
 
 const kpis = computed(() => ({
   income: transactions.value
@@ -228,6 +283,15 @@ const onSort = (event: { sortField?: string; sortOrder?: number }) => {
           />
         </div>
       </header>
+
+      <div v-if="reportDrilldown" class="report-drilldown-context">
+        <div>
+          <p class="eyebrow">Report drill-down</p>
+          <h2>{{ reportDrilldown.label }}</h2>
+          <p>{{ reportDrilldown.dateText }} · {{ totalRecords }} entries</p>
+        </div>
+        <strong v-if="reportDrilldown.amount !== null">{{ formatMoney(reportDrilldown.amount) }}</strong>
+      </div>
 
       <FinanceFilterToolbar
         v-model:filters="filters"
