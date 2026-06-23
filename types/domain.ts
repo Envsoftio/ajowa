@@ -78,6 +78,9 @@ export type FlatSummary = AuditFields & {
   areaSqFt: number | null
   occupancyStatus: string
   isActive: boolean
+  camAdvancePaidUntil?: string | null
+  camAdvanceNote?: string | null
+  camAdvanceUpdatedAt?: string | null
   ownerCount?: number
   tenantCount?: number
 }
@@ -483,6 +486,9 @@ export type MaintenanceDue = AuditFields & {
   billingPeriodId: string
   billingPeriodLabel: string
   billingPeriodDueDate: string
+  billingPeriodChargeType?: BillingPeriodChargeType
+  billingPeriodStartDate?: string
+  billingPeriodEndDate?: string
   flatId: string
   flatNumber: string
   blockName: string
@@ -498,6 +504,8 @@ export type MaintenanceDue = AuditFields & {
   chargeBreakdown: ChargeBreakdownItem[]
   generatedAt: string
   primaryResidentName: string | null
+  isCamAdvanceCovered?: boolean
+  camAdvancePaidUntil?: string | null
   relationshipType?: string
   isBillingContact?: boolean
   canPayNow?: boolean
@@ -512,10 +520,13 @@ export type DueGenerationPreview = {
   billingPeriodId: string
   billingPeriodLabel: string
   billingPeriodDueDate: string
+  billingPeriodChargeType?: BillingPeriodChargeType
   cycleMultiplier: number
   cycleLabel: string
   totalFlats: number
   totalAmount: number
+  skippedAdvanceCovered?: number
+  skippedOverlappingCam?: number
   flatTypeBreakdown: {
     flatType: string
     flatCount: number
