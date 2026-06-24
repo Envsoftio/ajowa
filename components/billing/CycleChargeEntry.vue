@@ -2043,6 +2043,7 @@ watch(
         <AppSkeletonState v-if="loadingCharges" />
         <AppDataTable
           v-else
+          class="billing-variable-charge-table"
           :value="filteredChargeEntries"
           scrollable
           scroll-height="28rem"
@@ -2629,3 +2630,20 @@ watch(
     </Dialog>
   </div>
 </template>
+
+<style scoped>
+:deep(.billing-variable-charge-table),
+:deep(.billing-variable-charge-table > .p-datatable),
+:deep(.billing-variable-charge-table .p-datatable-table),
+:deep(.billing-variable-charge-table .p-datatable-scrollable-table),
+:deep(.billing-variable-charge-table .p-datatable-scrollable-wrapper),
+:deep(.billing-variable-charge-table .p-datatable-wrapper) {
+  width: 100%;
+}
+
+:deep(.billing-variable-charge-table .p-datatable-table-container),
+:deep(.billing-variable-charge-table .p-datatable-scrollable-view) {
+  width: 100%;
+  max-width: 100%;
+}
+</style>

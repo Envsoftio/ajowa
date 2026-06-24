@@ -16,12 +16,16 @@ const menu = ref()
 const pageTitle = computed(() => String(route.meta.title ?? 'AJOWA'))
 const isLoading = computed(() => loading.isLoading.value)
 const userInitial = computed(() => authStore.me?.user.fullName?.charAt(0).toUpperCase() || 'A')
+const userEmail = computed(() => authStore.me?.user.email || '')
 
 const avatarItems = computed<MenuItem[]>(() => [
   {
-    label: theme.isDark.value ? 'Switch to Light Mode' : 'Switch to Dark Mode',
-    icon: theme.isDark.value ? 'pi pi-sun' : 'pi pi-moon',
-    command: () => theme.toggle(),
+    label: userEmail.value ? `Signed in as ${userEmail.value}` : 'Signed in',
+    icon: userEmail.value ? 'pi pi-envelope' : 'pi pi-user',
+    disabled: !userEmail.value,
+  },
+  {
+    separator: true,
   },
   {
     label: 'Notifications',
