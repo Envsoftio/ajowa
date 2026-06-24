@@ -237,7 +237,7 @@ const acceptExistingCredentialUser = async ({
   await client.query(
     `
       insert into auth_accounts (account_id, provider_id, user_id, password)
-      values ($1, 'credential', $1, $2)
+      values ($1::text, 'credential', $1::uuid, $2)
       on conflict (provider_id, account_id) do update
         set user_id = excluded.user_id,
             password = excluded.password,
@@ -331,7 +331,7 @@ const createInviteCredentialUser = async ({
   await client.query(
     `
       insert into auth_accounts (account_id, provider_id, user_id, password)
-      values ($1, 'credential', $1, $2)
+      values ($1::text, 'credential', $1::uuid, $2)
     `,
     [authUser.id, passwordHash],
   )
@@ -497,7 +497,7 @@ const acceptExistingAppUserByEmail = async ({
   await client.query(
     `
       insert into auth_accounts (account_id, provider_id, user_id, password)
-      values ($1, 'credential', $1, $2)
+      values ($1::text, 'credential', $1::uuid, $2)
       on conflict (provider_id, account_id) do update
         set user_id = excluded.user_id,
             password = excluded.password,

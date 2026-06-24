@@ -939,7 +939,7 @@ export const createCredentialUser = async ({
     await transactionClient.query(
       `
         insert into auth_accounts (account_id, provider_id, user_id, password)
-        values ($1, 'credential', $1, $2)
+        values ($1::text, 'credential', $1::uuid, $2)
       `,
       [authUserId, hashedPassword],
     )
