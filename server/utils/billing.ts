@@ -1037,12 +1037,19 @@ const buildUpiPaymentPayload = (row: MaintenanceBillDueRow, amount: number, bill
   return `upi://pay?${params.toString()}`
 }
 
+const normalizePdfImageMimeType = (mimeType: string) =>
+  mimeType === 'image/jpg' || mimeType === 'image/pjpeg'
+    ? 'image/jpeg'
+    : mimeType
+
 const getUploadedPaymentQrImageForPdf = async (row: MaintenanceBillDueRow) => {
   if (!row.payment_qr_storage_object_key || !row.payment_qr_mime_type) {
     return null
   }
 
-  if (!['image/png', 'image/jpeg'].includes(row.payment_qr_mime_type)) {
+  const mimeType = normalizePdfImageMimeType(row.payment_qr_mime_type)
+
+  if (!['image/png', 'image/jpeg'].includes(mimeType)) {
     return null
   }
 
@@ -1057,7 +1064,7 @@ const getUploadedPaymentQrImageForPdf = async (row: MaintenanceBillDueRow) => {
       return null
     }
 
-    return `data:${row.payment_qr_mime_type};base64,${buffer.toString('base64')}`
+    return `data:${mimeType};base64,${buffer.toString('base64')}`
   } catch (error) {
     console.warn(
       JSON.stringify({

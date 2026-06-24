@@ -24,15 +24,28 @@ const dues = computed(() => data.value?.data ?? [])
 
 const isCamDue = (due: MaintenanceDue) => due.billingPeriodChargeType === 'CAM'
 const hasActionableBalance = (due: MaintenanceDue) => due.balanceAmount > 0 && !due.isCamAdvanceCovered
+const camAdvanceAdjustmentAmount = (due: MaintenanceDue) =>
+  due.chargeBreakdown.reduce((sum, item) => {
+    const adjustment = Number(item.camAdvanceAdjustmentAmount ?? 0)
+    return Number.isFinite(adjustment) && adjustment > 0
+      ? sum + adjustment
+      : sum
+  }, 0)
+const hasCamAdvanceAdjustment = (due: MaintenanceDue) =>
+  camAdvanceAdjustmentAmount(due) > 0
+const camAdvanceAdjustmentNote = (due: MaintenanceDue) =>
+  due.chargeBreakdown.find((item) => item.camAdvanceNote)?.camAdvanceNote ?? null
 
 const advanceStatusKind = (due: MaintenanceDue) => {
   if (due.isCamAdvanceCovered) return 'covered'
+  if (hasCamAdvanceAdjustment(due)) return 'billable'
   if (isCamDue(due)) return 'billable'
   return 'not-cam'
 }
 
 const advanceStatusLabel = (due: MaintenanceDue) => {
   if (due.isCamAdvanceCovered) return 'Covered'
+  if (hasCamAdvanceAdjustment(due)) return 'Advance deducted'
   if (isCamDue(due)) return 'Billable'
   return 'Not CAM'
 }
@@ -40,6 +53,10 @@ const advanceStatusLabel = (due: MaintenanceDue) => {
 const advanceStatusDetail = (due: MaintenanceDue) => {
   if (due.isCamAdvanceCovered) {
     return `Covered ${formatDate(due.camAdvanceCoveredFrom)} to ${formatDate(due.camAdvancePaidUntil)}. No payment is needed for this CAM period.`
+  }
+  if (hasCamAdvanceAdjustment(due)) {
+    const note = camAdvanceAdjustmentNote(due)
+    return `${formatMoney(camAdvanceAdjustmentAmount(due))} advance deducted${note ? ` (${note})` : ''}. Remaining due is payable.`
   }
   if (isCamDue(due)) return 'No advance coverage for this CAM period.'
   return 'Advance coverage applies only to CAM bills.'
@@ -201,6 +218,9 @@ const openBreakdown = (due: MaintenanceDue) => {
             <Column field="balanceAmount" header="Balance">
               <template #body="{ data: row }">
                 <strong>{{ formatMoney(row.balanceAmount) }}</strong>
+                <p v-if="hasCamAdvanceAdjustment(row)" class="table-muted">
+                  {{ formatMoney(camAdvanceAdjustmentAmount(row)) }} advance deducted
+                </p>
               </template>
             </Column>
             <Column field="status" header="Status">
@@ -274,6 +294,10 @@ const openBreakdown = (due: MaintenanceDue) => {
           CAM advance covers this period from {{ formatDate(selectedDue.camAdvanceCoveredFrom) }}
           through {{ formatDate(selectedDue.camAdvancePaidUntil) }}.
           No payment is needed for this CAM period.
+        </Message>
+        <Message v-else-if="hasCamAdvanceAdjustment(selectedDue)" severity="info" :closable="false">
+          {{ formatMoney(camAdvanceAdjustmentAmount(selectedDue)) }} CAM advance was deducted.
+          The remaining balance is {{ formatMoney(selectedDue.balanceAmount) }}.
         </Message>
         <Message v-else-if="!selectedDue.canPayNow" severity="info">
           Payment access is limited to the billing contact and configured resident relationship policy.

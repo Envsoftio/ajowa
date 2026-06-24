@@ -114,10 +114,23 @@ const savingBankDetails = ref(false)
 const uploadingPaymentQr = ref(false)
 const removingPaymentQr = ref(false)
 const paymentQrInput = ref<HTMLInputElement | null>(null)
+const paymentQrPreviewUrl = ref('')
+const paymentQrPreviewFileId = ref('')
+let paymentQrPreviewRequestId = 0
 
 const emptyTextMarkers = new Set(['', 'NA', 'N/A', 'NIL', '-', '--'])
-const paymentQrAcceptedMimeTypes = ['image/png', 'image/jpeg'] as const
-const paymentQrAccept = paymentQrAcceptedMimeTypes.join(',')
+const paymentQrAcceptedMimeTypes = [
+  'image/png',
+  'image/jpeg',
+  'image/jpg',
+  'image/pjpeg',
+] as const
+const paymentQrAccept = [
+  ...paymentQrAcceptedMimeTypes,
+  '.jpg',
+  '.jpeg',
+  '.png',
+].join(',')
 const paymentQrMaxSizeBytes = 10 * 1024 * 1024
 const billingTenures = [
   'MONTHLY',
@@ -173,13 +186,7 @@ const assetAccountOptions = computed(() =>
 
 const bankAccounts = computed(() => bankAccountData.value?.data.items ?? [])
 const paymentQrFile = computed(() => data.value?.data.paymentQrFile ?? null)
-const paymentQrImageUrl = computed(() =>
-  paymentQrFile.value
-    ? `${paymentQrFile.value.downloadUrl}?v=${encodeURIComponent(
-        paymentQrFile.value.uploadedAt,
-      )}`
-    : '',
-)
+const paymentQrImageUrl = computed(() => paymentQrPreviewUrl.value)
 const societyPaymentAccount = computed(
   () =>
     bankAccounts.value.find(
@@ -255,6 +262,91 @@ const pickPaymentQr = () => {
   paymentQrInput.value?.click()
 }
 
+const clearPaymentQrPreview = () => {
+  if (paymentQrPreviewUrl.value.startsWith('blob:')) {
+    URL.revokeObjectURL(paymentQrPreviewUrl.value)
+  }
+
+  paymentQrPreviewUrl.value = ''
+  paymentQrPreviewFileId.value = ''
+}
+
+const setPaymentQrPreviewObjectUrl = (objectUrl: string, fileId: string) => {
+  clearPaymentQrPreview()
+  paymentQrPreviewUrl.value = objectUrl
+  paymentQrPreviewFileId.value = fileId
+}
+
+const loadSavedPaymentQrPreview = async (file: SocietyPaymentQrFile | null) => {
+  if (!import.meta.client) {
+    return
+  }
+
+  if (!file) {
+    paymentQrPreviewRequestId += 1
+    clearPaymentQrPreview()
+    return
+  }
+
+  if (paymentQrPreviewFileId.value === file.id && paymentQrPreviewUrl.value) {
+    return
+  }
+
+  const requestId = ++paymentQrPreviewRequestId
+
+  try {
+    const response = await fetch(
+      `${file.downloadUrl}?v=${encodeURIComponent(file.id)}`,
+      {
+        credentials: 'include',
+        cache: 'no-store',
+      },
+    )
+
+    if (!response.ok) {
+      throw new Error('Unable to load the saved payment QR preview.')
+    }
+
+    const objectUrl = URL.createObjectURL(await response.blob())
+
+    if (requestId !== paymentQrPreviewRequestId) {
+      URL.revokeObjectURL(objectUrl)
+      return
+    }
+
+    setPaymentQrPreviewObjectUrl(objectUrl, file.id)
+  } catch (error) {
+    if (requestId === paymentQrPreviewRequestId) {
+      clearPaymentQrPreview()
+      console.warn(
+        JSON.stringify({
+          level: 'warn',
+          message: 'Unable to load payment QR preview.',
+          fileId: file.id,
+          cause: error instanceof Error ? error.message : String(error),
+        }),
+      )
+    }
+  }
+}
+
+onBeforeUnmount(() => {
+  paymentQrPreviewRequestId += 1
+  clearPaymentQrPreview()
+})
+
+watch(
+  paymentQrFile,
+  (file) => {
+    void loadSavedPaymentQrPreview(file)
+  },
+  { immediate: true },
+)
+
+onMounted(() => {
+  void loadSavedPaymentQrPreview(paymentQrFile.value)
+})
+
 const uploadPaymentQr = async (file: File) => {
   if (
     !paymentQrAcceptedMimeTypes.includes(
@@ -285,17 +377,22 @@ const uploadPaymentQr = async (file: File) => {
   uploadingPaymentQr.value = true
 
   try {
-    await api<PaymentQrResponse>('/api/admin/society/payment-qr', {
+    const response = await api<PaymentQrResponse>('/api/admin/society/payment-qr', {
       method: 'POST',
       body: formData,
     })
+    if (data.value?.data) {
+      data.value.data.paymentQrFile = response.data
+    } else {
+      await refresh()
+    }
+    await loadSavedPaymentQrPreview(response.data)
     toast.add({
       severity: 'success',
       summary: 'QR saved',
       detail: 'Payment QR code was updated.',
       life: 10000,
     })
-    await refresh()
   } finally {
     uploadingPaymentQr.value = false
   }
@@ -323,13 +420,16 @@ const removePaymentQr = async () => {
     await api('/api/admin/society/payment-qr', {
       method: 'DELETE',
     })
+    clearPaymentQrPreview()
+    if (data.value?.data) {
+      data.value.data.paymentQrFile = null
+    }
     toast.add({
       severity: 'success',
       summary: 'QR removed',
       detail: 'Payment QR code was removed.',
       life: 10000,
     })
-    await refresh()
   } finally {
     removingPaymentQr.value = false
   }

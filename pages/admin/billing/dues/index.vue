@@ -130,7 +130,7 @@ const overdueOptions = [
 const advanceOptions = [
   { label: 'All advance states', value: '' },
   { label: 'CAM advance covered', value: 'covered' },
-  { label: 'Billable / no advance', value: 'billable' },
+  { label: 'Billable / partial advance', value: 'billable' },
 ]
 
 const isReminderEligible = (due: MaintenanceDue) =>
@@ -166,9 +166,32 @@ const getRecordPaymentRoute = (due: MaintenanceDue) => ({
 
 const isCamDue = (due: MaintenanceDue) => due.billingPeriodChargeType === 'CAM'
 const isCoverageRow = (due: MaintenanceDue) => Boolean(due.isAdvanceCoverageRow)
+const camAdvanceAdjustmentAmount = (due: MaintenanceDue) =>
+  due.chargeBreakdown.reduce((sum, item) => {
+    const adjustment = Number(item.camAdvanceAdjustmentAmount ?? 0)
+    return Number.isFinite(adjustment) && adjustment > 0
+      ? sum + adjustment
+      : sum
+  }, 0)
+const hasCamAdvanceAdjustment = (due: MaintenanceDue) =>
+  camAdvanceAdjustmentAmount(due) > 0
+const camAdvanceAdjustmentNote = (due: MaintenanceDue) =>
+  due.chargeBreakdown.find((item) => item.camAdvanceNote)?.camAdvanceNote ?? null
+const paymentProgressLabel = (due: MaintenanceDue) => {
+  if (due.isCamAdvanceCovered) return 'Covered'
+
+  const advanceAdjustment = camAdvanceAdjustmentAmount(due)
+
+  if (advanceAdjustment > 0) {
+    return `${formatMoney(advanceAdjustment)} advance deducted; ${paymentProgress(due)}% covered overall`
+  }
+
+  return `${paymentProgress(due)}% paid`
+}
 
 const advanceStatusKind = (due: MaintenanceDue) => {
   if (isCoverageRow(due) || due.isCamAdvanceCovered) return 'covered'
+  if (hasCamAdvanceAdjustment(due)) return 'billable'
   if (isCamDue(due)) return 'billable'
   return 'not-cam'
 }
@@ -176,6 +199,7 @@ const advanceStatusKind = (due: MaintenanceDue) => {
 const advanceStatusLabel = (due: MaintenanceDue) => {
   if (isCoverageRow(due)) return 'Coverage marker'
   if (due.isCamAdvanceCovered) return 'Covered'
+  if (hasCamAdvanceAdjustment(due)) return 'Advance deducted'
   if (isCamDue(due)) return 'Billable'
   return 'Not CAM'
 }
@@ -185,6 +209,10 @@ const advanceStatusDetail = (due: MaintenanceDue) => {
     return 'This row is a CAM coverage marker only. No bill or payment action is available.'
   if (due.isCamAdvanceCovered) {
     return `Covered ${formatDate(due.camAdvanceCoveredFrom)} to ${formatDate(due.camAdvancePaidUntil)}. Bill and reminder actions are off.`
+  }
+  if (hasCamAdvanceAdjustment(due)) {
+    const note = camAdvanceAdjustmentNote(due)
+    return `${formatMoney(camAdvanceAdjustmentAmount(due))} advance deducted${note ? ` (${note})` : ''}. Remaining due is payable.`
   }
   if (isCamDue(due)) return 'No advance coverage for this CAM period.'
   return 'Advance coverage applies only to CAM bills.'
@@ -263,11 +291,19 @@ const topOutstandingDue = computed(
 )
 
 const paymentProgress = (due: MaintenanceDue) =>
-  due.isCamAdvanceCovered
-    ? 100
-    : due.totalAmount > 0
-    ? Math.min(100, Math.round((due.paidAmount / due.totalAmount) * 100))
-    : 0
+  {
+    if (due.isCamAdvanceCovered) {
+      return 100
+    }
+
+    const advanceAdjustment = camAdvanceAdjustmentAmount(due)
+    const totalWithAdvance = due.totalAmount + advanceAdjustment
+    const paidWithAdvance = due.paidAmount + advanceAdjustment
+
+    return totalWithAdvance > 0
+      ? Math.min(100, Math.round((paidWithAdvance / totalWithAdvance) * 100))
+      : 0
+  }
 
 const selectedDue = ref<MaintenanceDue | null>(null)
 const breakdownVisible = ref(false)
@@ -906,7 +942,7 @@ watch(
           <template #body="{ data: row }">
             <div class="billing-balance-cell">
               <strong>{{ formatMoney(row.balanceAmount) }}</strong>
-              <span>{{ row.isCamAdvanceCovered ? 'Covered' : `${paymentProgress(row)}% paid` }}</span>
+              <span>{{ paymentProgressLabel(row) }}</span>
               <div class="billing-progress-track">
                 <span :style="{ width: `${paymentProgress(row)}%` }" />
               </div>
@@ -1026,6 +1062,11 @@ watch(
             <strong>{{ formatMoney(due.balanceAmount) }}</strong>
             <span v-if="due.isCamAdvanceCovered">
               {{ isCoverageRow(due) ? 'Coverage marker row' : 'Covered by CAM advance' }}
+            </span>
+            <span v-else-if="hasCamAdvanceAdjustment(due)">
+              {{ formatMoney(camAdvanceAdjustmentAmount(due)) }} advance deducted;
+              {{ formatMoney(due.paidAmount) }} paid of
+              {{ formatMoney(due.totalAmount) }} remaining bill
             </span>
             <span v-else>
               {{ formatMoney(due.paidAmount) }} paid of

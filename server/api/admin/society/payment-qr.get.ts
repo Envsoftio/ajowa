@@ -40,10 +40,19 @@ export default defineEventHandler(async (event) => {
     storageObjectKey: paymentQr.storage_object_key,
   })
   const fileName = (paymentQr.original_file_name ?? 'payment-qr').replace(/"/g, '')
+  const response = event.node?.res
 
-  setHeader(event, 'content-type', paymentQr.mime_type ?? 'application/octet-stream')
-  setHeader(event, 'cache-control', 'private, no-store')
-  setHeader(event, 'content-disposition', `inline; filename="${fileName}"`)
+  if (!response) {
+    throw new AppError({
+      code: 'INTERNAL_ERROR',
+      statusCode: 500,
+      message: 'Unable to prepare the payment QR image response.',
+    })
+  }
+
+  response.setHeader('content-type', paymentQr.mime_type ?? 'application/octet-stream')
+  response.setHeader('cache-control', 'private, no-store')
+  response.setHeader('content-disposition', `inline; filename="${fileName}"`)
 
   return Buffer.from(await blob.arrayBuffer())
 })
