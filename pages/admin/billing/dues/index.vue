@@ -24,6 +24,18 @@ type NotificationQueueResponse = {
   ok: true
   data: { eligible: number; jobCount: number }
 }
+type DueUpdateResponse = {
+  ok: true
+  data: {
+    id: string
+    dueDate: string
+    baseAmount: number
+    lateFeeAmount: number
+    totalAmount: number
+    balanceAmount: number
+    status: MaintenanceDue['status']
+  }
+}
 
 const api = useApi()
 const toast = useToast()
@@ -163,6 +175,12 @@ const canRecordPayment = (due: MaintenanceDue) =>
 const canWaiveDue = (due: MaintenanceDue) =>
   canManageDues.value && !due.isAdvanceCoverageRow && !due.isCamAdvanceCovered && !['PAID', 'CANCELLED'].includes(due.status)
 
+const canEditDue = (due: MaintenanceDue) =>
+  canManageDues.value &&
+  !due.isAdvanceCoverageRow &&
+  !due.isCamAdvanceCovered &&
+  !['PAID', 'WAIVED', 'CANCELLED'].includes(due.status)
+
 const getRecordPaymentRoute = (due: MaintenanceDue) => ({
   path: '/admin/payments/new',
   query: {
@@ -253,6 +271,13 @@ const getReminderTitle = (due: MaintenanceDue) => {
   return `Send reminder for ${due.flatNumber || 'flat'} ${due.billingPeriodLabel || ''}`.trim()
 }
 
+const getEditDueTitle = (due: MaintenanceDue) => {
+  if (isCoverageRow(due)) return 'Coverage marker rows cannot be edited here.'
+  if (due.isCamAdvanceCovered) return 'Covered CAM rows cannot be edited here.'
+  if (['PAID', 'WAIVED', 'CANCELLED'].includes(due.status)) return 'Closed dues cannot be edited.'
+  return 'Edit due'
+}
+
 const summary = computed(() => {
   const rows = dues.value
   const billRows = rows.filter((row) => !row.isAdvanceCoverageRow)
@@ -329,6 +354,14 @@ const waiverDialogVisible = ref(false)
 const waiverTarget = ref<MaintenanceDue | null>(null)
 const waiverReason = ref('')
 const savingWaiver = ref(false)
+const editDialogVisible = ref(false)
+const editTarget = ref<MaintenanceDue | null>(null)
+const savingDueEdit = ref(false)
+const editForm = reactive({
+  dueDate: '',
+  baseAmount: null as number | null,
+  note: '',
+})
 const sendingReminder = ref(false)
 const billSendDialogVisible = ref(false)
 const billSendTargets = ref<MaintenanceDue[]>([])
@@ -433,6 +466,60 @@ const clearNotificationSelection = () => {
 const openBreakdown = (due: MaintenanceDue) => {
   selectedDue.value = due
   breakdownVisible.value = true
+}
+
+const openDueEdit = (due: MaintenanceDue) => {
+  if (!canEditDue(due)) return
+  editTarget.value = due
+  editForm.dueDate = due.dueDate
+  editForm.baseAmount = due.baseAmount
+  editForm.note = ''
+  editDialogVisible.value = true
+}
+
+const isDueEditChanged = computed(() => {
+  if (!editTarget.value || editForm.baseAmount == null) return false
+
+  return (
+    editForm.dueDate !== editTarget.value.dueDate ||
+    Number(editForm.baseAmount) !== editTarget.value.baseAmount
+  )
+})
+
+const canSubmitDueEdit = computed(
+  () =>
+    Boolean(editTarget.value) &&
+    Boolean(editForm.dueDate) &&
+    editForm.baseAmount != null &&
+    editForm.baseAmount > 0 &&
+    isDueEditChanged.value,
+)
+
+const submitDueEdit = async () => {
+  if (!editTarget.value || !canSubmitDueEdit.value) return
+  savingDueEdit.value = true
+
+  try {
+    await api<DueUpdateResponse>(`/api/admin/billing/dues/${editTarget.value.id}`, {
+      method: 'PATCH',
+      body: {
+        dueDate: editForm.dueDate,
+        baseAmount: editForm.baseAmount,
+        note: editForm.note || null,
+      },
+    })
+    toast.add({
+      severity: 'success',
+      summary: 'Due updated',
+      detail: 'The bill amounts were recalculated.',
+      life: 10000,
+    })
+    editDialogVisible.value = false
+    editTarget.value = null
+    await refresh()
+  } finally {
+    savingDueEdit.value = false
+  }
 }
 
 const openWaiver = (due: MaintenanceDue) => {
@@ -1023,6 +1110,17 @@ watch(
           <template #body="{ data: row }">
             <div class="admin-inline-actions">
               <Button
+                v-if="canManageDues"
+                icon="pi pi-pencil"
+                severity="secondary"
+                text
+                rounded
+                :aria-label="getEditDueTitle(row)"
+                :title="getEditDueTitle(row)"
+                :disabled="!canEditDue(row)"
+                @click="openDueEdit(row)"
+              />
+              <Button
                 v-if="canManageBilling"
                 as="router-link"
                 :to="getRecordPaymentRoute(row)"
@@ -1152,6 +1250,17 @@ watch(
           </div>
           <div class="admin-inline-actions">
             <Button
+              v-if="canManageDues"
+              label="Edit"
+              icon="pi pi-pencil"
+              size="small"
+              severity="secondary"
+              outlined
+              :title="getEditDueTitle(due)"
+              :disabled="!canEditDue(due)"
+              @click="openDueEdit(due)"
+            />
+            <Button
               v-if="canManageBilling"
               as="router-link"
               :to="getRecordPaymentRoute(due)"
@@ -1263,6 +1372,76 @@ watch(
           <strong>{{ formatMoney(selectedDue.balanceAmount) }}</strong>
         </div>
       </div>
+    </Dialog>
+
+    <Dialog
+      v-model:visible="editDialogVisible"
+      header="Edit due"
+      modal
+      :style="{ width: '520px' }"
+    >
+      <form v-if="editTarget" class="admin-form-layout" @submit.prevent="submitDueEdit">
+        <div class="billing-dialog-intro billing-dialog-intro--compact">
+          <div>
+            <p class="eyebrow">Due correction</p>
+            <h2>{{ editTarget.blockName }} {{ editTarget.flatNumber }}</h2>
+            <p>
+              {{ editTarget.billingPeriodLabel }} ·
+              {{ formatMoney(editTarget.paidAmount) }} already paid
+            </p>
+          </div>
+        </div>
+        <div class="admin-form-grid">
+          <label>
+            <span class="field-label">
+              Due date
+              <AppHelpIcon text="Payment deadline shown on this due and its bill PDF." />
+            </span>
+            <InputText v-model="editForm.dueDate" type="date" required />
+          </label>
+          <label>
+            <span class="field-label">
+              Base amount
+              <AppHelpIcon text="Original bill amount before late fee, waivers, or payments." />
+            </span>
+            <InputNumber
+              v-model="editForm.baseAmount"
+              mode="currency"
+              currency="INR"
+              locale="en-IN"
+              :min="1"
+              :max-fraction-digits="2"
+              fluid
+            />
+          </label>
+          <label class="admin-form-grid__full">
+            <span class="field-label">
+              Note
+              <AppHelpIcon text="Optional audit note for this correction." />
+            </span>
+            <Textarea v-model="editForm.note" rows="3" auto-resize />
+          </label>
+        </div>
+        <div class="billing-total-line">
+          <span>Current balance</span>
+          <strong>{{ formatMoney(editTarget.balanceAmount) }}</strong>
+        </div>
+        <div class="admin-inline-actions dialog-actions">
+          <Button
+            type="button"
+            label="Cancel"
+            severity="secondary"
+            outlined
+            @click="editDialogVisible = false"
+          />
+          <Button
+            type="submit"
+            label="Save due"
+            :loading="savingDueEdit"
+            :disabled="!canSubmitDueEdit"
+          />
+        </div>
+      </form>
     </Dialog>
 
     <Dialog

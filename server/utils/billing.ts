@@ -104,6 +104,14 @@ export const dueWaiveSchema = z.object({
   reason: z.string().trim().min(2).max(500),
 })
 
+export const dueUpdateSchema = z.object({
+  dueDate: z.string().date().optional(),
+  baseAmount: z.coerce.number().positive().optional(),
+  note: z.string().trim().max(500).nullable().optional(),
+}).refine((value) => value.dueDate !== undefined || value.baseAmount !== undefined, {
+  message: 'Change the due date or base amount before saving.',
+})
+
 export const dueReminderSchema = z.object({
   dueIds: z.array(z.string().uuid()).min(1).max(500),
 })
@@ -118,6 +126,7 @@ export type BillingPeriodUpdateInput = z.infer<typeof billingPeriodUpdateSchema>
 export type ChargeConfigInput = z.infer<typeof chargeConfigSchema>
 export type DueGenerationInput = z.infer<typeof dueGenerationSchema>
 export type DueWaiveInput = z.infer<typeof dueWaiveSchema>
+export type DueUpdateInput = z.infer<typeof dueUpdateSchema>
 export type DueReminderInput = z.infer<typeof dueReminderSchema>
 export type DueBillSendInput = z.infer<typeof dueBillSendSchema>
 
