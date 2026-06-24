@@ -268,11 +268,95 @@ const openBreakdown = (due: MaintenanceDue) => {
               </template>
             </Column>
           </AppDataTable>
+
+          <div class="list-page__cards resident-due-cards">
+            <article v-for="row in group.rows" :key="row.id" class="list-card resident-due-card">
+              <div class="list-card__header resident-due-card__header">
+                <div>
+                  <h3>{{ row.billingPeriodLabel }}</h3>
+                  <p>Due {{ formatDate(row.dueDate) }}</p>
+                </div>
+                <span v-if="row.isCamAdvanceCovered" class="billing-advance-pill">
+                  Covered
+                </span>
+                <AppStatusBadge v-else :status="row.status" />
+              </div>
+
+              <div
+                class="billing-advance-state billing-advance-state--card"
+                :class="`billing-advance-state--${advanceStatusKind(row)}`"
+              >
+                <span class="billing-advance-pill">
+                  {{ advanceStatusLabel(row) }}
+                </span>
+                <p>{{ advanceStatusDetail(row) }}</p>
+              </div>
+
+              <div class="list-card__row">
+                <span>Base</span>
+                <strong>{{ formatMoney(row.baseAmount) }}</strong>
+              </div>
+              <div class="list-card__row">
+                <span>Late fee</span>
+                <strong>{{ formatMoney(row.lateFeeAmount) }}</strong>
+              </div>
+              <div class="list-card__row">
+                <span>Paid</span>
+                <strong>{{ formatMoney(row.paidAmount) }}</strong>
+              </div>
+              <div class="list-card__row">
+                <span>Balance</span>
+                <strong>
+                  {{ formatMoney(row.balanceAmount) }}
+                  <small v-if="hasCamAdvanceAdjustment(row)">
+                    {{ formatMoney(camAdvanceAdjustmentAmount(row)) }} advance deducted
+                  </small>
+                </strong>
+              </div>
+
+              <div class="resident-mobile-actions">
+                <Button
+                  v-if="!row.isAdvanceCoverageRow"
+                  as="a"
+                  :href="`/api/my/dues/${row.id}/bill`"
+                  target="_blank"
+                  label="Bill"
+                  icon="pi pi-file-pdf"
+                  severity="secondary"
+                  outlined
+                  size="small"
+                />
+                <Button
+                  label="Breakdown"
+                  icon="pi pi-list"
+                  severity="secondary"
+                  outlined
+                  size="small"
+                  @click="openBreakdown(row)"
+                />
+                <Button
+                  label="Pay"
+                  icon="pi pi-credit-card"
+                  severity="secondary"
+                  outlined
+                  size="small"
+                  :title="getPayTitle(row)"
+                  :disabled="!canPayDue(row)"
+                />
+              </div>
+            </article>
+          </div>
         </section>
       </div>
     </section>
 
-    <Dialog v-model:visible="breakdownVisible" header="Charge breakdown" modal :style="{ width: '520px' }">
+    <Dialog
+      v-model:visible="breakdownVisible"
+      header="Charge breakdown"
+      modal
+      class="p-dialog-custom"
+      :style="{ width: '520px' }"
+    >
       <div v-if="selectedDue" class="admin-form-layout">
         <div>
           <h3>{{ selectedDue.billingPeriodLabel }}</h3>

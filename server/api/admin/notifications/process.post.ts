@@ -1,12 +1,15 @@
 import { z } from 'zod'
+import process from 'node:process'
 import type { PoolClient } from 'pg'
 import { createApiSuccess, readJsonBody, validateInput } from '~/server/utils/api'
 import { requireRole } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
-import { dispatchNotificationJobs } from '~/server/utils/notifications'
+import { dispatchNotificationJobs, requeueFailedNotificationJobs } from '~/server/utils/notifications'
 
 const schema = z.object({
   eventId: z.string().uuid().optional(),
+  retryFailed: z.boolean().optional(),
+  limit: z.coerce.number().int().min(1).max(25).optional(),
 })
 
 type EventJobSummaryRow = {
@@ -21,6 +24,17 @@ type EventJobSummaryRow = {
   failed_count: number
   channel_statuses: string
 }
+
+const parsePositiveInteger = (value: string | undefined, fallback: number) => {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback
+}
+
+const defaultProcessLimit = () =>
+  parsePositiveInteger(
+    process.env.NOTIFICATION_PROCESS_BATCH_SIZE,
+    process.env.NETLIFY === 'true' ? 5 : 25,
+  )
 
 const getEventJobSummary = async (
   client: PoolClient,
@@ -99,8 +113,14 @@ export default defineEventHandler(async (event) => {
   const client = await getDatabasePool().connect()
 
   try {
+    const requeued = body.eventId && body.retryFailed
+      ? await requeueFailedNotificationJobs(client, {
+          societyId: authMe.user.societyId,
+          eventId: body.eventId,
+        })
+      : 0
     const result = await dispatchNotificationJobs(client, {
-      limit: body.eventId ? 250 : 50,
+      limit: body.limit ?? defaultProcessLimit(),
       societyId: authMe.user.societyId,
       lockTimeoutMinutes: body.eventId ? 1 : 10,
       ...(body.eventId ? { eventId: body.eventId } : {}),
@@ -111,6 +131,7 @@ export default defineEventHandler(async (event) => {
 
     return createApiSuccess(event, {
       ...result,
+      requeued,
       ...(eventSummary ? { eventSummary } : {}),
     })
   } finally {

@@ -30,7 +30,10 @@ export default defineNitroPlugin((nitroApp) => {
   }
 
   const intervalMs = parsePositiveInteger(process.env.NOTIFICATION_WORKER_INTERVAL_MS, 30_000)
-  const batchSize = parsePositiveInteger(process.env.NOTIFICATION_WORKER_BATCH_SIZE, 50)
+  const batchSize = parsePositiveInteger(
+    process.env.NOTIFICATION_WORKER_BATCH_SIZE,
+    process.env.NETLIFY === 'true' ? 5 : 50,
+  )
 
   const processQueue = async () => {
     if (state.processing) {

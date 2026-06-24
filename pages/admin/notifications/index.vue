@@ -32,6 +32,7 @@ type ProcessQueueResponse = {
     sent: number
     failed: number
     retried: number
+    requeued: number
     eventSummary?: {
       eventStatus: string
       jobCount: number
@@ -69,25 +70,31 @@ const { data, pending, refresh } = await useAsyncData('admin-notifications', () 
 
 const rows = computed(() => data.value?.data.items ?? [])
 
-const processResultDetail = (result: ProcessQueueResponse['data']) =>
-  result.claimed > 0
-    ? `${result.claimed} claimed, ${result.sent} sent, ${result.retried} retried, ${result.failed} failed.`
+const processResultDetail = (result: ProcessQueueResponse['data']) => {
+  const requeued = result.requeued ?? 0
+
+  return result.claimed > 0 || requeued > 0
+    ? `${requeued > 0 ? `${requeued} requeued, ` : ''}${result.claimed} claimed, ${result.sent} sent, ${result.retried} retried, ${result.failed} failed.`
     : result.eventSummary
       ? result.eventSummary.jobCount === 0
         ? 'No delivery jobs are attached to this row.'
         : `No new jobs claimed. Current channels: ${result.eventSummary.channelStatuses.map(channelLabel).join(', ')}.`
       : 'No claimable queued jobs were found.'
+}
 
 const processResultSeverity = (result: ProcessQueueResponse['data']) =>
-  result.claimed > 0 ? 'success' : 'info'
+  result.claimed > 0 || (result.requeued ?? 0) > 0 ? 'success' : 'info'
 
 const hasProcessableJob = (row: NotificationEvent) =>
   row.channelStatuses.some((channelStatus) =>
     ['QUEUED', 'RETRYING', 'PROCESSING'].includes(channelStatus.status),
   )
 
+const hasFailedJob = (row: NotificationEvent) =>
+  row.channelStatuses.some((channelStatus) => channelStatus.status === 'FAILED')
+
 const canProcessRow = (row: NotificationEvent) =>
-  hasProcessableJob(row) && !['PROCESSED', 'SENT', 'DELIVERED', 'READ', 'CANCELLED'].includes(row.status)
+  row.status !== 'CANCELLED' && (hasProcessableJob(row) || hasFailedJob(row))
 
 const channelSeverity = (status: string) => {
   if (['SENT', 'DELIVERED', 'READ'].includes(status)) return 'success'
@@ -156,11 +163,14 @@ const clearSentRows = async () => {
 }
 
 const processEvent = async (row: NotificationEvent) => {
+  const retryFailed = hasFailedJob(row)
   const confirmed = await confirmAction({
-    header: 'Process this notification?',
-    message: 'Claim and send queued jobs for this notification row only?',
+    header: retryFailed ? 'Retry this notification?' : 'Process this notification?',
+    message: retryFailed
+      ? 'Requeue failed delivery jobs and send this notification row again?'
+      : 'Claim and send queued jobs for this notification row only?',
     icon: 'pi pi-play',
-    acceptLabel: 'Process row',
+    acceptLabel: retryFailed ? 'Retry row' : 'Process row',
     acceptSeverity: 'warn',
   })
 
@@ -173,7 +183,7 @@ const processEvent = async (row: NotificationEvent) => {
   try {
     const response = await api<ProcessQueueResponse>('/api/admin/notifications/process', {
       method: 'POST',
-      body: { eventId: row.id },
+      body: { eventId: row.id, retryFailed },
     })
     toast.add({
       severity: processResultSeverity(response.data),

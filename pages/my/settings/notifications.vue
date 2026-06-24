@@ -120,6 +120,56 @@ const subscribePush = async () => {
         </Column>
         <Column header="Mobile fallback"><template #body="{ data: row }"><ToggleSwitch v-model="row.fallbackToMobileForWhatsapp" /></template></Column>
       </AppDataTable>
+
+      <div class="list-page__cards notification-preference-cards">
+        <article v-for="row in preferences" :key="row.category" class="list-card notification-preference-card">
+          <div class="list-card__header">
+            <div>
+              <h3>{{ row.category }}</h3>
+              <p>{{ row.preferredLanguage || 'Default language' }}</p>
+            </div>
+            <Tag :value="row.allowCriticalBypass ? 'Critical bypass' : 'Standard'" severity="secondary" />
+          </div>
+
+          <div class="notification-toggle-grid">
+            <label>
+              <span>Push</span>
+              <ToggleSwitch v-model="row.pushEnabled" :aria-label="`${row.category} push notifications`" />
+            </label>
+            <label>
+              <span>Email</span>
+              <ToggleSwitch v-model="row.emailEnabled" :aria-label="`${row.category} email notifications`" />
+            </label>
+            <label>
+              <span>WhatsApp</span>
+              <ToggleSwitch v-model="row.whatsappEnabled" :aria-label="`${row.category} WhatsApp notifications`" />
+            </label>
+            <label>
+              <span>In-app</span>
+              <ToggleSwitch v-model="row.inAppEnabled" :aria-label="`${row.category} in-app notifications`" />
+            </label>
+          </div>
+
+          <div class="notification-quiet-hours">
+            <label>
+              <span class="field-label">Quiet start</span>
+              <InputText v-model="row.quietHoursStart" placeholder="22:00" inputmode="numeric" />
+            </label>
+            <label>
+              <span class="field-label">Quiet end</span>
+              <InputText v-model="row.quietHoursEnd" placeholder="07:00" inputmode="numeric" />
+            </label>
+          </div>
+
+          <label class="notification-fallback-toggle">
+            <span>Use mobile as WhatsApp fallback</span>
+            <ToggleSwitch
+              v-model="row.fallbackToMobileForWhatsapp"
+              :aria-label="`${row.category} mobile WhatsApp fallback`"
+            />
+          </label>
+        </article>
+      </div>
     </section>
   </div>
 </template>

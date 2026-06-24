@@ -510,7 +510,7 @@ const applyUserNotificationPreferences = async (
   })
 }
 
-const getEmailAttachmentsForJob = async (job: ClaimedJobRow) => {
+const getEmailAttachmentsForJob = async (client: PoolClient, job: ClaimedJobRow) => {
   if (!['maintenance_due.bill', 'maintenance_due.reminder', 'maintenance_due.overdue'].includes(job.event_key)) {
     return undefined
   }
@@ -523,6 +523,7 @@ const getEmailAttachmentsForJob = async (job: ClaimedJobRow) => {
   const bill = await generateMaintenanceBillPdf(dueId, {
     societyId: job.society_id,
     isStaff: true,
+    client,
   })
 
   return [
@@ -879,6 +880,52 @@ export const claimNotificationJobs = async (
   return result.rows
 }
 
+export const requeueFailedNotificationJobs = async (
+  client: PoolClient,
+  input: {
+    societyId: string
+    eventId: string
+  },
+) => {
+  const result = await client.query<{ id: string }>(
+    `
+      update notification_jobs nj
+      set status = 'RETRYING',
+          next_attempt_at = now(),
+          locked_at = null,
+          locked_by = null,
+          failure_reason = null,
+          response_body = '{}'::jsonb,
+          permanent_failure = false,
+          updated_at = now()
+      from notification_events ne
+      where ne.id = nj.notification_event_id
+        and ne.id = $1
+        and ne.society_id = $2
+        and nj.status = 'FAILED'
+      returning nj.id
+    `,
+    [input.eventId, input.societyId],
+  )
+
+  if ((result.rowCount ?? 0) > 0) {
+    await client.query(
+      `
+        update notification_events
+        set status = 'QUEUED',
+            processed_at = null,
+            completed_at = null,
+            updated_at = now()
+        where id = $1
+          and society_id = $2
+      `,
+      [input.eventId, input.societyId],
+    )
+  }
+
+  return result.rowCount ?? 0
+}
+
 const sendWhatsAppMessage = async (input: {
   to: string
   title: string
@@ -1151,7 +1198,7 @@ const dispatchJob = async (
     let attachments: Awaited<ReturnType<typeof getEmailAttachmentsForJob>>
 
     try {
-      attachments = await getEmailAttachmentsForJob(job)
+      attachments = await getEmailAttachmentsForJob(client, job)
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to generate the bill PDF.'
 

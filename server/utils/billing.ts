@@ -1,5 +1,6 @@
 import * as QRCode from 'qrcode'
 import { z } from 'zod'
+import type { PoolClient } from 'pg'
 import type { ChargeBreakdownItem } from '~/types/domain'
 import { AppError } from './errors'
 import { getDatabasePool } from './database'
@@ -605,6 +606,7 @@ type MaintenanceBillAccess = {
   societyId?: string
   userId?: string
   isStaff?: boolean
+  client?: PoolClient
 }
 
 type MaintenanceBillDueRow = {
@@ -1113,8 +1115,8 @@ export const getMaintenanceBillData = async (
     )
   }
 
-  const pool = getDatabasePool()
-  const dueResult = await pool.query<MaintenanceBillDueRow>(
+  const queryable = access.client ?? getDatabasePool()
+  const dueResult = await queryable.query<MaintenanceBillDueRow>(
     `
       select
         md.id,
@@ -1242,7 +1244,7 @@ export const getMaintenanceBillData = async (
     settings.lateFeePerDay,
   )
 
-  const previousResult = await pool.query<PreviousDueRow>(
+  const previousResult = await queryable.query<PreviousDueRow>(
     `
       select
         md.due_date::text,
