@@ -28,6 +28,7 @@ type DefaulterRow = {
   paid_amount: string
   balance_amount: string
   due_date: string
+  cam_advance_note: string | null
 }
 
 export default defineEventHandler(async (event) => {
@@ -62,7 +63,18 @@ export default defineEventHandler(async (event) => {
         md.total_amount::text,
         md.paid_amount::text,
         md.balance_amount::text,
-        bp.due_date::text
+        bp.due_date::text,
+        (
+          select item->>'camAdvanceNote'
+          from jsonb_array_elements(
+            case
+              when jsonb_typeof(md.charge_breakdown) = 'array' then md.charge_breakdown
+              else '[]'::jsonb
+            end
+          ) item
+          where item ? 'camAdvanceNote'
+          limit 1
+        ) as cam_advance_note
       from maintenance_dues md
       inner join flats f on f.id = md.flat_id
       inner join blocks b on b.id = f.block_id
@@ -156,6 +168,7 @@ export default defineEventHandler(async (event) => {
       paidAmount: Number(row.paid_amount),
       balanceAmount: computed.balanceAmount,
       daysOverdue,
+      camAdvanceNote: row.cam_advance_note,
     }
 
     if (existing) {

@@ -4,8 +4,11 @@ import { requireRole } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
 import {
   appendChargeLookup,
+  applyCamAdvanceCoverageToChargeBreakdown,
   getBillingCycleLabel,
   getBillingCycleMultiplier,
+  summarizeCamAdvanceCoverage,
+  type CamAdvanceCoverageRange,
   hasUnresolvedAreaRateCharge,
   removeChargesOverriddenByPeriod,
   resolveChargeBreakdown,
@@ -138,15 +141,16 @@ export default defineEventHandler(async (event) => {
   const existingFlatIds = new Set(existingResult.rows.map((row) => row.flat_id))
   const isCamPeriod = period.charge_type === 'CAM'
   const advanceCoverageResult = isCamPeriod && flatsResult.rows.length
-    ? await pool.query<{ flat_id: string }>(
+    ? await pool.query<{ flat_id: string; covered_from: string; covered_until: string }>(
         `
-          select distinct flat_id
+          select flat_id, covered_from::text, covered_until::text
           from cam_advance_coverages
           where society_id = $1
             and flat_id = any($2::uuid[])
             and is_active = true
-            and covered_from <= $3::date
-            and covered_until >= $4::date
+            and covered_until >= $3::date
+            and covered_from <= $4::date
+          order by flat_id, covered_from asc, covered_until asc
         `,
         [
           authMe.user.societyId,
@@ -156,7 +160,31 @@ export default defineEventHandler(async (event) => {
         ],
       )
     : { rows: [] }
-  const advanceCoveredFlatIds = new Set(advanceCoverageResult.rows.map((row) => row.flat_id))
+  const advanceCoverageByFlatId = new Map<string, CamAdvanceCoverageRange[]>()
+  for (const row of advanceCoverageResult.rows) {
+    const coverages = advanceCoverageByFlatId.get(row.flat_id) ?? []
+    coverages.push({
+      coveredFrom: row.covered_from,
+      coveredUntil: row.covered_until,
+    })
+    advanceCoverageByFlatId.set(row.flat_id, coverages)
+  }
+  const advanceCoverageSummaryByFlatId = new Map(
+    flatsResult.rows
+      .map((flat) => {
+        const coverages = advanceCoverageByFlatId.get(flat.flatId) ?? []
+        if (coverages.length === 0) {
+          return null
+        }
+        return [
+          flat.flatId,
+          summarizeCamAdvanceCoverage(period.start_date, period.end_date, coverages),
+        ] as const
+      })
+      .filter((entry): entry is readonly [string, ReturnType<typeof summarizeCamAdvanceCoverage>] =>
+        Boolean(entry),
+      ),
+  )
   const overlappingCamResult = isCamPeriod && flatsResult.rows.length
     ? await pool.query<{ flat_id: string }>(
         `
@@ -226,13 +254,11 @@ export default defineEventHandler(async (event) => {
   let totalAmount = 0
   let skippedExisting = 0
   let skippedAdvanceCovered = 0
+  let advanceProratedCount = 0
+  let advanceProratedAmount = 0
   let skippedOverlappingCam = 0
 
   for (const flat of flatsResult.rows) {
-    if (advanceCoveredFlatIds.has(flat.flatId)) {
-      skippedAdvanceCovered += 1
-      continue
-    }
     if (overlappingCamFlatIds.has(flat.flatId)) {
       skippedOverlappingCam += 1
       continue
@@ -242,13 +268,15 @@ export default defineEventHandler(async (event) => {
       continue
     }
 
+    const coverageSummary = advanceCoverageSummaryByFlatId.get(flat.flatId)
+    const flatAreaSqFt = flat.areaSqFt ? Number(flat.areaSqFt) : null
     const baseCharges = resolveChargeBreakdown(
       defaultCharges,
       flatTypeCharges,
       flatOverrideCharges,
       flat.unitType,
       flat.flatId,
-      flat.areaSqFt ? Number(flat.areaSqFt) : null,
+      flatAreaSqFt,
       { cycleMultiplier },
     )
     const periodCharges = resolveChargeBreakdown(
@@ -257,21 +285,47 @@ export default defineEventHandler(async (event) => {
       periodFlatCharges,
       flat.unitType,
       flat.flatId,
-      flat.areaSqFt ? Number(flat.areaSqFt) : null,
+      flatAreaSqFt,
       { cycleMultiplier },
     )
     const charges = [
       ...removeChargesOverriddenByPeriod(baseCharges, periodCharges),
       ...periodCharges,
     ]
-    const effectiveCharges =
-      charges.length > 0 ? charges : [{ label: 'Maintenance Charges', amount: 2000 }]
+    const configuredCharges =
+      charges.length > 0
+        ? charges
+        : [{
+            label: 'Maintenance Charges',
+            amount: 2000,
+            ...(isCamPeriod ? { chargeType: 'CAM' as const } : {}),
+          }]
+    const effectiveCharges = isCamPeriod && coverageSummary?.coveredMonths
+      ? applyCamAdvanceCoverageToChargeBreakdown(configuredCharges, coverageSummary, {
+          flatAreaSqFt,
+          treatUnclassifiedChargesAsCam: true,
+        })
+      : configuredCharges
+    const configuredAmount = configuredCharges.reduce((sum, item) => sum + item.amount, 0)
+    const flatAmount = effectiveCharges.reduce((sum, item) => sum + item.amount, 0)
+    const advanceReduction = Math.round((configuredAmount - flatAmount) * 100) / 100
 
     if (hasUnresolvedAreaRateCharge(effectiveCharges)) {
       warnings.push(`${flat.blockName} ${flat.flatNumber} is missing area; area-based CAM cannot be generated.`)
     }
 
-    const flatAmount = effectiveCharges.reduce((sum, item) => sum + item.amount, 0)
+    if (effectiveCharges.length === 0 || flatAmount <= 0) {
+      if (coverageSummary?.isFullyCovered || advanceReduction > 0) {
+        skippedAdvanceCovered += 1
+      }
+      continue
+    }
+
+    if (advanceReduction > 0) {
+      advanceProratedCount += 1
+      advanceProratedAmount = Math.round((advanceProratedAmount + advanceReduction) * 100) / 100
+    }
+
     const current = breakdownMap.get(flat.unitType)
 
     if (charges.length === 0) {
@@ -302,11 +356,19 @@ export default defineEventHandler(async (event) => {
   if (skippedAdvanceCovered > 0) {
     warnings.push(`${skippedAdvanceCovered} CAM advance-paid flat${skippedAdvanceCovered === 1 ? '' : 's'} will be skipped.`)
   }
+  if (advanceProratedCount > 0) {
+    warnings.push(`${advanceProratedCount} CAM advance-paid flat${advanceProratedCount === 1 ? '' : 's'} will have CAM charges reduced or removed for advance-covered months.`)
+  }
   if (skippedOverlappingCam > 0) {
     warnings.push(`${skippedOverlappingCam} flat${skippedOverlappingCam === 1 ? '' : 's'} already have overlapping CAM dues and will be skipped.`)
   }
 
-  const preview: DueGenerationPreview & { skippedExisting: number; isLocked: boolean } = {
+  const preview: DueGenerationPreview & {
+    skippedExisting: number
+    isLocked: boolean
+    advanceProratedCount: number
+    advanceProratedAmount: number
+  } = {
     billingPeriodId: period.id,
     billingPeriodLabel: period.label,
     billingPeriodDueDate: period.due_date,
@@ -322,6 +384,8 @@ export default defineEventHandler(async (event) => {
     warnings,
     skippedExisting,
     skippedAdvanceCovered,
+    advanceProratedCount,
+    advanceProratedAmount,
     skippedOverlappingCam,
     isLocked: period.is_locked,
   }

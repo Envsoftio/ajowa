@@ -721,7 +721,18 @@ const buildDefaulterReport = async ({ societyId, filters, exportMode }: ReportQu
         md.total_amount::text as "totalAmount",
         md.paid_amount::text as "paidAmount",
         md.balance_amount::text as "balanceAmount",
-        greatest((current_date - md.due_date), 0)::text as "daysOverdue"
+        greatest((current_date - md.due_date), 0)::text as "daysOverdue",
+        coalesce((
+          select item->>'camAdvanceNote'
+          from jsonb_array_elements(
+            case
+              when jsonb_typeof(md.charge_breakdown) = 'array' then md.charge_breakdown
+              else '[]'::jsonb
+            end
+          ) item
+          where item ? 'camAdvanceNote'
+          limit 1
+        ), '') as "camAdvanceNote"
       from maintenance_dues md
       join billing_periods bp on bp.id = md.billing_period_id
       join flats f on f.id = md.flat_id
@@ -747,6 +758,7 @@ const buildDefaulterReport = async ({ societyId, filters, exportMode }: ReportQu
       { key: 'flat', label: 'Flat' },
       { key: 'owner', label: 'Owner' },
       { key: 'period', label: 'Period' },
+      { key: 'camAdvanceNote', label: 'CAM advance note' },
       { key: 'dueDate', label: 'Due date', type: 'date' },
       { key: 'totalAmount', label: 'Total', type: 'money' },
       { key: 'paidAmount', label: 'Paid', type: 'money' },

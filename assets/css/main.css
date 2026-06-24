@@ -1219,6 +1219,23 @@ a {
   align-items: start;
 }
 
+.admin-form-grid .p-select,
+.admin-form-grid .p-multiselect {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.admin-form-grid .p-select-label,
+.admin-form-grid .p-multiselect-label {
+  flex: 1 1 auto;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .admin-form-grid > *,
 .admin-toggle-grid > * {
   min-width: 0;
@@ -1227,6 +1244,7 @@ a {
 .admin-form-grid label,
 .admin-toggle-card {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 0.5rem;
   min-width: 0;
 }

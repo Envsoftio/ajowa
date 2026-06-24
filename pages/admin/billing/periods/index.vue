@@ -29,12 +29,15 @@ type GenerationResponse = {
     skipped: number
     advanceAppliedCount: number
     advanceAppliedAmount: number
+    dueIds: string[]
   }
 }
 
 const api = useApi()
 const route = useRoute()
 const toast = useToast()
+const lastGeneratedDueIds = ref<string[]>([])
+const { downloadingBillPdfs, downloadBillPdfs } = useBillPdfZipDownload()
 
 const formatMoney = (value: number) =>
   new Intl.NumberFormat('en-IN', {
@@ -471,6 +474,7 @@ const generateDues = async () => {
           : undefined,
       },
     })
+    lastGeneratedDueIds.value = response.data.dueIds
     toast.add({
       severity: 'success',
       summary: 'Bills generated',
@@ -489,6 +493,14 @@ const generateDues = async () => {
     generating.value = false
   }
 }
+
+const downloadLastGeneratedBillPdfs = () => {
+  if (lastGeneratedDueIds.value.length === 0) return
+
+  void downloadBillPdfs({
+    dueIds: lastGeneratedDueIds.value,
+  })
+}
 </script>
 
 <template>
@@ -505,6 +517,15 @@ const generateDues = async () => {
           </p>
         </div>
         <div class="billing-command-actions">
+          <Button
+            v-if="lastGeneratedDueIds.length > 0"
+            :label="`Download last ${lastGeneratedDueIds.length} PDF${lastGeneratedDueIds.length === 1 ? '' : 's'}`"
+            icon="pi pi-download"
+            severity="secondary"
+            outlined
+            :loading="downloadingBillPdfs"
+            @click="downloadLastGeneratedBillPdfs"
+          />
           <Button
             label="Create period"
             icon="pi pi-calendar-plus"

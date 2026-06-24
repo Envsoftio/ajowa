@@ -348,6 +348,8 @@ const billChannels = ref<BillChannel[]>(['EMAIL'])
 const billDeliveryFlatIds = ref<string[]>([])
 const generationProgressSteps = ref<GenerationProgressStep[]>([])
 const activeGenerationStepId = ref<string | null>(null)
+const lastGeneratedDueIds = ref<string[]>([])
+const { downloadingBillPdfs, downloadBillPdfs } = useBillPdfZipDownload()
 
 const billChannelOptions: Array<{ label: string; value: BillChannel }> = [
   { label: 'Email', value: 'EMAIL' },
@@ -1319,6 +1321,17 @@ const sendGeneratedBillNotifications = async (
   return response.data
 }
 
+const getUniqueDueIds = (targets: GeneratedDueTarget[]) =>
+  Array.from(new Set(targets.map((target) => target.dueId)))
+
+const downloadLastGeneratedBillPdfs = () => {
+  if (lastGeneratedDueIds.value.length === 0) return
+
+  void downloadBillPdfs({
+    dueIds: lastGeneratedDueIds.value,
+  })
+}
+
 const openGenerationDialog = async () => {
   resetGenerationProgress()
 
@@ -1536,6 +1549,7 @@ const generateDues = async () => {
           : 'Bill delivery is off for this run.',
       )
       const sentBills = await sendGeneratedBillNotifications(billSendTargets)
+      lastGeneratedDueIds.value = getUniqueDueIds(billSendTargets)
       completeGenerationProgressStep(
         'bill-delivery',
         sentBills
@@ -1622,6 +1636,10 @@ const generateDues = async () => {
         : 'Bill delivery is off for this run.',
     )
     const sentBills = await sendGeneratedBillNotifications([
+      ...response.data.generatedDues,
+      ...response.data.skippedDues,
+    ])
+    lastGeneratedDueIds.value = getUniqueDueIds([
       ...response.data.generatedDues,
       ...response.data.skippedDues,
     ])
@@ -1744,6 +1762,15 @@ watch(
             severity="secondary"
             outlined
             @click="openCreatePeriod"
+          />
+          <Button
+            v-if="lastGeneratedDueIds.length > 0"
+            :label="`Download last ${lastGeneratedDueIds.length} PDF${lastGeneratedDueIds.length === 1 ? '' : 's'}`"
+            icon="pi pi-download"
+            severity="secondary"
+            outlined
+            :loading="downloadingBillPdfs"
+            @click="downloadLastGeneratedBillPdfs"
           />
           <Button
             :label="camRunFlow ? 'Generate CAM bills' : 'Generate bills'"

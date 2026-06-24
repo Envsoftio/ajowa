@@ -443,6 +443,11 @@ export type ChargeBreakdownItem = {
   areaSqFt?: number
   cycleMultiplier?: number
   cycleLabel?: string
+  camAdvanceCoveredMonths?: number
+  camAdvanceBilledMonths?: number
+  camAdvanceTotalMonths?: number
+  camAdvanceAdjustmentAmount?: number
+  camAdvanceNote?: string
   source?: string
   electricityType?: string
   meterNo?: string | null
@@ -604,6 +609,7 @@ export type DefaulterSummary = {
     paidAmount: number
     balanceAmount: number
     daysOverdue: number
+    camAdvanceNote?: string | null
   }[]
   totalDue: number
   totalPaid: number

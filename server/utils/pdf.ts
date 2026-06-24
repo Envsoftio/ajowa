@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import pdfMake from 'pdfmake/build/pdfmake.js'
 import pdfFonts from 'pdfmake/build/vfs_fonts.js'
 
@@ -12,23 +13,39 @@ const resolveSocietyStampAssetCandidates = (root: string) => [
   join(root, 'public', societyStampAssetPath),
   join(root, '.output', 'public', societyStampAssetPath),
   join(root, 'dist', 'public', societyStampAssetPath),
+  join(root, '.netlify', 'output', 'static', societyStampAssetPath),
+  join(root, '.netlify', 'output', 'public', societyStampAssetPath),
+  join(root, '..', 'public', societyStampAssetPath),
+  join(root, '..', '..', 'public', societyStampAssetPath),
 ]
 
 const findSocietyStampAssetPath = () => {
-  let currentRoot = process.cwd()
+  const roots = new Set<string>()
+  const seeds = [
+    process.cwd(),
+    dirname(fileURLToPath(import.meta.url)),
+  ]
 
-  for (let depth = 0; depth < 8; depth++) {
+  for (const seed of seeds) {
+    let currentRoot = seed
+
+    for (let depth = 0; depth < 10; depth++) {
+      roots.add(currentRoot)
+
+      const nextRoot = dirname(currentRoot)
+      if (nextRoot === currentRoot) {
+        break
+      }
+      currentRoot = nextRoot
+    }
+  }
+
+  for (const currentRoot of roots) {
     for (const candidate of resolveSocietyStampAssetCandidates(currentRoot)) {
       if (existsSync(candidate)) {
         return candidate
       }
     }
-
-    const nextRoot = dirname(currentRoot)
-    if (nextRoot === currentRoot) {
-      break
-    }
-    currentRoot = nextRoot
   }
 
   return null
@@ -40,11 +57,13 @@ export const getSocietyStampImage = () => {
   const stampPath = findSocietyStampAssetPath()
 
   try {
-    cachedSocietyStampImage = stampPath
-      ? `data:image/jpeg;base64,${readFileSync(stampPath).toString('base64')}`
-      : null
+    if (!stampPath) {
+      return null
+    }
+
+    cachedSocietyStampImage = `data:image/jpeg;base64,${readFileSync(stampPath).toString('base64')}`
   } catch {
-    cachedSocietyStampImage = null
+    return null
   }
 
   return cachedSocietyStampImage

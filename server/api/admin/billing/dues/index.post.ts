@@ -4,9 +4,12 @@ import { getDatabasePool } from '~/server/utils/database'
 import { validatePayload, writeMasterAudit } from '~/server/utils/master-data'
 import {
   appendChargeLookup,
+  applyCamAdvanceCoverageToChargeBreakdown,
   dueGenerationSchema,
   getBillingCycleLabel,
   getBillingCycleMultiplier,
+  summarizeCamAdvanceCoverage,
+  type CamAdvanceCoverageRange,
   type DueGenerationInput,
   hasUnresolvedAreaRateCharge,
   removeChargesOverriddenByPeriod,
@@ -203,15 +206,16 @@ export default defineEventHandler(async (event) => {
     )
     const isCamPeriod = period.charge_type === 'CAM'
     const advanceCoverageResult = isCamPeriod
-      ? await client.query<{ flat_id: string }>(
+      ? await client.query<{ flat_id: string; covered_from: string; covered_until: string }>(
           `
-            select distinct flat_id
+            select flat_id, covered_from::text, covered_until::text
             from cam_advance_coverages
             where society_id = $1
               and flat_id = any($2::uuid[])
               and is_active = true
-              and covered_from <= $3::date
-              and covered_until >= $4::date
+              and covered_until >= $3::date
+              and covered_from <= $4::date
+            order by flat_id, covered_from asc, covered_until asc
           `,
           [
             authMe.user.societyId,
@@ -222,8 +226,30 @@ export default defineEventHandler(async (event) => {
         )
       : { rows: [] }
     const existingByFlatId = new Map(existingResult.rows.map((row) => [row.flat_id, row.id]))
-    const advanceCoveredFlatIds = new Set(
-      advanceCoverageResult.rows.map((row) => row.flat_id),
+    const advanceCoverageByFlatId = new Map<string, CamAdvanceCoverageRange[]>()
+    for (const row of advanceCoverageResult.rows) {
+      const coverages = advanceCoverageByFlatId.get(row.flat_id) ?? []
+      coverages.push({
+        coveredFrom: row.covered_from,
+        coveredUntil: row.covered_until,
+      })
+      advanceCoverageByFlatId.set(row.flat_id, coverages)
+    }
+    const advanceCoverageSummaryByFlatId = new Map(
+      flatsResult.rows
+        .map((flat) => {
+          const coverages = advanceCoverageByFlatId.get(flat.flatId) ?? []
+          if (coverages.length === 0) {
+            return null
+          }
+          return [
+            flat.flatId,
+            summarizeCamAdvanceCoverage(period.start_date, period.end_date, coverages),
+          ] as const
+        })
+        .filter((entry): entry is readonly [string, ReturnType<typeof summarizeCamAdvanceCoverage>] =>
+          Boolean(entry),
+        ),
     )
     const overlappingCamResult = isCamPeriod
       ? await client.query<OverlappingCamDueRow>(
@@ -258,14 +284,11 @@ export default defineEventHandler(async (event) => {
     let advanceAppliedCount = 0
     let advanceAppliedAmount = 0
     let advanceCoveredCount = 0
+    let advanceProratedCount = 0
+    let advanceProratedAmount = 0
     let overlapSkippedCount = 0
 
     for (const flat of flatsResult.rows) {
-      if (advanceCoveredFlatIds.has(flat.flatId)) {
-        advanceCoveredCount += 1
-        continue
-      }
-
       if (overlappingCamByFlatId.has(flat.flatId)) {
         overlapSkippedCount += 1
         continue
@@ -275,13 +298,15 @@ export default defineEventHandler(async (event) => {
         continue
       }
 
+      const coverageSummary = advanceCoverageSummaryByFlatId.get(flat.flatId)
+      const flatAreaSqFt = flat.areaSqFt ? Number(flat.areaSqFt) : null
       const baseBreakdown = resolveChargeBreakdown(
         defaultCharges,
         flatTypeCharges,
         flatOverrideCharges,
         flat.unitType,
         flat.flatId,
-        flat.areaSqFt ? Number(flat.areaSqFt) : null,
+        flatAreaSqFt,
         { cycleMultiplier },
       )
       const periodBreakdown = resolveChargeBreakdown(
@@ -290,10 +315,10 @@ export default defineEventHandler(async (event) => {
         periodFlatCharges,
         flat.unitType,
         flat.flatId,
-        flat.areaSqFt ? Number(flat.areaSqFt) : null,
+        flatAreaSqFt,
         { cycleMultiplier },
       )
-      const breakdown = [
+      let breakdown = [
         ...removeChargesOverriddenByPeriod(baseBreakdown, periodBreakdown),
         ...periodBreakdown,
       ]
@@ -301,32 +326,52 @@ export default defineEventHandler(async (event) => {
       if (breakdown.length === 0) {
         // No charges configured — create a default entry
         const defaultAmount = 2000 // fallback
-        insertPayload.push({
-          flatId: flat.flatId,
-          baseAmount: defaultAmount,
-          totalAmount: defaultAmount,
-          chargeBreakdown: [{ label: 'Maintenance Charges', amount: defaultAmount }],
-        })
-      } else {
-        if (hasUnresolvedAreaRateCharge(breakdown)) {
-          throw new AppError({
-            code: 'VALIDATION_ERROR',
-            statusCode: 400,
-            message: `${flat.blockName} ${flat.flatNumber} is missing area, so area-based CAM cannot be generated.`,
+        breakdown = [{
+          label: 'Maintenance Charges',
+          amount: defaultAmount,
+          ...(isCamPeriod ? { chargeType: 'CAM' as const } : {}),
+        }]
+      }
+
+      const originalBase = roundMoney(breakdown.reduce((sum, item) => sum + item.amount, 0))
+      const adjustedBreakdown = isCamPeriod && coverageSummary?.coveredMonths
+        ? applyCamAdvanceCoverageToChargeBreakdown(breakdown, coverageSummary, {
+            flatAreaSqFt,
+            treatUnclassifiedChargesAsCam: true,
           })
+        : breakdown
+      const totalBase = roundMoney(adjustedBreakdown.reduce((sum, item) => sum + item.amount, 0))
+      const advanceReduction = roundMoney(originalBase - totalBase)
+
+      if (adjustedBreakdown.length === 0 || totalBase <= 0) {
+        if (coverageSummary?.isFullyCovered || advanceReduction > 0) {
+          advanceCoveredCount += 1
         }
+        continue
+      }
 
-        const totalBase = breakdown.reduce((sum, item) => sum + item.amount, 0)
-        const lateFee = 0
-        const totalAmount = roundMoney(totalBase + lateFee)
+      if (advanceReduction > 0) {
+        advanceProratedCount += 1
+        advanceProratedAmount = roundMoney(advanceProratedAmount + advanceReduction)
+      }
 
-        insertPayload.push({
-          flatId: flat.flatId,
-          baseAmount: roundMoney(totalBase),
-          totalAmount,
-          chargeBreakdown: breakdown,
+      if (hasUnresolvedAreaRateCharge(adjustedBreakdown)) {
+        throw new AppError({
+          code: 'VALIDATION_ERROR',
+          statusCode: 400,
+          message: `${flat.blockName} ${flat.flatNumber} is missing area, so area-based CAM cannot be generated.`,
         })
       }
+
+      const lateFee = 0
+      const totalAmount = roundMoney(totalBase + lateFee)
+
+      insertPayload.push({
+        flatId: flat.flatId,
+        baseAmount: totalBase,
+        totalAmount,
+        chargeBreakdown: adjustedBreakdown,
+      })
     }
 
     const insertResult = insertPayload.length
@@ -405,7 +450,10 @@ export default defineEventHandler(async (event) => {
 
     const skippedDues = flatsResult.rows
       .map((flat) => {
-        if (advanceCoveredFlatIds.has(flat.flatId) || overlappingCamByFlatId.has(flat.flatId)) {
+        if (
+          advanceCoverageSummaryByFlatId.get(flat.flatId)?.isFullyCovered ||
+          overlappingCamByFlatId.has(flat.flatId)
+        ) {
           return null
         }
         const dueId = existingByFlatId.get(flat.flatId)
@@ -466,6 +514,8 @@ export default defineEventHandler(async (event) => {
           generatedCount: generated,
           skippedCount: skipped,
           advanceCoveredCount,
+          advanceProratedCount,
+          advanceProratedAmount,
           overlapSkippedCount,
           advanceAppliedCount,
           advanceAppliedAmount,
@@ -485,6 +535,8 @@ export default defineEventHandler(async (event) => {
       generated,
       skipped,
       advanceCoveredCount,
+      advanceProratedCount,
+      advanceProratedAmount,
       overlapSkippedCount,
       advanceAppliedCount,
       advanceAppliedAmount,

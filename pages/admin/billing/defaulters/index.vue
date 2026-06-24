@@ -455,6 +455,9 @@ watch(filteredDefaulters, (rows) => {
                   {{ flat.billingPeriodLabel }} · Due
                   {{ formatDate(flat.dueDate) }} · {{ flat.daysOverdue }} days
                 </small>
+                <p v-if="flat.camAdvanceNote" class="table-muted">
+                  CAM advance: {{ flat.camAdvanceNote }}
+                </p>
               </div>
             </div>
           </template>
@@ -532,6 +535,9 @@ watch(filteredDefaulters, (rows) => {
                 {{ flat.billingPeriodLabel }} · Due
                 {{ formatDate(flat.dueDate) }} · {{ flat.daysOverdue }} days
               </small>
+              <p v-if="flat.camAdvanceNote" class="table-muted">
+                CAM advance: {{ flat.camAdvanceNote }}
+              </p>
             </div>
           </div>
           <div class="admin-inline-actions">

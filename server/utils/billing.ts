@@ -15,6 +15,11 @@ export const chargeBreakdownItemSchema = z.object({
   areaSqFt: z.coerce.number().positive().optional(),
   cycleMultiplier: z.coerce.number().positive().optional(),
   cycleLabel: z.string().trim().max(80).optional(),
+  camAdvanceCoveredMonths: z.coerce.number().int().nonnegative().optional(),
+  camAdvanceBilledMonths: z.coerce.number().int().nonnegative().optional(),
+  camAdvanceTotalMonths: z.coerce.number().int().positive().optional(),
+  camAdvanceAdjustmentAmount: z.coerce.number().nonnegative().optional(),
+  camAdvanceNote: z.string().trim().max(200).optional(),
   source: z.string().trim().max(80).optional(),
   electricityType: z.string().trim().max(80).nullable().optional(),
   meterNo: z.string().trim().max(80).nullable().optional(),
@@ -397,6 +402,177 @@ export const isDgSetCharge = (charge: ChargeBreakdownItem) =>
   charge.chargeType === 'DG_SET' ||
   /\b(dg\s*set|dgset|generator|power\s*back\s*up|power\s*backup)\b/i.test(charge.label)
 
+export type BillingMonthSegment = {
+  startDate: string
+  endDate: string
+}
+
+export type CamAdvanceCoverageRange = {
+  coveredFrom: string
+  coveredUntil: string
+}
+
+export type CamAdvanceCoverageSummary = {
+  totalMonths: number
+  coveredMonths: number
+  remainingMonths: number
+  remainingRatio: number
+  isFullyCovered: boolean
+}
+
+const formatBillingDate = (date: Date) => date.toISOString().slice(0, 10)
+
+const minBillingDate = (a: string, b: string) => (a <= b ? a : b)
+
+const maxBillingDate = (a: string, b: string) => (a >= b ? a : b)
+
+const roundProratedChargeAmount = (value: number) =>
+  Math.max(0, Math.round(value * 100) / 100)
+
+const pluralizeMonth = (count: number) => `${count} ${count === 1 ? 'month' : 'months'}`
+
+const getCamAdvanceCoverageNote = (coverage: CamAdvanceCoverageSummary) =>
+  `${coverage.remainingMonths} of ${coverage.totalMonths} ${coverage.totalMonths === 1 ? 'month' : 'months'} billed; ${pluralizeMonth(coverage.coveredMonths)} covered by advance`
+
+const appendCamAdvanceCoverageNote = (label: string, note: string) => {
+  if (label.includes(note)) {
+    return label
+  }
+
+  return `${label} (${note})`
+}
+
+export const getBillingPeriodMonthSegments = (
+  startDate: string,
+  endDate: string,
+): BillingMonthSegment[] => {
+  const start = parseBillingDate(startDate)
+  const end = parseBillingDate(endDate)
+
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) {
+    return [{ startDate, endDate }]
+  }
+
+  const segments: BillingMonthSegment[] = []
+  let cursor = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1))
+  const endMonthStart = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), 1))
+
+  while (cursor <= endMonthStart) {
+    const monthStart = formatBillingDate(cursor)
+    const monthEnd = formatBillingDate(
+      new Date(Date.UTC(cursor.getUTCFullYear(), cursor.getUTCMonth() + 1, 0)),
+    )
+
+    segments.push({
+      startDate: maxBillingDate(startDate, monthStart),
+      endDate: minBillingDate(endDate, monthEnd),
+    })
+
+    cursor = new Date(Date.UTC(cursor.getUTCFullYear(), cursor.getUTCMonth() + 1, 1))
+  }
+
+  return segments
+}
+
+export const summarizeCamAdvanceCoverage = (
+  periodStartDate: string,
+  periodEndDate: string,
+  coverages: CamAdvanceCoverageRange[],
+): CamAdvanceCoverageSummary => {
+  const segments = getBillingPeriodMonthSegments(periodStartDate, periodEndDate)
+  const totalMonths = Math.max(1, segments.length)
+  const coveredMonths = segments.filter((segment) =>
+    coverages.some(
+      (coverage) =>
+        coverage.coveredFrom <= segment.startDate &&
+        coverage.coveredUntil >= segment.endDate,
+    ),
+  ).length
+  const remainingMonths = Math.max(0, totalMonths - coveredMonths)
+
+  return {
+    totalMonths,
+    coveredMonths,
+    remainingMonths,
+    remainingRatio: remainingMonths / totalMonths,
+    isFullyCovered: coveredMonths >= totalMonths,
+  }
+}
+
+export const applyCamAdvanceCoverageToChargeBreakdown = (
+  charges: ChargeBreakdownItem[],
+  coverage: CamAdvanceCoverageSummary,
+  options: {
+    flatAreaSqFt?: number | null
+    treatUnclassifiedChargesAsCam?: boolean
+  } = {},
+): ChargeBreakdownItem[] => {
+  if (coverage.coveredMonths <= 0) {
+    return charges.map((charge) => ({ ...charge }))
+  }
+
+  return charges
+    .map((charge) => {
+      const isExplicitNonCamCharge =
+        charge.chargeType === 'DG_SET' ||
+        charge.chargeType === 'OTHER' ||
+        isDgSetCharge(charge)
+      const shouldProrate =
+        isCamCharge(charge) ||
+        (options.treatUnclassifiedChargesAsCam && !isExplicitNonCamCharge)
+
+      if (!shouldProrate) {
+        return { ...charge }
+      }
+
+      if (coverage.remainingMonths <= 0) {
+        return null
+      }
+
+      const originalAmount = Number(charge.amount ?? 0)
+      const ratePerSqFt = charge.ratePerSqFt ?? charge.amount
+      const areaSqFt = charge.areaSqFt ?? options.flatAreaSqFt
+      const camAdvanceNote = getCamAdvanceCoverageNote(coverage)
+      if (charge.calculationMethod === 'AREA_RATE' && !areaSqFt) {
+        return {
+          ...charge,
+          label: appendCamAdvanceCoverageNote(charge.label, camAdvanceNote),
+          amount: 0,
+          cycleMultiplier: coverage.remainingMonths,
+          cycleLabel: getBillingCycleLabel(coverage.remainingMonths),
+          camAdvanceCoveredMonths: coverage.coveredMonths,
+          camAdvanceBilledMonths: coverage.remainingMonths,
+          camAdvanceTotalMonths: coverage.totalMonths,
+          camAdvanceAdjustmentAmount: originalAmount,
+          camAdvanceNote,
+        }
+      }
+
+      const amount =
+        charge.calculationMethod === 'AREA_RATE' && areaSqFt
+          ? roundAreaRateChargeAmount(areaSqFt * ratePerSqFt * coverage.remainingMonths)
+          : roundProratedChargeAmount(Number(charge.amount ?? 0) * coverage.remainingRatio)
+
+      if (amount <= 0) {
+        return null
+      }
+
+      return {
+        ...charge,
+        label: appendCamAdvanceCoverageNote(charge.label, camAdvanceNote),
+        amount,
+        cycleMultiplier: coverage.remainingMonths,
+        cycleLabel: getBillingCycleLabel(coverage.remainingMonths),
+        camAdvanceCoveredMonths: coverage.coveredMonths,
+        camAdvanceBilledMonths: coverage.remainingMonths,
+        camAdvanceTotalMonths: coverage.totalMonths,
+        camAdvanceAdjustmentAmount: roundProratedChargeAmount(originalAmount - amount),
+        camAdvanceNote,
+      }
+    })
+    .filter((charge): charge is ChargeBreakdownItem => Boolean(charge))
+}
+
 export const removeChargesOverriddenByPeriod = (
   baseCharges: ChargeBreakdownItem[],
   periodCharges: ChargeBreakdownItem[],
@@ -472,24 +648,17 @@ type PreviousDueRow = {
 
 const roundBillMoney = (value: number) => Math.round(value * 100) / 100
 
-const formatBillMoney = (value: number) =>
-  new Intl.NumberFormat('en-IN', {
-    style: 'currency',
-    currency: 'INR',
-    maximumFractionDigits: 2,
-  }).format(value)
-
 const formatBillPlainNumber = (value: number) =>
   new Intl.NumberFormat('en-IN', {
     maximumFractionDigits: 2,
   }).format(value)
 
-const formatBillDate = (value: string | null | undefined) =>
-  value
-    ? new Date(value.length === 10 ? `${value}T00:00:00` : value).toLocaleDateString('en-IN', {
-        dateStyle: 'medium',
-      })
-    : '-'
+const parseBillDate = (value: string | null | undefined) => {
+  if (!value) return null
+
+  const date = new Date(value.length === 10 ? `${value}T00:00:00` : value)
+  return Number.isNaN(date.getTime()) ? null : date
+}
 
 const formatDgBillDate = (value: string | null | undefined) =>
   value
@@ -499,6 +668,138 @@ const formatDgBillDate = (value: string | null | undefined) =>
         year: 'numeric',
       })
     : '-'
+
+const formatInvoiceDate = (value: string | null | undefined) => {
+  const date = parseBillDate(value)
+  if (!date) return '-'
+
+  const day = String(date.getDate()).padStart(2, '0')
+  const month = date.toLocaleDateString('en-GB', { month: 'short' })
+  const year = String(date.getFullYear()).slice(-2)
+  return `${day}-${month}-${year}`
+}
+
+const formatInvoicePeriodDate = (value: string | null | undefined) => {
+  const date = parseBillDate(value)
+  if (!date) return '-'
+
+  const month = date.toLocaleDateString('en-GB', { month: 'short' })
+  const year = String(date.getFullYear()).slice(-2)
+  return `${month} ${year}`
+}
+
+const formatInvoicePeriodLabel = (row: MaintenanceBillDueRow) =>
+  `${formatInvoicePeriodDate(row.period_start_date)} to ${formatInvoicePeriodDate(row.period_end_date)}`
+
+const formatInvoiceAmount = (value: number) =>
+  new Intl.NumberFormat('en-IN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value)
+
+const formatInvoiceCurrency = (value: number) => `₹ ${formatInvoiceAmount(value)}`
+
+const smallNumberWords = [
+  'Zero',
+  'One',
+  'Two',
+  'Three',
+  'Four',
+  'Five',
+  'Six',
+  'Seven',
+  'Eight',
+  'Nine',
+  'Ten',
+  'Eleven',
+  'Twelve',
+  'Thirteen',
+  'Fourteen',
+  'Fifteen',
+  'Sixteen',
+  'Seventeen',
+  'Eighteen',
+  'Nineteen',
+]
+
+const tensNumberWords = [
+  '',
+  '',
+  'Twenty',
+  'Thirty',
+  'Forty',
+  'Fifty',
+  'Sixty',
+  'Seventy',
+  'Eighty',
+  'Ninety',
+]
+
+const numberBelowHundredToWords = (value: number): string => {
+  if (value < 20) {
+    return smallNumberWords[value] ?? ''
+  }
+
+  const tens = Math.floor(value / 10)
+  const ones = value % 10
+  return [tensNumberWords[tens], ones ? smallNumberWords[ones] : ''].filter(Boolean).join(' ')
+}
+
+const numberToIndianWords = (value: number): string => {
+  if (value === 0) return 'Zero'
+
+  const scales = [
+    { value: 10000000, label: 'Crore' },
+    { value: 100000, label: 'Lakh' },
+    { value: 1000, label: 'Thousand' },
+    { value: 100, label: 'Hundred' },
+  ]
+  const words: string[] = []
+  let remainder = value
+
+  for (const scale of scales) {
+    const count = Math.floor(remainder / scale.value)
+    if (count > 0) {
+      words.push(`${numberToIndianWords(count)} ${scale.label}`)
+      remainder %= scale.value
+    }
+  }
+
+  if (remainder > 0) {
+    words.push(numberBelowHundredToWords(remainder))
+  }
+
+  return words.join(' ')
+}
+
+const formatInrAmountInWords = (value: number) => {
+  const absoluteValue = Math.abs(roundBillMoney(value))
+  const rupees = Math.floor(absoluteValue)
+  const paise = Math.round((absoluteValue - rupees) * 100)
+  const rupeeWords = numberToIndianWords(rupees)
+
+  if (paise > 0) {
+    return `INR ${rupeeWords} and Paise ${numberToIndianWords(paise)}\nOnly`
+  }
+
+  return `INR ${rupeeWords}\nOnly`
+}
+
+const getOrdinalDay = (value: string | null | undefined) => {
+  const date = parseBillDate(value)
+  const day = date?.getDate() ?? 10
+  const suffix = day % 100 >= 11 && day % 100 <= 13
+    ? 'th'
+    : day % 10 === 1
+      ? 'st'
+      : day % 10 === 2
+        ? 'nd'
+        : day % 10 === 3
+          ? 'rd'
+          : 'th'
+
+  return `${day}${suffix}`
+}
 
 const sanitizeBillFileSegment = (value: string) =>
   value
@@ -638,12 +939,17 @@ const normalizeBillChargeBreakdown = (
       copyStringField('connectionLoad')
       copyStringField('state')
       copyStringField('stateCode')
+      copyStringField('camAdvanceNote')
       copyNumberField('openingReading')
       copyNumberField('closingReading')
       copyNumberField('consumedUnits')
       copyNumberField('ratePerUnit')
       copyNumberField('previousOutstanding')
       copyNumberField('interestAmount')
+      copyNumberField('camAdvanceCoveredMonths')
+      copyNumberField('camAdvanceBilledMonths')
+      copyNumberField('camAdvanceTotalMonths')
+      copyNumberField('camAdvanceAdjustmentAmount')
 
       if (source.ratePerSqFt != null && Number.isFinite(Number(source.ratePerSqFt))) {
         charge.ratePerSqFt = Number(source.ratePerSqFt)
@@ -671,6 +977,25 @@ const buildMaintenanceBillNumber = (row: MaintenanceBillDueRow) => {
   return sanitizeBillFileSegment(`${row.society_code}-BILL-${periodCode}-${flatCode}`).toUpperCase()
 }
 
+const getBillTypeCode = (charges: ChargeBreakdownItem[]) => {
+  const hasCam = charges.some(isCamCharge)
+  const hasDgSet = charges.some(isDgSetCharge)
+
+  if (hasCam && hasDgSet) {
+    return 'CAM_DG'
+  }
+
+  if (hasCam) {
+    return 'CAM'
+  }
+
+  if (hasDgSet) {
+    return 'DG_SET'
+  }
+
+  return 'DUES'
+}
+
 const sumBillCharges = (charges: ChargeBreakdownItem[]) =>
   roundBillMoney(charges.reduce((sum, charge) => sum + Number(charge.amount ?? 0), 0))
 
@@ -682,6 +1007,14 @@ const getCompactFlatNumber = (row: MaintenanceBillDueRow) => {
   if (flat.toLowerCase().includes(block.toLowerCase())) return flat
 
   return `${block}_${flat}`
+}
+
+const buildMaintenanceBillFileName = (row: MaintenanceBillDueRow, charges: ChargeBreakdownItem[]) => {
+  const periodCode = row.period_start_date.replaceAll('-', '').slice(0, 6)
+  const flatCode = sanitizeBillFileSegment(getCompactFlatNumber(row)).toUpperCase()
+  const billType = getBillTypeCode(charges)
+
+  return sanitizeBillFileSegment(`${flatCode}_${periodCode}_${billType}`).toUpperCase()
 }
 
 const buildUpiPaymentPayload = (row: MaintenanceBillDueRow, amount: number, billNumber: string) => {
@@ -890,6 +1223,7 @@ export const getMaintenanceBillData = async (
 
   const chargeBreakdown = normalizeBillChargeBreakdown(due.charge_breakdown, Number(due.base_amount))
   const billNumber = buildMaintenanceBillNumber(due)
+  const fileName = buildMaintenanceBillFileName(due, chargeBreakdown)
   const currentBalance = currentAmounts.balanceAmount
   const netPayable = roundBillMoney(currentBalance + previousOutstanding)
 
@@ -897,6 +1231,7 @@ export const getMaintenanceBillData = async (
     due,
     settings,
     billNumber,
+    fileName,
     chargeBreakdown,
     previousOutstanding,
     currentAmounts,
@@ -910,15 +1245,16 @@ export const generateMaintenanceBillPdf = async (
   access: MaintenanceBillAccess = {},
 ) => {
   const bill = await getMaintenanceBillData(dueId, access)
-  const { due, chargeBreakdown, currentAmounts, previousOutstanding, currentBalance, netPayable } = bill
+  const {
+    due,
+    chargeBreakdown,
+    currentAmounts,
+    previousOutstanding,
+    netPayable,
+    fileName,
+  } = bill
   const flatLabel = `${due.block_name} ${due.flat_number}`
   const compactFlatNumber = getCompactFlatNumber(due)
-  const contactLines = [
-    due.billing_contact_name,
-    due.billing_contact_mobile,
-    due.billing_contact_email,
-  ].filter(Boolean)
-  const address = [flatLabel, due.society_address].filter(Boolean).join(', ')
   const dgCharges = chargeBreakdown.filter(isDgSetCharge)
   const maintenanceCharges = chargeBreakdown.filter((charge) => !isDgSetCharge(charge))
   const invoiceCharges = maintenanceCharges.length > 0 || dgCharges.length > 0
@@ -929,75 +1265,6 @@ export const generateMaintenanceBillPdf = async (
   const dgAmount = sumBillCharges(dgCharges)
   const invoiceStampImage = getSocietyStampImage()
   const societyBankAccounts = getSocietyBankAccountsForPdf(due)
-
-  const buildChargeRows = (charges: ChargeBreakdownItem[]) => charges.map((charge) => {
-    const isAreaRate = charge.calculationMethod === 'AREA_RATE'
-    const cycleText =
-      isAreaRate && charge.cycleMultiplier && charge.cycleMultiplier > 1
-        ? ` x ${charge.cycleLabel ?? getBillingCycleLabel(charge.cycleMultiplier)}`
-        : ''
-    const units = isAreaRate && charge.areaSqFt
-      ? `${charge.areaSqFt} sq ft${cycleText}`
-      : charge.consumedUnits != null
-        ? `${formatBillPlainNumber(charge.consumedUnits)} units`
-        : '-'
-    const rate = isAreaRate && charge.ratePerSqFt
-      ? `${formatBillMoney(charge.ratePerSqFt)} / sq ft / month`
-      : charge.ratePerUnit != null
-        ? `${formatBillMoney(charge.ratePerUnit)} / unit`
-        : '-'
-
-    return [
-      { text: charge.label, style: 'tableCell' },
-      { text: units, style: 'tableCell' },
-      { text: rate, style: 'tableCellRight' },
-      { text: formatBillMoney(Number(charge.amount)), style: 'tableCellRight' },
-    ]
-  })
-
-  const bankRows = societyBankAccounts.length > 0
-    ? societyBankAccounts.flatMap((account, index) => [
-      [
-        {
-          text: societyBankAccounts.length > 1
-            ? `Society Bank Details ${index + 1}`
-            : 'Society Bank Details',
-          style: 'labelCell',
-          colSpan: 2,
-        },
-        {},
-      ],
-      [
-        { text: 'Bank', style: 'labelCell' },
-        { text: account.bankName, style: 'valueCell' },
-      ],
-      [
-        { text: 'Account Name', style: 'labelCell' },
-        { text: account.accountName, style: 'valueCell' },
-      ],
-      [
-        { text: 'Account No.', style: 'labelCell' },
-        { text: account.accountNumber, style: 'valueCell' },
-      ],
-      [
-        { text: 'IFSC', style: 'labelCell' },
-        { text: account.ifscCode, style: 'valueCell' },
-      ],
-      [
-        { text: 'Branch', style: 'labelCell' },
-        { text: account.branchName ?? '-', style: 'valueCell' },
-      ],
-      [
-        { text: 'UPI', style: 'labelCell' },
-        { text: account.upiId ?? '-', style: 'valueCell' },
-      ],
-    ])
-    : [
-      [
-        { text: 'Payment Details', style: 'labelCell' },
-        { text: 'Contact the society office for bank or UPI payment details.', style: 'valueCell' },
-      ],
-    ]
 
   const dgOuterLayout = {
     hLineWidth: () => 0.9,
@@ -1026,156 +1293,334 @@ export const generateMaintenanceBillPdf = async (
       return []
     }
 
-    const chargeRows = buildChargeRows(invoiceCharges)
-    const summaryRows = hasSeparateDgBill
-      ? [
-          [{ text: 'Current CAM / maintenance charges', style: 'summaryLabel' }, { text: formatBillMoney(maintenanceAmount), style: 'summaryValue' }],
-          [{ text: 'Previous outstanding', style: 'summaryLabel' }, { text: formatBillMoney(previousOutstanding), style: 'summaryValue' }],
-          [{ text: 'Net amount payable', style: 'summaryTotalLabel' }, { text: formatBillMoney(roundBillMoney(maintenanceAmount + previousOutstanding)), style: 'summaryTotalValue' }],
-        ]
-      : [
-          [{ text: 'Current period charges', style: 'summaryLabel' }, { text: formatBillMoney(currentAmounts.totalAmount), style: 'summaryValue' }],
-          [{ text: 'Paid / adjusted for this period', style: 'summaryLabel' }, { text: formatBillMoney(Number(due.paid_amount)), style: 'summaryValue' }],
-          [{ text: 'Current period balance', style: 'summaryLabel' }, { text: formatBillMoney(currentBalance), style: 'summaryValue' }],
-          [{ text: 'Previous outstanding', style: 'summaryLabel' }, { text: formatBillMoney(previousOutstanding), style: 'summaryValue' }],
-          [{ text: 'Net amount payable', style: 'summaryTotalLabel' }, { text: formatBillMoney(netPayable), style: 'summaryTotalValue' }],
-        ]
+    const invoicePeriodLabel = formatInvoicePeriodLabel(due)
+    const invoiceFlatNumber = due.block_name && !due.flat_number.toLowerCase().includes(due.block_name.toLowerCase())
+      ? `${due.block_name}-${due.flat_number}`
+      : due.flat_number
+    const mainParticular = invoiceCharges.some(isCamCharge)
+      ? `Maintenance Charges for the Period ${invoicePeriodLabel}`
+      : `${invoiceCharges[0]?.label ?? 'Maintenance Charges'} for the Period ${invoicePeriodLabel}`
+    const lateFeeAmount = hasSeparateDgBill ? 0 : roundBillMoney(currentAmounts.lateFeeAmount)
+    const waivedAmount = hasSeparateDgBill ? 0 : roundBillMoney(Number(due.waived_amount))
+    const paidAmount = hasSeparateDgBill ? 0 : roundBillMoney(Number(due.paid_amount))
+    const invoiceLineItems = [
+      { serial: '1', particulars: mainParticular, amount: maintenanceAmount },
+      ...(lateFeeAmount > 0
+        ? [{ serial: '', particulars: 'Late Payment Charges', amount: lateFeeAmount }]
+        : []),
+      ...(waivedAmount > 0
+        ? [{ serial: '', particulars: 'Waiver / Adjustment', amount: -waivedAmount }]
+        : []),
+      ...(paidAmount > 0
+        ? [{ serial: '', particulars: 'Paid / Adjusted for this Period', amount: -paidAmount }]
+        : []),
+      ...(previousOutstanding > 0
+        ? [{ serial: '', particulars: 'Previous Outstanding', amount: previousOutstanding }]
+        : []),
+    ]
+    const invoiceTotal = roundBillMoney(invoiceLineItems.reduce((sum, item) => sum + item.amount, 0))
+    const primaryInvoiceCharge = invoiceCharges.find(isCamCharge) ?? invoiceCharges[0]
+    const areaSqFt = primaryInvoiceCharge?.areaSqFt
+      ?? (Number.isFinite(Number(due.area_sq_ft)) ? Number(due.area_sq_ft) : null)
+    const ratePerSqFt = primaryInvoiceCharge?.ratePerSqFt ?? null
+    const societyAddressLines = (due.society_address || '')
+      .split(',')
+      .map((part) => part.trim())
+      .filter(Boolean)
+    const buyerName = due.billing_contact_name?.trim() || flatLabel
+    const firstBankAccount = societyBankAccounts[0] ?? null
+    const paymentContact = due.contact_phone ?? due.billing_contact_mobile ?? 'society office'
+    const dueDay = getOrdinalDay(due.due_date)
+    const camInvoiceColumnWidths = [18, 222, 60, 60, 28, 92]
+    const camInvoiceTableWidth = camInvoiceColumnWidths.reduce((sum, width) => sum + width, 0)
+    const remarksLines = [
+      areaSqFt && ratePerSqFt
+        ? `${formatBillPlainNumber(areaSqFt)} Sq Feet@${formatBillPlainNumber(ratePerSqFt)} per sq feet`
+        : areaSqFt
+          ? `${formatBillPlainNumber(areaSqFt)} Sq Feet`
+          : '',
+      invoiceFlatNumber,
+    ].filter(Boolean)
+
+    const invoiceMetaCell = (label: string, value = '', bold = false) => ({
+      stack: [
+        { text: label, style: 'camMetaLabel' },
+        ...(value ? [{ text: value, style: bold ? 'camMetaValueBold' : 'camMetaValue' }] : []),
+      ],
+      margin: [3, 3, 3, 2],
+      colSpan: 2,
+    })
+
+    const camInvoiceLayout = {
+      hLineWidth: () => 0.55,
+      vLineWidth: () => 0.55,
+      hLineColor: () => '#000000',
+      vLineColor: () => '#000000',
+      paddingLeft: () => 0,
+      paddingRight: () => 0,
+      paddingTop: () => 0,
+      paddingBottom: () => 0,
+    }
+
+    const camSignatureTopLineLayout = {
+      hLineWidth: (lineIndex: number) => lineIndex === 0 ? 0.55 : 0,
+      vLineWidth: () => 0,
+      hLineColor: () => '#000000',
+      vLineColor: () => '#000000',
+      paddingLeft: () => 0,
+      paddingRight: () => 0,
+      paddingTop: () => 2,
+      paddingBottom: () => 0,
+    }
 
     return [
       {
-        table: {
-          widths: ['*'],
-          body: [
-            [{ text: due.society_name, style: 'brand', alignment: 'center' }],
-            [{ text: due.society_address, style: 'subtle', alignment: 'center' }],
-            [
-              {
-                text: [due.contact_phone, due.contact_email].filter(Boolean).join(' | '),
-                style: 'subtle',
-                alignment: 'center',
+        text: 'INVOICE',
+        style: 'camInvoiceTitle',
+        alignment: 'center',
+        margin: [0, 22, 0, 24],
+      },
+      {
+        columns: [
+          { width: '*', text: '' },
+          {
+            width: camInvoiceTableWidth,
+            table: {
+              widths: camInvoiceColumnWidths,
+              heights: (rowIndex: number) => {
+                if (rowIndex === 0) return 58
+                if (rowIndex >= 1 && rowIndex <= 5) return 26
+                if (rowIndex === 6) return 34
+                if (rowIndex === 7) return 270
+                if (rowIndex === 8) return 22
+                if (rowIndex === 9) return 56
+                if (rowIndex === 10) return 104
+                return 20
               },
-            ],
+              body: [
             [
               {
-                text: hasSeparateDgBill ? 'CAM / MAINTENANCE BILL CUM NOTICE' : 'BILL CUM NOTICE',
-                style: 'noticeTitle',
-                alignment: 'center',
-              },
-            ],
-          ],
-        },
-        layout: {
-          hLineWidth: () => 0.6,
-          vLineWidth: () => 0.6,
-          hLineColor: () => '#111827',
-          vLineColor: () => '#111827',
-          paddingTop: () => 4,
-          paddingBottom: () => 4,
-        },
-      },
-      {
-        columns: [
-          {
-            table: {
-              widths: ['35%', '*'],
-              body: [
-                [{ text: 'Flat No.', style: 'labelCell' }, { text: flatLabel, style: 'valueCellBold' }],
-                [{ text: 'Address', style: 'labelCell' }, { text: address, style: 'valueCell' }],
-                [{ text: 'Billing Contact', style: 'labelCell' }, { text: contactLines.join('\n') || '-', style: 'valueCell' }],
-              ],
-            },
-            layout: 'lightHorizontalLines',
-          },
-          {
-            table: {
-              widths: ['38%', '*'],
-              body: [
-                [{ text: 'Bill No.', style: 'labelCell' }, { text: bill.billNumber, style: 'valueCellBold' }],
-                [{ text: 'Dated', style: 'labelCell' }, { text: formatBillDate(due.generated_at), style: 'valueCell' }],
-                [{ text: 'Period', style: 'labelCell' }, { text: `${formatBillDate(due.period_start_date)} to ${formatBillDate(due.period_end_date)}`, style: 'valueCell' }],
-                [{ text: 'Due Date', style: 'labelCell' }, { text: formatBillDate(due.due_date), style: 'valueCellBold' }],
-              ],
-            },
-            layout: 'lightHorizontalLines',
-          },
-        ],
-        columnGap: 8,
-        margin: [0, 10, 0, 10],
-      },
-      {
-        table: {
-          headerRows: 1,
-          widths: ['*', '20%', '22%', '20%'],
-          body: [
-            [
-              { text: 'Description', style: 'tableHeader' },
-              { text: 'Units', style: 'tableHeader' },
-              { text: 'Rate', style: 'tableHeader' },
-              { text: 'Amount', style: 'tableHeaderRight' },
-            ],
-            ...chargeRows,
-          ],
-        },
-        layout: 'lightHorizontalLines',
-      },
-      {
-        columns: [
-          {
-            table: {
-              widths: ['*', '32%'],
-              body: summaryRows,
-            },
-            layout: 'lightHorizontalLines',
-          },
-          {
-            table: {
-              widths: ['34%', '*'],
-              body: bankRows,
-            },
-            layout: 'lightHorizontalLines',
-          },
-        ],
-        columnGap: 10,
-        margin: [0, 12, 0, 12],
-      },
-      {
-        text: [
-          { text: 'Terms and Conditions\n', bold: true },
-          `Payment should be made on or before ${formatBillDate(due.due_date)}. Late payment may attract charges as per society policy. Please share payment confirmation with the society office after NEFT, RTGS, IMPS, UPI, or cheque payment.`,
-        ],
-        style: 'terms',
-      },
-      {
-        columns: [
-          {
-            stack: [
-              ...(invoiceStampImage
-                ? [
-                    {
-                      image: invoiceStampImage,
-                      fit: [124, 76],
-                      margin: [0, 0, 0, 4],
-                    },
-                  ]
-                : []),
-              {
-                text: [
-                  `${due.society_name}\n`,
-                  due.registration_number ? `Registration No: ${due.registration_number}\n` : '',
-                  'Authorised Signatory',
+                stack: [
+                  { text: due.society_name, style: 'camSocietyName' },
+                  ...societyAddressLines.map((line) => ({ text: line, style: 'camSocietyLine' })),
+                  { text: `Contact : ${due.contact_phone ?? '-'}`, style: 'camSocietyLine' },
                 ],
-                style: 'signature',
+                margin: [4, 6, 4, 4],
+                colSpan: 2,
+              },
+              {},
+              invoiceMetaCell('Invoice No.', bill.billNumber, true),
+              {},
+              invoiceMetaCell('Dated', formatInvoiceDate(due.generated_at), true),
+              {},
+            ],
+            [
+              {
+                stack: [
+                  { text: 'Buyer (Bill to)', style: 'camBuyerLabel' },
+                  { text: buyerName, style: 'camBuyerName', margin: [0, 12, 0, 0] },
+                ],
+                margin: [4, 5, 4, 4],
+                colSpan: 2,
+                rowSpan: 5,
+              },
+              {},
+              invoiceMetaCell('Delivery Note'),
+              {},
+              invoiceMetaCell('Mode/Terms of Payment'),
+              {},
+            ],
+            [
+              {},
+              {},
+              invoiceMetaCell('Reference No. & Date.'),
+              {},
+              invoiceMetaCell('Other References'),
+              {},
+            ],
+            [
+              {},
+              {},
+              invoiceMetaCell("Buyer's Order No."),
+              {},
+              invoiceMetaCell('Dated'),
+              {},
+            ],
+            [
+              {},
+              {},
+              invoiceMetaCell('Dispatch Doc No.'),
+              {},
+              invoiceMetaCell('Delivery Note Date'),
+              {},
+            ],
+            [
+              {},
+              {},
+              invoiceMetaCell('Dispatched through'),
+              {},
+              invoiceMetaCell('Destination'),
+              {},
+            ],
+            [
+              { text: ['Sl\n', { text: 'No.', fontSize: 5 }], style: 'camTableHeader', alignment: 'center' },
+              { text: 'Particulars', style: 'camTableHeader', alignment: 'center' },
+              { text: 'Quantity', style: 'camTableHeader', alignment: 'center' },
+              { text: 'Rate', style: 'camTableHeader', alignment: 'center' },
+              { text: 'per', style: 'camTableHeader', alignment: 'center' },
+              { text: 'Amount', style: 'camTableHeader', alignment: 'center' },
+            ],
+            [
+              {
+                stack: invoiceLineItems.map((item, index) => ({
+                  text: item.serial,
+                  style: 'camItemCell',
+                  alignment: 'center',
+                  margin: [0, index === 0 ? 9 : 4, 0, 0],
+                })),
+              },
+              {
+                stack: invoiceLineItems.map((item, index) => ({
+                  text: item.particulars,
+                  style: 'camParticularCell',
+                  alignment: 'center',
+                  margin: [0, index === 0 ? 9 : 4, 0, 0],
+                })),
+              },
+              { text: '', style: 'camItemCell' },
+              { text: '', style: 'camItemCell' },
+              { text: '', style: 'camItemCell' },
+              {
+                stack: invoiceLineItems.map((item, index) => ({
+                  text: formatInvoiceAmount(item.amount),
+                  style: 'camParticularCell',
+                  alignment: 'right',
+                  margin: [0, index === 0 ? 9 : 4, 8, 0],
+                })),
               },
             ],
+            [
+              { text: '', style: 'camItemCell' },
+              { text: 'Total', style: 'camTotalLabel', alignment: 'right', margin: [0, 4, 4, 0] },
+              { text: '', style: 'camItemCell' },
+              { text: '', style: 'camItemCell' },
+              { text: '', style: 'camItemCell' },
+              { text: formatInvoiceCurrency(invoiceTotal), style: 'camGrandTotal', alignment: 'right', margin: [0, 3, 6, 0] },
+            ],
+            [
+              {
+                stack: [
+                  { text: 'Amount Chargeable (in words)', style: 'camTinyText' },
+                  {
+                    columns: [
+                      { text: formatInrAmountInWords(invoiceTotal), style: 'camAmountWords', width: '*' },
+                      { text: 'E. & O.E', style: 'camEoe', width: 58, alignment: 'right' },
+                    ],
+                  },
+                ],
+                margin: [4, 4, 6, 3],
+                colSpan: 6,
+              },
+              {},
+              {},
+              {},
+              {},
+              {},
+            ],
+            [
+              {
+                stack: [
+                  { text: 'Remarks:', style: 'camRemarksTitle' },
+                  { text: remarksLines.join('\n') || invoiceFlatNumber, style: 'camFooterText', margin: [0, 2, 0, 8] },
+                  { text: 'Declaration', style: 'camDeclaration' },
+                  {
+                    text: [
+                      'Terms and Conditions:\n',
+                      `1) Maintenance is due by the ${dueDay} of each month.\n`,
+                      '2) Late payments will incur penalties.\n',
+                      '3) Non-payment may result in service suspension.\n\n',
+                      `4) Raise billing disputes before the ${dueDay}.\n`,
+                      `5) Kindly share the payment screenshot on ${paymentContact} once payment is done.`,
+                    ],
+                    style: 'camFooterText',
+                  },
+                ],
+                margin: [4, 5, 4, 3],
+                colSpan: 2,
+              },
+              {},
+              {
+                stack: [
+                  { text: "Company's Bank Details", style: 'camFooterTitle' },
+                  {
+                    table: {
+                      widths: [72, '*'],
+                      body: [
+                        [
+                          { text: 'Bank Name', style: 'camFooterText' },
+                          { text: `: ${firstBankAccount?.bankName ?? '-'}`, style: 'camFooterBold' },
+                        ],
+                        [
+                          { text: 'A/c No.', style: 'camFooterText' },
+                          { text: `: ${firstBankAccount?.accountNumber ?? '-'}`, style: 'camFooterBold' },
+                        ],
+                        [
+                          { text: 'Branch & IFS Code', style: 'camFooterText' },
+                          { text: `: ${firstBankAccount?.ifscCode ?? '-'}`, style: 'camFooterBold' },
+                        ],
+                      ],
+                    },
+                    layout: 'noBorders',
+                    margin: [0, 2, 0, 2],
+                  },
+                  {
+                    table: {
+                      widths: ['*'],
+                      heights: [52],
+                      body: [
+                        [
+                          {
+                            stack: [
+                              { text: `for ${due.society_name}`, style: 'camFooterBold', alignment: 'center' },
+                              ...(invoiceStampImage
+                                ? [
+                                    {
+                                      image: invoiceStampImage,
+                                      fit: [120, 36],
+                                      alignment: 'center',
+                                      margin: [0, 0, 0, 0],
+                                    },
+                                  ]
+                                : [{ text: '', margin: [0, 24, 0, 0] }]),
+                              { text: 'Authorised Signatory', style: 'camFooterText', alignment: 'right', margin: [0, 0, 6, 0] },
+                            ],
+                          },
+                        ],
+                      ],
+                    },
+                    layout: camSignatureTopLineLayout,
+                  },
+                ],
+                margin: [4, 5, 0, 0],
+                colSpan: 4,
+              },
+              {},
+              {},
+              {},
+            ],
+              ],
+            },
+            layout: camInvoiceLayout,
           },
-          {
-            text: 'This is a computer-generated bill and does not require a physical signature.',
-            style: 'footerNote',
-            alignment: 'right',
-          },
+          { width: '*', text: '' },
         ],
-        columnGap: 16,
-        margin: [0, 20, 0, 0],
+        columnGap: 0,
+      },
+      {
+        text: 'This is a Computer Generated Invoice',
+        style: 'camComputerGenerated',
+        alignment: 'center',
+        margin: [0, 42, 0, 0],
       },
     ]
   }
@@ -1498,6 +1943,28 @@ export const generateMaintenanceBillPdf = async (
       terms: { fontSize: 8, color: '#111827', italics: true, margin: [0, 4, 0, 0] },
       signature: { fontSize: 8, color: '#111827', bold: true },
       footerNote: { fontSize: 7, color: '#4b5563', italics: true },
+      camInvoiceTitle: { fontSize: 13, color: '#000000', bold: true },
+      camSocietyName: { fontSize: 8.8, color: '#000000', bold: true },
+      camSocietyLine: { fontSize: 8.5, color: '#000000', lineHeight: 1.08 },
+      camMetaLabel: { fontSize: 7.6, color: '#000000' },
+      camMetaValue: { fontSize: 8.4, color: '#000000' },
+      camMetaValueBold: { fontSize: 8.4, color: '#000000', bold: true },
+      camBuyerLabel: { fontSize: 7.8, color: '#000000' },
+      camBuyerName: { fontSize: 8.5, color: '#000000', bold: true },
+      camTableHeader: { fontSize: 8.4, color: '#000000' },
+      camItemCell: { fontSize: 8.4, color: '#000000' },
+      camParticularCell: { fontSize: 8.4, color: '#000000', bold: true },
+      camTotalLabel: { fontSize: 8.4, color: '#000000' },
+      camGrandTotal: { fontSize: 12, color: '#000000', bold: true },
+      camTinyText: { fontSize: 6.8, color: '#000000' },
+      camAmountWords: { fontSize: 7.8, color: '#000000', bold: true, lineHeight: 1.12 },
+      camEoe: { fontSize: 7.8, color: '#000000', italics: true },
+      camRemarksTitle: { fontSize: 7.5, color: '#000000', italics: true },
+      camDeclaration: { fontSize: 7.5, color: '#000000', decoration: 'underline' },
+      camFooterTitle: { fontSize: 8, color: '#000000' },
+      camFooterText: { fontSize: 7.5, color: '#000000', lineHeight: 1.05 },
+      camFooterBold: { fontSize: 7.5, color: '#000000', bold: true, lineHeight: 1.05 },
+      camComputerGenerated: { fontSize: 8.2, color: '#000000' },
       dgBrand: { fontSize: 11, color: '#111827', bold: true, margin: [2, 1.5, 2, 1] },
       dgBrandSub: { fontSize: 8.2, color: '#111827', bold: true, margin: [2, 1, 2, 1] },
       dgHeaderBlank: { fontSize: 4, color: '#111827', margin: [0, 0, 0, 0] },
@@ -1524,7 +1991,7 @@ export const generateMaintenanceBillPdf = async (
   return {
     buffer,
     billNumber: bill.billNumber,
-    fileName: `${bill.billNumber}.pdf`,
+    fileName: `${fileName}.pdf`,
     totalPayable: netPayable,
     dueId: due.id,
     flatLabel,

@@ -284,6 +284,7 @@ const billSendTargets = ref<MaintenanceDue[]>([])
 const billChannels = ref<BillChannel[]>(['EMAIL', 'WHATSAPP'])
 const sendingBills = ref(false)
 const confirmAction = useAppConfirm()
+const { downloadingBillPdfs, downloadBillPdfs } = useBillPdfZipDownload()
 
 const hasBulkSelection = computed(() => bulkSelectedDues.value.length > 0)
 const notificationSelectedDues = computed(() =>
@@ -295,6 +296,10 @@ const selectedReminderDues = computed(() =>
 const selectedBillDues = computed(() =>
   notificationSelectedDues.value.filter(canSendBill),
 )
+const selectedPdfDues = computed(() =>
+  notificationSelectedDues.value.filter((due) => !due.isAdvanceCoverageRow),
+)
+const selectedPdfCount = computed(() => selectedPdfDues.value.length)
 const notificationSelectionText = computed(() => {
   if (hasBulkSelection.value) {
     return `${bulkSelectedDues.value.length} matching due${bulkSelectedDues.value.length === 1 ? '' : 's'} selected across every page.`
@@ -522,6 +527,30 @@ const sendBills = async () => {
   }
 }
 
+const buildBillPdfDownloadFilters = () => ({
+  search: query.search || undefined,
+  billingPeriodId: query.billingPeriodId || undefined,
+  status: query.status || undefined,
+  balance: query.balance || undefined,
+  overdue: query.overdue || undefined,
+  advance: query.advance || undefined,
+  sortBy: query.sortBy,
+  sortDirection: query.sortDirection,
+})
+
+const downloadVisibleBillPdfs = () => {
+  if (selectedPdfDues.value.length > 0) {
+    void downloadBillPdfs({
+      dueIds: selectedPdfDues.value.map((due) => due.id),
+    })
+    return
+  }
+
+  void downloadBillPdfs({
+    filters: buildBillPdfDownloadFilters(),
+  })
+}
+
 const resetFilters = () => {
   query.page = 1
   query.search = ''
@@ -607,6 +636,19 @@ watch(
             severity="secondary"
             outlined
             @click="() => refresh()"
+          />
+          <Button
+            :label="
+              selectedPdfCount > 0
+                ? `Download ${selectedPdfCount} PDF${selectedPdfCount === 1 ? '' : 's'}`
+                : 'Download PDFs'
+            "
+            icon="pi pi-download"
+            severity="secondary"
+            outlined
+            :loading="downloadingBillPdfs"
+            :disabled="totalRecords === 0 && selectedPdfCount === 0"
+            @click="downloadVisibleBillPdfs"
           />
           <Button
             v-if="canManageDues"
