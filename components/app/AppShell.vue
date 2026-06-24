@@ -25,6 +25,19 @@ const shell = computed(() => props.shell ?? 'public')
           <AppBreadcrumb :shell="shell" />
           <slot />
         </main>
+        <footer class="app-footer">
+          <span>
+            Developed by
+            <a
+              class="app-footer__link"
+              href="https://envsoft.io"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Envsoft Solutions LLP
+            </a>
+          </span>
+        </footer>
       </div>
     </div>
   </div>

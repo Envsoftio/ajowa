@@ -93,6 +93,31 @@ a {
   padding: 0.9rem 1.2rem 3rem;
 }
 
+.app-footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 3rem;
+  padding: 0.85rem 1.2rem 1rem;
+  border-top: 1px solid var(--color-border);
+  background: color-mix(in srgb, var(--color-bg) 78%, var(--color-surface));
+  color: var(--color-muted);
+  font-size: 0.82rem;
+  line-height: 1.4;
+  text-align: center;
+}
+
+.app-footer__link {
+  color: var(--color-brand-strong);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.app-footer__link:hover,
+.app-footer__link:focus-visible {
+  text-decoration: underline;
+}
+
 .app-topbar {
   width: 100%;
   margin: 0;

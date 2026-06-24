@@ -94,6 +94,12 @@ export default defineNuxtConfig({
     },
   },
   nitro: {
+    serverAssets: [
+      {
+        baseName: 'emailTemplates',
+        dir: './email-templates',
+      },
+    ],
     routeRules: {
       '/api/**': {
         cors: false,

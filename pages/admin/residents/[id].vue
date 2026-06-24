@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { ResidentDetail } from '~/types/domain'
+import ResidentEditorDialog from '~/components/residents/ResidentEditorDialog.vue'
 
 definePageMeta({
   layout: 'admin',
@@ -49,7 +50,10 @@ const residentId = computed(() => String(route.params.id))
 
 const { data, pending, error, refresh } = await useAsyncData(
   () => `admin-resident-${residentId.value}`,
-  () => api<{ ok: true; data: ResidentDetail }>(`/api/admin/residents/${residentId.value}`),
+  () =>
+    api<{ ok: true; data: ResidentDetail }>(
+      `/api/admin/residents/${residentId.value}`,
+    ),
   { watch: [residentId] },
 )
 
@@ -57,6 +61,7 @@ const resident = computed(() => data.value?.data ?? null)
 const runningAction = ref<ResidentAction | ''>('')
 const notesDraft = ref('')
 const savingNotes = ref(false)
+const displayEditDialog = ref(false)
 const displayValue = (value: string | null | undefined) => value || '-'
 const relationshipSeverity = (type: string) => {
   if (type === 'OWNER') return 'success'
@@ -72,7 +77,10 @@ const displayRelationshipNote = (note: string | null | undefined) => {
 
   const normalized = trimmed.toLowerCase()
 
-  if (normalized.startsWith('imported from workbook') || normalized.startsWith('tenant imported from workbook')) {
+  if (
+    normalized.startsWith('imported from workbook') ||
+    normalized.startsWith('tenant imported from workbook')
+  ) {
     return null
   }
 
@@ -80,9 +88,25 @@ const displayRelationshipNote = (note: string | null | undefined) => {
 }
 const statusSeverity = (status: string | null | undefined) => {
   if (!status) return 'secondary'
-  if (['PAID', 'VERIFIED', 'RESOLVED', 'CLOSED', 'ALLOWED', 'ACTIVE'].includes(status)) return 'success'
-  if (['OPEN', 'PARTIALLY_PAID', 'PENDING_VERIFICATION', 'ASSIGNED', 'ACKNOWLEDGED', 'IN_PROGRESS'].includes(status)) return 'info'
-  if (['OVERDUE', 'FAILED', 'REJECTED', 'DENIED', 'CANCELLED'].includes(status)) return 'danger'
+  if (
+    ['PAID', 'VERIFIED', 'RESOLVED', 'CLOSED', 'ALLOWED', 'ACTIVE'].includes(
+      status,
+    )
+  )
+    return 'success'
+  if (
+    [
+      'OPEN',
+      'PARTIALLY_PAID',
+      'PENDING_VERIFICATION',
+      'ASSIGNED',
+      'ACKNOWLEDGED',
+      'IN_PROGRESS',
+    ].includes(status)
+  )
+    return 'info'
+  if (['OVERDUE', 'FAILED', 'REJECTED', 'DENIED', 'CANCELLED'].includes(status))
+    return 'danger'
   return 'secondary'
 }
 
@@ -110,23 +134,33 @@ const fileUrl = (field: DocumentField) => {
 }
 
 const profileImageSrc = computed(() => fileUrl('profileImagePath'))
-const displayEmail = computed(() => resident.value?.email ?? resident.value?.sourceEmail ?? null)
-const displayMobile = computed(() => resident.value?.mobileNumber ?? resident.value?.sourceContact ?? null)
+const displayEmail = computed(
+  () => resident.value?.email ?? resident.value?.sourceEmail ?? null,
+)
+const displayMobile = computed(
+  () => resident.value?.mobileNumber ?? resident.value?.sourceContact ?? null,
+)
 const contactLine = computed(() => {
   const parts = [displayEmail.value, displayMobile.value].filter(Boolean)
   return parts.length > 0 ? parts.join(' · ') : 'No contact details on record'
 })
-const hasLoginIdentity = computed(() => Boolean(resident.value?.authUserId && resident.value?.email))
+const hasLoginIdentity = computed(() =>
+  Boolean(resident.value?.authUserId && resident.value?.email),
+)
 
 const relationshipTypes = computed(() => {
-  const types = resident.value?.relationships.map((relationship) => relationship.relationshipType) ?? []
+  const types =
+    resident.value?.relationships.map(
+      (relationship) => relationship.relationshipType,
+    ) ?? []
   return Array.from(new Set(types))
 })
 
 const relationshipFlatNumbers = computed(() => {
-  const flatNumbers = resident.value?.relationships
-    .map((relationship) => relationship.flatNumber)
-    .filter((flatNumber): flatNumber is string => Boolean(flatNumber)) ?? []
+  const flatNumbers =
+    resident.value?.relationships
+      .map((relationship) => relationship.flatNumber)
+      .filter((flatNumber): flatNumber is string => Boolean(flatNumber)) ?? []
 
   return Array.from(new Set(flatNumbers))
 })
@@ -139,8 +173,12 @@ const loginStatus = computed(() => {
   return 'active'
 })
 
-const linkedFlatLabel = (relationship: ResidentDetail['relationships'][number]) =>
-  [relationship.blockName, relationship.flatNumber].filter(Boolean).join(' · ') || relationship.flatId
+const linkedFlatLabel = (
+  relationship: ResidentDetail['relationships'][number],
+) =>
+  [relationship.blockName, relationship.flatNumber]
+    .filter(Boolean)
+    .join(' · ') || relationship.flatId
 
 const relationshipSummary = computed(() => {
   const relationships = resident.value?.relationships ?? []
@@ -167,7 +205,15 @@ const financialSummary = computed(() => {
 
 const requestSummary = computed(() => {
   const requests = resident.value?.serviceRequests ?? []
-  const openStatuses = new Set(['OPEN', 'ASSIGNED', 'ACKNOWLEDGED', 'IN_PROGRESS', 'ON_HOLD', 'REOPENED', 'NEEDS_REASSIGNMENT'])
+  const openStatuses = new Set([
+    'OPEN',
+    'ASSIGNED',
+    'ACKNOWLEDGED',
+    'IN_PROGRESS',
+    'ON_HOLD',
+    'REOPENED',
+    'NEEDS_REASSIGNMENT',
+  ])
 
   return {
     total: requests.length,
@@ -176,11 +222,20 @@ const requestSummary = computed(() => {
   }
 })
 
-const flatLabel = (item: { blockName?: string | null; flatNumber?: string | null }) =>
-  [item.blockName, item.flatNumber].filter(Boolean).join(' · ') || item.flatNumber || '-'
+const flatLabel = (item: {
+  blockName?: string | null
+  flatNumber?: string | null
+}) =>
+  [item.blockName, item.flatNumber].filter(Boolean).join(' · ') ||
+  item.flatNumber ||
+  '-'
 
 const normalizeNotes = (value: string | null | undefined) => value?.trim() ?? ''
-const notesDirty = computed(() => normalizeNotes(notesDraft.value) !== normalizeNotes(resident.value?.adminNotes))
+const notesDirty = computed(
+  () =>
+    normalizeNotes(notesDraft.value) !==
+    normalizeNotes(resident.value?.adminNotes),
+)
 const notesCharacterCount = computed(() => notesDraft.value.length)
 
 const documentItems = computed(() => {
@@ -215,6 +270,14 @@ const resetNotesDraft = () => {
   notesDraft.value = resident.value?.adminNotes ?? ''
 }
 
+const openEditDialog = () => {
+  displayEditDialog.value = true
+}
+
+const onResidentSaved = async () => {
+  await refresh()
+}
+
 watch(
   () => [resident.value?.id, resident.value?.adminNotes] as const,
   () => resetNotesDraft(),
@@ -225,20 +288,25 @@ const runAction = async (action: ResidentAction) => {
   runningAction.value = action
 
   try {
-    const response = await api<{ ok: true; data: ResidentActionResponse }>(`/api/admin/residents/${residentId.value}/actions`, {
-      method: 'POST',
-      body: { action },
-    })
+    const response = await api<{ ok: true; data: ResidentActionResponse }>(
+      `/api/admin/residents/${residentId.value}/actions`,
+      {
+        method: 'POST',
+        body: { action },
+      },
+    )
     const inviteDelivery = response.data.invite?.emailDelivery
     const inviteDeliveryWarning =
       inviteDelivery && !inviteDelivery.delivered
-        ? (inviteDelivery.reason ?? 'Invite was created, but email delivery failed.')
+        ? (inviteDelivery.reason ??
+          'Invite was created, but email delivery failed.')
         : ''
 
     toast.add({
       severity: inviteDeliveryWarning ? 'warn' : 'success',
       summary: inviteDeliveryWarning ? 'Invite created' : 'Action completed',
-      detail: inviteDeliveryWarning || action.replaceAll('_', ' ').toLowerCase(),
+      detail:
+        inviteDeliveryWarning || action.replaceAll('_', ' ').toLowerCase(),
       life: 10000,
     })
     await refresh()
@@ -255,10 +323,13 @@ const saveResidentNotes = async () => {
   savingNotes.value = true
 
   try {
-    const response = await api<{ ok: true; data: ResidentNotesResponse }>(`/api/admin/residents/${residentId.value}/notes`, {
-      method: 'PATCH',
-      body: { adminNotes: notesDraft.value },
-    })
+    const response = await api<{ ok: true; data: ResidentNotesResponse }>(
+      `/api/admin/residents/${residentId.value}/notes`,
+      {
+        method: 'PATCH',
+        body: { adminNotes: notesDraft.value },
+      },
+    )
 
     if (data.value?.data) {
       data.value.data.adminNotes = response.data.adminNotes
@@ -304,7 +375,11 @@ const saveResidentNotes = async () => {
       <section class="hero-panel resident-detail-hero">
         <div class="resident-detail-identity">
           <div class="resident-avatar resident-avatar--large">
-            <img v-if="profileImageSrc" :src="profileImageSrc" :alt="resident.fullName">
+            <img
+              v-if="profileImageSrc"
+              :src="profileImageSrc"
+              :alt="resident.fullName"
+            >
             <span v-else>{{ initials }}</span>
           </div>
           <div>
@@ -323,7 +398,9 @@ const saveResidentNotes = async () => {
                 :value="`Flat ${flatNumber}`"
                 rounded
               />
-              <AppStatusBadge :status="resident.isActive ? 'active' : 'inactive'" />
+              <AppStatusBadge
+                :status="resident.isActive ? 'active' : 'inactive'"
+              />
               <AppStatusBadge :status="loginStatus" />
             </div>
             <h1>{{ resident.fullName }}</h1>
@@ -338,6 +415,11 @@ const saveResidentNotes = async () => {
             severity="secondary"
             outlined
             @click="router.push('/admin/residents')"
+          />
+          <Button
+            label="Edit resident"
+            icon="pi pi-pencil"
+            @click="openEditDialog"
           />
           <Button
             label="Send invite"
@@ -379,8 +461,18 @@ const saveResidentNotes = async () => {
       <div class="surface-grid">
         <section class="surface-card">
           <p class="eyebrow">Login</p>
-          <h3>{{ resident.canLogin && hasLoginIdentity ? 'Enabled' : 'Disabled' }}</h3>
-          <p>{{ hasLoginIdentity ? (resident.emailVerified ? 'Email verified' : 'Email pending') : 'No login email' }}</p>
+          <h3>
+            {{ resident.canLogin && hasLoginIdentity ? 'Enabled' : 'Disabled' }}
+          </h3>
+          <p>
+            {{
+              hasLoginIdentity
+                ? resident.emailVerified
+                  ? 'Email verified'
+                  : 'Email pending'
+                : 'No login email'
+            }}
+          </p>
         </section>
         <section class="surface-card">
           <p class="eyebrow">Compliance</p>
@@ -390,7 +482,10 @@ const saveResidentNotes = async () => {
         <section class="surface-card">
           <p class="eyebrow">Linked flats</p>
           <h3>{{ relationshipSummary.active }}</h3>
-          <p>{{ relationshipSummary.billing }} billing contact · {{ relationshipSummary.primary }} primary</p>
+          <p>
+            {{ relationshipSummary.billing }} billing contact ·
+            {{ relationshipSummary.primary }} primary
+          </p>
         </section>
         <section class="surface-card">
           <p class="eyebrow">Outstanding</p>
@@ -405,7 +500,10 @@ const saveResidentNotes = async () => {
         <section class="surface-card">
           <p class="eyebrow">Requests</p>
           <h3>{{ requestSummary.open }}</h3>
-          <p>{{ requestSummary.total }} total · {{ requestSummary.overdue }} breached</p>
+          <p>
+            {{ requestSummary.total }} total ·
+            {{ requestSummary.overdue }} breached
+          </p>
         </section>
       </div>
 
@@ -433,7 +531,9 @@ const saveResidentNotes = async () => {
             </div>
             <div>
               <span>Notification preset</span>
-              <strong>{{ resident.preferredNotificationChannels.replaceAll('_', ' ') }}</strong>
+              <strong>{{
+                resident.preferredNotificationChannels.replaceAll('_', ' ')
+              }}</strong>
             </div>
             <div>
               <span>Emergency contact</span>
@@ -546,7 +646,11 @@ const saveResidentNotes = async () => {
             <p class="eyebrow">Relationships</p>
             <h2>Flat links and occupancy</h2>
           </div>
-          <Tag :value="`${relationshipSummary.total} total`" severity="secondary" rounded />
+          <Tag
+            :value="`${relationshipSummary.total} total`"
+            severity="secondary"
+            rounded
+          />
         </div>
 
         <AppState
@@ -564,22 +668,32 @@ const saveResidentNotes = async () => {
           >
             <div class="admin-detail-card__header">
               <div>
-                <p class="eyebrow">{{ relationship.relationshipType.replaceAll('_', ' ') }}</p>
+                <p class="eyebrow">
+                  {{ relationship.relationshipType.replaceAll('_', ' ') }}
+                </p>
                 <h3>{{ linkedFlatLabel(relationship) }}</h3>
                 <p>{{ relationship.accessScope || 'Access pending' }}</p>
               </div>
-              <AppStatusBadge :status="relationship.isActive ? 'active' : 'inactive'" />
+              <AppStatusBadge
+                :status="relationship.isActive ? 'active' : 'inactive'"
+              />
             </div>
 
             <div class="resident-chip-row">
               <Tag
-                :severity="relationship.isPrimaryContact ? 'success' : 'secondary'"
+                :severity="
+                  relationship.isPrimaryContact ? 'success' : 'secondary'
+                "
                 :value="relationship.isPrimaryContact ? 'Primary' : 'Secondary'"
                 rounded
               />
               <Tag
-                :severity="relationship.isBillingContact ? 'success' : 'secondary'"
-                :value="relationship.isBillingContact ? 'Billing' : 'Non-billing'"
+                :severity="
+                  relationship.isBillingContact ? 'success' : 'secondary'
+                "
+                :value="
+                  relationship.isBillingContact ? 'Billing' : 'Non-billing'
+                "
                 rounded
               />
               <Tag
@@ -596,7 +710,9 @@ const saveResidentNotes = async () => {
               </div>
               <div>
                 <span>Ownership start</span>
-                <strong>{{ formatDate(relationship.ownershipStartDate) }}</strong>
+                <strong>{{
+                  formatDate(relationship.ownershipStartDate)
+                }}</strong>
               </div>
               <div>
                 <span>Lease start</span>
@@ -608,7 +724,10 @@ const saveResidentNotes = async () => {
               </div>
             </div>
 
-            <p v-if="displayRelationshipNote(relationship.relationshipNote)" class="resident-note">
+            <p
+              v-if="displayRelationshipNote(relationship.relationshipNote)"
+              class="resident-note"
+            >
               {{ displayRelationshipNote(relationship.relationshipNote) }}
             </p>
           </article>
@@ -621,7 +740,11 @@ const saveResidentNotes = async () => {
             <p class="eyebrow">Household</p>
             <h2>Owners and tenants for linked flats</h2>
           </div>
-          <Tag :value="`${resident.flatOccupants.length} records`" severity="secondary" rounded />
+          <Tag
+            :value="`${resident.flatOccupants.length} records`"
+            severity="secondary"
+            rounded
+          />
         </div>
 
         <AppDataTable
@@ -632,7 +755,10 @@ const saveResidentNotes = async () => {
         >
           <Column header="Resident">
             <template #body="{ data: row }">
-              <NuxtLink :to="`/admin/residents/${row.userId}`" class="table-link-button">
+              <NuxtLink
+                :to="`/admin/residents/${row.userId}`"
+                class="table-link-button"
+              >
                 {{ row.residentName }}
               </NuxtLink>
             </template>
@@ -647,19 +773,39 @@ const saveResidentNotes = async () => {
             </template>
           </Column>
           <Column header="Flat">
-            <template #body="{ data: row }">{{ linkedFlatLabel(row) }}</template>
+            <template #body="{ data: row }">{{
+              linkedFlatLabel(row)
+            }}</template>
           </Column>
           <Column header="Contact">
             <template #body="{ data: row }">
-              {{ [row.residentEmail, row.residentMobileNumber].filter(Boolean).join(' · ') || '-' }}
+              {{
+                [row.residentEmail, row.residentMobileNumber]
+                  .filter(Boolean)
+                  .join(' · ') || '-'
+              }}
             </template>
           </Column>
           <Column header="Flags">
             <template #body="{ data: row }">
               <div class="resident-chip-row">
-                <Tag v-if="row.isPrimaryContact" value="Primary" severity="success" rounded />
-                <Tag v-if="row.isBillingContact" value="Billing" severity="info" rounded />
-                <Tag :value="row.isActive ? 'Active' : 'Inactive'" :severity="row.isActive ? 'success' : 'secondary'" rounded />
+                <Tag
+                  v-if="row.isPrimaryContact"
+                  value="Primary"
+                  severity="success"
+                  rounded
+                />
+                <Tag
+                  v-if="row.isBillingContact"
+                  value="Billing"
+                  severity="info"
+                  rounded
+                />
+                <Tag
+                  :value="row.isActive ? 'Active' : 'Inactive'"
+                  :severity="row.isActive ? 'success' : 'secondary'"
+                  rounded
+                />
               </div>
             </template>
           </Column>
@@ -679,7 +825,11 @@ const saveResidentNotes = async () => {
               <p class="eyebrow">Billing</p>
               <h2>Dues for linked flats</h2>
             </div>
-            <Tag :value="formatMoney(financialSummary.dueBalance)" :severity="financialSummary.dueBalance > 0 ? 'danger' : 'success'" rounded />
+            <Tag
+              :value="formatMoney(financialSummary.dueBalance)"
+              :severity="financialSummary.dueBalance > 0 ? 'danger' : 'success'"
+              rounded
+            />
           </div>
 
           <AppDataTable
@@ -693,10 +843,14 @@ const saveResidentNotes = async () => {
               <template #body="{ data: row }">{{ flatLabel(row) }}</template>
             </Column>
             <Column header="Due">
-              <template #body="{ data: row }">{{ formatMoney(row.totalAmount) }}</template>
+              <template #body="{ data: row }">{{
+                formatMoney(row.totalAmount)
+              }}</template>
             </Column>
             <Column header="Paid">
-              <template #body="{ data: row }">{{ formatMoney(row.paidAmount) }}</template>
+              <template #body="{ data: row }">{{
+                formatMoney(row.paidAmount)
+              }}</template>
             </Column>
             <Column header="Balance">
               <template #body="{ data: row }">
@@ -705,7 +859,11 @@ const saveResidentNotes = async () => {
             </Column>
             <Column header="Status">
               <template #body="{ data: row }">
-                <Tag :severity="statusSeverity(row.status)" :value="row.status.replaceAll('_', ' ')" rounded />
+                <Tag
+                  :severity="statusSeverity(row.status)"
+                  :value="row.status.replaceAll('_', ' ')"
+                  rounded
+                />
               </template>
             </Column>
           </AppDataTable>
@@ -723,7 +881,11 @@ const saveResidentNotes = async () => {
               <p class="eyebrow">Payments</p>
               <h2>Recent payments</h2>
             </div>
-            <Tag :value="formatMoney(financialSummary.paymentTotal)" severity="success" rounded />
+            <Tag
+              :value="formatMoney(financialSummary.paymentTotal)"
+              severity="success"
+              rounded
+            />
           </div>
 
           <AppDataTable
@@ -733,7 +895,9 @@ const saveResidentNotes = async () => {
             class="list-page__table"
           >
             <Column header="Date">
-              <template #body="{ data: row }">{{ formatDate(row.paymentDate) }}</template>
+              <template #body="{ data: row }">{{
+                formatDate(row.paymentDate)
+              }}</template>
             </Column>
             <Column header="Flat">
               <template #body="{ data: row }">{{ flatLabel(row) }}</template>
@@ -746,7 +910,11 @@ const saveResidentNotes = async () => {
             </Column>
             <Column header="Status">
               <template #body="{ data: row }">
-                <Tag :severity="statusSeverity(row.status)" :value="row.status.replaceAll('_', ' ')" rounded />
+                <Tag
+                  :severity="statusSeverity(row.status)"
+                  :value="row.status.replaceAll('_', ' ')"
+                  rounded
+                />
               </template>
             </Column>
             <Column field="receiptNumber" header="Receipt" />
@@ -767,7 +935,11 @@ const saveResidentNotes = async () => {
               <p class="eyebrow">Requests</p>
               <h2>Service requests</h2>
             </div>
-            <Tag :value="`${requestSummary.open} open`" :severity="requestSummary.open > 0 ? 'info' : 'success'" rounded />
+            <Tag
+              :value="`${requestSummary.open} open`"
+              :severity="requestSummary.open > 0 ? 'info' : 'success'"
+              rounded
+            />
           </div>
 
           <AppDataTable
@@ -779,19 +951,31 @@ const saveResidentNotes = async () => {
             <Column header="Request">
               <template #body="{ data: row }">
                 <strong>{{ row.requestNumber }}</strong>
-                <p class="resident-note resident-note--plain">{{ row.title }}</p>
+                <p class="resident-note resident-note--plain">
+                  {{ row.title }}
+                </p>
               </template>
             </Column>
             <Column field="category" header="Category" />
             <Column field="flatLabel" header="Flat" />
             <Column header="Priority">
               <template #body="{ data: row }">
-                <Tag :severity="row.priority === 'EMERGENCY' ? 'danger' : 'secondary'" :value="row.priority" rounded />
+                <Tag
+                  :severity="
+                    row.priority === 'EMERGENCY' ? 'danger' : 'secondary'
+                  "
+                  :value="row.priority"
+                  rounded
+                />
               </template>
             </Column>
             <Column header="Status">
               <template #body="{ data: row }">
-                <Tag :severity="statusSeverity(row.status)" :value="row.status.replaceAll('_', ' ')" rounded />
+                <Tag
+                  :severity="statusSeverity(row.status)"
+                  :value="row.status.replaceAll('_', ' ')"
+                  rounded
+                />
               </template>
             </Column>
           </AppDataTable>
@@ -809,7 +993,11 @@ const saveResidentNotes = async () => {
               <p class="eyebrow">Access</p>
               <h2>Recent gate scans</h2>
             </div>
-            <Tag :value="`${resident.accessLogs.length} scans`" severity="secondary" rounded />
+            <Tag
+              :value="`${resident.accessLogs.length} scans`"
+              severity="secondary"
+              rounded
+            />
           </div>
 
           <AppDataTable
@@ -819,7 +1007,9 @@ const saveResidentNotes = async () => {
             class="list-page__table"
           >
             <Column header="Time">
-              <template #body="{ data: row }">{{ formatDateTime(row.scannedAt) }}</template>
+              <template #body="{ data: row }">{{
+                formatDateTime(row.scannedAt)
+              }}</template>
             </Column>
             <Column field="userName" header="Resident" />
             <Column header="Flat">
@@ -828,7 +1018,11 @@ const saveResidentNotes = async () => {
             <Column field="gateName" header="Gate" />
             <Column header="Result">
               <template #body="{ data: row }">
-                <Tag :severity="statusSeverity(row.scanResult)" :value="row.scanResult.replaceAll('_', ' ')" rounded />
+                <Tag
+                  :severity="statusSeverity(row.scanResult)"
+                  :value="row.scanResult.replaceAll('_', ' ')"
+                  rounded
+                />
               </template>
             </Column>
           </AppDataTable>
@@ -841,6 +1035,12 @@ const saveResidentNotes = async () => {
         </section>
       </section>
     </template>
+
+    <ResidentEditorDialog
+      v-model:visible="displayEditDialog"
+      :resident-id="residentId"
+      @saved="onResidentSaved"
+    />
   </div>
 </template>
 

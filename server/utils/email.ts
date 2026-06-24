@@ -67,14 +67,24 @@ let partialsRegistered = false
 
 const templateRoot = path.resolve(process.cwd(), 'server/email-templates')
 
+const readTemplateFile = async (relativePath: string) => {
+  const bundledTemplate = await useStorage('assets:emailTemplates').getItem<string>(relativePath)
+
+  if (typeof bundledTemplate === 'string') {
+    return bundledTemplate
+  }
+
+  return fs.readFile(path.join(templateRoot, relativePath), 'utf8')
+}
+
 const registerPartials = async () => {
   if (partialsRegistered) {
     return
   }
 
   const [footer, header] = await Promise.all([
-    fs.readFile(path.join(templateRoot, 'partials/footer.hbs'), 'utf8'),
-    fs.readFile(path.join(templateRoot, 'partials/header.hbs'), 'utf8'),
+    readTemplateFile('partials/footer.hbs'),
+    readTemplateFile('partials/header.hbs'),
   ])
 
   Handlebars.registerPartial('footer', footer)
@@ -89,14 +99,14 @@ const getCompiledTemplate = async (name: string) => {
     return cached
   }
 
-  const source = await fs.readFile(path.join(templateRoot, `${name}.hbs`), 'utf8')
+  const source = await readTemplateFile(`${name}.hbs`)
   const template = Handlebars.compile(source)
   templateCache.set(name, template)
   return template
 }
 
 const renderIntoBaseLayout = async (contentHtml: string) => {
-  const baseSource = await fs.readFile(path.join(templateRoot, 'layouts/base.hbs'), 'utf8')
+  const baseSource = await readTemplateFile('layouts/base.hbs')
   const compiled = Handlebars.compile(baseSource)
 
   Handlebars.registerPartial('content', contentHtml)
@@ -105,7 +115,7 @@ const renderIntoBaseLayout = async (contentHtml: string) => {
 
 const tryReadTemplate = async (relativePath: string) => {
   try {
-    return await fs.readFile(path.join(templateRoot, relativePath), 'utf8')
+    return await readTemplateFile(relativePath)
   } catch {
     return null
   }
