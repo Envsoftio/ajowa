@@ -26,6 +26,13 @@ type ResidentActionResponse = {
   }
 }
 
+type ResidentNotesResponse = {
+  id: string
+  adminNotes: string | null
+  updatedAt?: string | null
+  updated: boolean
+}
+
 type DocumentField =
   | 'profileImagePath'
   | 'governmentIdDocumentPath'
@@ -48,6 +55,8 @@ const { data, pending, error, refresh } = await useAsyncData(
 
 const resident = computed(() => data.value?.data ?? null)
 const runningAction = ref<ResidentAction | ''>('')
+const notesDraft = ref('')
+const savingNotes = ref(false)
 const displayValue = (value: string | null | undefined) => value || '-'
 const relationshipSeverity = (type: string) => {
   if (type === 'OWNER') return 'success'
@@ -170,6 +179,10 @@ const requestSummary = computed(() => {
 const flatLabel = (item: { blockName?: string | null; flatNumber?: string | null }) =>
   [item.blockName, item.flatNumber].filter(Boolean).join(' · ') || item.flatNumber || '-'
 
+const normalizeNotes = (value: string | null | undefined) => value?.trim() ?? ''
+const notesDirty = computed(() => normalizeNotes(notesDraft.value) !== normalizeNotes(resident.value?.adminNotes))
+const notesCharacterCount = computed(() => notesDraft.value.length)
+
 const documentItems = computed(() => {
   const current = resident.value
 
@@ -198,6 +211,16 @@ const documentItems = computed(() => {
   ]
 })
 
+const resetNotesDraft = () => {
+  notesDraft.value = resident.value?.adminNotes ?? ''
+}
+
+watch(
+  () => [resident.value?.id, resident.value?.adminNotes] as const,
+  () => resetNotesDraft(),
+  { immediate: true },
+)
+
 const runAction = async (action: ResidentAction) => {
   runningAction.value = action
 
@@ -221,6 +244,40 @@ const runAction = async (action: ResidentAction) => {
     await refresh()
   } finally {
     runningAction.value = ''
+  }
+}
+
+const saveResidentNotes = async () => {
+  if (!resident.value || !notesDirty.value) {
+    return
+  }
+
+  savingNotes.value = true
+
+  try {
+    const response = await api<{ ok: true; data: ResidentNotesResponse }>(`/api/admin/residents/${residentId.value}/notes`, {
+      method: 'PATCH',
+      body: { adminNotes: notesDraft.value },
+    })
+
+    if (data.value?.data) {
+      data.value.data.adminNotes = response.data.adminNotes
+
+      if (response.data.updatedAt) {
+        data.value.data.updatedAt = response.data.updatedAt
+      }
+    }
+
+    notesDraft.value = response.data.adminNotes ?? ''
+
+    toast.add({
+      severity: 'success',
+      summary: 'Notes saved',
+      detail: 'Resident notes updated.',
+      life: 4000,
+    })
+  } finally {
+    savingNotes.value = false
   }
 }
 </script>
@@ -440,6 +497,47 @@ const runAction = async (action: ResidentAction) => {
             </article>
           </div>
         </section>
+      </section>
+
+      <section class="surface-card resident-notes-panel">
+        <div class="admin-form-section__header">
+          <div>
+            <p class="eyebrow">Notes</p>
+            <h2>Admin notes</h2>
+          </div>
+          <Tag value="Private" severity="secondary" rounded />
+        </div>
+
+        <Textarea
+          v-model="notesDraft"
+          rows="5"
+          auto-resize
+          fluid
+          maxlength="10000"
+          class="resident-notes-textarea"
+          aria-label="Admin notes"
+        />
+
+        <div class="resident-notes-footer">
+          <span>{{ notesCharacterCount }} / 10000</span>
+          <div class="resident-notes-actions">
+            <Button
+              label="Reset"
+              icon="pi pi-undo"
+              severity="secondary"
+              outlined
+              :disabled="savingNotes || !notesDirty"
+              @click="resetNotesDraft"
+            />
+            <Button
+              label="Save notes"
+              icon="pi pi-save"
+              :loading="savingNotes"
+              :disabled="!notesDirty"
+              @click="saveResidentNotes"
+            />
+          </div>
+        </div>
       </section>
 
       <section class="surface-card admin-detail-list">
@@ -796,7 +894,8 @@ const runAction = async (action: ResidentAction) => {
 }
 
 .resident-info-panel,
-.resident-document-panel {
+.resident-document-panel,
+.resident-notes-panel {
   display: grid;
   gap: 1rem;
 }
@@ -872,6 +971,28 @@ const runAction = async (action: ResidentAction) => {
 .resident-note {
   padding-top: 0.75rem;
   border-top: 1px solid var(--color-border);
+}
+
+.resident-notes-textarea {
+  width: 100%;
+  min-height: 10rem;
+  max-height: 10rem;
+  overflow-y: auto;
+  resize: vertical;
+}
+
+.resident-notes-footer,
+.resident-notes-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.resident-notes-footer {
+  justify-content: space-between;
+  color: var(--color-muted);
+  font-size: 0.85rem;
 }
 
 @media (max-width: 900px) {

@@ -225,6 +225,7 @@ export type ResidentAccessLogSummary = {
 export type ResidentDetail = ResidentSummary & {
   emergencyContactName: string | null
   emergencyContactNumber: string | null
+  adminNotes: string | null
   governmentIdType: string | null
   governmentIdNumber: string | null
   governmentIdDocumentPath: string | null

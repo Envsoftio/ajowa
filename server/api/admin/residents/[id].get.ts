@@ -32,6 +32,7 @@ type ResidentRow = {
   police_verification_status: string
   emergency_contact_name: string | null
   emergency_contact_number: string | null
+  admin_notes: string | null
   government_id_type: string | null
   government_id_number: string | null
   government_id_document_path: string | null
@@ -278,6 +279,7 @@ export default defineEventHandler(async (event) => {
           u.police_verification_status::text,
           u.emergency_contact_name,
           u.emergency_contact_number,
+          u.admin_notes,
           u.government_id_type,
           u.government_id_number,
           u.government_id_document_path,
@@ -547,6 +549,7 @@ export default defineEventHandler(async (event) => {
     policeVerificationStatus: row.police_verification_status,
     emergencyContactName: row.emergency_contact_name,
     emergencyContactNumber: row.emergency_contact_number,
+    adminNotes: row.admin_notes,
     governmentIdType: row.government_id_type,
     governmentIdNumber: row.government_id_number,
     governmentIdDocumentPath: row.government_id_document_path,
