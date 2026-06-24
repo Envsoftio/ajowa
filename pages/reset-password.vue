@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { getApiErrorMessage } from '~/composables/useApi'
+import { getPasswordPolicyMessage } from '~/shared/auth'
+
 definePageMeta({
   layout: 'public',
   middleware: ['guest-only'],
@@ -37,6 +40,18 @@ const submit = async () => {
     return
   }
 
+  const policyMessage = getPasswordPolicyMessage(form.password)
+
+  if (policyMessage) {
+    toast.add({
+      severity: 'error',
+      summary: 'Password is too weak',
+      detail: policyMessage,
+      life: 10000,
+    })
+    return
+  }
+
   loading.value = true
 
   try {
@@ -48,11 +63,11 @@ const submit = async () => {
       },
     })
     completed.value = true
-  } catch {
+  } catch (error) {
     toast.add({
       severity: 'error',
       summary: 'Reset failed',
-      detail: 'This reset link is invalid or expired.',
+      detail: getApiErrorMessage(error, 'This reset link is invalid or expired.'),
       life: 10000,
     })
   } finally {

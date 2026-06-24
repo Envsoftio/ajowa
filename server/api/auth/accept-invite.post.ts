@@ -11,7 +11,11 @@ import {
   sendVerificationEmailToUser,
 } from '~/server/utils/auth'
 import { AppError } from '~/server/utils/errors'
-import { passwordPolicySatisfied } from '~/shared/auth'
+import {
+  getPasswordPolicyMessage,
+  PASSWORD_POLICY,
+  passwordPolicySatisfied,
+} from '~/shared/auth'
 import { getDatabasePool } from '~/server/utils/database'
 import { getRequestLogger } from '~/server/utils/logging'
 
@@ -20,7 +24,10 @@ const acceptInviteSchema = z.object({
   fullName: z.string().trim().min(2),
   mobileNumber: z.string().trim().min(8),
   whatsappNumber: z.string().trim().min(8).optional().or(z.literal('')),
-  password: z.string().min(12),
+  password: z.string().min(
+    PASSWORD_POLICY.minLength,
+    `Password must be at least ${PASSWORD_POLICY.minLength} characters.`,
+  ),
 })
 
 type InviteAssignmentRow = {
@@ -164,7 +171,9 @@ export default defineEventHandler(async (event) => {
     throw new AppError({
       code: 'VALIDATION_ERROR',
       statusCode: 400,
-      message: 'Password does not satisfy the AJOWA policy.',
+      message:
+        getPasswordPolicyMessage(body.password) ??
+        'Password does not satisfy the AJOWA policy.',
     })
   }
 

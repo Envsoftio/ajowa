@@ -4,11 +4,18 @@ import { createApiSuccess, readJsonBody, validateInput } from '~/server/utils/ap
 import { requireAuth } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
 import { AppError } from '~/server/utils/errors'
-import { passwordPolicySatisfied } from '~/shared/auth'
+import {
+  getPasswordPolicyMessage,
+  PASSWORD_POLICY,
+  passwordPolicySatisfied,
+} from '~/shared/auth'
 
 const schema = z.object({
   currentPassword: z.string().min(1),
-  newPassword: z.string().min(12),
+  newPassword: z.string().min(
+    PASSWORD_POLICY.minLength,
+    `Password must be at least ${PASSWORD_POLICY.minLength} characters.`,
+  ),
 })
 
 export default defineEventHandler(async (event) => {
@@ -19,7 +26,9 @@ export default defineEventHandler(async (event) => {
     throw new AppError({
       code: 'VALIDATION_ERROR',
       statusCode: 400,
-      message: 'Password does not satisfy the AJOWA policy.',
+      message:
+        getPasswordPolicyMessage(body.newPassword) ??
+        'Password does not satisfy the AJOWA policy.',
     })
   }
 

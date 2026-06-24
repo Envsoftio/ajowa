@@ -11,6 +11,7 @@ import { sendTemplatedEmail, buildAppUrl, normalizeAppActionUrl } from './email'
 import { getValidatedRuntimeConfig, type ValidatedRuntimeConfig } from './env'
 import {
   getRoleLandingRoute,
+  PASSWORD_POLICY,
   requiresTemporaryPasswordChangeForRole,
 } from '~/shared/auth'
 import {
@@ -561,7 +562,7 @@ const createAuth = () => {
     },
     emailAndPassword: {
       enabled: true,
-      minPasswordLength: 12,
+      minPasswordLength: PASSWORD_POLICY.minLength,
       maxPasswordLength: 128,
       sendResetPassword: async ({ user, url }) => {
         const appState = await loadAppUserByAuthUserId(user.id)

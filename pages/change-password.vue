@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { validatePasswordPolicy } from '~/shared/auth'
+import { getApiErrorMessage } from '~/composables/useApi'
+import { getPasswordPolicyMessage } from '~/shared/auth'
 
 definePageMeta({
   layout: 'public',
@@ -16,54 +17,6 @@ const form = reactive({
   confirmPassword: '',
 })
 
-const getPasswordPolicyMessage = () => {
-  const result = validatePasswordPolicy(form.newPassword)
-  const missing: string[] = []
-
-  if (!result.minLength) {
-    missing.push('at least 12 characters')
-  }
-  if (!result.uppercase) {
-    missing.push('one uppercase letter')
-  }
-  if (!result.lowercase) {
-    missing.push('one lowercase letter')
-  }
-  if (!result.number) {
-    missing.push('one number')
-  }
-  if (!result.symbol) {
-    missing.push('one symbol')
-  }
-
-  return missing.length > 0 ? `Use ${missing.join(', ')}.` : null
-}
-
-const getErrorMessage = (error: unknown) => {
-  const fetchError = error as {
-    data?: {
-      message?: string
-      data?: {
-        message?: string
-        fieldErrors?: Record<string, string[]>
-        details?: {
-          fieldErrors?: Record<string, string[]>
-        }
-      }
-    }
-  }
-  const nestedData = fetchError.data?.data
-  const fieldErrors = nestedData?.fieldErrors ?? nestedData?.details?.fieldErrors
-  const firstFieldError = Object.values(fieldErrors ?? {})[0]?.[0]
-
-  return (
-    firstFieldError ??
-    nestedData?.message ??
-    fetchError.data?.message ??
-    'Check your current password and try again.'
-  )
-}
-
 const submit = async () => {
   if (form.newPassword !== form.confirmPassword) {
     toast.add({
@@ -75,7 +28,7 @@ const submit = async () => {
     return
   }
 
-  const policyMessage = getPasswordPolicyMessage()
+  const policyMessage = getPasswordPolicyMessage(form.newPassword)
 
   if (policyMessage) {
     toast.add({
@@ -111,7 +64,7 @@ const submit = async () => {
     toast.add({
       severity: 'error',
       summary: 'Password change failed',
-      detail: getErrorMessage(error),
+      detail: getApiErrorMessage(error, 'Check your current password and try again.'),
       life: 10000,
     })
   } finally {

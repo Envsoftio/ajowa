@@ -11,7 +11,7 @@ export const PUBLIC_AUTH_ROUTES = [
 ] as const
 
 export const PASSWORD_POLICY = {
-  minLength: 12,
+  minLength: 8,
   requiresUppercase: true,
   requiresLowercase: true,
   requiresNumber: true,
@@ -185,4 +185,27 @@ export const validatePasswordPolicy = (password: string) => {
 export const passwordPolicySatisfied = (password: string) => {
   const result = validatePasswordPolicy(password)
   return Object.values(result).every(Boolean)
+}
+
+export const getPasswordPolicyMessage = (password: string) => {
+  const result = validatePasswordPolicy(password)
+  const missing: string[] = []
+
+  if (!result.minLength) {
+    missing.push(`at least ${PASSWORD_POLICY.minLength} characters`)
+  }
+  if (!result.uppercase) {
+    missing.push('one uppercase letter')
+  }
+  if (!result.lowercase) {
+    missing.push('one lowercase letter')
+  }
+  if (!result.number) {
+    missing.push('one number')
+  }
+  if (!result.symbol) {
+    missing.push('one symbol')
+  }
+
+  return missing.length > 0 ? `Use ${missing.join(', ')}.` : null
 }

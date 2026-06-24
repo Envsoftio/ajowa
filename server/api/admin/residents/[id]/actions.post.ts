@@ -18,6 +18,7 @@ import {
   type PendingInviteEmail,
 } from '~/server/utils/invite-email'
 import { readUuidParam, writeMasterAudit } from '~/server/utils/master-data'
+import { PASSWORD_POLICY } from '~/shared/auth'
 
 const actionSchema = z.object({
   action: z.enum([
@@ -27,7 +28,13 @@ const actionSchema = z.object({
     'DEACTIVATE_LOGIN',
     'RESET_ONBOARDING',
   ]),
-  password: z.string().min(12).optional(),
+  password: z
+    .string()
+    .min(
+      PASSWORD_POLICY.minLength,
+      `Password must be at least ${PASSWORD_POLICY.minLength} characters.`,
+    )
+    .optional(),
 })
 
 type ResidentActionRow = {

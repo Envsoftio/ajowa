@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import type { InvitePreview } from '~/types/auth'
+import { getApiErrorMessage } from '~/composables/useApi'
+import { getPasswordPolicyMessage } from '~/shared/auth'
 
 definePageMeta({
   layout: 'public',
@@ -63,6 +65,18 @@ const submit = async () => {
     return
   }
 
+  const policyMessage = getPasswordPolicyMessage(form.password)
+
+  if (policyMessage) {
+    toast.add({
+      severity: 'error',
+      summary: 'Password is too weak',
+      detail: policyMessage,
+      life: 10000,
+    })
+    return
+  }
+
   submitting.value = true
 
   try {
@@ -102,11 +116,10 @@ const submit = async () => {
     })
     await navigateTo('/login')
   } catch (error) {
-    const fetchError = error as { data?: { message?: string } }
     toast.add({
       severity: 'error',
       summary: 'Invite failed',
-      detail: fetchError.data?.message ?? 'This invite could not be accepted.',
+      detail: getApiErrorMessage(error, 'This invite could not be accepted.'),
       life: 10000,
     })
   } finally {

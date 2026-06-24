@@ -8,7 +8,14 @@ type ApiFetchOptions<T> = NonNullable<Parameters<typeof $fetch<T>>[1]> & {
   showErrorToast?: boolean
 }
 
-const formatFirstFieldError = (payload?: ApiErrorPayload) => {
+const humanizeFieldName = (field: string) =>
+  field
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/[._-]+/g, ' ')
+    .trim()
+    .replace(/^./, (letter) => letter.toUpperCase())
+
+const formatFirstFieldError = (payload?: Partial<ApiErrorPayload>) => {
   const fieldErrors =
     payload?.fieldErrors ??
     (payload?.details?.fieldErrors as Record<string, string[]> | undefined)
@@ -21,7 +28,32 @@ const formatFirstFieldError = (payload?: ApiErrorPayload) => {
   const [field, messages] = firstFieldError
   const message = messages[0]
 
-  return message ? `${field}: ${message}` : null
+  if (!message) {
+    return null
+  }
+
+  const fieldName = humanizeFieldName(field)
+
+  return message.toLowerCase().includes(fieldName.toLowerCase())
+    ? message
+    : `${fieldName}: ${message}`
+}
+
+export const getApiErrorMessage = (
+  error: unknown,
+  fallback = 'Something went wrong. Please try again.',
+) => {
+  const fetchError = error as {
+    data?: FetchErrorPayload
+  }
+  const errorPayload = fetchError.data?.data ?? fetchError.data
+
+  return (
+    formatFirstFieldError(errorPayload) ??
+    errorPayload?.message ??
+    fetchError.data?.message ??
+    fallback
+  )
 }
 
 export const useApi = () => {
@@ -45,11 +77,7 @@ export const useApi = () => {
         data?: FetchErrorPayload
         statusCode?: number
       }
-      const errorPayload = fetchError.data?.data ?? fetchError.data
-      const detail =
-        formatFirstFieldError(errorPayload) ??
-        errorPayload?.message ??
-        'Something went wrong. Please try again.'
+      const detail = getApiErrorMessage(error)
 
       if (fetchError.statusCode === 401) {
         const authStore = useAuthStore()
