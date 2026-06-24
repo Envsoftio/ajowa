@@ -90,6 +90,7 @@ export const chargeConfigSchema = z.object({
 export const dueGenerationSchema = z.object({
   billingPeriodId: z.string().uuid(),
   flatIds: z.array(z.string().uuid()).optional(),
+  billDate: z.string().date().optional(),
 })
 
 export const dueWaiveSchema = z.object({

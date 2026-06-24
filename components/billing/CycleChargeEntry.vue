@@ -264,26 +264,7 @@ const endOfMonth = (date: Date) =>
 const addMonths = (date: Date, months: number) =>
   new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + months, 1))
 
-const toMonthInput = (date: Date) => date.toISOString().slice(0, 7)
-
 const startOfNextMonth = () => startOfMonth(addMonths(new Date(), 1))
-
-const parseMonthInput = (value: string) => {
-  const [yearText, monthText] = value.split('-')
-  const year = Number(yearText)
-  const month = Number(monthText)
-
-  if (
-    !Number.isInteger(year) ||
-    !Number.isInteger(month) ||
-    month < 1 ||
-    month > 12
-  ) {
-    return startOfNextMonth()
-  }
-
-  return new Date(Date.UTC(year, month - 1, 1))
-}
 
 const formatSuggestedCycleLabel = (startDate: Date, endDate: Date) => {
   const startLabel = startDate.toLocaleDateString('en-IN', {
@@ -341,18 +322,9 @@ const defaultRatePerUnit = ref<number | null>(props.defaultRatePerUnit)
 const defaultRatePerSqFt = ref<number | null>(props.defaultRatePerSqFt)
 const defaultFlatAmount = ref<number | null>(props.defaultFlatAmount)
 const defaultConnectionLoad = ref(props.defaultConnectionLoad)
-const camRunStartMonth = ref(toMonthInput(startOfNextMonth()))
-const camRunDueDate = ref(
-  toDateInput(
-    new Date(
-      Date.UTC(
-        startOfNextMonth().getUTCFullYear(),
-        startOfNextMonth().getUTCMonth(),
-        10,
-      ),
-    ),
-  ),
-)
+const camRunStartDate = ref(toDateInput(startOfMonth(startOfNextMonth())))
+const camRunDueDate = ref(toDateInput(startOfMonth(startOfNextMonth())))
+const camRunBillDate = ref(toDateInput(startOfMonth(startOfNextMonth())))
 const loadingCharges = ref(false)
 const savingCharges = ref(false)
 const periodDialogVisible = ref(false)
@@ -400,10 +372,21 @@ const selectedCycleMonths = computed(() =>
   getFrequencyMonthCount(selectedPeriod.value),
 )
 
-const camRunStartDate = computed(() =>
-  startOfMonth(parseMonthInput(camRunStartMonth.value)),
+const parseDateInput = (value: string) => new Date(`${value}T00:00:00Z`)
+const normalizeCamRunDate = (value: string) => {
+  const parsed = parseDateInput(value)
+  if (Number.isNaN(parsed.getTime())) {
+    return toDateInput(startOfMonth(startOfNextMonth()))
+  }
+
+  return toDateInput(startOfMonth(parsed))
+}
+
+const camRunStartDateValue = computed(() =>
+  startOfMonth(parseDateInput(camRunStartDate.value)),
 )
 const camRunDueDateLabel = computed(() => formatDate(camRunDueDate.value))
+const camRunBillDateLabel = computed(() => formatDate(camRunBillDate.value))
 
 const getCycleFrequency = (cycleMonths: number): BillingFrequency => {
   if (cycleMonths === 1) return 'MONTHLY'
@@ -414,7 +397,7 @@ const getCycleFrequency = (cycleMonths: number): BillingFrequency => {
 }
 
 const getCamPeriodForCycle = (cycleMonths: number) => {
-  const startDate = camRunStartDate.value
+  const startDate = camRunStartDateValue.value
   const endDate = endOfMonth(addMonths(startDate, cycleMonths - 1))
   const startDateText = toDateInput(startDate)
   const endDateText = toDateInput(endDate)
@@ -443,7 +426,7 @@ const periodFormCycleSummary = computed(
 
 const selectedCycleLabel = computed(() =>
   props.camRunFlow
-    ? `CAM run from ${formatDate(toDateInput(camRunStartDate.value))}; due ${camRunDueDateLabel.value}`
+    ? `CAM run from ${formatDate(camRunStartDate.value)}; due ${camRunDueDateLabel.value}; bill ${camRunBillDateLabel.value}`
     : selectedPeriod.value
       ? `${getFrequencyLabel(selectedPeriod.value.frequency)} - ${formatDate(selectedPeriod.value.startDate)} to ${formatDate(selectedPeriod.value.endDate)}`
       : 'Create or select a billing period',
@@ -1344,11 +1327,21 @@ const openGenerationDialog = async () => {
       recalculateCharge(entry)
     }
 
-    if (camRunDueDate.value < toDateInput(camRunStartDate.value)) {
+    if (camRunDueDate.value < camRunStartDate.value) {
       toast.add({
         severity: 'warn',
         summary: 'Check due date',
-        detail: 'CAM due date must be on or after the run start month.',
+        detail: 'CAM due date must be on or after the run start date.',
+        life: 10000,
+      })
+      return
+    }
+
+    if (camRunBillDate.value < camRunStartDate.value) {
+      toast.add({
+        severity: 'warn',
+        summary: 'Check bill date',
+        detail: 'CAM bill date must be on or after the run start date.',
         life: 10000,
       })
       return
@@ -1499,6 +1492,7 @@ const generateDues = async () => {
             body: {
               billingPeriodId: periodId,
               flatIds: group.entries.map((entry) => entry.flatId),
+              billDate: camRunBillDate.value,
             },
           },
         )
@@ -1707,11 +1701,20 @@ watch(
   { immediate: true },
 )
 
-watch(camRunStartMonth, (value) => {
-  const startDate = parseMonthInput(value)
-  camRunDueDate.value = toDateInput(
-    new Date(Date.UTC(startDate.getUTCFullYear(), startDate.getUTCMonth(), 10)),
-  )
+watch(camRunStartDate, (value) => {
+  const normalizedDate = normalizeCamRunDate(value)
+  if (value !== normalizedDate) {
+    camRunStartDate.value = normalizedDate
+    return
+  }
+
+  if (camRunDueDate.value < camRunStartDate.value) {
+    camRunDueDate.value = normalizedDate
+  }
+
+  if (camRunBillDate.value < camRunStartDate.value) {
+    camRunBillDate.value = normalizedDate
+  }
 })
 
 watch(
@@ -1753,11 +1756,11 @@ watch(
 
       <div class="billing-cycle-guide" aria-label="Charge entry summary">
         <div>
-          <span>{{ camRunFlow ? 'Start month' : 'Selected period' }}</span>
+          <span>{{ camRunFlow ? 'Start date' : 'Selected period' }}</span>
           <strong>
             {{
               camRunFlow
-                ? formatDate(toDateInput(camRunStartDate))
+                ? formatDate(camRunStartDate)
                 : (selectedPeriod?.label ?? 'No period selected')
             }}
           </strong>
@@ -1809,7 +1812,7 @@ watch(
           <p>
             {{
               camRunFlow
-                ? 'Choose the start month, apply quarterly CAM defaults, adjust monthly or yearly flats, then generate bills.'
+                ? 'Choose the start date, apply defaults, adjust monthly or yearly flats, then generate CAM bills.'
                 : showAreaRate
                   ? 'Create or select a charge period, apply the CAM rate by flat area and cycle, then save.'
                   : 'Create or select a charge period, enter per-flat readings or amounts, then save.'
@@ -1831,12 +1834,12 @@ watch(
       <div class="list-page__toolbar">
         <label v-if="camRunFlow">
           <span class="field-label">
-            Start month
+            Start date
             <AppHelpIcon
-              text="The month from which this CAM invoice run begins. Internal periods are created per flat cycle."
+              text="The date from which this CAM invoice run begins. Internal periods are created per flat cycle."
             />
           </span>
-          <InputText v-model="camRunStartMonth" type="month" />
+          <InputText v-model="camRunStartDate" type="date" />
         </label>
         <label v-if="camRunFlow">
           <span class="field-label">
@@ -1845,7 +1848,16 @@ watch(
               text="Payment deadline shown on all CAM bills generated from this run."
             />
           </span>
-          <InputText v-model="camRunDueDate" type="date" />
+          <InputText v-model="camRunDueDate" type="date" :min="camRunStartDate" />
+        </label>
+        <label v-if="camRunFlow">
+          <span class="field-label">
+            Bill date
+            <AppHelpIcon
+              text="Date stamped on generated CAM PDF bills."
+            />
+          </span>
+          <InputText v-model="camRunBillDate" type="date" :min="camRunStartDate" />
         </label>
         <label v-if="!camRunFlow" class="list-page__search">
           <span class="field-label">
@@ -2340,13 +2352,14 @@ watch(
         </ol>
       </section>
 
-      <div v-if="camRunFlow" class="admin-form-layout">
-        <div class="billing-generation-summary">
-          <div>
-            <span>Start month</span>
-            <strong>{{ formatDate(toDateInput(camRunStartDate)) }}</strong>
-            <small>Due {{ camRunDueDateLabel }}</small>
-          </div>
+        <div v-if="camRunFlow" class="admin-form-layout">
+          <div class="billing-generation-summary">
+            <div>
+              <span>Start date</span>
+              <strong>{{ formatDate(camRunStartDate) }}</strong>
+              <small>Due {{ camRunDueDateLabel }}</small>
+              <small>Bill {{ camRunBillDateLabel }}</small>
+            </div>
           <div>
             <span>Bills to create</span>
             <strong>{{ camBillableEntries.length }}</strong>

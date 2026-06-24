@@ -107,6 +107,7 @@ export default defineEventHandler(async (event) => {
     }
 
     const periodDueDate = period.due_date
+    const generatedAtDate = body.billDate ?? new Date().toISOString().slice(0, 10)
     const cycleMultiplier = getBillingCycleMultiplier(period)
     const cycleLabel = getBillingCycleLabel(cycleMultiplier)
 
@@ -329,10 +330,10 @@ export default defineEventHandler(async (event) => {
     }
 
     const insertResult = insertPayload.length
-      ? await client.query<{ id: string; flat_id: string }>(
-          `
+        ? await client.query<{ id: string; flat_id: string }>(
+            `
             insert into maintenance_dues (
-              society_id, billing_period_id, flat_id, due_date,
+              society_id, billing_period_id, flat_id, due_date, generated_at,
               base_amount, late_fee_amount, waived_amount, paid_amount,
               total_amount, balance_amount, status, charge_breakdown
             )
@@ -341,6 +342,7 @@ export default defineEventHandler(async (event) => {
               $2,
               payload.flat_id,
               $3::date,
+              $4::date,
               payload.base_amount,
               0,
               0,
@@ -349,7 +351,7 @@ export default defineEventHandler(async (event) => {
               payload.total_amount,
               'OPEN',
               payload.charge_breakdown
-            from jsonb_to_recordset($4::jsonb) as payload(
+            from jsonb_to_recordset($5::jsonb) as payload(
               flat_id uuid,
               base_amount numeric,
               total_amount numeric,
@@ -362,6 +364,7 @@ export default defineEventHandler(async (event) => {
             authMe.user.societyId,
             body.billingPeriodId,
             periodDueDate,
+            generatedAtDate,
             JSON.stringify(insertPayload.map((payload) => ({
               flat_id: payload.flatId,
               base_amount: payload.baseAmount,
