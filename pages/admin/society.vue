@@ -3,6 +3,7 @@ import type {
   AccountHead,
   BankAccount,
   BankAccountType,
+  SocietyPaymentQrFile,
   SocietyProfile,
 } from '~/types/domain'
 
@@ -22,6 +23,7 @@ const { data, pending, refresh } = await useAsyncData(
 
 type AccountsResponse = { ok: true; data: { items: AccountHead[] } }
 type BankAccountsResponse = { ok: true; data: { items: BankAccount[] } }
+type PaymentQrResponse = { ok: true; data: SocietyPaymentQrFile }
 
 const { data: accountData, pending: accountsPending } = await useAsyncData(
   'admin-society-asset-accounts',
@@ -109,8 +111,14 @@ watchEffect(() => {
 
 const saving = ref(false)
 const savingBankDetails = ref(false)
+const uploadingPaymentQr = ref(false)
+const removingPaymentQr = ref(false)
+const paymentQrInput = ref<HTMLInputElement | null>(null)
 
 const emptyTextMarkers = new Set(['', 'NA', 'N/A', 'NIL', '-', '--'])
+const paymentQrAcceptedMimeTypes = ['image/png', 'image/jpeg'] as const
+const paymentQrAccept = paymentQrAcceptedMimeTypes.join(',')
+const paymentQrMaxSizeBytes = 10 * 1024 * 1024
 const billingTenures = [
   'MONTHLY',
   'QUARTERLY',
@@ -164,6 +172,14 @@ const assetAccountOptions = computed(() =>
 )
 
 const bankAccounts = computed(() => bankAccountData.value?.data.items ?? [])
+const paymentQrFile = computed(() => data.value?.data.paymentQrFile ?? null)
+const paymentQrImageUrl = computed(() =>
+  paymentQrFile.value
+    ? `${paymentQrFile.value.downloadUrl}?v=${encodeURIComponent(
+        paymentQrFile.value.uploadedAt,
+      )}`
+    : '',
+)
 const societyPaymentAccount = computed(
   () =>
     bankAccounts.value.find(
@@ -216,6 +232,108 @@ const setFieldError = (field: SocietyField, message: string) => {
 }
 
 const fieldError = (field: SocietyField) => fieldErrors.value[field]
+
+const formatFileSize = (sizeBytes: number) => {
+  if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) {
+    return '-'
+  }
+
+  if (sizeBytes < 1024) {
+    return `${sizeBytes} B`
+  }
+
+  const sizeKb = sizeBytes / 1024
+  if (sizeKb < 1024) {
+    return `${sizeKb.toFixed(sizeKb >= 100 ? 0 : 1)} KB`
+  }
+
+  const sizeMb = sizeKb / 1024
+  return `${sizeMb.toFixed(sizeMb >= 100 ? 0 : 1)} MB`
+}
+
+const pickPaymentQr = () => {
+  paymentQrInput.value?.click()
+}
+
+const uploadPaymentQr = async (file: File) => {
+  if (
+    !paymentQrAcceptedMimeTypes.includes(
+      file.type as (typeof paymentQrAcceptedMimeTypes)[number],
+    )
+  ) {
+    toast.add({
+      severity: 'warn',
+      summary: 'Unsupported QR image',
+      detail: 'Upload a PNG or JPG payment QR code.',
+      life: 10000,
+    })
+    return
+  }
+
+  if (file.size > paymentQrMaxSizeBytes) {
+    toast.add({
+      severity: 'warn',
+      summary: 'QR image too large',
+      detail: 'Payment QR image must be 10 MB or smaller.',
+      life: 10000,
+    })
+    return
+  }
+
+  const formData = new FormData()
+  formData.append('file', file)
+  uploadingPaymentQr.value = true
+
+  try {
+    await api<PaymentQrResponse>('/api/admin/society/payment-qr', {
+      method: 'POST',
+      body: formData,
+    })
+    toast.add({
+      severity: 'success',
+      summary: 'QR saved',
+      detail: 'Payment QR code was updated.',
+      life: 10000,
+    })
+    await refresh()
+  } finally {
+    uploadingPaymentQr.value = false
+  }
+}
+
+const onPaymentQrChange = (event: Event) => {
+  const target = event.target as HTMLInputElement
+  const file = target.files?.[0]
+
+  if (file) {
+    void uploadPaymentQr(file)
+  }
+
+  target.value = ''
+}
+
+const removePaymentQr = async () => {
+  if (!paymentQrFile.value) {
+    return
+  }
+
+  removingPaymentQr.value = true
+
+  try {
+    await api('/api/admin/society/payment-qr', {
+      method: 'DELETE',
+    })
+    toast.add({
+      severity: 'success',
+      summary: 'QR removed',
+      detail: 'Payment QR code was removed.',
+      life: 10000,
+    })
+    await refresh()
+  } finally {
+    removingPaymentQr.value = false
+  }
+}
 
 const isNullableMarker = (value: unknown) =>
   typeof value !== 'string' || emptyTextMarkers.has(value.trim().toUpperCase())
@@ -835,6 +953,58 @@ const submitBankDetails = async () => {
             <span>UPI ID</span>
             <InputText v-model="bankForm.upiId" />
           </label>
+          <div class="admin-form-grid__full society-payment-qr">
+            <input
+              ref="paymentQrInput"
+              type="file"
+              :accept="paymentQrAccept"
+              class="society-payment-qr__input"
+              @change="onPaymentQrChange"
+            >
+            <div class="society-payment-qr__summary">
+              <div class="society-payment-qr__preview">
+                <img
+                  v-if="paymentQrImageUrl"
+                  :src="paymentQrImageUrl"
+                  alt="Payment QR code"
+                >
+                <i v-else class="pi pi-qrcode" aria-hidden="true" />
+              </div>
+              <div class="society-payment-qr__meta">
+                <span class="field-label">Payment QR code</span>
+                <strong>{{
+                  paymentQrFile?.fileName ?? 'No QR uploaded'
+                }}</strong>
+                <small v-if="paymentQrFile">
+                  {{ paymentQrFile.mimeType }} ·
+                  {{ formatFileSize(paymentQrFile.sizeBytes) }}
+                </small>
+              </div>
+            </div>
+            <div class="admin-inline-actions society-payment-qr__actions">
+              <Button
+                type="button"
+                icon="pi pi-upload"
+                :label="paymentQrFile ? 'Replace QR' : 'Upload QR'"
+                severity="secondary"
+                outlined
+                :loading="uploadingPaymentQr"
+                :disabled="removingPaymentQr"
+                @click="pickPaymentQr"
+              />
+              <Button
+                v-if="paymentQrFile"
+                type="button"
+                icon="pi pi-trash"
+                label="Remove"
+                severity="danger"
+                outlined
+                :loading="removingPaymentQr"
+                :disabled="uploadingPaymentQr"
+                @click="removePaymentQr"
+              />
+            </div>
+          </div>
         </div>
       </section>
     </form>

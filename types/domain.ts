@@ -25,6 +25,15 @@ export type StoredFileMetadata = AuditFields & {
   lastError?: string
 }
 
+export type SocietyPaymentQrFile = {
+  id: string
+  fileName: string
+  mimeType: string
+  sizeBytes: number
+  uploadedAt: string
+  downloadUrl: string
+}
+
 export type SocietyPolicySettings = {
   billingTenure: 'MONTHLY' | 'QUARTERLY' | 'HALF_YEARLY' | 'YEARLY' | 'CUSTOM'
   excessPaymentHandling: 'KEEP_AS_ADVANCE' | 'REFUND' | 'MANUAL_REVIEW'
@@ -53,6 +62,7 @@ export type SocietyProfile = AuditFields & {
   timezone: string
   isActive: boolean
   settings: SocietyPolicySettings
+  paymentQrFile: SocietyPaymentQrFile | null
 }
 
 export type BlockSummary = AuditFields & {
@@ -80,6 +90,10 @@ export type FlatSummary = AuditFields & {
   isActive: boolean
   camAdvanceCoveredFrom?: string | null
   camAdvancePaidUntil?: string | null
+  camAdvanceCoverages?: {
+    coveredFrom: string
+    coveredUntil: string
+  }[]
   camAdvanceNote?: string | null
   camAdvanceUpdatedAt?: string | null
   ownerCount?: number

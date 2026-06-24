@@ -17,6 +17,10 @@ type FlatRow = {
   is_active: boolean
   cam_advance_covered_from: string | null
   cam_advance_paid_until: string | null
+  cam_advance_coverages: {
+    coveredFrom: string
+    coveredUntil: string
+  }[] | null
   cam_advance_note: string | null
   cam_advance_updated_at: string | null
   created_at: string
@@ -99,6 +103,19 @@ export default defineEventHandler(async (event) => {
           f.is_active,
           coverage.covered_from::text as cam_advance_covered_from,
           coalesce(coverage.covered_until::text, f.cam_advance_paid_until::text) as cam_advance_paid_until,
+          coalesce((
+            select jsonb_agg(
+              jsonb_build_object(
+                'coveredFrom', all_coverage.covered_from::text,
+                'coveredUntil', all_coverage.covered_until::text
+              )
+              order by all_coverage.covered_from asc, all_coverage.covered_until asc
+            )
+            from cam_advance_coverages all_coverage
+            where all_coverage.society_id = f.society_id
+              and all_coverage.flat_id = f.id
+              and all_coverage.is_active = true
+          ), '[]'::jsonb) as cam_advance_coverages,
           coalesce(coverage.notes, f.cam_advance_note) as cam_advance_note,
           f.cam_advance_updated_at::text,
           f.created_at::text,
@@ -149,6 +166,9 @@ export default defineEventHandler(async (event) => {
     isActive: row.is_active,
     camAdvanceCoveredFrom: row.cam_advance_covered_from,
     camAdvancePaidUntil: row.cam_advance_paid_until,
+    camAdvanceCoverages: Array.isArray(row.cam_advance_coverages)
+      ? row.cam_advance_coverages
+      : [],
     camAdvanceNote: row.cam_advance_note,
     camAdvanceUpdatedAt: row.cam_advance_updated_at,
     ownerCount: Number(row.owner_count),

@@ -44,6 +44,10 @@ type VariableChargeEntry = {
   areaSqFt: number | null
   camAdvanceCoveredFrom: string | null
   camAdvancePaidUntil: string | null
+  camAdvanceCoverages?: {
+    coveredFrom: string
+    coveredUntil: string
+  }[]
   camAdvanceNote: string | null
   camAdvanceUpdatedAt: string | null
   meterNo: string | null
@@ -85,6 +89,8 @@ type GenerationResponse = {
     generated: number
     skipped: number
     advanceCoveredCount: number
+    advanceProratedCount?: number
+    advanceProratedAmount?: number
     overlapSkippedCount: number
     advanceAppliedCount: number
     advanceAppliedAmount: number
@@ -512,7 +518,7 @@ const billDeliveryFlatOptions = computed(() =>
   chargeEntries.value
     .filter(
       (entry) =>
-        Number(entry.amount ?? 0) > 0 && !isCamAdvanceCoveredForEntry(entry),
+        getEntryNetBillableAmount(entry) > 0 && !isCamAdvanceCoveredForEntry(entry),
     )
     .map((entry) => ({
       label: `${entry.blockName} ${entry.flatNumber} - ${entry.unitType}`,
@@ -536,7 +542,7 @@ const billableFlatIds = computed(() =>
   chargeEntries.value
     .filter(
       (entry) =>
-        Number(entry.amount ?? 0) > 0 && !isCamAdvanceCoveredForEntry(entry),
+        getEntryNetBillableAmount(entry) > 0 && !isCamAdvanceCoveredForEntry(entry),
     )
     .map((entry) => entry.flatId),
 )
@@ -544,12 +550,19 @@ const billableFlatIds = computed(() =>
 const camBillableEntries = computed(() =>
   chargeEntries.value.filter(
     (entry) =>
-      Number(entry.amount ?? 0) > 0 && !isCamAdvanceCoveredForEntry(entry),
+      getEntryNetBillableAmount(entry) > 0 && !isCamAdvanceCoveredForEntry(entry),
   ),
 )
 
 const camAdvanceCoveredEntries = computed(() =>
   chargeEntries.value.filter((entry) => isCamAdvanceCoveredForEntry(entry)),
+)
+
+const camAdvanceAdjustedEntries = computed(() =>
+  chargeEntries.value.filter((entry) => {
+    const coverage = getCamAdvanceCoverageSummaryForEntry(entry)
+    return coverage.coveredMonths > 0 && !coverage.isFullyCovered
+  }),
 )
 
 const camRunGenerationEntries = computed(() =>
@@ -569,6 +582,7 @@ const camRunGroups = computed(() => {
       entries: VariableChargeEntry[]
       billableCount: number
       advanceCoveredCount: number
+      advanceAdjustedCount: number
       totalAmount: number
     }
   >()
@@ -576,18 +590,23 @@ const camRunGroups = computed(() => {
   for (const entry of camRunGenerationEntries.value) {
     const cycleMonths = getEntryCycleMultiplier(entry)
     const isCovered = isCamAdvanceCoveredForEntry(entry)
+    const coverageSummary = getCamAdvanceCoverageSummaryForEntry(entry)
+    const isAdvanceAdjusted =
+      coverageSummary.coveredMonths > 0 && !coverageSummary.isFullyCovered
+    const billableAmount = getEntryNetBillableAmount(entry)
     const current = groups.get(cycleMonths)
 
     if (current) {
       current.entries.push(entry)
       current.billableCount += isCovered
         ? 0
-        : Number(entry.amount ?? 0) > 0
+        : billableAmount > 0
           ? 1
           : 0
       current.advanceCoveredCount += isCovered ? 1 : 0
+      current.advanceAdjustedCount += isAdvanceAdjusted ? 1 : 0
       current.totalAmount = roundChargeValue(
-        current.totalAmount + (isCovered ? 0 : Number(entry.amount ?? 0)),
+        current.totalAmount + (isCovered ? 0 : billableAmount),
       )
     } else {
       groups.set(cycleMonths, {
@@ -595,9 +614,10 @@ const camRunGroups = computed(() => {
         cycleLabel: getCycleLabel(cycleMonths),
         period: getCamPeriodForCycle(cycleMonths),
         entries: [entry],
-        billableCount: isCovered || Number(entry.amount ?? 0) <= 0 ? 0 : 1,
+        billableCount: isCovered || billableAmount <= 0 ? 0 : 1,
         advanceCoveredCount: isCovered ? 1 : 0,
-        totalAmount: isCovered ? 0 : Number(entry.amount ?? 0),
+        advanceAdjustedCount: isAdvanceAdjusted ? 1 : 0,
+        totalAmount: isCovered ? 0 : billableAmount,
       })
     }
   }
@@ -617,7 +637,14 @@ const chargeTotal = computed(() =>
 const billableChargeTotal = computed(() =>
   chargeEntries.value
     .filter((entry) => !isCamAdvanceCoveredForEntry(entry))
-    .reduce((sum, entry) => sum + Number(entry.amount ?? 0), 0),
+    .reduce((sum, entry) => sum + getEntryNetBillableAmount(entry), 0),
+)
+
+const advanceAdjustmentTotal = computed(() =>
+  chargeEntries.value.reduce(
+    (sum, entry) => sum + Math.max(0, getEntryAdvanceAdjustmentAmount(entry)),
+    0,
+  ),
 )
 
 const chargeUnitsTotal = computed(() =>
@@ -629,7 +656,11 @@ const chargeUnitsTotal = computed(() =>
 
 const chargeAreaTotal = computed(() =>
   chargeEntries.value
-    .filter((entry) => Number(entry.amount ?? 0) > 0)
+    .filter((entry) =>
+      props.camRunFlow
+        ? getEntryNetBillableAmount(entry) > 0
+        : Number(entry.amount ?? 0) > 0,
+    )
     .reduce((sum, entry) => sum + Number(entry.areaSqFt ?? 0), 0),
 )
 
@@ -637,7 +668,7 @@ const cycleDistributionLabel = computed(() => {
   const counts = new Map<string, number>()
 
   for (const entry of chargeEntries.value) {
-    if (Number(entry.amount ?? 0) <= 0) continue
+    if ((props.camRunFlow ? getEntryNetBillableAmount(entry) : Number(entry.amount ?? 0)) <= 0) continue
 
     const label = getCycleLabel(
       entry.cycleMultiplier ?? defaultCycleMonths.value,
@@ -663,6 +694,7 @@ const buildCamGenerationProgressSteps = (
     entries: VariableChargeEntry[]
     billableCount: number
     advanceCoveredCount: number
+    advanceAdjustedCount: number
   }>,
 ): GenerationProgressStep[] => [
   {
@@ -674,7 +706,7 @@ const buildCamGenerationProgressSteps = (
   ...groups.map((group) => ({
     id: getCamGenerationGroupStepId(group.cycleMonths),
     label: `${group.cycleLabel} CAM bills`,
-    detail: `${formatUnit(group.billableCount, 'bill')} - ${formatUnit(group.advanceCoveredCount, 'advance flat')} covered.`,
+    detail: `${formatUnit(group.billableCount, 'bill')} - ${formatUnit(group.advanceCoveredCount, 'advance flat')} fully covered - ${formatUnit(group.advanceAdjustedCount, 'advance flat')} adjusted.`,
     status: 'pending' as const,
   })),
   {
@@ -876,25 +908,177 @@ const getEntryGenerationPeriod = (
     ? getCamPeriodForCycle(getEntryCycleMultiplier(entry))
     : null)
 
+const toUtcBillingDate = (value: string) => new Date(`${value}T00:00:00Z`)
+
+const toBillingDateInput = (date: Date) => date.toISOString().slice(0, 10)
+
+const minBillingDate = (a: string, b: string) => (a <= b ? a : b)
+
+const maxBillingDate = (a: string, b: string) => (a >= b ? a : b)
+
+const getPeriodMonthSegments = (period: { startDate: string; endDate: string }) => {
+  const start = toUtcBillingDate(period.startDate)
+  const end = toUtcBillingDate(period.endDate)
+
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) {
+    return [{ startDate: period.startDate, endDate: period.endDate }]
+  }
+
+  const segments: { startDate: string; endDate: string }[] = []
+  let cursor = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1))
+  const endMonthStart = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), 1))
+
+  while (cursor <= endMonthStart) {
+    const monthStart = toBillingDateInput(cursor)
+    const monthEnd = toBillingDateInput(
+      new Date(Date.UTC(cursor.getUTCFullYear(), cursor.getUTCMonth() + 1, 0)),
+    )
+
+    segments.push({
+      startDate: maxBillingDate(period.startDate, monthStart),
+      endDate: minBillingDate(period.endDate, monthEnd),
+    })
+
+    cursor = new Date(Date.UTC(cursor.getUTCFullYear(), cursor.getUTCMonth() + 1, 1))
+  }
+
+  return segments
+}
+
+const getEntryCamAdvanceCoverages = (
+  entry: Pick<
+    VariableChargeEntry,
+    'camAdvanceCoveredFrom' | 'camAdvancePaidUntil' | 'camAdvanceCoverages'
+  >,
+) => {
+  if ((entry.camAdvanceCoverages?.length ?? 0) > 0) {
+    return entry.camAdvanceCoverages ?? []
+  }
+
+  if (!entry.camAdvancePaidUntil) {
+    return []
+  }
+
+  return [{
+    coveredFrom: entry.camAdvanceCoveredFrom ?? '0001-01-01',
+    coveredUntil: entry.camAdvancePaidUntil,
+  }]
+}
+
+const getCamAdvanceCoverageSummaryForEntry = (
+  entry: Pick<
+    VariableChargeEntry,
+    'cycleMultiplier' | 'camAdvanceCoveredFrom' | 'camAdvancePaidUntil' | 'camAdvanceCoverages'
+  >,
+) => {
+  const period = getEntryGenerationPeriod(entry)
+  const coverages = getEntryCamAdvanceCoverages(entry)
+
+  if (props.chargeType !== 'CAM' || !period || coverages.length === 0) {
+    return {
+      totalMonths: getEntryCycleMultiplier(entry),
+      coveredMonths: 0,
+      remainingMonths: getEntryCycleMultiplier(entry),
+      isFullyCovered: false,
+    }
+  }
+
+  const segments = getPeriodMonthSegments(period)
+  const totalMonths = Math.max(1, segments.length)
+  const coveredMonths = segments.filter((segment) =>
+    coverages.some(
+      (coverage) =>
+        coverage.coveredFrom <= segment.startDate &&
+        coverage.coveredUntil >= segment.endDate,
+    ),
+  ).length
+  const remainingMonths = Math.max(0, totalMonths - coveredMonths)
+
+  return {
+    totalMonths,
+    coveredMonths,
+    remainingMonths,
+    isFullyCovered: coveredMonths >= totalMonths,
+  }
+}
+
+const getEntryGrossAmount = (entry: Pick<VariableChargeEntry, 'amount'>) =>
+  Number(entry.amount ?? 0)
+
+const getEntryNetBillableAmount = (
+  entry: Pick<
+    VariableChargeEntry,
+    | 'amount'
+    | 'areaSqFt'
+    | 'ratePerSqFt'
+    | 'cycleMultiplier'
+    | 'camAdvanceCoveredFrom'
+    | 'camAdvancePaidUntil'
+    | 'camAdvanceCoverages'
+  >,
+) => {
+  const grossAmount = getEntryGrossAmount(entry)
+  const coverage = getCamAdvanceCoverageSummaryForEntry(entry)
+
+  if (grossAmount <= 0 || coverage.coveredMonths <= 0) {
+    return grossAmount
+  }
+
+  if (coverage.remainingMonths <= 0) {
+    return 0
+  }
+
+  const areaSqFt = normalizeChargeNumber(entry.areaSqFt)
+  const ratePerSqFt = normalizeChargeNumber(entry.ratePerSqFt)
+
+  if (props.showAreaRate && areaSqFt != null && ratePerSqFt != null) {
+    return roundAreaRateChargeValue(areaSqFt * ratePerSqFt * coverage.remainingMonths)
+  }
+
+  return roundChargeValue(grossAmount * (coverage.remainingMonths / coverage.totalMonths))
+}
+
+const getEntryAdvanceAdjustmentAmount = (
+  entry: Pick<
+    VariableChargeEntry,
+    | 'amount'
+    | 'areaSqFt'
+    | 'ratePerSqFt'
+    | 'cycleMultiplier'
+    | 'camAdvanceCoveredFrom'
+    | 'camAdvancePaidUntil'
+    | 'camAdvanceCoverages'
+  >,
+) => roundChargeValue(getEntryGrossAmount(entry) - getEntryNetBillableAmount(entry))
+
+const getEntryCamAdvanceLabel = (
+  entry: Pick<
+    VariableChargeEntry,
+    'cycleMultiplier' | 'camAdvanceCoveredFrom' | 'camAdvancePaidUntil' | 'camAdvanceCoverages'
+  >,
+) => {
+  const coverage = getCamAdvanceCoverageSummaryForEntry(entry)
+
+  if (coverage.coveredMonths <= 0) {
+    return ''
+  }
+
+  return `${coverage.coveredMonths} of ${coverage.totalMonths} month${coverage.totalMonths === 1 ? '' : 's'} covered by advance`
+}
+
 const isCamAdvanceCoveredForEntry = (
   entry: Pick<
     VariableChargeEntry,
-    'cycleMultiplier' | 'camAdvanceCoveredFrom' | 'camAdvancePaidUntil'
+    'cycleMultiplier' | 'camAdvanceCoveredFrom' | 'camAdvancePaidUntil' | 'camAdvanceCoverages'
   >,
 ) => {
-  if (props.chargeType !== 'CAM' || !entry.camAdvancePaidUntil) return false
-
-  const period = getEntryGenerationPeriod(entry)
-  const coveredFrom = entry.camAdvanceCoveredFrom ?? '0001-01-01'
-  return Boolean(
-    period &&
-    coveredFrom <= period.startDate &&
-    entry.camAdvancePaidUntil >= period.endDate,
-  )
+  return getCamAdvanceCoverageSummaryForEntry(entry).isFullyCovered
 }
 
 const getRecordPaymentRoute = (entry: VariableChargeEntry) => {
-  const amount = Number(entry.amount ?? 0)
+  const amount = props.camRunFlow
+    ? getEntryNetBillableAmount(entry)
+    : Number(entry.amount ?? 0)
   const billingPeriodId = getRecordPaymentPeriod(entry)?.id ?? ''
 
   return {
@@ -908,7 +1092,7 @@ const getRecordPaymentRoute = (entry: VariableChargeEntry) => {
 }
 
 const canRecordPaymentForEntry = (entry: VariableChargeEntry) =>
-  Number(entry.amount ?? 0) > 0 &&
+  (props.camRunFlow ? getEntryNetBillableAmount(entry) : Number(entry.amount ?? 0)) > 0 &&
   Number(getRecordPaymentPeriod(entry)?.dueCount ?? 0) > 0
 
 const getRecordPaymentTitle = (entry: VariableChargeEntry) =>
@@ -923,6 +1107,9 @@ const normalizeChargeEntry = (
   areaSqFt: normalizeChargeNumber(entry.areaSqFt),
   camAdvanceCoveredFrom: entry.camAdvanceCoveredFrom || null,
   camAdvancePaidUntil: entry.camAdvancePaidUntil || null,
+  camAdvanceCoverages: Array.isArray(entry.camAdvanceCoverages)
+    ? entry.camAdvanceCoverages
+    : [],
   camAdvanceNote: entry.camAdvanceNote || null,
   camAdvanceUpdatedAt: entry.camAdvanceUpdatedAt || null,
   meterNo: entry.meterNo ?? null,
@@ -1187,6 +1374,7 @@ const loadVariableCharges = async () => {
           areaSqFt: flat.areaSqFt,
           camAdvanceCoveredFrom: flat.camAdvanceCoveredFrom ?? null,
           camAdvancePaidUntil: flat.camAdvancePaidUntil ?? null,
+          camAdvanceCoverages: flat.camAdvanceCoverages ?? [],
           camAdvanceNote: flat.camAdvanceNote ?? null,
           camAdvanceUpdatedAt: flat.camAdvanceUpdatedAt ?? null,
           meterNo: null,
@@ -1489,6 +1677,8 @@ const generateDues = async () => {
       let generated = 0
       let skipped = 0
       let advanceCoveredCount = 0
+      let advanceProratedCount = 0
+      let advanceProratedAmount = 0
       let overlapSkippedCount = 0
       let advanceAppliedCount = 0
       let advanceAppliedAmount = 0
@@ -1565,6 +1755,10 @@ const generateDues = async () => {
         generated += response.data.generated
         skipped += response.data.skipped
         advanceCoveredCount += response.data.advanceCoveredCount
+        advanceProratedCount += response.data.advanceProratedCount ?? 0
+        advanceProratedAmount = roundChargeValue(
+          advanceProratedAmount + (response.data.advanceProratedAmount ?? 0),
+        )
         overlapSkippedCount += response.data.overlapSkippedCount
         advanceAppliedCount += response.data.advanceAppliedCount
         billSendTargets.push(
@@ -1581,6 +1775,9 @@ const generateDues = async () => {
             `${response.data.skipped} skipped`,
             response.data.advanceCoveredCount > 0
               ? `${formatUnit(response.data.advanceCoveredCount, 'advance flat')} covered`
+              : '',
+            (response.data.advanceProratedCount ?? 0) > 0
+              ? `${formatMoney(response.data.advanceProratedAmount ?? 0)} advance deducted`
               : '',
             response.data.overlapSkippedCount > 0
               ? `${formatUnit(response.data.overlapSkippedCount, 'overlap')} skipped`
@@ -1629,6 +1826,9 @@ const generateDues = async () => {
             `${skipped} skipped`,
             advanceCoveredCount > 0
               ? `${formatUnit(advanceCoveredCount, 'advance flat')} covered`
+              : '',
+            advanceProratedAmount > 0
+              ? `${formatMoney(advanceProratedAmount)} advance deducted across ${formatUnit(advanceProratedCount, 'flat')}`
               : '',
             overlapSkippedCount > 0
               ? `${formatUnit(overlapSkippedCount, 'overlap')} skipped`
@@ -1869,7 +2069,7 @@ watch(
           <p>
             {{
               camRunFlow
-                ? `${formatUnit(camBillableEntries.length, 'bill')} - ${formatUnit(camAdvanceCoveredEntries.length, 'advance flat')} covered`
+                ? `${formatUnit(camBillableEntries.length, 'bill')} - ${formatMoney(advanceAdjustmentTotal)} advance deducted`
                 : `${formatUnit(filledChargeCount, 'flat')} with saved amount.`
             }}
           </p>
@@ -2010,17 +2210,22 @@ watch(
             <p v-if="camRunFlow">
               CAM advance coverage is managed in
               <NuxtLink to="/admin/billing/cam-advance">CAM Advance</NuxtLink>.
-              Covered periods are skipped during CAM bill generation.
+              Advance-covered months are deducted from the payable CAM amount.
             </p>
           </div>
           <div>
-            <strong>{{ formatMoney(chargeTotal) }}</strong>
+            <strong>{{
+              formatMoney(camRunFlow ? billableChargeTotal : chargeTotal)
+            }}</strong>
             <span>
-              {{ formatUnit(filledChargeCount, 'flat') }} -
               {{
-                showAreaRate
-                  ? `${formatNumber(chargeAreaTotal)} sq ft`
-                  : `${formatNumber(chargeUnitsTotal)} ${unitsSummaryLabel}`
+                camRunFlow
+                  ? `${formatMoney(chargeTotal)} gross - ${formatMoney(advanceAdjustmentTotal)} advance deducted`
+                  : `${formatUnit(filledChargeCount, 'flat')} - ${
+                      showAreaRate
+                        ? `${formatNumber(chargeAreaTotal)} sq ft`
+                        : `${formatNumber(chargeUnitsTotal)} ${unitsSummaryLabel}`
+                    }`
               }}
             </span>
           </div>
@@ -2270,7 +2475,31 @@ watch(
                 placeholder="0"
                 fluid
               />
-              <strong v-else>{{ formatMoney(Number(row.amount ?? 0)) }}</strong>
+              <div v-else>
+                <strong>{{
+                  formatMoney(
+                    camRunFlow
+                      ? getEntryNetBillableAmount(row)
+                      : Number(row.amount ?? 0),
+                  )
+                }}</strong>
+                <p
+                  v-if="
+                    camRunFlow && getEntryAdvanceAdjustmentAmount(row) > 0
+                  "
+                  class="table-muted"
+                >
+                  {{ formatMoney(Number(row.amount ?? 0)) }} gross -
+                  {{ formatMoney(getEntryAdvanceAdjustmentAmount(row)) }}
+                  advance
+                </p>
+                <p
+                  v-if="camRunFlow && getEntryCamAdvanceLabel(row)"
+                  class="table-muted"
+                >
+                  {{ getEntryCamAdvanceLabel(row) }}
+                </p>
+              </div>
             </template>
           </Column>
           <Column
@@ -2463,7 +2692,9 @@ watch(
               >{{
                 formatUnit(camAdvanceCoveredEntries.length, 'advance flat')
               }}
-              covered</small
+              fully covered ·
+              {{ formatUnit(camAdvanceAdjustedEntries.length, 'advance flat') }}
+              adjusted</small
             >
           </div>
           <div>
@@ -2548,7 +2779,9 @@ watch(
               {{
                 formatUnit(group.advanceCoveredCount, 'advance flat')
               }}
-              covered - {{ formatDate(group.period.startDate) }} to
+              fully covered -
+              {{ formatUnit(group.advanceAdjustedCount, 'advance flat') }}
+              adjusted - {{ formatDate(group.period.startDate) }} to
               {{ formatDate(group.period.endDate) }}
             </p>
           </div>

@@ -1383,6 +1383,66 @@ a {
   grid-column: 1 / -1;
 }
 
+.society-payment-qr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.85rem;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-muted);
+}
+
+.society-payment-qr__input {
+  display: none;
+}
+
+.society-payment-qr__summary {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  min-width: 0;
+}
+
+.society-payment-qr__preview {
+  width: 5.5rem;
+  height: 5.5rem;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border: 1px solid var(--color-border);
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.society-payment-qr__preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.society-payment-qr__preview .pi {
+  font-size: 2rem;
+  color: var(--color-muted);
+}
+
+.society-payment-qr__meta {
+  display: grid;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.society-payment-qr__meta strong,
+.society-payment-qr__meta small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.society-payment-qr__actions {
+  flex: 0 0 auto;
+}
+
 .report-chart {
   display: grid;
   gap: 0.75rem;
@@ -3414,6 +3474,19 @@ th.expense-summary-table__first-data-column {
 
   .resident-file-upload {
     grid-template-columns: 1fr;
+  }
+
+  .society-payment-qr {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .society-payment-qr__actions {
+    width: 100%;
+  }
+
+  .society-payment-qr__actions .p-button {
+    flex: 1 1 auto;
   }
 
   .billing-flow {

@@ -20,6 +20,11 @@ type SocietyProfileRow = {
   timezone: string
   is_active: boolean
   settings: Record<string, unknown> | null
+  payment_qr_file_id: string | null
+  payment_qr_original_file_name: string | null
+  payment_qr_mime_type: string | null
+  payment_qr_size_bytes: string | null
+  payment_qr_uploaded_at: string | null
   created_at: string
   updated_at: string
 }
@@ -30,24 +35,33 @@ export default defineEventHandler(async (event) => {
   const result = await pool.query<SocietyProfileRow>(
     `
       select
-        id,
-        code,
-        name,
-        registration_number,
-        address_line_1,
-        address_line_2,
-        city,
-        state,
-        pincode,
-        contact_email,
-        contact_phone,
-        timezone,
-        is_active,
-        settings,
-        created_at::text,
-        updated_at::text
-      from society_profile
-      where id = $1
+        sp.id,
+        sp.code,
+        sp.name,
+        sp.registration_number,
+        sp.address_line_1,
+        sp.address_line_2,
+        sp.city,
+        sp.state,
+        sp.pincode,
+        sp.contact_email,
+        sp.contact_phone,
+        sp.timezone,
+        sp.is_active,
+        sp.settings,
+        payment_qr.id as payment_qr_file_id,
+        payment_qr.original_file_name as payment_qr_original_file_name,
+        payment_qr.mime_type as payment_qr_mime_type,
+        payment_qr.size_bytes::text as payment_qr_size_bytes,
+        payment_qr.uploaded_at::text as payment_qr_uploaded_at,
+        sp.created_at::text,
+        sp.updated_at::text
+      from society_profile sp
+      left join file_objects payment_qr
+        on payment_qr.id = sp.payment_qr_file_id
+        and payment_qr.storage_target_key = 'qr_images'
+        and payment_qr.upload_status = 'READY'
+      where sp.id = $1
       limit 1
     `,
     [authMe.user.societyId],
@@ -78,6 +92,16 @@ export default defineEventHandler(async (event) => {
     timezone: row.timezone,
     isActive: row.is_active,
     settings: normalizeSocietySettings(row.settings),
+    paymentQrFile: row.payment_qr_file_id
+      ? {
+          id: row.payment_qr_file_id,
+          fileName: row.payment_qr_original_file_name ?? 'payment-qr',
+          mimeType: row.payment_qr_mime_type ?? 'application/octet-stream',
+          sizeBytes: Number(row.payment_qr_size_bytes ?? 0),
+          uploadedAt: row.payment_qr_uploaded_at ?? row.updated_at,
+          downloadUrl: '/api/admin/society/payment-qr',
+        }
+      : null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }

@@ -4,7 +4,8 @@ import type { ChargeBreakdownItem } from '~/types/domain'
 import { AppError } from './errors'
 import { getDatabasePool } from './database'
 import { normalizeSocietySettings } from './master-data'
-import { createPdfBuffer, getSocietyStampImage } from './pdf'
+import { createPdfBuffer, getSocietyStampImageForPdf } from './pdf'
+import { downloadPrivateFile } from './storage'
 
 export const chargeBreakdownItemSchema = z.object({
   label: z.string().trim().min(1).max(200),
@@ -636,6 +637,8 @@ type MaintenanceBillDueRow = {
   ifsc_code: string | null
   branch_name: string | null
   upi_id: string | null
+  payment_qr_storage_object_key: string | null
+  payment_qr_mime_type: string | null
 }
 
 type PreviousDueRow = {
@@ -1034,6 +1037,41 @@ const buildUpiPaymentPayload = (row: MaintenanceBillDueRow, amount: number, bill
   return `upi://pay?${params.toString()}`
 }
 
+const getUploadedPaymentQrImageForPdf = async (row: MaintenanceBillDueRow) => {
+  if (!row.payment_qr_storage_object_key || !row.payment_qr_mime_type) {
+    return null
+  }
+
+  if (!['image/png', 'image/jpeg'].includes(row.payment_qr_mime_type)) {
+    return null
+  }
+
+  try {
+    const blob = await downloadPrivateFile({
+      storageTargetKey: 'qr_images',
+      storageObjectKey: row.payment_qr_storage_object_key,
+    })
+    const buffer = Buffer.from(await blob.arrayBuffer())
+
+    if (buffer.length === 0) {
+      return null
+    }
+
+    return `data:${row.payment_qr_mime_type};base64,${buffer.toString('base64')}`
+  } catch (error) {
+    console.warn(
+      JSON.stringify({
+        level: 'warn',
+        message: 'Unable to load society payment QR image for bill PDF.',
+        societyId: row.society_id,
+        storageObjectKey: row.payment_qr_storage_object_key,
+        cause: error instanceof Error ? error.message : String(error),
+      }),
+    )
+    return null
+  }
+}
+
 export const getMaintenanceBillData = async (
   dueId: string,
   access: MaintenanceBillAccess = {},
@@ -1100,7 +1138,9 @@ export const getMaintenanceBillData = async (
         bank.ifsc_code,
         bank.branch_name,
         bank.upi_id,
-        bank_accounts.bank_accounts
+        bank_accounts.bank_accounts,
+        payment_qr.storage_object_key as payment_qr_storage_object_key,
+        payment_qr.mime_type as payment_qr_mime_type
       from maintenance_dues md
       inner join society_profile sp on sp.id = md.society_id
       inner join billing_periods bp on bp.id = md.billing_period_id
@@ -1153,6 +1193,10 @@ export const getMaintenanceBillData = async (
         where ba.society_id = sp.id
           and ba.is_active = true
       ) bank_accounts on true
+      left join file_objects payment_qr
+        on payment_qr.id = sp.payment_qr_file_id
+        and payment_qr.storage_target_key = 'qr_images'
+        and payment_qr.upload_status = 'READY'
       where ${filters.join(' and ')}
       limit 1
     `,
@@ -1263,7 +1307,7 @@ export const generateMaintenanceBillPdf = async (
   const hasSeparateDgBill = dgCharges.length > 0
   const maintenanceAmount = sumBillCharges(invoiceCharges)
   const dgAmount = sumBillCharges(dgCharges)
-  const invoiceStampImage = getSocietyStampImage()
+  const invoiceStampImage = await getSocietyStampImageForPdf()
   const societyBankAccounts = getSocietyBankAccountsForPdf(due)
 
   const dgOuterLayout = {
@@ -1591,7 +1635,7 @@ export const generateMaintenanceBillPdf = async (
                                       margin: [0, 1, 0, 1],
                                     },
                                   ]
-                                : [{ text: 'Stamp / signature image unavailable', style: 'camFooterText', alignment: 'center', margin: [0, 14, 0, 12] }]),
+                                : [{ text: '', margin: [0, 24, 0, 12] }]),
                               { text: 'Authorised Signatory', style: 'camFooterText', alignment: 'right', margin: [0, 0, 5, 0] },
                             ],
                           },
@@ -1649,9 +1693,10 @@ export const generateMaintenanceBillPdf = async (
     const tariffRateLabel = primaryCharge.tariffRateLabel
       ?? (ratePerUnit != null ? `Rs.${formatBillPlainNumber(ratePerUnit)}/Unit` : '-')
     const qrPayload = buildUpiPaymentPayload(due, dgNetPayable, `${bill.billNumber}-DG`)
-    const qrImage = qrPayload
+    const uploadedQrImage = await getUploadedPaymentQrImageForPdf(due)
+    const qrImage = uploadedQrImage ?? (qrPayload
       ? await QRCode.toDataURL(qrPayload, { margin: 1, width: 180 })
-      : null
+      : null)
 
     const optionalNumber = (value: number | null | undefined) =>
       value == null ? '-' : formatBillPlainNumber(value)
