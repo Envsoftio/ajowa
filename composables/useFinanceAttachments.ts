@@ -13,6 +13,7 @@ const maxSizeBytes = 10 * 1024 * 1024
 
 export const useFinanceAttachments = () => {
   const toast = useToast()
+  const api = useApi()
   const attachment = ref<LocalFinanceAttachment | null>(null)
 
   const setAttachment = (file: File) => {
@@ -69,12 +70,11 @@ export const useFinanceAttachments = () => {
       formData.append('replacesAttachmentId', replacesAttachmentId)
     }
 
-    return await $fetch<{ ok: true; data: FinanceTransactionAttachment }>(
+    return await api<{ ok: true; data: FinanceTransactionAttachment }>(
       `/api/admin/finance/transactions/${transactionId}/attachments`,
       {
         method: 'POST',
         body: formData,
-        credentials: 'include',
       },
     )
   }

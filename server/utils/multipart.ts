@@ -1,4 +1,4 @@
-import type { H3Event } from 'h3'
+import { getRequestHeader, readRawBody, type H3Event } from 'h3'
 import { AppError } from './errors'
 
 export type MultipartFormPart = {
@@ -13,65 +13,11 @@ const getMultipartBoundary = (contentType: string | null | undefined) => {
   return match?.[1] ?? match?.[2]?.trim() ?? null
 }
 
-const getRequestHeaderValue = (event: H3Event, name: string) => {
-  const lowerName = name.toLowerCase()
-  const nodeHeaders = event.node?.req?.headers
-  const nodeValue = nodeHeaders?.[lowerName]
-
-  if (Array.isArray(nodeValue)) {
-    return nodeValue.join(', ')
-  }
-
-  if (typeof nodeValue === 'string') {
-    return nodeValue
-  }
-
-  const requestHeaders = (event as unknown as {
-    req?: {
-      headers?: {
-        get?: unknown
-      } | Record<string, string | string[] | undefined>
-    }
-  }).req?.headers
-
-  if (
-    requestHeaders &&
-    typeof (requestHeaders as { get?: unknown }).get === 'function'
-  ) {
-    const value = (requestHeaders as { get: (key: string) => string | null }).get(name)
-    if (value) return value
-  }
-
-  const fallbackValue = (requestHeaders as Record<string, string | string[] | undefined> | undefined)?.[lowerName]
-
-  if (Array.isArray(fallbackValue)) {
-    return fallbackValue.join(', ')
-  }
-
-  return fallbackValue ?? null
-}
-
 const readRequestBodyBuffer = async (event: H3Event) => {
-  const nodeRequest = event.node?.req
+  const body = await readRawBody(event, false)
 
-  if (nodeRequest) {
-    const chunks: Buffer[] = []
-
-    for await (const chunk of nodeRequest) {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
-    }
-
-    return Buffer.concat(chunks)
-  }
-
-  const request = (event as unknown as {
-    req?: {
-      arrayBuffer?: unknown
-    }
-  }).req
-
-  if (request && typeof request.arrayBuffer === 'function') {
-    return Buffer.from(await (request.arrayBuffer as () => Promise<ArrayBuffer>)())
+  if (body) {
+    return Buffer.from(body)
   }
 
   throw new AppError({
@@ -119,7 +65,7 @@ const parseMultipartHeaderParams = (value: string) => {
 }
 
 export const readMultipartFormParts = async (event: H3Event): Promise<MultipartFormPart[]> => {
-  const boundary = getMultipartBoundary(getRequestHeaderValue(event, 'content-type'))
+  const boundary = getMultipartBoundary(getRequestHeader(event, 'content-type'))
 
   if (!boundary) {
     throw new AppError({

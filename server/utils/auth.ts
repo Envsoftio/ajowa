@@ -1048,6 +1048,63 @@ export const assignInviteRelationships = async ({
 
   if (role === 'RESIDENT' && relationshipType) {
     for (const flatId of flatIds) {
+      const existingRelationship = await client.query<{
+        id: string
+        relationship_type: RelationshipType
+        lease_start_date: string | null
+        lease_end_date: string | null
+      }>(
+        `
+          select id,
+                 relationship_type,
+                 lease_start_date::text,
+                 lease_end_date::text
+          from flat_residents
+          where flat_id = $1
+            and user_id = $2
+          limit 1
+        `,
+        [flatId, userId],
+      )
+
+      const relationship = existingRelationship.rows[0]
+
+      if (relationship?.id) {
+        if (
+          relationship.relationship_type === 'TENANT' &&
+          (!relationship.lease_start_date || !relationship.lease_end_date)
+        ) {
+          throw new AppError({
+            code: 'VALIDATION_ERROR',
+            statusCode: 400,
+            message:
+              'Tenant invites need lease start and end dates. Ask an admin to add the lease details on the resident profile, then resend the invite.',
+          })
+        }
+
+        await client.query(
+          `
+            update flat_residents
+            set can_login = true,
+                is_active = true,
+                access_scope = coalesce(access_scope, $2::access_scope),
+                updated_at = now()
+            where id = $1
+          `,
+          [relationship.id, accessScope],
+        )
+        continue
+      }
+
+      if (relationshipType === 'TENANT') {
+        throw new AppError({
+          code: 'VALIDATION_ERROR',
+          statusCode: 400,
+          message:
+            'Tenant invites need lease start and end dates. Ask an admin to add the lease details on the resident profile, then resend the invite.',
+        })
+      }
+
       await client.query(
         `
           insert into flat_residents (
@@ -1059,7 +1116,6 @@ export const assignInviteRelationships = async ({
             access_scope
           )
           values ($1, $2, $3, true, true, $4)
-          on conflict do nothing
         `,
         [flatId, userId, relationshipType, accessScope],
       )

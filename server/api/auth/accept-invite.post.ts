@@ -32,6 +32,7 @@ const acceptInviteSchema = z.object({
 
 type InviteAssignmentRow = {
   id: string
+  society_id: string
   email: string
   role: 'ADMIN' | 'MANAGER' | 'SERVICE_STAFF' | 'RESIDENT' | 'GUARD'
   relationship_type: 'OWNER' | 'TENANT' | 'FAMILY_MEMBER' | null
@@ -48,6 +49,13 @@ type AcceptedInviteUser = {
   authUserId: string
   email: string
   fullName: string
+}
+
+type ExistingAppUserRow = {
+  id: string
+  auth_user_id: string | null
+  email: string
+  role: InviteAssignmentRow['role']
 }
 
 type VerificationEmailDelivery =
@@ -76,6 +84,92 @@ const serializeEmailError = (error: unknown) => {
   }
 
   return { message: String(error) }
+}
+
+const toInviteAcceptanceError = (error: unknown) => {
+  if (error instanceof AppError) {
+    return error
+  }
+
+  const databaseError = error as {
+    code?: string
+    constraint?: string
+    message?: string
+  }
+
+  if (databaseError.code === '23505') {
+    if (databaseError.constraint === 'users_society_id_email_key') {
+      return new AppError({
+        code: 'CONFLICT',
+        statusCode: 409,
+        message:
+          'A resident already exists with this email. Ask an admin to resend the invite from that resident profile.',
+      })
+    }
+
+    if (databaseError.constraint === 'auth_users_email_key') {
+      return new AppError({
+        code: 'CONFLICT',
+        statusCode: 409,
+        message:
+          'An account already exists with this email. Ask an admin to review the resident login and resend the invite.',
+      })
+    }
+
+    if (
+      databaseError.constraint ===
+      'flat_residents_one_active_tenant_household_idx'
+    ) {
+      return new AppError({
+        code: 'CONFLICT',
+        statusCode: 409,
+        message:
+          'This flat already has an active tenant household. Ask an admin to update the existing tenant record or resend the correct invite.',
+      })
+    }
+
+    if (
+      databaseError.constraint === 'flat_residents_one_primary_contact_idx' ||
+      databaseError.constraint === 'flat_residents_one_billing_contact_idx'
+    ) {
+      return new AppError({
+        code: 'CONFLICT',
+        statusCode: 409,
+        message:
+          'This flat already has an active primary or billing contact. Ask an admin to update the flat relationship and resend the invite.',
+      })
+    }
+  }
+
+  if (
+    databaseError.code === 'P0001' &&
+    databaseError.message?.includes(
+      'tenant relationships require lease_start_date and lease_end_date',
+    )
+  ) {
+    return new AppError({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message:
+        'Tenant invites need lease start and end dates. Ask an admin to add the lease details on the resident profile, then resend the invite.',
+    })
+  }
+
+  if (databaseError.code === '23503') {
+    return new AppError({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message:
+        'This invite points to a flat, department, or account that no longer exists. Ask an admin to resend a fresh invite.',
+    })
+  }
+
+  return new AppError({
+    code: 'INTERNAL_ERROR',
+    statusCode: 500,
+    message:
+      'We could not activate this invite. Ask an admin to review the resident record and resend the invite.',
+  })
 }
 
 const acceptExistingCredentialUser = async ({
@@ -164,6 +258,171 @@ const acceptExistingCredentialUser = async ({
   }
 }
 
+const acceptExistingAppUserByEmail = async ({
+  client,
+  societyId,
+  email,
+  role,
+  fullName,
+  mobileNumber,
+  whatsappNumber,
+  password,
+  emailVerified,
+}: {
+  client: PoolClient
+  societyId: string
+  email: string
+  role: InviteAssignmentRow['role']
+  fullName: string
+  mobileNumber: string
+  whatsappNumber: string
+  password: string
+  emailVerified: boolean
+}): Promise<AcceptedInviteUser | null> => {
+  const existingResult = await client.query<ExistingAppUserRow>(
+    `
+      select id, auth_user_id::text, email::text, role
+      from users
+      where society_id = $1 and email = $2
+      limit 1
+    `,
+    [societyId, email],
+  )
+  const existing = existingResult.rows[0]
+
+  if (!existing) {
+    return null
+  }
+
+  if (existing.role !== role) {
+    throw new AppError({
+      code: 'CONFLICT',
+      statusCode: 409,
+      message:
+        'This email already belongs to a different type of account. Ask an admin to review the resident record and resend the correct invite.',
+    })
+  }
+
+  if (existing.auth_user_id) {
+    return acceptExistingCredentialUser({
+      client,
+      authUserId: existing.auth_user_id,
+      email,
+      fullName,
+      mobileNumber,
+      whatsappNumber,
+      password,
+      emailVerified,
+    })
+  }
+
+  const authUserResult = await client.query<{ id: string }>(
+    `
+      select id
+      from auth_users
+      where email = $1
+      limit 1
+    `,
+    [email],
+  )
+
+  let authUserId = authUserResult.rows[0]?.id ?? null
+
+  if (authUserId) {
+    const linkedUserResult = await client.query<{ id: string }>(
+      `
+        select id
+        from users
+        where auth_user_id = $1 and id <> $2
+        limit 1
+      `,
+      [authUserId, existing.id],
+    )
+
+    if (linkedUserResult.rows[0]?.id) {
+      throw new AppError({
+        code: 'CONFLICT',
+        statusCode: 409,
+        message:
+          'This email is already linked to another account. Ask an admin to review the resident record and resend the invite.',
+      })
+    }
+  } else {
+    const insertedAuthUser = await client.query<{ id: string }>(
+      `
+        insert into auth_users (name, email, email_verified)
+        values ($1, $2, $3)
+        returning id
+      `,
+      [fullName, email, emailVerified],
+    )
+    authUserId = insertedAuthUser.rows[0]?.id ?? null
+  }
+
+  if (!authUserId) {
+    throw new AppError({
+      code: 'INTERNAL_ERROR',
+      statusCode: 500,
+      message: 'Account creation did not return an auth identifier.',
+    })
+  }
+
+  const passwordHash = await hashPassword(password)
+
+  await client.query(
+    `
+      update auth_users
+      set name = $2,
+          email_verified = $3,
+          updated_at = now()
+      where id = $1
+    `,
+    [authUserId, fullName, emailVerified],
+  )
+
+  await client.query(
+    `
+      insert into auth_accounts (account_id, provider_id, user_id, password)
+      values ($1, 'credential', $1, $2)
+      on conflict (provider_id, account_id) do update
+        set user_id = excluded.user_id,
+            password = excluded.password,
+            updated_at = now()
+    `,
+    [authUserId, passwordHash],
+  )
+
+  await client.query(
+    `
+      update users
+      set auth_user_id = $2,
+          full_name = $3,
+          mobile_number = $4,
+          whatsapp_number = $5,
+          can_login = true,
+          must_change_password = false,
+          email_verified = $6,
+          is_active = true,
+          updated_at = now()
+      where id = $1
+    `,
+    [
+      existing.id,
+      authUserId,
+      fullName,
+      mobileNumber,
+      whatsappNumber,
+      emailVerified,
+    ],
+  )
+
+  return {
+    authUserId,
+    email: existing.email,
+    fullName,
+  }
+}
+
 export default defineEventHandler(async (event) => {
   const body = validateInput(acceptInviteSchema, await readJsonBody(event))
 
@@ -206,6 +465,7 @@ export default defineEventHandler(async (event) => {
       `
         select
           id,
+          society_id::text,
           email,
           role,
           relationship_type,
@@ -245,7 +505,18 @@ export default defineEventHandler(async (event) => {
           password: body.password,
           emailVerified: !requiresEmailVerification,
         })
-      : await createCredentialUser({
+      : (await acceptExistingAppUserByEmail({
+          client,
+          societyId: invite.society_id,
+          email: invite.email,
+          role: invite.role,
+          fullName: body.fullName,
+          mobileNumber: body.mobileNumber,
+          whatsappNumber: body.whatsappNumber || body.mobileNumber,
+          password: body.password,
+          emailVerified: !requiresEmailVerification,
+        })) ??
+        (await createCredentialUser({
           client,
           email: invite.email,
           fullName: body.fullName,
@@ -255,7 +526,7 @@ export default defineEventHandler(async (event) => {
           role: invite.role,
           emailVerified: !requiresEmailVerification,
           mustChangePassword: false,
-        })
+        }))
 
     if (!invite.accepted_by_auth_user_id) {
       await assignInviteRelationships({
@@ -327,7 +598,15 @@ export default defineEventHandler(async (event) => {
     if (!committed) {
       await client.query('rollback')
     }
-    throw error
+    const inviteError = toInviteAcceptanceError(error)
+
+    if (inviteError.code === 'INTERNAL_ERROR') {
+      getRequestLogger(event).error('Invite acceptance failed.', {
+        error: serializeEmailError(error),
+      })
+    }
+
+    throw inviteError
   } finally {
     client.release()
   }

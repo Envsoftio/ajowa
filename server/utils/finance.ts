@@ -627,7 +627,7 @@ export const createFinanceTransaction = async (
   },
 ) => {
   await validateFinanceTransactionContext(client, input.societyId, input)
-  const status = input.submitForPosting === false ? 'DRAFT' : 'POSTED'
+  const initialStatus = input.submitForPosting === false ? 'DRAFT' : 'PENDING_REVIEW'
 
   const result = await client.query<{ id: string }>(
     `
@@ -644,10 +644,7 @@ export const createFinanceTransaction = async (
         transaction_date,
         amount,
         status,
-        created_by_user_id,
-        approved_by_user_id,
-        approved_at,
-        posted_at
+        created_by_user_id
       )
       values (
         $1,
@@ -662,10 +659,7 @@ export const createFinanceTransaction = async (
         $10,
         $11,
         $12::finance_lifecycle_status,
-        $13,
-        case when $12::finance_lifecycle_status = 'POSTED' then $13 else null end,
-        case when $12::finance_lifecycle_status = 'POSTED' then now() else null end,
-        case when $12::finance_lifecycle_status = 'POSTED' then now() else null end
+        $13::uuid
       )
       returning id
     `,
@@ -681,7 +675,7 @@ export const createFinanceTransaction = async (
       input.voucherNumber ?? null,
       input.transactionDate,
       roundMoney(input.amount),
-      status,
+      initialStatus,
       input.actorUserId,
     ],
   )
@@ -690,7 +684,24 @@ export const createFinanceTransaction = async (
     throw new AppError({ code: 'INTERNAL_ERROR', statusCode: 500, message: 'Transaction creation failed.' })
   }
 
-  return { id: transactionId, status }
+  if (input.submitForPosting !== false) {
+    await postJournalForTransaction(client, {
+      societyId: input.societyId,
+      transactionId,
+      transactionType: input.transactionType,
+      categoryId: input.categoryId,
+      bankAccountId: input.bankAccountId,
+      billingPeriodId: input.billingPeriodId ?? null,
+      transactionDate: input.transactionDate,
+      amount: input.amount,
+      description: input.description ?? input.title,
+      postedByUserId: input.actorUserId,
+    })
+
+    return { id: transactionId, status: 'POSTED' }
+  }
+
+  return { id: transactionId, status: initialStatus }
 }
 
 export const approveFinanceTransaction = async (
