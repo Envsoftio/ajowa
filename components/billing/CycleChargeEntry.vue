@@ -176,6 +176,54 @@ const formatNumber = (value: number) =>
 const formatUnit = (count: number, singular: string, plural = `${singular}s`) =>
   `${formatNumber(count)} ${count === 1 ? singular : plural}`
 
+type ApiErrorPayloadShape = {
+  message?: string
+  fieldErrors?: Record<string, string[]>
+  details?: {
+    fieldErrors?: Record<string, string[]>
+  }
+  data?: ApiErrorPayloadShape
+}
+
+const getFirstFieldErrorMessage = (payload?: ApiErrorPayloadShape | null) => {
+  const fieldErrors = payload?.fieldErrors ?? payload?.details?.fieldErrors
+  const firstFieldError = Object.entries(fieldErrors ?? {})[0]
+
+  if (!firstFieldError) return null
+
+  const [field, messages] = firstFieldError
+  const message = messages[0]
+
+  return message ? `${field}: ${message}` : null
+}
+
+const getApiErrorMessage = (
+  error: unknown,
+  fallback = 'Bill generation failed. Please review the details and try again.',
+) => {
+  const apiError = error as {
+    data?: ApiErrorPayloadShape
+    message?: string
+    statusMessage?: string
+  }
+  const payload = apiError.data?.data ?? apiError.data
+  const detail =
+    getFirstFieldErrorMessage(payload) ??
+    payload?.message ??
+    apiError.message ??
+    apiError.statusMessage
+
+  if (
+    !detail ||
+    /^(\[.*\]\s*)?fetch failed$/i.test(detail) ||
+    /^something went wrong\.?( please try again\.)?$/i.test(detail)
+  ) {
+    return fallback
+  }
+
+  return detail
+}
+
 const formatDate = (value: string | null | undefined) =>
   value
     ? new Date(`${value}T00:00:00`).toLocaleDateString('en-IN', {
@@ -1091,6 +1139,7 @@ const ensureCamRunPeriod = async (
       '/api/admin/billing/periods',
       {
         method: 'POST',
+        showErrorToast: false,
         body: {
           ...period,
           chargeType: periodChargeType.value,
@@ -1311,6 +1360,7 @@ const sendGeneratedBillNotifications = async (
     '/api/admin/billing/dues/send-bills',
     {
       method: 'POST',
+      showErrorToast: false,
       body: {
         dueIds,
         channels: billChannels.value,
@@ -1469,6 +1519,7 @@ const generateDues = async () => {
           `/api/admin/billing/periods/${periodId}/variable-charges`,
           {
             method: 'PUT',
+            showErrorToast: false,
             body: {
               chargeName: props.chargeName,
               chargeLabel: props.chargeLabel,
@@ -1502,6 +1553,7 @@ const generateDues = async () => {
           '/api/admin/billing/dues',
           {
             method: 'POST',
+            showErrorToast: false,
             body: {
               billingPeriodId: periodId,
               flatIds: group.entries.map((entry) => entry.flatId),
@@ -1595,10 +1647,19 @@ const generateDues = async () => {
 
       generationDialogVisible.value = false
     } catch (error) {
-      failActiveGenerationProgressStep(
-        'This backend step did not complete. Fix the reported error, then run generation again.',
+      const detail = getApiErrorMessage(
+        error,
+        'CAM bill generation stopped before completion. Please check the current step and try again.',
       )
-      throw error
+      failActiveGenerationProgressStep(
+        detail,
+      )
+      toast.add({
+        severity: 'error',
+        summary: 'CAM bill generation failed',
+        detail,
+        life: 15000,
+      })
     } finally {
       generating.value = false
     }
@@ -1617,6 +1678,7 @@ const generateDues = async () => {
     )
     const response = await api<GenerationResponse>('/api/admin/billing/dues', {
       method: 'POST',
+      showErrorToast: false,
       body: {
         billingPeriodId: selectedPeriod.value.id,
         flatIds: selectedFlatIds.value.length
@@ -1680,10 +1742,16 @@ const generateDues = async () => {
     )
     generationDialogVisible.value = false
   } catch (error) {
+    const detail = getApiErrorMessage(error)
     failActiveGenerationProgressStep(
-      'This backend step did not complete. Fix the reported error, then run generation again.',
+      detail,
     )
-    throw error
+    toast.add({
+      severity: 'error',
+      summary: 'Bill generation failed',
+      detail,
+      life: 15000,
+    })
   } finally {
     generating.value = false
   }

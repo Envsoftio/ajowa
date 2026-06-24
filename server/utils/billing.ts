@@ -1331,7 +1331,7 @@ export const generateMaintenanceBillPdf = async (
     const firstBankAccount = societyBankAccounts[0] ?? null
     const paymentContact = due.contact_phone ?? due.billing_contact_mobile ?? 'society office'
     const dueDay = getOrdinalDay(due.due_date)
-    const camInvoiceColumnWidths = [18, 222, 60, 60, 28, 92]
+    const camInvoiceColumnWidths = [16, 210, 56, 56, 26, 86]
     const camInvoiceTableWidth = camInvoiceColumnWidths.reduce((sum, width) => sum + width, 0)
     const remarksLines = [
       areaSqFt && ratePerSqFt
@@ -1378,7 +1378,7 @@ export const generateMaintenanceBillPdf = async (
         text: 'INVOICE',
         style: 'camInvoiceTitle',
         alignment: 'center',
-        margin: [0, 22, 0, 24],
+        margin: [0, 4, 0, 8],
       },
       {
         columns: [
@@ -1388,13 +1388,13 @@ export const generateMaintenanceBillPdf = async (
             table: {
               widths: camInvoiceColumnWidths,
               heights: (rowIndex: number) => {
-                if (rowIndex === 0) return 58
-                if (rowIndex >= 1 && rowIndex <= 5) return 26
-                if (rowIndex === 6) return 34
-                if (rowIndex === 7) return 270
-                if (rowIndex === 8) return 22
-                if (rowIndex === 9) return 56
-                if (rowIndex === 10) return 104
+                if (rowIndex === 0) return 50
+                if (rowIndex >= 1 && rowIndex <= 5) return 22
+                if (rowIndex === 6) return 24
+                if (rowIndex === 7) return 206
+                if (rowIndex === 8) return 20
+                if (rowIndex === 9) return 40
+                if (rowIndex === 10) return 96
                 return 20
               },
               body: [
@@ -1576,7 +1576,7 @@ export const generateMaintenanceBillPdf = async (
                   {
                     table: {
                       widths: ['*'],
-                      heights: [52],
+                      heights: [66],
                       body: [
                         [
                           {
@@ -1586,13 +1586,13 @@ export const generateMaintenanceBillPdf = async (
                                 ? [
                                     {
                                       image: invoiceStampImage,
-                                      fit: [120, 36],
+                                      fit: [132, 46],
                                       alignment: 'center',
-                                      margin: [0, 0, 0, 0],
+                                      margin: [0, 1, 0, 1],
                                     },
                                   ]
-                                : [{ text: '', margin: [0, 24, 0, 0] }]),
-                              { text: 'Authorised Signatory', style: 'camFooterText', alignment: 'right', margin: [0, 0, 6, 0] },
+                                : [{ text: 'Stamp / signature image unavailable', style: 'camFooterText', alignment: 'center', margin: [0, 14, 0, 12] }]),
+                              { text: 'Authorised Signatory', style: 'camFooterText', alignment: 'right', margin: [0, 0, 5, 0] },
                             ],
                           },
                         ],
@@ -1620,7 +1620,7 @@ export const generateMaintenanceBillPdf = async (
         text: 'This is a Computer Generated Invoice',
         style: 'camComputerGenerated',
         alignment: 'center',
-        margin: [0, 42, 0, 0],
+        margin: [0, 10, 0, 0],
       },
     ]
   }
@@ -1923,7 +1923,8 @@ export const generateMaintenanceBillPdf = async (
   }
 
   const docDefinition = {
-    pageMargins: [20, 18, 20, 18],
+    pageSize: 'A4',
+    pageMargins: [16, 10, 16, 10],
     content,
     styles: {
       brand: { fontSize: 13, color: '#111827', bold: true },

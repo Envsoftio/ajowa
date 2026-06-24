@@ -4,6 +4,10 @@ type FetchErrorPayload = ApiErrorPayload & {
   data?: ApiErrorPayload
 }
 
+type ApiFetchOptions<T> = NonNullable<Parameters<typeof $fetch<T>>[1]> & {
+  showErrorToast?: boolean
+}
+
 const formatFirstFieldError = (payload?: ApiErrorPayload) => {
   const fieldErrors =
     payload?.fieldErrors ??
@@ -24,15 +28,17 @@ export const useApi = () => {
   const toast = useToast()
   const requestHeaders = useRequestHeaders(['cookie'])
 
-  return async function apiFetch<T>(url: string, options?: Parameters<typeof $fetch<T>>[1]) {
+  return async function apiFetch<T>(url: string, options?: ApiFetchOptions<T>) {
+    const { showErrorToast = true, ...fetchOptions } = (options ?? {}) as ApiFetchOptions<T>
+
     try {
       return await $fetch<T>(url, {
         credentials: 'include',
         headers: {
           ...requestHeaders,
-          ...options?.headers,
+          ...fetchOptions.headers,
         } as HeadersInit,
-        ...options,
+        ...fetchOptions,
       })
     } catch (error) {
       const fetchError = error as {
@@ -52,12 +58,14 @@ export const useApi = () => {
         return Promise.reject(error)
       }
 
-      toast.add({
-        severity: 'error',
-        summary: 'Request failed',
-        detail,
-        life: 10000,
-      })
+      if (showErrorToast) {
+        toast.add({
+          severity: 'error',
+          summary: 'Request failed',
+          detail,
+          life: 10000,
+        })
+      }
 
       return Promise.reject(error)
     }
