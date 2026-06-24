@@ -678,6 +678,8 @@ export default defineEventHandler(async (event) => {
           id: acceptedUser.authUserId,
           email: acceptedUser.email,
           name: acceptedUser.fullName,
+          societyId: invite.society_id,
+          client,
         })
 
         if (verificationEmail.delivered) {

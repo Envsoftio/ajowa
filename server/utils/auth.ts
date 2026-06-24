@@ -836,8 +836,13 @@ export const sendVerificationEmailToUser = async (user: {
   id: string
   email: string
   name: string
+  societyId?: string | null
+  client?: PoolClient | null
 }) => {
-  const appState = await loadAppUserByAuthUserId(user.id)
+  const appState = user.societyId
+    ? null
+    : await loadAppUserByAuthUserId(user.id)
+  const societyId = user.societyId ?? appState?.user.society_id
   const runtimeConfig = getValidatedRuntimeConfig(useRuntimeConfig())
   const token = await createEmailVerificationToken(
     runtimeConfig.betterAuthSecret,
@@ -857,7 +862,8 @@ export const sendVerificationEmailToUser = async (user: {
       actionUrl,
       expiresLabel: 'in 1 hour',
     },
-    ...(appState ? { societyId: appState.user.society_id } : {}),
+    ...(societyId ? { societyId } : {}),
+    ...(user.client ? { client: user.client } : {}),
   })
 }
 
