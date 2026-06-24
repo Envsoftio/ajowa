@@ -194,6 +194,12 @@ export default defineEventHandler(async (event) => {
     where.push(`c.billing_period_id = $${values.length}`)
   }
 
+  const chargeTypeFilter = query.filters.chargeType?.[0]
+  if (chargeTypeFilter && ['GENERAL', 'CAM', 'DG_SET'].includes(chargeTypeFilter)) {
+    values.push(chargeTypeFilter)
+    where.push(`c.billing_period_charge_type = $${values.length}`)
+  }
+
   const flatFilter = query.filters.flatId?.[0]
   if (flatFilter) {
     values.push(flatFilter)

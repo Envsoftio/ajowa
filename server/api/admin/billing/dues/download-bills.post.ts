@@ -7,9 +7,13 @@ import { AppError } from '~/server/utils/errors'
 import { generateMaintenanceBillPdf, todayDate } from '~/server/utils/billing'
 import { createZipBuffer } from '~/server/utils/zip'
 
+const billingChargeTypeSchema = z.enum(['GENERAL', 'CAM', 'DG_SET'])
+
 const downloadFiltersSchema = z.object({
   search: z.string().trim().max(200).optional(),
   billingPeriodId: z.string().uuid().optional(),
+  chargeType: billingChargeTypeSchema.optional(),
+  chargeTypes: z.array(billingChargeTypeSchema).max(3).optional(),
   status: z.enum(['OPEN', 'PARTIALLY_PAID', 'PAID', 'OVERDUE', 'WAIVED', 'CANCELLED']).optional(),
   balance: z.enum(['outstanding', 'paid']).optional(),
   overdue: z.union([z.boolean(), z.literal('true'), z.literal('false')]).optional(),
@@ -87,6 +91,16 @@ const getFilteredDueIds = async (
   if (filters.billingPeriodId) {
     values.push(filters.billingPeriodId)
     where.push(`md.billing_period_id = $${values.length}`)
+  }
+
+  const chargeTypes = Array.from(new Set([
+    ...(filters.chargeType ? [filters.chargeType] : []),
+    ...(filters.chargeTypes ?? []),
+  ]))
+
+  if (chargeTypes.length > 0) {
+    values.push(chargeTypes)
+    where.push(`bp.charge_type::text = any($${values.length}::text[])`)
   }
 
   if (filters.status) {

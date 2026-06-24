@@ -55,6 +55,7 @@ const query = reactive({
   pageSize: 50,
   search: '',
   billingPeriodId: '',
+  chargeType: '',
   status: '',
   balance: '',
   overdue: '',
@@ -68,6 +69,7 @@ const buildDueQuery = (overrides: Partial<typeof query> = {}) => ({
   pageSize: overrides.pageSize ?? query.pageSize,
   search: query.search || undefined,
   billingPeriodId: query.billingPeriodId || undefined,
+  chargeType: query.chargeType || undefined,
   status: query.status || undefined,
   balance: query.balance || undefined,
   overdue: query.overdue || undefined,
@@ -127,6 +129,13 @@ const overdueOptions = [
   { label: 'Overdue only', value: 'true' },
 ]
 
+const chargeTypeOptions = [
+  { label: 'All bill types', value: '' },
+  { label: 'CAM', value: 'CAM' },
+  { label: 'DG Set', value: 'DG_SET' },
+  { label: 'General', value: 'GENERAL' },
+]
+
 const advanceOptions = [
   { label: 'All advance states', value: '' },
   { label: 'CAM advance covered', value: 'covered' },
@@ -166,6 +175,11 @@ const getRecordPaymentRoute = (due: MaintenanceDue) => ({
 
 const isCamDue = (due: MaintenanceDue) => due.billingPeriodChargeType === 'CAM'
 const isCoverageRow = (due: MaintenanceDue) => Boolean(due.isAdvanceCoverageRow)
+const billTypeLabel = (due: MaintenanceDue) => {
+  if (due.billingPeriodChargeType === 'CAM') return 'CAM'
+  if (due.billingPeriodChargeType === 'DG_SET') return 'DG Set'
+  return 'General'
+}
 const camAdvanceAdjustmentAmount = (due: MaintenanceDue) =>
   due.chargeBreakdown.reduce((sum, item) => {
     const adjustment = Number(item.camAdvanceAdjustmentAmount ?? 0)
@@ -269,6 +283,7 @@ const hasActiveFilters = computed(
   () =>
     Boolean(query.search) ||
     Boolean(query.billingPeriodId) ||
+    Boolean(query.chargeType) ||
     Boolean(query.status) ||
     Boolean(query.balance) ||
     Boolean(query.overdue) ||
@@ -566,6 +581,7 @@ const sendBills = async () => {
 const buildBillPdfDownloadFilters = () => ({
   search: query.search || undefined,
   billingPeriodId: query.billingPeriodId || undefined,
+  chargeType: query.chargeType || undefined,
   status: query.status || undefined,
   balance: query.balance || undefined,
   overdue: query.overdue || undefined,
@@ -587,10 +603,21 @@ const downloadVisibleBillPdfs = () => {
   })
 }
 
+const downloadCamAndDgBillPdfs = () => {
+  void downloadBillPdfs({
+    filters: {
+      chargeTypes: ['CAM', 'DG_SET'],
+      sortBy: query.sortBy,
+      sortDirection: query.sortDirection,
+    },
+  })
+}
+
 const resetFilters = () => {
   query.page = 1
   query.search = ''
   query.billingPeriodId = ''
+  query.chargeType = ''
   query.status = ''
   query.balance = ''
   query.overdue = ''
@@ -601,6 +628,7 @@ watch(
   () => [
     query.search,
     query.billingPeriodId,
+    query.chargeType,
     query.status,
     query.balance,
     query.overdue,
@@ -676,15 +704,32 @@ watch(
           <Button
             :label="
               selectedPdfCount > 0
-                ? `Download ${selectedPdfCount} PDF${selectedPdfCount === 1 ? '' : 's'}`
-                : 'Download PDFs'
+                ? `Download selected ${selectedPdfCount} PDF${selectedPdfCount === 1 ? '' : 's'}`
+                : 'Download filtered PDFs'
             "
             icon="pi pi-download"
             severity="secondary"
             outlined
+            :title="
+              selectedPdfCount > 0
+                ? 'Download PDFs for the selected dues.'
+                : hasActiveFilters
+                  ? 'Download PDFs for dues matching the current filters.'
+                  : 'Choose a filter first, or select dues to download.'
+            "
             :loading="downloadingBillPdfs"
-            :disabled="totalRecords === 0 && selectedPdfCount === 0"
+            :disabled="selectedPdfCount === 0 && (!hasActiveFilters || totalRecords === 0)"
             @click="downloadVisibleBillPdfs"
+          />
+          <Button
+            label="Download all CAM + DG PDFs"
+            icon="pi pi-download"
+            severity="secondary"
+            outlined
+            title="Download every CAM and DG Set bill PDF, ignoring current filters."
+            :loading="downloadingBillPdfs"
+            :disabled="downloadingBillPdfs"
+            @click="downloadCamAndDgBillPdfs"
           />
           <Button
             v-if="canManageDues"
@@ -813,6 +858,21 @@ watch(
           </label>
           <label>
             <span class="field-label">
+              Bill type
+              <AppHelpIcon
+                text="Filter dues by CAM, DG Set, or general billing periods."
+              />
+            </span>
+            <Select
+              v-model="query.chargeType"
+              :options="chargeTypeOptions"
+              option-label="label"
+              option-value="value"
+              placeholder="Bill type"
+            />
+          </label>
+          <label>
+            <span class="field-label">
               Status
               <AppHelpIcon
                 text="Filter by due lifecycle, such as open, paid, overdue, or waived."
@@ -902,7 +962,9 @@ watch(
         <Column field="billingPeriodLabel" header="Period">
           <template #body="{ data: row }">
             <span>{{ row.billingPeriodLabel }}</span>
-            <p class="table-muted">Due {{ formatDate(row.dueDate) }}</p>
+            <p class="table-muted">
+              {{ billTypeLabel(row) }} · Due {{ formatDate(row.dueDate) }}
+            </p>
           </template>
         </Column>
         <Column header="Advance" style="min-width: 13rem">
@@ -1039,7 +1101,8 @@ watch(
             <div>
               <h3>{{ due.blockName }} {{ due.flatNumber }}</h3>
               <p>
-                {{ due.billingPeriodLabel }} · Due {{ formatDate(due.dueDate) }}
+                {{ due.billingPeriodLabel }} · {{ billTypeLabel(due) }} · Due
+                {{ formatDate(due.dueDate) }}
               </p>
             </div>
             <div>

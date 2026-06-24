@@ -1,6 +1,8 @@
 type BillPdfZipDownloadFilters = {
   search?: string | undefined
   billingPeriodId?: string | undefined
+  chargeType?: string | undefined
+  chargeTypes?: string[] | undefined
   status?: string | undefined
   balance?: string | undefined
   overdue?: string | undefined
