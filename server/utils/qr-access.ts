@@ -486,7 +486,7 @@ const enqueueAccessNotification = async (
     priority: 'HIGH',
     title: content.title,
     body: content.body,
-    payload: { path: '/my/qr' },
+    payload: { path: '/my/qr', deepLinkUrl: '/my/qr' },
     idempotencyKey: `${eventKey}:${content.sourceId}`,
     users: users.rows.map(mapNotificationUser),
   })

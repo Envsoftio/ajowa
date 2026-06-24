@@ -1,6 +1,17 @@
 {{title}}
 
-{{body}}
-{{#if actionUrl}}
-{{actionLabel}}: {{actionUrl}}
+Hello,
+
+{{body}} You can open AJOWA to view or download the receipt whenever needed.
+
+Summary:
+{{#if receiptNumber}}Receipt: {{receiptNumber}}
+{{/if}}{{#if amount}}Amount: Rs. {{amount}}
+{{/if}}{{#if flatLabel}}Flat: {{flatLabel}}
 {{/if}}
+{{#if actionUrl}}
+{{#if actionLabel}}{{actionLabel}}{{else}}Open in AJOWA{{/if}}: {{actionUrl}}
+{{/if}}
+
+Thank you,
+AJOWA Society Management System

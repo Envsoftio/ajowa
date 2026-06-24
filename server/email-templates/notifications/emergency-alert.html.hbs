@@ -1,3 +1,31 @@
-<h1>{{title}}</h1>
-<p>{{body}}</p>
-{{#if actionUrl}}<p><a href="{{actionUrl}}">{{actionLabel}}</a></p>{{/if}}
+{{> header title=title eyebrow="Emergency Alert" accentColor="#b42318" subtitle="Please review this message immediately."}}
+
+<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin: 0 0 24px; border: 1px solid #fecaca; border-radius: 8px; background: #fff5f5;">
+  <tr>
+    <td style="padding: 18px 20px;">
+      <p style="margin: 0 0 8px; color: #991b1b; font-size: 12px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;">
+        Immediate attention
+      </p>
+      <p style="margin: 0; color: #7f1d1d; font-size: 16px; font-weight: 700; line-height: 1.7;">
+        {{body}}
+      </p>
+    </td>
+  </tr>
+</table>
+
+<p style="margin: 0 0 22px; color: #52606d; font-size: 14px; line-height: 1.7;">
+  Follow the instructions from society management and keep this message available until the situation is resolved.
+</p>
+
+{{#if actionUrl}}
+  <p style="margin: 28px 0 0;">
+    <a
+      href="{{actionUrl}}"
+      style="display: inline-block; padding: 14px 22px; border-radius: 8px; background: #b42318; color: #ffffff; font-size: 14px; font-weight: 700; text-decoration: none;"
+    >
+      {{#if actionLabel}}{{actionLabel}}{{else}}Open in AJOWA{{/if}}
+    </a>
+  </p>
+{{/if}}
+
+{{> footer}}

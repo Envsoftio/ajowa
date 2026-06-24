@@ -9,6 +9,8 @@ const email = ref('')
 const loading = ref(false)
 const sent = ref(false)
 const toast = useToast()
+const config = useRuntimeConfig()
+const resetPasswordUrl = computed(() => new URL('/reset-password', config.public.appUrl).toString())
 
 const submit = async () => {
   loading.value = true
@@ -18,7 +20,7 @@ const submit = async () => {
       method: 'POST',
       body: {
         email: email.value,
-        redirectTo: `${window.location.origin}/reset-password`,
+        redirectTo: resetPasswordUrl.value,
       },
     })
     sent.value = true

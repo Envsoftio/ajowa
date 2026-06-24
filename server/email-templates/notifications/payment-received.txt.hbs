@@ -1,6 +1,17 @@
 {{title}}
 
+Hello,
+
 {{body}}
-{{#if actionUrl}}
-{{actionLabel}}: {{actionUrl}}
+
+Summary:
+{{#if amount}}Amount: Rs. {{amount}}
+{{/if}}{{#if receiptNumber}}Receipt: {{receiptNumber}}
+{{/if}}{{#if flatLabel}}Flat: {{flatLabel}}
 {{/if}}
+{{#if actionUrl}}
+{{#if actionLabel}}{{actionLabel}}{{else}}Open in AJOWA{{/if}}: {{actionUrl}}
+{{/if}}
+
+Thank you,
+AJOWA Society Management System

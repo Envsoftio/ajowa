@@ -1,3 +1,48 @@
-<h1>{{title}}</h1>
-<p>{{body}}</p>
-{{#if actionUrl}}<p><a href="{{actionUrl}}">{{actionLabel}}</a></p>{{/if}}
+{{> header title=title eyebrow="Payment Update" subtitle="Your society payment status has been updated."}}
+
+<p style="margin: 0 0 18px; color: #52606d; font-size: 15px; line-height: 1.7;">
+  Hello,
+</p>
+<p style="margin: 0 0 20px; color: #52606d; font-size: 15px; line-height: 1.7;">
+  {{body}}
+</p>
+
+<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin: 24px 0; border: 1px solid #d9e5e2; border-radius: 8px; background: #f8fbfa;">
+  {{#if amount}}
+    <tr>
+      <td colspan="2" style="padding: 20px 22px 14px;">
+        <p style="margin: 0 0 6px; color: #607080; font-size: 12px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;">
+          Amount
+        </p>
+        <p style="margin: 0; color: #0f766e; font-size: 28px; font-weight: 700; line-height: 1.2;">
+          &#8377;{{amount}}
+        </p>
+      </td>
+    </tr>
+  {{/if}}
+  {{#if receiptNumber}}
+    <tr>
+      <td style="padding: 12px 22px; border-top: 1px solid #d9e5e2; color: #607080; font-size: 13px;">Receipt</td>
+      <td align="right" style="padding: 12px 22px; border-top: 1px solid #d9e5e2; color: #102033; font-size: 14px; font-weight: 700;">{{receiptNumber}}</td>
+    </tr>
+  {{/if}}
+  {{#if flatLabel}}
+    <tr>
+      <td style="padding: 12px 22px; border-top: 1px solid #d9e5e2; color: #607080; font-size: 13px;">Flat</td>
+      <td align="right" style="padding: 12px 22px; border-top: 1px solid #d9e5e2; color: #102033; font-size: 14px; font-weight: 700;">{{flatLabel}}</td>
+    </tr>
+  {{/if}}
+</table>
+
+{{#if actionUrl}}
+  <p style="margin: 28px 0 0;">
+    <a
+      href="{{actionUrl}}"
+      style="display: inline-block; padding: 14px 22px; border-radius: 8px; background: #0f766e; color: #ffffff; font-size: 14px; font-weight: 700; text-decoration: none;"
+    >
+      {{#if actionLabel}}{{actionLabel}}{{else}}Open in AJOWA{{/if}}
+    </a>
+  </p>
+{{/if}}
+
+{{> footer}}

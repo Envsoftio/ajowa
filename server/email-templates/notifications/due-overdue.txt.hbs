@@ -1,6 +1,20 @@
 {{title}}
 
+Hello,
+
 {{body}}
-{{#if actionUrl}}
-{{actionLabel}}: {{actionUrl}}
+
+Summary:
+{{#if flatLabel}}Flat: {{flatLabel}}
+{{/if}}{{#if billingPeriodLabel}}Billing period: {{billingPeriodLabel}}
+{{/if}}{{#if dueDate}}Due date: {{dueDate}}
+{{/if}}{{#if balanceAmount}}Overdue amount: Rs. {{balanceAmount}}
 {{/if}}
+
+A PDF copy of the bill is attached for your records. Please complete the payment at the earliest to avoid additional follow-up from the society office.
+{{#if actionUrl}}
+{{#if actionLabel}}{{actionLabel}}{{else}}Open in AJOWA{{/if}}: {{actionUrl}}
+{{/if}}
+
+Thank you,
+AJOWA Society Management System

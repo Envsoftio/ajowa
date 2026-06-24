@@ -18,6 +18,7 @@ type EventRow = {
   sent_count: string
   failed_count: string
   read_count: string
+  channel_statuses: string
 }
 
 export default defineEventHandler(async (event) => {
@@ -53,7 +54,28 @@ export default defineEventHandler(async (event) => {
           count(nj.id)::text as job_count,
           count(nj.id) filter (where nj.status in ('SENT', 'DELIVERED', 'READ'))::text as sent_count,
           count(nj.id) filter (where nj.status = 'FAILED')::text as failed_count,
-          count(nj.id) filter (where nj.status = 'READ')::text as read_count
+          count(nj.id) filter (where nj.status = 'READ')::text as read_count,
+          coalesce((
+            select jsonb_agg(
+              jsonb_build_object(
+                'channel', channel_stats.channel,
+                'status', channel_stats.status,
+                'count', channel_stats.count,
+                'failureReason', channel_stats.failure_reason
+              )
+              order by channel_stats.channel, channel_stats.status
+            )
+            from (
+              select
+                status_jobs.channel::text as channel,
+                status_jobs.status::text as status,
+                count(*)::int as count,
+                max(status_jobs.failure_reason) filter (where status_jobs.failure_reason is not null) as failure_reason
+              from notification_jobs status_jobs
+              where status_jobs.notification_event_id = ne.id
+              group by status_jobs.channel, status_jobs.status
+            ) channel_stats
+          ), '[]'::jsonb)::text as channel_statuses
         from notification_events ne
         left join notification_jobs nj on nj.notification_event_id = ne.id
         where ${where.join(' and ')}
@@ -89,6 +111,12 @@ export default defineEventHandler(async (event) => {
       sentCount: Number(row.sent_count),
       failedCount: Number(row.failed_count),
       readCount: Number(row.read_count),
+      channelStatuses: JSON.parse(row.channel_statuses) as Array<{
+        channel: string
+        status: string
+        count: number
+        failureReason: string | null
+      }>,
     })),
     total: Number(total.rows[0]?.total ?? 0),
     page: query.page,

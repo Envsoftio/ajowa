@@ -279,19 +279,31 @@ export const getResolvedEmailIntegrationStatus = async (
   return { enabled: true, reason: null }
 }
 
-export const buildAppUrl = (pathname: string, params?: Record<string, string>) => {
+const getRuntimeAppUrl = () => {
   const runtimeConfig = getValidatedRuntimeConfig(useRuntimeConfig())
-  const url = new URL(pathname, runtimeConfig.appUrl)
+  return new URL(runtimeConfig.appUrl)
+}
+
+export const buildAppUrl = (pathname: string, params?: Record<string, string>) => {
+  const appUrl = getRuntimeAppUrl()
+  const url = new URL(pathname, appUrl)
 
   for (const [key, value] of Object.entries(params ?? {})) {
     url.searchParams.set(key, value)
   }
 
-  if (url.origin !== new URL(runtimeConfig.appUrl).origin) {
+  if (url.origin !== appUrl.origin) {
     throw new Error('Invalid application URL origin for auth email.')
   }
 
   return url.toString()
+}
+
+export const normalizeAppActionUrl = (actionUrl: string) => {
+  const appUrl = getRuntimeAppUrl()
+  const sourceUrl = new URL(actionUrl, appUrl)
+
+  return new URL(`${sourceUrl.pathname}${sourceUrl.search}${sourceUrl.hash}`, appUrl).toString()
 }
 
 export const renderAuthEmailTemplate = async (

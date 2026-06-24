@@ -1,6 +1,18 @@
 {{title}}
 
+Hello,
+
 {{body}}
-{{#if actionUrl}}
-{{actionLabel}}: {{actionUrl}}
+
+Summary:
+{{#if ticketNumber}}Ticket: {{ticketNumber}}
+{{/if}}{{#unless ticketNumber}}{{#if requestNumber}}Request: {{requestNumber}}
+{{/if}}{{/unless}}{{#if status}}Status: {{status}}
+{{/if}}{{#if ticketTitle}}Subject: {{ticketTitle}}
 {{/if}}
+{{#if actionUrl}}
+{{#if actionLabel}}{{actionLabel}}{{else}}Open in AJOWA{{/if}}: {{actionUrl}}
+{{/if}}
+
+Thank you,
+AJOWA Society Management System

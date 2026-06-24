@@ -1,8 +1,8 @@
 import process from 'node:process'
 import Aura from '@primevue/themes/aura'
 
-const deploymentUrl = process.env.URL ?? process.env.DEPLOY_PRIME_URL ?? process.env.DEPLOY_URL
-const appUrl = process.env.APP_URL ?? deploymentUrl ?? 'http://localhost:3000'
+const defaultAppUrl = 'https://ajowa.in'
+const appUrl = process.env.APP_URL ?? process.env.NUXT_PUBLIC_APP_URL ?? defaultAppUrl
 const publicAppUrl = process.env.NUXT_PUBLIC_APP_URL ?? appUrl
 
 export default defineNuxtConfig({

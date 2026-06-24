@@ -1,15 +1,32 @@
 import { hashPassword } from 'better-auth/crypto'
 import { z } from 'zod'
-import { createApiSuccess, readJsonBody, validateInput } from '~/server/utils/api'
-import { createInviteToken, requireRole } from '~/server/utils/auth'
+import {
+  createApiSuccess,
+  readJsonBody,
+  validateInput,
+} from '~/server/utils/api'
+import {
+  createInviteExpiresAt,
+  createInviteToken,
+  requireRole,
+} from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
 import { buildAppUrl } from '~/server/utils/email'
 import { AppError } from '~/server/utils/errors'
-import { sendInviteEmailSafely, type PendingInviteEmail } from '~/server/utils/invite-email'
+import {
+  sendInviteEmailSafely,
+  type PendingInviteEmail,
+} from '~/server/utils/invite-email'
 import { readUuidParam, writeMasterAudit } from '~/server/utils/master-data'
 
 const actionSchema = z.object({
-  action: z.enum(['CREATE_CREDENTIALS', 'SEND_INVITE', 'RESEND_INVITE', 'DEACTIVATE_LOGIN', 'RESET_ONBOARDING']),
+  action: z.enum([
+    'CREATE_CREDENTIALS',
+    'SEND_INVITE',
+    'RESEND_INVITE',
+    'DEACTIVATE_LOGIN',
+    'RESET_ONBOARDING',
+  ]),
   password: z.string().min(12).optional(),
 })
 
@@ -57,7 +74,8 @@ export default defineEventHandler(async (event) => {
         throw new AppError({
           code: 'VALIDATION_ERROR',
           statusCode: 422,
-          message: 'Add a real email and auth account before enabling login actions for this resident.',
+          message:
+            'Add a real email and auth account before enabling login actions for this resident.',
         })
       }
 
@@ -69,7 +87,9 @@ export default defineEventHandler(async (event) => {
 
     if (body.action === 'CREATE_CREDENTIALS') {
       const loginIdentity = requireLoginIdentity()
-      const passwordHash = await hashPassword(body.password ?? `Ajowa@${loginIdentity.email.slice(0, 4)}2026`)
+      const passwordHash = await hashPassword(
+        body.password ?? `Ajowa@${loginIdentity.email.slice(0, 4)}2026`,
+      )
 
       await client.query(
         `
@@ -119,7 +139,11 @@ export default defineEventHandler(async (event) => {
     if (body.action === 'SEND_INVITE' || body.action === 'RESEND_INVITE') {
       const loginIdentity = requireLoginIdentity()
       const { token, tokenHash } = createInviteToken()
-      const flatResult = await client.query<{ flat_id: string; label: string; relationship_type: string }>(
+      const flatResult = await client.query<{
+        flat_id: string
+        label: string
+        relationship_type: string
+      }>(
         `
           select
             fr.flat_id,
@@ -144,7 +168,7 @@ export default defineEventHandler(async (event) => {
         )
       }
 
-      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+      const expiresAt = createInviteExpiresAt()
       const inviteUrl = buildAppUrl('/accept-invite', { token })
       await client.query(
         `
@@ -191,10 +215,16 @@ export default defineEventHandler(async (event) => {
           title: 'Accept your AJOWA invite',
           name: resident.full_name,
           actionUrl: inviteUrl,
-          expiresLabel: expiresAt.toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }),
+          expiresLabel: expiresAt.toLocaleString('en-IN', {
+            dateStyle: 'medium',
+            timeStyle: 'short',
+          }),
           inviterName: authMe.user.fullName,
           roleLabel: resident.role.replace('_', ' ').toLowerCase(),
-          details: flatResult.rows.length > 0 ? `Assigned flats: ${flatResult.rows.map((item) => item.label).join(', ')}.` : 'Finish onboarding to activate access.',
+          details:
+            flatResult.rows.length > 0
+              ? `Assigned flats: ${flatResult.rows.map((item) => item.label).join(', ')}.`
+              : 'Finish onboarding to activate access.',
         },
       }
     }
@@ -207,7 +237,9 @@ export default defineEventHandler(async (event) => {
       action: 'STATE_CHANGED',
       eventKey: `residents.${body.action.toLowerCase()}`,
       afterState: { action: body.action },
-      relatedEntities: [{ entityTable: 'users', entityId: id, entityLabel: resident.full_name }],
+      relatedEntities: [
+        { entityTable: 'users', entityId: id, entityLabel: resident.full_name },
+      ],
       targetUserId: id,
     })
 

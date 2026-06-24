@@ -1,3 +1,34 @@
-<h1>{{title}}</h1>
-<p>{{body}}</p>
-{{#if actionUrl}}<p><a href="{{actionUrl}}">{{actionLabel}}</a></p>{{/if}}
+{{> header title=title eyebrow="Gate Access" accentColor="#b45309" subtitle="Your gate QR access needs attention."}}
+
+<p style="margin: 0 0 18px; color: #52606d; font-size: 15px; line-height: 1.7;">
+  Hello,
+</p>
+<p style="margin: 0 0 20px; color: #52606d; font-size: 15px; line-height: 1.7;">
+  {{body}}
+</p>
+
+<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin: 24px 0; border: 1px solid #fed7aa; border-radius: 8px; background: #fff7ed;">
+  <tr>
+    <td style="padding: 16px 18px;">
+      <p style="margin: 0 0 6px; color: #9a3412; font-size: 12px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;">
+        Access unavailable
+      </p>
+      <p style="margin: 0; color: #7c2d12; font-size: 14px; line-height: 1.7;">
+        Check your AJOWA account for pending dues or contact the society office if you believe this update is incorrect.
+      </p>
+    </td>
+  </tr>
+</table>
+
+{{#if actionUrl}}
+  <p style="margin: 28px 0 0;">
+    <a
+      href="{{actionUrl}}"
+      style="display: inline-block; padding: 14px 22px; border-radius: 8px; background: #b45309; color: #ffffff; font-size: 14px; font-weight: 700; text-decoration: none;"
+    >
+      {{#if actionLabel}}{{actionLabel}}{{else}}Open in AJOWA{{/if}}
+    </a>
+  </p>
+{{/if}}
+
+{{> footer}}

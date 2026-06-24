@@ -1,11 +1,18 @@
 import { createApiSuccess, readJsonBody } from '~/server/utils/api'
-import { createInviteToken, requireRole } from '~/server/utils/auth'
+import {
+  createInviteExpiresAt,
+  createInviteToken,
+  requireRole,
+} from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
 import { buildAppUrl } from '~/server/utils/email'
 import { hashPassword } from 'better-auth/crypto'
 import type { PoolClient } from 'pg'
 import { AppError } from '~/server/utils/errors'
-import { sendInviteEmailSafely, type PendingInviteEmail } from '~/server/utils/invite-email'
+import {
+  sendInviteEmailSafely,
+  type PendingInviteEmail,
+} from '~/server/utils/invite-email'
 import {
   ensureResidentRelationshipsAreValid,
   residentSchema,
@@ -112,7 +119,7 @@ const insertInviteIfRequested = async ({
   flatLabels: string[]
 }): Promise<PendingInviteEmail> => {
   const { token, tokenHash } = createInviteToken()
-  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+  const expiresAt = createInviteExpiresAt()
   const inviteUrl = buildAppUrl('/accept-invite', { token })
 
   await client.query(
@@ -169,10 +176,16 @@ const insertInviteIfRequested = async ({
       title: 'Accept your AJOWA invite',
       name: fullName,
       actionUrl: inviteUrl,
-      expiresLabel: expiresAt.toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }),
+      expiresLabel: expiresAt.toLocaleString('en-IN', {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+      }),
       inviterName: 'AJOWA Admin',
       roleLabel: role.replace('_', ' ').toLowerCase(),
-      details: flatLabels.length > 0 ? `Assigned flats: ${flatLabels.join(', ')}.` : 'Complete onboarding to activate access.',
+      details:
+        flatLabels.length > 0
+          ? `Assigned flats: ${flatLabels.join(', ')}.`
+          : 'Complete onboarding to activate access.',
     },
   }
 }
@@ -252,7 +265,9 @@ export default defineEventHandler(async (event) => {
         body.fullName,
         body.email,
         body.mobileNumber,
-        body.isWhatsappSameAsMobile ? body.mobileNumber : (body.whatsappNumber ?? null),
+        body.isWhatsappSameAsMobile
+          ? body.mobileNumber
+          : (body.whatsappNumber ?? null),
         body.isWhatsappSameAsMobile,
         body.profileImagePath ?? null,
         body.canLogin,
@@ -325,12 +340,19 @@ export default defineEventHandler(async (event) => {
       )
     }
 
-    await recomputeUserAccessForActiveBillingPeriods(client, authMe.user.societyId, [userId])
+    await recomputeUserAccessForActiveBillingPeriods(
+      client,
+      authMe.user.societyId,
+      [userId],
+    )
 
     await seedPasswordCredential(client, authUserId, body.email)
 
     if (body.sendInvite) {
-      const flatLabelResult = await client.query<{ flat_id: string; label: string }>(
+      const flatLabelResult = await client.query<{
+        flat_id: string
+        label: string
+      }>(
         `
           select f.id as flat_id, concat(b.name, ' ', f.flat_number) as label
           from flats f
@@ -366,7 +388,9 @@ export default defineEventHandler(async (event) => {
         ...body,
         authUserId,
       },
-      relatedEntities: [{ entityTable: 'users', entityId: userId, entityLabel: body.fullName }],
+      relatedEntities: [
+        { entityTable: 'users', entityId: userId, entityLabel: body.fullName },
+      ],
       targetUserId: userId,
     })
 

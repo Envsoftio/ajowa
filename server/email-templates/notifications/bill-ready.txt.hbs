@@ -1,8 +1,20 @@
 {{title}}
 
+Hello,
+
 {{body}}
+
+Summary:
+{{#if flatLabel}}Flat: {{flatLabel}}
+{{/if}}{{#if billingPeriodLabel}}Billing period: {{billingPeriodLabel}}
+{{/if}}{{#if dueDate}}Due date: {{dueDate}}
+{{/if}}{{#if balanceAmount}}Amount payable: Rs. {{balanceAmount}}
+{{/if}}
 
 The PDF bill is attached to this email for your records.
 {{#if actionUrl}}
-{{actionLabel}}: {{actionUrl}}
+{{#if actionLabel}}{{actionLabel}}{{else}}Open in AJOWA{{/if}}: {{actionUrl}}
 {{/if}}
+
+Thank you,
+AJOWA Society Management System

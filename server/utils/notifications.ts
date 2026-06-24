@@ -85,6 +85,7 @@ type DueNotificationRow = {
   flat_id: string
   flat_number: string
   block_name: string
+  due_date: string
   balance_amount: string
   user_id: string
   email: string | null
@@ -510,7 +511,7 @@ const applyUserNotificationPreferences = async (
 }
 
 const getEmailAttachmentsForJob = async (job: ClaimedJobRow) => {
-  if (job.event_key !== 'maintenance_due.bill') {
+  if (!['maintenance_due.bill', 'maintenance_due.reminder', 'maintenance_due.overdue'].includes(job.event_key)) {
     return undefined
   }
 
@@ -519,7 +520,10 @@ const getEmailAttachmentsForJob = async (job: ClaimedJobRow) => {
     return undefined
   }
 
-  const bill = await generateMaintenanceBillPdf(dueId)
+  const bill = await generateMaintenanceBillPdf(dueId, {
+    societyId: job.society_id,
+    isStaff: true,
+  })
 
   return [
     {
@@ -528,6 +532,20 @@ const getEmailAttachmentsForJob = async (job: ClaimedJobRow) => {
       contentType: 'application/pdf',
     },
   ]
+}
+
+const getEmailActionUrlForJob = (job: ClaimedJobRow) => {
+  const deepLinkUrl = typeof job.payload.deepLinkUrl === 'string' ? job.payload.deepLinkUrl : null
+
+  if (!deepLinkUrl) {
+    return undefined
+  }
+
+  try {
+    return new URL(deepLinkUrl).toString()
+  } catch {
+    return buildAppUrl(deepLinkUrl)
+  }
 }
 
 export const resolveNotificationAudience = async (
@@ -782,10 +800,14 @@ export const claimNotificationJobs = async (
   input: {
     limit?: number
     workerId?: string
+    societyId?: string
+    eventId?: string
+    lockTimeoutMinutes?: number
   } = {},
 ) => {
   const workerId = input.workerId ?? `worker-${randomUUID()}`
   const limit = Math.min(Math.max(input.limit ?? 50, 1), 250)
+  const lockTimeoutMinutes = Math.min(Math.max(input.lockTimeoutMinutes ?? 10, 1), 60)
 
   const result = await client.query<ClaimedJobRow>(
     `
@@ -793,10 +815,21 @@ export const claimNotificationJobs = async (
         select nj.id
         from notification_jobs nj
         inner join notification_events ne on ne.id = nj.notification_event_id
-        where nj.status in ('QUEUED', 'RETRYING')
+        where (
+            nj.status in ('QUEUED', 'RETRYING')
+            or (
+              nj.status = 'PROCESSING'
+              and nj.locked_at < now() - ($5::integer * interval '1 minute')
+            )
+          )
+          and ($3::uuid is null or ne.society_id = $3::uuid)
+          and ($4::uuid is null or ne.id = $4::uuid)
           and coalesce(nj.scheduled_for, ne.scheduled_for, now()) <= now()
           and coalesce(nj.next_attempt_at, now()) <= now()
-          and (nj.locked_at is null or nj.locked_at < now() - interval '10 minutes')
+          and (
+            nj.locked_at is null
+            or nj.locked_at < now() - ($5::integer * interval '1 minute')
+          )
           and ne.status not in ('CANCELLED', 'FAILED')
         order by
           case nj.priority
@@ -840,7 +873,7 @@ export const claimNotificationJobs = async (
       inner join notification_events ne on ne.id = claimed.notification_event_id
       left join notification_audiences na on na.id = claimed.audience_id
     `,
-    [limit, workerId],
+    [limit, workerId, input.societyId ?? null, input.eventId ?? null, lockTimeoutMinutes],
   )
 
   return result.rows
@@ -1138,7 +1171,7 @@ const dispatchJob = async (
         context: {
           title,
           body,
-          actionUrl: typeof job.payload.deepLinkUrl === 'string' ? job.payload.deepLinkUrl : undefined,
+          actionUrl: getEmailActionUrlForJob(job),
           actionLabel: 'Open in AJOWA',
           ...job.payload,
         },
@@ -1195,6 +1228,9 @@ export const dispatchNotificationJobs = async (
   input: {
     limit?: number
     workerId?: string
+    societyId?: string
+    eventId?: string
+    lockTimeoutMinutes?: number
   } = {},
 ) => {
   const jobs = await claimNotificationJobs(client, input)
@@ -1226,7 +1262,7 @@ export const dispatchNotificationJobs = async (
     await client.query(
       `
         update notification_jobs
-        set status = $2,
+        set status = $2::notification_job_status,
             attempt_count = $3,
             last_attempt_at = now(),
             next_attempt_at = ${nextAttemptAt},
@@ -1237,8 +1273,8 @@ export const dispatchNotificationJobs = async (
             response_body = $6::jsonb,
             failure_reason = $7,
             permanent_failure = $8,
-            sent_at = case when $2 in ('SENT', 'DELIVERED') then coalesce(sent_at, now()) else sent_at end,
-            delivered_at = case when $2 = 'DELIVERED' then coalesce(delivered_at, now()) else delivered_at end,
+            sent_at = case when $2::notification_job_status in ('SENT'::notification_job_status, 'DELIVERED'::notification_job_status) then coalesce(sent_at, now()) else sent_at end,
+            delivered_at = case when $2::notification_job_status = 'DELIVERED'::notification_job_status then coalesce(delivered_at, now()) else delivered_at end,
             updated_at = now()
         where id = $1
       `,
@@ -1267,7 +1303,7 @@ export const dispatchNotificationJobs = async (
           failure_reason,
           delivered_at
         )
-        values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, case when $5 = 'DELIVERED' then now() else null end)
+        values ($1, $2, $3, $4, $5::delivery_status, $6, $7::jsonb, $8, case when $5::delivery_status = 'DELIVERED'::delivery_status then now() else null end)
       `,
       [
         job.id,
@@ -1290,30 +1326,41 @@ export const dispatchNotificationJobs = async (
     }
   }
 
-  await client.query(
-    `
-      update notification_events ne
-      set status = case
-            when stats.failed_count > 0 and stats.pending_count = 0 then 'FAILED'
-            when stats.pending_count = 0 then 'PROCESSED'
-            else ne.status
-          end,
-          processed_at = case when stats.pending_count = 0 then now() else ne.processed_at end,
-          completed_at = case when stats.pending_count = 0 then now() else ne.completed_at end,
-          updated_at = now()
-      from (
-        select
-          notification_event_id,
-          count(*) filter (where status in ('QUEUED', 'RETRYING', 'PROCESSING')) as pending_count,
-          count(*) filter (where status = 'FAILED') as failed_count
-        from notification_jobs
-        where notification_event_id = any($1::uuid[])
-        group by notification_event_id
-      ) stats
-      where ne.id = stats.notification_event_id
-    `,
-    [jobs.map((job) => job.notification_event_id)],
-  )
+  const eventIdsToRefresh = [
+    ...new Set([
+      ...jobs.map((job) => job.notification_event_id),
+      ...(input.eventId ? [input.eventId] : []),
+    ]),
+  ]
+
+  if (eventIdsToRefresh.length > 0) {
+    await client.query(
+      `
+        update notification_events ne
+        set status = case
+              when stats.pending_count = 0 and stats.sent_count > 0 then 'PROCESSED'
+              when stats.failed_count > 0 and stats.pending_count = 0 then 'FAILED'
+              when stats.pending_count = 0 then 'PROCESSED'
+              else ne.status
+            end,
+            processed_at = case when stats.pending_count = 0 then now() else ne.processed_at end,
+            completed_at = case when stats.pending_count = 0 then now() else ne.completed_at end,
+            updated_at = now()
+        from (
+          select
+            notification_event_id,
+            count(*) filter (where status in ('QUEUED', 'RETRYING', 'PROCESSING')) as pending_count,
+            count(*) filter (where status in ('SENT', 'DELIVERED', 'READ')) as sent_count,
+            count(*) filter (where status = 'FAILED') as failed_count
+          from notification_jobs
+          where notification_event_id = any($1::uuid[])
+          group by notification_event_id
+        ) stats
+        where ne.id = stats.notification_event_id
+      `,
+      [eventIdsToRefresh],
+    )
+  }
 
   return {
     claimed: jobs.length,
@@ -1435,6 +1482,7 @@ export const enqueueDueBillingContactNotifications = async (
         f.id as flat_id,
         f.flat_number,
         b.name as block_name,
+        md.due_date::text as due_date,
         md.balance_amount::text,
         u.id as user_id,
         coalesce(nullif(btrim(u.email::text), ''), ${importedOwnerEmailExpression('fr')}) as email,
@@ -1476,6 +1524,11 @@ export const enqueueDueBillingContactNotifications = async (
   for (const row of result.rows) {
     rowsByDueId.set(row.due_id, [...(rowsByDueId.get(row.due_id) ?? []), row])
   }
+  const eventSetting = await getNotificationEventSetting(client, {
+    societyId: input.societyId,
+    eventKey: input.eventKey,
+  })
+  const requestedChannels = getRequestedChannels(input.channels, eventSetting)
 
   const eventRows = []
   const eventByDueId = new Map<
@@ -1495,7 +1548,6 @@ export const enqueueDueBillingContactNotifications = async (
       input.eventKey === 'maintenance_due.reminder' || input.eventKey === 'maintenance_due.bill'
         ? `${dueId}:${new Date().toISOString().slice(0, 10)}`
         : dueId
-    const isBill = input.eventKey === 'maintenance_due.bill'
     const idempotencyKey = `${input.eventKey}:${idempotencyScope}`
     const priority: NotificationPriority = input.eventKey === 'maintenance_due.reminder' ? 'HIGH' : 'MEDIUM'
     const windowSeconds = input.eventKey === 'maintenance_due.created' ? 31536000 : 86400
@@ -1505,9 +1557,10 @@ export const enqueueDueBillingContactNotifications = async (
       billingPeriodLabel: due.billing_period_label,
       flatId: due.flat_id,
       flatLabel: `${due.block_name} ${due.flat_number}`,
+      dueDate: due.due_date,
       balanceAmount: Number(due.balance_amount),
-      deepLinkUrl: isBill ? buildAppUrl(`/api/my/dues/${dueId}/bill`) : '/my/dues',
-      actionLabel: isBill ? 'Download bill PDF' : 'Open in AJOWA',
+      deepLinkUrl: '/my/dues',
+      actionLabel: 'Open in AJOWA',
     }
 
     eventByDueId.set(dueId, { idempotencyKey, payload, priority, windowSeconds })
@@ -1525,7 +1578,7 @@ export const enqueueDueBillingContactNotifications = async (
       idempotency_window_seconds: windowSeconds,
       triggered_by_user_id: input.triggeredByUserId ?? null,
       audience_snapshot: { eventKey: input.eventKey, dueId },
-      channel_snapshot: input.channels?.length ? input.channels : ['PUSH', 'EMAIL', 'WHATSAPP', 'IN_APP'],
+      channel_snapshot: requestedChannels,
       template_snapshot: {},
       status: 'QUEUED',
     })
@@ -1619,7 +1672,7 @@ export const enqueueDueBillingContactNotifications = async (
         inAppEnabled: row.notification_in_app_enabled,
       }
 
-      for (const channel of getUserChannels(user, input.channels)) {
+      for (const channel of getUserChannels(user, requestedChannels, eventSetting)) {
         const address = channelAddress(user, channel)
         if ((channel === 'EMAIL' || channel === 'WHATSAPP') && !address) {
           continue

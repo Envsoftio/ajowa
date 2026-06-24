@@ -7,7 +7,7 @@ import { fromNodeHeaders } from 'better-auth/node'
 import type { H3Event } from 'h3'
 import { AppError } from './errors'
 import { getDatabasePool, queryRows } from './database'
-import { sendTemplatedEmail, buildAppUrl } from './email'
+import { sendTemplatedEmail, buildAppUrl, normalizeAppActionUrl } from './email'
 import { getValidatedRuntimeConfig, type ValidatedRuntimeConfig } from './env'
 import {
   getRoleLandingRoute,
@@ -94,6 +94,10 @@ const STAFF_EMAIL_VERIFICATION_EXEMPT_ROLES: AppRole[] = [
   'SERVICE_STAFF',
   'GUARD',
 ]
+const INVITE_EXPIRY_MS_PER_DAY = 24 * 60 * 60 * 1000
+
+export const DEFAULT_INVITE_EXPIRY_DAYS = 14
+export const MAX_INVITE_EXPIRY_DAYS = 30
 
 const nowDate = () => new Date().toISOString().slice(0, 10)
 
@@ -561,6 +565,7 @@ const createAuth = () => {
       maxPasswordLength: 128,
       sendResetPassword: async ({ user, url }) => {
         const appState = await loadAppUserByAuthUserId(user.id)
+        const actionUrl = normalizeAppActionUrl(url)
         await sendTemplatedEmail({
           to: user.email,
           subject: 'Reset your AJOWA password',
@@ -568,7 +573,7 @@ const createAuth = () => {
           context: {
             title: 'Reset your password',
             name: user.name,
-            actionUrl: url,
+            actionUrl,
             expiresLabel: 'in 1 hour',
           },
           ...(appState ? { societyId: appState.user.society_id } : {}),
@@ -605,6 +610,7 @@ const createAuth = () => {
       autoSignInAfterVerification: false,
       sendVerificationEmail: async ({ user, url }) => {
         const appState = await loadAppUserByAuthUserId(user.id)
+        const actionUrl = normalizeAppActionUrl(url)
         await sendTemplatedEmail({
           to: user.email,
           subject: 'Verify your AJOWA email',
@@ -612,7 +618,7 @@ const createAuth = () => {
           context: {
             title: 'Verify your email',
             name: user.name,
-            actionUrl: url,
+            actionUrl,
             expiresLabel: 'in 1 hour',
           },
           ...(appState ? { societyId: appState.user.society_id } : {}),
@@ -998,6 +1004,10 @@ export const createInviteToken = () => {
     tokenHash: createHash('sha256').update(token).digest('hex'),
   }
 }
+
+export const createInviteExpiresAt = (
+  expiresInDays = DEFAULT_INVITE_EXPIRY_DAYS,
+) => new Date(Date.now() + expiresInDays * INVITE_EXPIRY_MS_PER_DAY)
 
 export const hashInviteToken = (token: string) =>
   createHash('sha256').update(token).digest('hex')

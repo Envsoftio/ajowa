@@ -2,11 +2,17 @@ import { createHash } from 'node:crypto'
 import { createApiSuccess } from '~/server/utils/api'
 import { requireRole } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
+import { readMultipartFormParts } from '~/server/utils/multipart'
 import {
   createStorageObjectKey,
   uploadPrivateFile,
 } from '~/server/utils/storage'
 import type { FinanceTransactionAttachment } from '~/types/domain'
+
+const normalizeFinanceAttachmentMimeType = (mimeType: string) =>
+  mimeType === 'image/jpg' || mimeType === 'image/pjpeg'
+    ? 'image/jpeg'
+    : mimeType
 
 export default defineEventHandler(async (event) => {
   const authMe = await requireRole(event, ['ADMIN', 'MANAGER'])
@@ -21,7 +27,7 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 404, statusMessage: 'Transaction not found.' })
   }
 
-  const parts = await readMultipartFormData(event)
+  const parts = await readMultipartFormParts(event)
   const filePart = parts?.find((part) => part.name === 'file' && part.filename)
   const replacePart = parts?.find((part) => part.name === 'replacesAttachmentId')
   const replacesAttachmentId = replacePart
@@ -37,13 +43,14 @@ export default defineEventHandler(async (event) => {
     recordId: transactionId,
     fileName: filePart.filename,
   })
+  const mimeType = normalizeFinanceAttachmentMimeType(filePart.type)
   const checksum = createHash('sha256').update(filePart.data).digest('hex')
 
   await uploadPrivateFile({
     storageTargetKey: 'finance_attachments',
     storageObjectKey,
     originalFileName: filePart.filename,
-    mimeType: filePart.type,
+    mimeType,
     sizeBytes: filePart.data.byteLength,
     body: filePart.data,
     uploadedBy: authMe.user.id,
@@ -110,7 +117,7 @@ export default defineEventHandler(async (event) => {
         transactionId,
         filePart.filename,
         storageObjectKey,
-        filePart.type,
+        mimeType,
         filePart.data.byteLength,
         checksum,
         authMe.user.id,

@@ -48,6 +48,7 @@ export default defineEventHandler(async (event) => {
       eventKey: 'maintenance_due.reminder',
       title: 'Maintenance payment reminder',
       bodyPrefix: 'Maintenance dues are pending for',
+      channels: ['EMAIL'],
       triggeredByUserId: authMe.user.id,
     })
 

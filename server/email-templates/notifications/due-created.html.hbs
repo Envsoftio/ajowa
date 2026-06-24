@@ -1,3 +1,54 @@
-<h1>{{title}}</h1>
-<p>{{body}}</p>
-{{#if actionUrl}}<p><a href="{{actionUrl}}">{{actionLabel}}</a></p>{{/if}}
+{{> header title=title eyebrow="New Maintenance Due" subtitle="A new maintenance due has been added to your AJOWA account."}}
+
+<p style="margin: 0 0 18px; color: #52606d; font-size: 15px; line-height: 1.7;">
+  Hello,
+</p>
+<p style="margin: 0 0 20px; color: #52606d; font-size: 15px; line-height: 1.7;">
+  {{body}} Please review the amount and due date so payment can be completed on time.
+</p>
+
+<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin: 24px 0; border: 1px solid #d9e5e2; border-radius: 8px; background: #f8fbfa;">
+  {{#if balanceAmount}}
+    <tr>
+      <td colspan="2" style="padding: 20px 22px 14px;">
+        <p style="margin: 0 0 6px; color: #607080; font-size: 12px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;">
+          Amount due
+        </p>
+        <p style="margin: 0; color: #0f766e; font-size: 28px; font-weight: 700; line-height: 1.2;">
+          &#8377;{{balanceAmount}}
+        </p>
+      </td>
+    </tr>
+  {{/if}}
+  {{#if flatLabel}}
+    <tr>
+      <td style="padding: 12px 22px; border-top: 1px solid #d9e5e2; color: #607080; font-size: 13px;">Flat</td>
+      <td align="right" style="padding: 12px 22px; border-top: 1px solid #d9e5e2; color: #102033; font-size: 14px; font-weight: 700;">{{flatLabel}}</td>
+    </tr>
+  {{/if}}
+  {{#if billingPeriodLabel}}
+    <tr>
+      <td style="padding: 12px 22px; border-top: 1px solid #d9e5e2; color: #607080; font-size: 13px;">Billing period</td>
+      <td align="right" style="padding: 12px 22px; border-top: 1px solid #d9e5e2; color: #102033; font-size: 14px; font-weight: 700;">{{billingPeriodLabel}}</td>
+    </tr>
+  {{/if}}
+  {{#if dueDate}}
+    <tr>
+      <td style="padding: 12px 22px; border-top: 1px solid #d9e5e2; color: #607080; font-size: 13px;">Due date</td>
+      <td align="right" style="padding: 12px 22px; border-top: 1px solid #d9e5e2; color: #102033; font-size: 14px; font-weight: 700;">{{dueDate}}</td>
+    </tr>
+  {{/if}}
+</table>
+
+{{#if actionUrl}}
+  <p style="margin: 28px 0 0;">
+    <a
+      href="{{actionUrl}}"
+      style="display: inline-block; padding: 14px 22px; border-radius: 8px; background: #0f766e; color: #ffffff; font-size: 14px; font-weight: 700; text-decoration: none;"
+    >
+      {{#if actionLabel}}{{actionLabel}}{{else}}Open in AJOWA{{/if}}
+    </a>
+  </p>
+{{/if}}
+
+{{> footer}}

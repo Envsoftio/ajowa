@@ -1,6 +1,18 @@
 {{title}}
 
-{{body}}
-{{#if actionUrl}}
-{{actionLabel}}: {{actionUrl}}
+Hello,
+
+{{body}} Please review the details and complete payment by the due date.
+
+Summary:
+{{#if flatLabel}}Flat: {{flatLabel}}
+{{/if}}{{#if billingPeriodLabel}}Billing period: {{billingPeriodLabel}}
+{{/if}}{{#if dueDate}}Due date: {{dueDate}}
+{{/if}}{{#if balanceAmount}}Amount due: Rs. {{balanceAmount}}
 {{/if}}
+{{#if actionUrl}}
+{{#if actionLabel}}{{actionLabel}}{{else}}Open in AJOWA{{/if}}: {{actionUrl}}
+{{/if}}
+
+Thank you,
+AJOWA Society Management System
