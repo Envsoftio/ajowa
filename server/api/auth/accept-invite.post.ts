@@ -4,7 +4,6 @@ import type { PoolClient } from 'pg'
 import { createApiSuccess, readJsonBody, validateInput } from '~/server/utils/api'
 import {
   assignInviteRelationships,
-  createCredentialUser,
   getInvitePreview,
   hashInviteToken,
   isEmailVerificationRequiredForRole,
@@ -164,6 +163,18 @@ const toInviteAcceptanceError = (error: unknown) => {
     })
   }
 
+  if (
+    databaseError.code === '23514' &&
+    databaseError.constraint === 'users_login_requires_auth_email'
+  ) {
+    return new AppError({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message:
+        'This resident needs a valid email and login account before the invite can be accepted.',
+    })
+  }
+
   return new AppError({
     code: 'INTERNAL_ERROR',
     statusCode: 500,
@@ -254,6 +265,110 @@ const acceptExistingCredentialUser = async ({
   return {
     authUserId,
     email: existing.email,
+    fullName,
+  }
+}
+
+const createInviteCredentialUser = async ({
+  client,
+  societyId,
+  email,
+  role,
+  fullName,
+  mobileNumber,
+  whatsappNumber,
+  password,
+  emailVerified,
+}: {
+  client: PoolClient
+  societyId: string
+  email: string
+  role: InviteAssignmentRow['role']
+  fullName: string
+  mobileNumber: string
+  whatsappNumber: string
+  password: string
+  emailVerified: boolean
+}): Promise<AcceptedInviteUser> => {
+  const existingAuthUser = await client.query<{ id: string }>(
+    `
+      select id
+      from auth_users
+      where email = $1
+      limit 1
+    `,
+    [email],
+  )
+
+  if (existingAuthUser.rows[0]?.id) {
+    throw new AppError({
+      code: 'CONFLICT',
+      statusCode: 409,
+      message:
+        'An account already exists with this email. Ask an admin to review the resident login and resend the invite.',
+    })
+  }
+
+  const insertedAuthUser = await client.query<{ id: string; email: string }>(
+    `
+      insert into auth_users (name, email, email_verified)
+      values ($1, $2, $3)
+      returning id, email::text
+    `,
+    [fullName, email, emailVerified],
+  )
+  const authUser = insertedAuthUser.rows[0]
+
+  if (!authUser?.id) {
+    throw new AppError({
+      code: 'INTERNAL_ERROR',
+      statusCode: 500,
+      message: 'Account creation did not return an auth identifier.',
+    })
+  }
+
+  const passwordHash = await hashPassword(password)
+
+  await client.query(
+    `
+      insert into auth_accounts (account_id, provider_id, user_id, password)
+      values ($1, 'credential', $1, $2)
+    `,
+    [authUser.id, passwordHash],
+  )
+
+  await client.query(
+    `
+      insert into users (
+        society_id,
+        auth_user_id,
+        role,
+        full_name,
+        email,
+        mobile_number,
+        whatsapp_number,
+        can_login,
+        must_change_password,
+        email_verified,
+        is_active
+      )
+      values ($1, $2, $3, $4, $5, $6, $7, true, false, $8, true)
+    `,
+    [
+      societyId,
+      authUser.id,
+      role,
+      fullName,
+      email,
+      mobileNumber,
+      whatsappNumber,
+      emailVerified,
+    ],
+  )
+
+  return {
+    authUserId: authUser.id,
+    email: authUser.email,
     fullName,
   }
 }
@@ -479,6 +594,7 @@ export default defineEventHandler(async (event) => {
         from auth_invites
         where token_hash = $1
         limit 1
+        for update
       `,
       [hashInviteToken(body.token)],
     )
@@ -516,16 +632,16 @@ export default defineEventHandler(async (event) => {
           password: body.password,
           emailVerified: !requiresEmailVerification,
         })) ??
-        (await createCredentialUser({
+        (await createInviteCredentialUser({
           client,
+          societyId: invite.society_id,
           email: invite.email,
+          role: invite.role,
           fullName: body.fullName,
           password: body.password,
           mobileNumber: body.mobileNumber,
           whatsappNumber: body.whatsappNumber || body.mobileNumber,
-          role: invite.role,
           emailVerified: !requiresEmailVerification,
-          mustChangePassword: false,
         }))
 
     if (!invite.accepted_by_auth_user_id) {
@@ -540,16 +656,27 @@ export default defineEventHandler(async (event) => {
       })
     }
 
-    await client.query(
+    const acceptedInviteResult = await client.query<{ id: string }>(
       `
         update auth_invites
         set accepted_at = now(),
             accepted_by_auth_user_id = $2,
             updated_at = now()
         where id = $1
+          and accepted_at is null
+          and revoked_at is null
+        returning id
       `,
       [invite.id, acceptedUser.authUserId],
     )
+
+    if (!acceptedInviteResult.rows[0]?.id) {
+      throw new AppError({
+        code: 'FORBIDDEN',
+        statusCode: 403,
+        message: 'This invite is no longer active.',
+      })
+    }
 
     await client.query('commit')
     committed = true

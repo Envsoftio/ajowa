@@ -42,49 +42,77 @@ export default defineEventHandler(async (event) => {
   const body = validateInput(schema, await readJsonBody(event))
   const { token, tokenHash } = createInviteToken()
   const pool = getDatabasePool()
+  const client = await pool.connect()
+  let committed = false
   const expiresInDays = body.expiresInDays ?? DEFAULT_INVITE_EXPIRY_DAYS
   const flatLabels = body.flatLabels ?? []
   const departmentNames = body.departmentNames ?? []
   const expiresAt = createInviteExpiresAt(expiresInDays)
   const inviteUrl = buildAppUrl('/accept-invite', { token })
 
-  await pool.query(
-    `
-      insert into auth_invites (
-        society_id,
-        email,
-        role,
-        full_name,
-        mobile_number,
-        relationship_type,
-        access_scope,
-        flat_ids,
-        flat_labels,
-        department_ids,
-        department_names,
-        token_hash,
-        invited_by_user_id,
-        expires_at
-      )
-      values ($1, $2, $3, $4, $5, $6, $7, $8::uuid[], $9::text[], $10::uuid[], $11::text[], $12, $13, $14)
-    `,
-    [
-      authMe.user.societyId,
-      body.email,
-      body.role,
-      body.fullName ?? null,
-      body.mobileNumber ?? null,
-      body.relationshipType ?? null,
-      body.accessScope ?? null,
-      body.flatIds,
-      flatLabels,
-      body.departmentIds,
-      departmentNames,
-      tokenHash,
-      authMe.user.id,
-      expiresAt.toISOString(),
-    ],
-  )
+  try {
+    await client.query('begin')
+
+    await client.query(
+      `
+        update auth_invites
+        set revoked_at = now(), revoked_by_user_id = $3
+        where society_id = $1
+          and email = $2
+          and accepted_at is null
+          and revoked_at is null
+      `,
+      [authMe.user.societyId, body.email, authMe.user.id],
+    )
+
+    await client.query(
+      `
+        insert into auth_invites (
+          society_id,
+          email,
+          role,
+          full_name,
+          mobile_number,
+          relationship_type,
+          access_scope,
+          flat_ids,
+          flat_labels,
+          department_ids,
+          department_names,
+          token_hash,
+          invited_by_user_id,
+          expires_at
+        )
+        values ($1, $2, $3, $4, $5, $6, $7, $8::uuid[], $9::text[], $10::uuid[], $11::text[], $12, $13, $14)
+      `,
+      [
+        authMe.user.societyId,
+        body.email,
+        body.role,
+        body.fullName ?? null,
+        body.mobileNumber ?? null,
+        body.relationshipType ?? null,
+        body.accessScope ?? null,
+        body.flatIds,
+        flatLabels,
+        body.departmentIds,
+        departmentNames,
+        tokenHash,
+        authMe.user.id,
+        expiresAt.toISOString(),
+      ],
+    )
+
+    await client.query('commit')
+    committed = true
+  } catch (error) {
+    if (!committed) {
+      await client.query('rollback')
+    }
+    throw error
+  } finally {
+    client.release()
+  }
 
   const pendingInviteEmail: PendingInviteEmail = {
     societyId: authMe.user.societyId,

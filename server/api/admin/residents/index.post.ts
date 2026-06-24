@@ -125,10 +125,13 @@ const insertInviteIfRequested = async ({
   await client.query(
     `
       update auth_invites
-      set revoked_at = now(), revoked_by_user_id = $2
-      where email = $1 and accepted_at is null and revoked_at is null
+      set revoked_at = now(), revoked_by_user_id = $3
+      where society_id = $1
+        and email = $2
+        and accepted_at is null
+        and revoked_at is null
     `,
-    [email, actorUserId],
+    [societyId, email, actorUserId],
   )
 
   await client.query(
