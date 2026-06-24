@@ -4,7 +4,6 @@ import type { PoolClient } from 'pg'
 import { createApiSuccess, readJsonBody, validateInput } from '~/server/utils/api'
 import {
   assignInviteRelationships,
-  getInvitePreview,
   hashInviteToken,
   isEmailVerificationRequiredForRole,
   sendVerificationEmailToUser,
@@ -551,29 +550,12 @@ export default defineEventHandler(async (event) => {
     })
   }
 
-  const preview = await getInvitePreview(body.token)
-
-  if (!preview) {
-    throw new AppError({
-      code: 'NOT_FOUND',
-      statusCode: 404,
-      message: 'This invite is invalid or no longer available.',
-    })
-  }
-
-  if (preview.status !== 'PENDING') {
-    throw new AppError({
-      code: 'FORBIDDEN',
-      statusCode: 403,
-      message: 'This invite is no longer active.',
-    })
-  }
-
   const pool = getDatabasePool()
-  const client = await pool.connect()
+  let client: PoolClient | null = null
   let committed = false
 
   try {
+    client = await pool.connect()
     await client.query('begin')
 
     const inviteResult = await client.query<InviteAssignmentRow>(
@@ -601,7 +583,15 @@ export default defineEventHandler(async (event) => {
 
     const invite = inviteResult.rows[0]
 
-    if (!invite || invite.accepted_at || invite.revoked_at || new Date(invite.expires_at).getTime() <= Date.now()) {
+    if (!invite) {
+      throw new AppError({
+        code: 'NOT_FOUND',
+        statusCode: 404,
+        message: 'This invite is invalid or no longer available.',
+      })
+    }
+
+    if (invite.accepted_at || invite.revoked_at || new Date(invite.expires_at).getTime() <= Date.now()) {
       throw new AppError({
         code: 'FORBIDDEN',
         statusCode: 403,
@@ -722,8 +712,14 @@ export default defineEventHandler(async (event) => {
       verificationEmailDelivery,
     })
   } catch (error) {
-    if (!committed) {
-      await client.query('rollback')
+    if (client && !committed) {
+      try {
+        await client.query('rollback')
+      } catch (rollbackError) {
+        getRequestLogger(event).error('Invite acceptance rollback failed.', {
+          error: serializeEmailError(rollbackError),
+        })
+      }
     }
     const inviteError = toInviteAcceptanceError(error)
 
@@ -735,6 +731,6 @@ export default defineEventHandler(async (event) => {
 
     throw inviteError
   } finally {
-    client.release()
+    client?.release()
   }
 })
