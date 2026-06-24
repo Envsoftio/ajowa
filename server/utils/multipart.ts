@@ -1,4 +1,9 @@
-import { getRequestHeader, readRawBody, type H3Event } from 'h3'
+import {
+  getRequestHeader,
+  readMultipartFormData,
+  readRawBody,
+  type H3Event,
+} from 'h3'
 import { AppError } from './errors'
 
 export type MultipartFormPart = {
@@ -25,6 +30,41 @@ const readRequestBodyBuffer = async (event: H3Event) => {
     statusCode: 400,
     message: 'Unable to read the upload request body.',
   })
+}
+
+const toMultipartFormParts = (
+  parts: Awaited<ReturnType<typeof readMultipartFormData>>,
+): MultipartFormPart[] =>
+  parts.flatMap((part) => {
+    if (!part.name) {
+      return []
+    }
+
+    return [
+      {
+        name: part.name,
+        ...(part.filename ? { filename: part.filename } : {}),
+        type: part.type ?? '',
+        data: Buffer.from(part.data),
+      },
+    ]
+  })
+
+const readNativeMultipartFormParts = async (event: H3Event) => {
+  try {
+    return toMultipartFormParts(await readMultipartFormData(event))
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown multipart parser error.'
+    console.warn(
+      JSON.stringify({
+        level: 'warn',
+        message: 'Native multipart parser failed; falling back to raw multipart parser.',
+        cause: message,
+      }),
+    )
+
+    return null
+  }
 }
 
 const splitBuffer = (buffer: Buffer, delimiter: Buffer) => {
@@ -65,6 +105,12 @@ const parseMultipartHeaderParams = (value: string) => {
 }
 
 export const readMultipartFormParts = async (event: H3Event): Promise<MultipartFormPart[]> => {
+  const nativeParts = await readNativeMultipartFormParts(event)
+
+  if (nativeParts) {
+    return nativeParts
+  }
+
   const boundary = getMultipartBoundary(getRequestHeader(event, 'content-type'))
 
   if (!boundary) {
@@ -75,7 +121,24 @@ export const readMultipartFormParts = async (event: H3Event): Promise<MultipartF
     })
   }
 
-  const body = await readRequestBodyBuffer(event)
+  let body: Buffer
+
+  try {
+    body = await readRequestBodyBuffer(event)
+  } catch (error) {
+    if (error instanceof AppError) {
+      throw error
+    }
+
+    throw new AppError({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message: 'Unable to parse the multipart upload request.',
+      details: {
+        cause: error instanceof Error ? error.message : 'Unknown multipart request error.',
+      },
+    })
+  }
   const delimiter = Buffer.from(`--${boundary}`)
   const headerSeparator = Buffer.from('\r\n\r\n')
   const parts: MultipartFormPart[] = []
