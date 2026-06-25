@@ -81,6 +81,17 @@ const toggleMenu = (event: Event) => {
   menu.value?.toggle(event)
 }
 
+const isDesktopViewport = () => import.meta.client && window.matchMedia('(min-width: 769px)').matches
+
+const toggleNavigation = () => {
+  if (isDesktopViewport()) {
+    appStore.toggleDesktopSidebar()
+    return
+  }
+
+  appStore.toggleSidebar()
+}
+
 onMounted(() => {
   notificationsStore.hydrateSoundPreference()
 })
@@ -95,7 +106,7 @@ onMounted(() => {
         rounded
         text
         aria-label="Toggle navigation"
-        @click="appStore.toggleSidebar()"
+        @click="toggleNavigation"
       />
       <NuxtLink to="/" class="topbar-brand" aria-label="AJOWA home">
         <AppBrandLogo variant="mark" />

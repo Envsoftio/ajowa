@@ -111,15 +111,15 @@ const query = reactive({
 const buildDueQuery = (overrides: Partial<typeof query> = {}) => ({
   page: overrides.page ?? query.page,
   pageSize: overrides.pageSize ?? query.pageSize,
-  search: query.search || undefined,
-  billingPeriodId: query.billingPeriodId || undefined,
-  chargeType: query.chargeType || undefined,
-  status: query.status || undefined,
-  balance: query.balance || undefined,
-  overdue: query.overdue || undefined,
-  advance: query.advance || undefined,
-  sortBy: query.sortBy,
-  sortDirection: query.sortDirection,
+  search: (overrides.search ?? query.search) || undefined,
+  billingPeriodId: (overrides.billingPeriodId ?? query.billingPeriodId) || undefined,
+  chargeType: (overrides.chargeType ?? query.chargeType) || undefined,
+  status: (overrides.status ?? query.status) || undefined,
+  balance: (overrides.balance ?? query.balance) || undefined,
+  overdue: (overrides.overdue ?? query.overdue) || undefined,
+  advance: (overrides.advance ?? query.advance) || undefined,
+  sortBy: overrides.sortBy ?? query.sortBy,
+  sortDirection: overrides.sortDirection ?? query.sortDirection,
 })
 
 const buildDueFilters = (): DueFilterPayload => {
@@ -429,6 +429,10 @@ const billChannels = ref<BillChannel[]>(['EMAIL', 'WHATSAPP'])
 const sendingBills = ref(false)
 const confirmAction = useAppConfirm()
 const { downloadingBillPdfs, downloadBillPdfs } = useBillPdfZipDownload()
+const downloadingFilteredBillPdfs = ref(false)
+const isDownloadingBillPdfs = computed(
+  () => downloadingBillPdfs.value || downloadingFilteredBillPdfs.value,
+)
 
 const hasBulkSelection = computed(() => bulkSelectedDues.value.length > 0)
 const notificationSelectedDues = computed(() =>
@@ -574,17 +578,17 @@ const sumBulkDueDateResponses = (responses: BulkDueDateUpdateResponse['data'][])
     },
   )
 
-const fetchAllMatchingDues = async () => {
+const fetchAllMatchingDues = async (overrides: Partial<typeof query> = {}) => {
   const pageSize = 2000
   const firstPage = await api<DueResponse>('/api/admin/billing/dues', {
-    query: buildDueQuery({ page: 1, pageSize }),
+    query: buildDueQuery({ ...overrides, page: 1, pageSize }),
   })
   const items = [...firstPage.data.items]
   const pageCount = Math.ceil(firstPage.data.total / pageSize)
 
   for (let page = 2; page <= pageCount; page += 1) {
     const response = await api<DueResponse>('/api/admin/billing/dues', {
-      query: buildDueQuery({ page, pageSize }),
+      query: buildDueQuery({ ...overrides, page, pageSize }),
     })
     items.push(...response.data.items)
   }
@@ -920,19 +924,10 @@ const sendBills = async () => {
   }
 }
 
-const buildBillPdfDownloadFilters = () => ({
-  search: query.search || undefined,
-  billingPeriodId: query.billingPeriodId || undefined,
-  chargeType: query.chargeType || undefined,
-  status: query.status || undefined,
-  balance: query.balance || undefined,
-  overdue: query.overdue || undefined,
-  advance: query.advance || undefined,
-  sortBy: query.sortBy,
-  sortDirection: query.sortDirection,
-})
+const getDownloadableDueIds = (items: MaintenanceDue[]) =>
+  items.filter((due) => !due.isAdvanceCoverageRow).map((due) => due.id)
 
-const downloadVisibleBillPdfs = () => {
+const downloadVisibleBillPdfs = async () => {
   if (selectedPdfDues.value.length > 0) {
     void downloadBillPdfs({
       dueIds: selectedPdfDues.value.map((due) => due.id),
@@ -940,19 +935,71 @@ const downloadVisibleBillPdfs = () => {
     return
   }
 
-  void downloadBillPdfs({
-    filters: buildBillPdfDownloadFilters(),
-  })
+  downloadingFilteredBillPdfs.value = true
+
+  try {
+    const dueIds = getDownloadableDueIds(await fetchAllMatchingDues())
+
+    if (dueIds.length === 0) {
+      toast.add({
+        severity: 'warn',
+        summary: 'No bill PDFs found',
+        detail: 'No downloadable bill PDFs matched the current filters.',
+        life: 8000,
+      })
+      return
+    }
+
+    await downloadBillPdfs({ dueIds })
+  } finally {
+    downloadingFilteredBillPdfs.value = false
+  }
 }
 
-const downloadCamAndDgBillPdfs = () => {
-  void downloadBillPdfs({
-    filters: {
-      chargeTypes: ['CAM', 'DG_SET'],
-      sortBy: query.sortBy,
-      sortDirection: query.sortDirection,
-    },
-  })
+const downloadCamAndDgBillPdfs = async () => {
+  downloadingFilteredBillPdfs.value = true
+
+  try {
+    const [camDues, dgDues] = await Promise.all([
+      fetchAllMatchingDues({
+        search: '',
+        billingPeriodId: '',
+        chargeType: 'CAM',
+        status: '',
+        balance: '',
+        overdue: '',
+        advance: '',
+        sortBy: query.sortBy,
+        sortDirection: query.sortDirection,
+      }),
+      fetchAllMatchingDues({
+        search: '',
+        billingPeriodId: '',
+        chargeType: 'DG_SET',
+        status: '',
+        balance: '',
+        overdue: '',
+        advance: '',
+        sortBy: query.sortBy,
+        sortDirection: query.sortDirection,
+      }),
+    ])
+    const dueIds = Array.from(new Set(getDownloadableDueIds([...camDues, ...dgDues])))
+
+    if (dueIds.length === 0) {
+      toast.add({
+        severity: 'warn',
+        summary: 'No bill PDFs found',
+        detail: 'No CAM or DG Set bill PDFs are available to download.',
+        life: 8000,
+      })
+      return
+    }
+
+    await downloadBillPdfs({ dueIds })
+  } finally {
+    downloadingFilteredBillPdfs.value = false
+  }
 }
 
 const resetFilters = () => {
@@ -1059,8 +1106,8 @@ watch(
                   ? 'Download PDFs for dues matching the current filters.'
                   : 'Choose a filter first, or select dues to download.'
             "
-            :loading="downloadingBillPdfs"
-            :disabled="selectedPdfCount === 0 && (!hasActiveFilters || totalRecords === 0)"
+            :loading="isDownloadingBillPdfs"
+            :disabled="isDownloadingBillPdfs || (selectedPdfCount === 0 && (!hasActiveFilters || totalRecords === 0))"
             @click="downloadVisibleBillPdfs"
           />
           <Button
@@ -1069,8 +1116,8 @@ watch(
             severity="secondary"
             outlined
             title="Download every CAM and DG Set bill PDF, ignoring current filters."
-            :loading="downloadingBillPdfs"
-            :disabled="downloadingBillPdfs"
+            :loading="isDownloadingBillPdfs"
+            :disabled="isDownloadingBillPdfs"
             @click="downloadCamAndDgBillPdfs"
           />
           <Button

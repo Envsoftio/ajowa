@@ -28,6 +28,7 @@ watch(
       theme.isDark.value ? 'app-theme-dark' : 'app-theme-light',
       shellClass,
       { 'app-shell--public-compact': isCompactPublicShell },
+      { 'app-shell--sidebar-collapsed': appStore.desktopSidebarCollapsed },
     ]"
   >
     <Toast />

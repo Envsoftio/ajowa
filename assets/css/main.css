@@ -98,6 +98,14 @@ a {
   align-items: stretch;
 }
 
+.app-shell--sidebar-collapsed .app-shell__layout {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.app-shell--sidebar-collapsed .app-shell__layout > .app-sidebar {
+  display: none;
+}
+
 .app-frame {
   width: 100%;
   margin: 0;
@@ -669,9 +677,11 @@ a {
 
 .app-sidebar__header {
   display: grid;
+  justify-items: center;
   gap: 0.75rem;
   padding: 0 1rem 0.85rem;
   border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+  text-align: center;
 }
 
 .app-sidebar__brand {
@@ -4369,7 +4379,7 @@ button *,
 
 @media (min-width: 769px) {
   .topbar-menu-button {
-    display: none;
+    display: inline-flex;
   }
 
   .app-mobile-drawer {
