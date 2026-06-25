@@ -39,43 +39,57 @@ const { formatMoney, formatDate, formatDateTime } = useFinanceFormatters()
 const { buildTransactionCreateLink } = useFinanceSharedReportLinks()
 const editing = ref(false)
 
+const [
+  detailAsyncData,
+  categoriesAsyncData,
+  bankAccountsAsyncData,
+  periodsAsyncData,
+  societyAsyncData,
+] = await Promise.all([
+  useAsyncData(`finance-transaction-${route.params.id}`, () =>
+    api<DetailResponse>(`/api/admin/finance/transactions/${route.params.id}`),
+  ),
+  useAsyncData(`finance-transaction-${route.params.id}-categories`, () =>
+    api<CategoriesResponse>('/api/categories', { query: { isActive: 'true' } }),
+  ),
+  useAsyncData(`finance-transaction-${route.params.id}-accounts`, () =>
+    api<BankAccountsResponse>('/api/admin/finance/bank-accounts', {
+      query: { isActive: 'true' },
+    }),
+  ),
+  useAsyncData(`finance-transaction-${route.params.id}-periods`, () =>
+    api<PeriodsResponse>('/api/admin/billing/periods', { query: { pageSize: 200 } }),
+  ),
+  useAsyncData(`finance-transaction-${route.params.id}-society`, () =>
+    api<SocietyResponse>('/api/admin/society/profile'),
+  ),
+])
+
 const {
   data,
   pending,
   refresh: refreshDetail,
-} = await useAsyncData(`finance-transaction-${route.params.id}`, () =>
-  api<DetailResponse>(`/api/admin/finance/transactions/${route.params.id}`),
-)
+} = detailAsyncData
 const {
   data: categoriesData,
   pending: categoriesPending,
   error: categoriesError,
-} = await useAsyncData(`finance-transaction-${route.params.id}-categories`, () =>
-  api<CategoriesResponse>('/api/categories', { query: { isActive: 'true' } }),
-)
+} = categoriesAsyncData
 const {
   data: bankAccountsData,
   pending: bankAccountsPending,
   error: bankAccountsError,
-} = await useAsyncData(`finance-transaction-${route.params.id}-accounts`, () =>
-  api<BankAccountsResponse>('/api/admin/finance/bank-accounts', {
-    query: { isActive: 'true' },
-  }),
-)
+} = bankAccountsAsyncData
 const {
   data: periodsData,
   pending: periodsPending,
   error: periodsError,
-} = await useAsyncData(`finance-transaction-${route.params.id}-periods`, () =>
-  api<PeriodsResponse>('/api/admin/billing/periods', { query: { pageSize: 200 } }),
-)
+} = periodsAsyncData
 const {
   data: societyData,
   pending: societyPending,
   error: societyError,
-} = await useAsyncData(`finance-transaction-${route.params.id}-society`, () =>
-  api<SocietyResponse>('/api/admin/society/profile'),
-)
+} = societyAsyncData
 
 const detail = computed(() => data.value?.data ?? null)
 const transaction = computed(() => detail.value?.transaction ?? null)

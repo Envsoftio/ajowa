@@ -105,21 +105,29 @@ const loadBankAccounts = () =>
     },
   })
 
+const [
+  accountsAsyncData,
+  bankAccountsAsyncData,
+] = await Promise.all([
+  useAsyncData('admin-finance-accounts', loadAccounts, {
+    watch: [search, activeFilter, typeFilter],
+  }),
+  useAsyncData('admin-finance-bank-accounts', loadBankAccounts, {
+    watch: [search, activeFilter],
+  }),
+])
+
 const {
   data: accountsData,
   pending: accountsPending,
   refresh: refreshAccounts,
-} = await useAsyncData('admin-finance-accounts', loadAccounts, {
-  watch: [search, activeFilter, typeFilter],
-})
+} = accountsAsyncData
 
 const {
   data: bankAccountsData,
   pending: bankAccountsPending,
   refresh: refreshBankAccounts,
-} = await useAsyncData('admin-finance-bank-accounts', loadBankAccounts, {
-  watch: [search, activeFilter],
-})
+} = bankAccountsAsyncData
 
 const accounts = computed(() => accountsData.value?.data.items ?? [])
 const bankAccounts = computed(() => bankAccountsData.value?.data.items ?? [])

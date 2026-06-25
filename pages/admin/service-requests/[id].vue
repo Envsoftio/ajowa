@@ -15,22 +15,30 @@ const serviceRequests = useServiceRequests('admin')
 const saving = ref(false)
 const assignDialogVisible = ref(false)
 
-const { data, pending, refresh } = await useAsyncData(`admin-service-request-${route.params.id}`, () =>
-  useApi()<{
-    ok: true
-    data: ServiceRequestDetail
-  }>(`/api/admin/service-requests/${route.params.id}`),
-)
+const api = useApi()
+const [
+  detailAsyncData,
+  optionsAsyncData,
+] = await Promise.all([
+  useAsyncData(`admin-service-request-${route.params.id}`, () =>
+    api<{
+      ok: true
+      data: ServiceRequestDetail
+    }>(`/api/admin/service-requests/${route.params.id}`),
+  ),
+  useAsyncData('admin-service-request-detail-options', () =>
+    api<{
+      ok: true
+      data: {
+        departments: ServiceDepartment[]
+        staff: StaffOption[]
+      }
+    }>('/api/service-requests/options'),
+  ),
+])
 
-const { data: optionsData } = await useAsyncData('admin-service-request-detail-options', () =>
-  useApi()<{
-    ok: true
-    data: {
-      departments: ServiceDepartment[]
-      staff: StaffOption[]
-    }
-  }>('/api/service-requests/options'),
-)
+const { data, pending, refresh } = detailAsyncData
+const { data: optionsData } = optionsAsyncData
 
 const ticket = computed(() => data.value?.data ?? null)
 const departments = computed(() => optionsData.value?.data.departments ?? [])

@@ -116,7 +116,7 @@ const createFinanceAttachmentErrorResponse = (
   return {
     error: true,
     ok: false,
-    url: getRequestURL(event).toString(),
+    url: getSafeRequestUrl(event),
     statusCode: failure.statusCode,
     statusMessage: failure.code,
     code: failure.code,
@@ -127,6 +127,26 @@ const createFinanceAttachmentErrorResponse = (
       ...(failure.details ? { details: failure.details } : {}),
     },
     ...(failure.details ? { details: failure.details } : {}),
+  }
+}
+
+const getSafeRequestUrl = (event: H3Event) => {
+  try {
+    return getRequestURL(event).toString()
+  } catch {
+    const rawUrl = event.node?.req.url ?? String(event.req?.url ?? '')
+    const hostHeader = event.node?.req.headers.host
+    const host = Array.isArray(hostHeader) ? hostHeader[0] : hostHeader
+
+    if (!rawUrl) {
+      return ''
+    }
+
+    if (/^https?:\/\//i.test(rawUrl)) {
+      return rawUrl
+    }
+
+    return host ? `http://${host}${rawUrl}` : rawUrl
   }
 }
 

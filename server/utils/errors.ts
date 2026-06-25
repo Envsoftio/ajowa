@@ -18,7 +18,16 @@ export type AppErrorOptions = {
 
 export class AppError extends HTTPError {
   code: AppErrorCode
+  private readonly appStatusCode: number
   details: Record<string, unknown> | undefined
+
+  override get statusCode() {
+    return this.appStatusCode
+  }
+
+  override get statusMessage() {
+    return this.code
+  }
 
   constructor(options: AppErrorOptions) {
     const fieldErrors = options.details?.fieldErrors
@@ -40,6 +49,7 @@ export class AppError extends HTTPError {
       unhandled: false,
     })
     this.code = options.code
+    this.appStatusCode = options.statusCode
     this.details = options.details
   }
 }

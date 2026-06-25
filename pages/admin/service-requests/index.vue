@@ -42,17 +42,25 @@ const loadTickets = () =>
     },
   })
 
-const { data, pending, refresh } = await useAsyncData('admin-service-requests', loadTickets, { watch: [query] })
-const { data: optionsData } = await useAsyncData('admin-service-request-options', () =>
-  api<{
-    ok: true
-    data: {
-      departments: ServiceDepartment[]
-      staff: StaffOption[]
-      flats: Array<{ id: string; label: string }>
-    }
-  }>('/api/service-requests/options'),
-)
+const [
+  ticketsAsyncData,
+  optionsAsyncData,
+] = await Promise.all([
+  useAsyncData('admin-service-requests', loadTickets, { watch: [query] }),
+  useAsyncData('admin-service-request-options', () =>
+    api<{
+      ok: true
+      data: {
+        departments: ServiceDepartment[]
+        staff: StaffOption[]
+        flats: Array<{ id: string; label: string }>
+      }
+    }>('/api/service-requests/options'),
+  ),
+])
+
+const { data, pending, refresh } = ticketsAsyncData
+const { data: optionsData } = optionsAsyncData
 
 const tickets = computed(() => data.value?.data.items ?? [])
 const summary = computed(() => data.value?.data.summary)

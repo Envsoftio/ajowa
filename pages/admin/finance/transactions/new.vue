@@ -40,44 +40,56 @@ const routeType = computed<FinanceTransactionType>(() =>
   String(route.query.type ?? '').toLowerCase() === 'income' ? 'INCOME' : 'EXPENSE',
 )
 
+const [
+  categoriesAsyncData,
+  bankAccountsAsyncData,
+  periodsAsyncData,
+  societyAsyncData,
+] = await Promise.all([
+  useAsyncData(
+    'new-finance-categories',
+    () => api<CategoriesResponse>('/api/categories', { query: { isActive: 'true' } }),
+  ),
+  useAsyncData(
+    'new-finance-bank-accounts',
+    () =>
+      api<BankAccountsResponse>('/api/admin/finance/bank-accounts', {
+        query: { isActive: 'true' },
+      }),
+  ),
+  useAsyncData(
+    'new-finance-periods',
+    () => api<PeriodsResponse>('/api/admin/billing/periods', { query: { pageSize: 200 } }),
+  ),
+  useAsyncData('new-finance-society', () =>
+    api<SocietyResponse>('/api/admin/society/profile'),
+  ),
+])
+
 const {
   data: categoriesData,
   pending: categoriesPending,
   error: categoriesError,
   refresh: refreshCategories,
-} = await useAsyncData(
-  'new-finance-categories',
-  () => api<CategoriesResponse>('/api/categories', { query: { isActive: 'true' } }),
-)
+} = categoriesAsyncData
 const {
   data: bankAccountsData,
   pending: bankAccountsPending,
   error: bankAccountsError,
   refresh: refreshBankAccounts,
-} = await useAsyncData(
-  'new-finance-bank-accounts',
-  () =>
-    api<BankAccountsResponse>('/api/admin/finance/bank-accounts', {
-      query: { isActive: 'true' },
-    }),
-)
+} = bankAccountsAsyncData
 const {
   data: periodsData,
   pending: periodsPending,
   error: periodsError,
   refresh: refreshPeriods,
-} = await useAsyncData(
-  'new-finance-periods',
-  () => api<PeriodsResponse>('/api/admin/billing/periods', { query: { pageSize: 200 } }),
-)
+} = periodsAsyncData
 const {
   data: societyData,
   pending: societyPending,
   error: societyError,
   refresh: refreshSociety,
-} = await useAsyncData('new-finance-society', () =>
-  api<SocietyResponse>('/api/admin/society/profile'),
-)
+} = societyAsyncData
 
 const success = ref<{
   id: string

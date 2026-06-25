@@ -71,19 +71,26 @@ const buildCoverageQuery = (overrides: Partial<typeof query> = {}) => ({
   sortDirection: query.sortDirection,
 })
 
-const { data, pending, refresh } = await useAsyncData(
-  'admin-cam-advance-coverages',
-  () => api<CoverageResponse>('/api/admin/billing/cam-advance-coverages', {
-    query: buildCoverageQuery(),
-  }),
-  { watch: [query] },
-)
+const [
+  coveragesAsyncData,
+  flatsAsyncData,
+] = await Promise.all([
+  useAsyncData(
+    'admin-cam-advance-coverages',
+    () => api<CoverageResponse>('/api/admin/billing/cam-advance-coverages', {
+      query: buildCoverageQuery(),
+    }),
+    { watch: [query] },
+  ),
+  useAsyncData('cam-advance-flat-options', () =>
+    api<FlatsResponse>('/api/admin/flats', {
+      query: { page: 1, pageSize: 2000, sortBy: 'flatNumber', sortDirection: 'asc', isActive: 'true' },
+    }),
+  ),
+])
 
-const { data: flatsData } = await useAsyncData('cam-advance-flat-options', () =>
-  api<FlatsResponse>('/api/admin/flats', {
-    query: { page: 1, pageSize: 2000, sortBy: 'flatNumber', sortDirection: 'asc', isActive: 'true' },
-  }),
-)
+const { data, pending, refresh } = coveragesAsyncData
+const { data: flatsData } = flatsAsyncData
 
 const coverages = computed(() => data.value?.data.items ?? [])
 const totalRecords = computed(() => data.value?.data.total ?? 0)

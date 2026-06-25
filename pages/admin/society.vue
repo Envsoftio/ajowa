@@ -16,33 +16,41 @@ definePageMeta({
 const api = useApi()
 const toast = useToast()
 
-const { data, pending, refresh } = await useAsyncData(
-  'admin-society-profile',
-  () => api<{ ok: true; data: SocietyProfile }>('/api/admin/society/profile'),
-)
-
 type AccountsResponse = { ok: true; data: { items: AccountHead[] } }
 type BankAccountsResponse = { ok: true; data: { items: BankAccount[] } }
 type PaymentQrResponse = { ok: true; data: SocietyPaymentQrFile }
 
-const { data: accountData, pending: accountsPending } = await useAsyncData(
-  'admin-society-asset-accounts',
-  () =>
-    api<AccountsResponse>('/api/admin/finance/accounts', {
-      query: {
-        headType: 'ASSET',
-        isActive: 'true',
-      },
-    }),
-)
+const [
+  profileAsyncData,
+  accountAsyncData,
+  bankAccountAsyncData,
+] = await Promise.all([
+  useAsyncData(
+    'admin-society-profile',
+    () => api<{ ok: true; data: SocietyProfile }>('/api/admin/society/profile'),
+  ),
+  useAsyncData(
+    'admin-society-asset-accounts',
+    () =>
+      api<AccountsResponse>('/api/admin/finance/accounts', {
+        query: {
+          headType: 'ASSET',
+          isActive: 'true',
+        },
+      }),
+  ),
+  useAsyncData('admin-society-bank-accounts', () =>
+    api<BankAccountsResponse>('/api/admin/finance/bank-accounts'),
+  ),
+])
 
+const { data, pending, refresh } = profileAsyncData
+const { data: accountData, pending: accountsPending } = accountAsyncData
 const {
   data: bankAccountData,
   pending: bankAccountsPending,
   refresh: refreshBankAccounts,
-} = await useAsyncData('admin-society-bank-accounts', () =>
-  api<BankAccountsResponse>('/api/admin/finance/bank-accounts'),
-)
+} = bankAccountAsyncData
 
 const form = reactive({
   name: '',

@@ -13,21 +13,28 @@ const toast = useToast()
 const serviceRequests = useServiceRequests('service')
 const savingId = ref<string | null>(null)
 
-const { data: dashboardData, pending: dashboardPending, refresh: refreshDashboard } = await useAsyncData('service-dashboard', () =>
-  api<{ ok: true; data: { summary: ServiceRequestQueueSummary } }>('/api/service/dashboard'),
-)
+const [
+  dashboardAsyncData,
+  ticketsAsyncData,
+] = await Promise.all([
+  useAsyncData('service-dashboard', () =>
+    api<{ ok: true; data: { summary: ServiceRequestQueueSummary } }>('/api/service/dashboard'),
+  ),
+  useAsyncData('service-dashboard-tickets', () =>
+    api<{ ok: true; data: { items: ServiceRequestSummary[]; total: number } }>('/api/service/tickets', {
+      query: {
+        page: 1,
+        pageSize: 8,
+        activeOnly: 'true',
+        sortBy: 'dueByAt',
+        sortDirection: 'asc',
+      },
+    }),
+  ),
+])
 
-const { data: ticketsData, pending: ticketsPending, refresh: refreshTickets } = await useAsyncData('service-dashboard-tickets', () =>
-  api<{ ok: true; data: { items: ServiceRequestSummary[]; total: number } }>('/api/service/tickets', {
-    query: {
-      page: 1,
-      pageSize: 8,
-      activeOnly: 'true',
-      sortBy: 'dueByAt',
-      sortDirection: 'asc',
-    },
-  }),
-)
+const { data: dashboardData, pending: dashboardPending, refresh: refreshDashboard } = dashboardAsyncData
+const { data: ticketsData, pending: ticketsPending, refresh: refreshTickets } = ticketsAsyncData
 
 const summary = computed(() => dashboardData.value?.data.summary)
 const tickets = computed(() => ticketsData.value?.data.items ?? [])

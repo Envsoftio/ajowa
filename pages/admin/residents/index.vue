@@ -24,24 +24,6 @@ const query = ref<ListQueryParams>({
 const selectedResidentId = ref<string | null>(null)
 const displayDialog = ref(false)
 
-const { data: flatsData } = await useAsyncData('admin-flat-options', () =>
-  api<{ ok: true; data: { items: FlatSummary[] } }>('/api/admin/flats', {
-    query: {
-      page: 1,
-      pageSize: 500,
-      sortBy: 'flatNumber',
-      sortDirection: 'asc',
-    },
-  }),
-)
-
-const flatOptions = computed(() =>
-  (flatsData.value?.data.items ?? []).map((item) => ({
-    label: `${item.blockName} · ${item.flatNumber}`,
-    value: item.id,
-  })),
-)
-
 const loadResidents = () =>
   api<{ ok: true; data: { items: ResidentSummary[]; total: number } }>(
     '/api/admin/residents',
@@ -59,12 +41,37 @@ const loadResidents = () =>
     },
   )
 
-const { data, pending, refresh } = await useAsyncData(
-  'admin-residents',
-  loadResidents,
-  {
-    watch: [query],
-  },
+const [
+  flatsAsyncData,
+  residentsAsyncData,
+] = await Promise.all([
+  useAsyncData('admin-flat-options', () =>
+    api<{ ok: true; data: { items: FlatSummary[] } }>('/api/admin/flats', {
+      query: {
+        page: 1,
+        pageSize: 500,
+        sortBy: 'flatNumber',
+        sortDirection: 'asc',
+      },
+    }),
+  ),
+  useAsyncData(
+    'admin-residents',
+    loadResidents,
+    {
+      watch: [query],
+    },
+  ),
+])
+
+const { data: flatsData } = flatsAsyncData
+const { data, pending, refresh } = residentsAsyncData
+
+const flatOptions = computed(() =>
+  (flatsData.value?.data.items ?? []).map((item) => ({
+    label: `${item.blockName} · ${item.flatNumber}`,
+    value: item.id,
+  })),
 )
 
 const openCreateDialog = () => {

@@ -37,17 +37,27 @@ const { formatDate, formatDateTime } = useFinanceFormatters()
 const statusFilter = ref('')
 const query = computed(() => ({ status: statusFilter.value || undefined }))
 
-const { data, pending, refresh } = await useAsyncData(
-  'finance-report-shares',
-  () => api<SharesResponse>('/api/reports/shares', { query: query.value }),
-  { watch: [query] },
-)
-const { data: flatsData } = await useAsyncData('finance-report-share-flats', () =>
-  api<FlatsResponse>('/api/admin/flats', { query: { pageSize: 300 } }),
-)
-const { data: ownersData } = await useAsyncData('finance-report-share-owners', () =>
-  api<ResidentsResponse>('/api/admin/residents', { query: { pageSize: 300 } }),
-)
+const [
+  sharesAsyncData,
+  flatsAsyncData,
+  ownersAsyncData,
+] = await Promise.all([
+  useAsyncData(
+    'finance-report-shares',
+    () => api<SharesResponse>('/api/reports/shares', { query: query.value }),
+    { watch: [query] },
+  ),
+  useAsyncData('finance-report-share-flats', () =>
+    api<FlatsResponse>('/api/admin/flats', { query: { pageSize: 300 } }),
+  ),
+  useAsyncData('finance-report-share-owners', () =>
+    api<ResidentsResponse>('/api/admin/residents', { query: { pageSize: 300 } }),
+  ),
+])
+
+const { data, pending, refresh } = sharesAsyncData
+const { data: flatsData } = flatsAsyncData
+const { data: ownersData } = ownersAsyncData
 
 const shares = computed(() => data.value?.data ?? [])
 const flats = computed(() => flatsData.value?.data.items ?? [])

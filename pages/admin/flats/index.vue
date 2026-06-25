@@ -30,19 +30,6 @@ const form = reactive({
   isActive: true,
 })
 
-const { data: blocksData } = await useAsyncData('admin-block-options', () =>
-  api<{ ok: true; data: { items: BlockSummary[] } }>('/api/admin/blocks', {
-    query: { page: 1, pageSize: 100, sortBy: 'sortOrder', sortDirection: 'asc' },
-  }),
-)
-
-const blockOptions = computed(() =>
-  (blocksData.value?.data.items ?? []).map((item) => ({
-    label: `${item.code} · ${item.name}`,
-    value: item.id,
-  })),
-)
-
 const loadFlats = () =>
   api<{ ok: true; data: { items: FlatSummary[]; total: number } }>('/api/admin/flats', {
     query: {
@@ -53,7 +40,27 @@ const loadFlats = () =>
     },
   })
 
-const { data, pending, refresh } = await useAsyncData('admin-flats', loadFlats)
+const [
+  blocksAsyncData,
+  flatsAsyncData,
+] = await Promise.all([
+  useAsyncData('admin-block-options', () =>
+    api<{ ok: true; data: { items: BlockSummary[] } }>('/api/admin/blocks', {
+      query: { page: 1, pageSize: 100, sortBy: 'sortOrder', sortDirection: 'asc' },
+    }),
+  ),
+  useAsyncData('admin-flats', loadFlats),
+])
+
+const { data: blocksData } = blocksAsyncData
+const { data, pending, refresh } = flatsAsyncData
+
+const blockOptions = computed(() =>
+  (blocksData.value?.data.items ?? []).map((item) => ({
+    label: `${item.code} · ${item.name}`,
+    value: item.id,
+  })),
+)
 
 const flats = computed(() => data.value?.data.items ?? [])
 

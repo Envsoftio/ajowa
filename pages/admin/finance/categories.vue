@@ -66,17 +66,25 @@ const loadAccounts = () =>
     query: { isActive: '' },
   })
 
+const [
+  categoriesAsyncData,
+  accountsAsyncData,
+] = await Promise.all([
+  useAsyncData('admin-finance-categories', loadCategories, {
+    watch: [search, typeFilter, activeFilter],
+  }),
+  useAsyncData(
+    'admin-finance-category-accounts',
+    loadAccounts,
+  ),
+])
+
 const {
   data: categoriesData,
   pending,
   refresh,
-} = await useAsyncData('admin-finance-categories', loadCategories, {
-  watch: [search, typeFilter, activeFilter],
-})
-const { data: accountsData } = await useAsyncData(
-  'admin-finance-category-accounts',
-  loadAccounts,
-)
+} = categoriesAsyncData
+const { data: accountsData } = accountsAsyncData
 
 const categories = computed(() => categoriesData.value?.data.items ?? [])
 const accounts = computed(() => accountsData.value?.data.items ?? [])

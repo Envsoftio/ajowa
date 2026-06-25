@@ -99,36 +99,50 @@ const loadTransactions = () =>
     },
   })
 
+const [
+  transactionsAsyncData,
+  categoriesAsyncData,
+  accountsAsyncData,
+  bankAccountsAsyncData,
+  periodsAsyncData,
+] = await Promise.all([
+  useAsyncData('admin-finance-transactions', loadTransactions, {
+    watch: [search, statusFilter, typeFilter, page, pageSize],
+  }),
+  useAsyncData(
+    'admin-finance-transaction-categories',
+    () =>
+      api<CategoriesResponse>('/api/categories', { query: { isActive: 'true' } }),
+  ),
+  useAsyncData(
+    'admin-finance-transaction-accounts',
+    () =>
+      api<AccountsResponse>('/api/admin/finance/accounts', {
+        query: { isActive: 'true' },
+      }),
+  ),
+  useAsyncData(
+    'admin-finance-transaction-bank-accounts',
+    () =>
+      api<BankAccountsResponse>('/api/admin/finance/bank-accounts', {
+        query: { isActive: 'true' },
+      }),
+  ),
+  useAsyncData(
+    'admin-finance-transaction-periods',
+    () => api<BillingPeriodsResponse>('/api/admin/billing/periods'),
+  ),
+])
+
 const {
   data: transactionsData,
   pending,
   refresh,
-} = await useAsyncData('admin-finance-transactions', loadTransactions, {
-  watch: [search, statusFilter, typeFilter, page, pageSize],
-})
-const { data: categoriesData, refresh: refreshCategories } = await useAsyncData(
-  'admin-finance-transaction-categories',
-  () =>
-    api<CategoriesResponse>('/api/categories', { query: { isActive: 'true' } }),
-)
-const { data: accountsData } = await useAsyncData(
-  'admin-finance-transaction-accounts',
-  () =>
-    api<AccountsResponse>('/api/admin/finance/accounts', {
-      query: { isActive: 'true' },
-    }),
-)
-const { data: bankAccountsData } = await useAsyncData(
-  'admin-finance-transaction-bank-accounts',
-  () =>
-    api<BankAccountsResponse>('/api/admin/finance/bank-accounts', {
-      query: { isActive: 'true' },
-    }),
-)
-const { data: periodsData } = await useAsyncData(
-  'admin-finance-transaction-periods',
-  () => api<BillingPeriodsResponse>('/api/admin/billing/periods'),
-)
+} = transactionsAsyncData
+const { data: categoriesData, refresh: refreshCategories } = categoriesAsyncData
+const { data: accountsData } = accountsAsyncData
+const { data: bankAccountsData } = bankAccountsAsyncData
+const { data: periodsData } = periodsAsyncData
 
 const transactions = computed(() => transactionsData.value?.data.items ?? [])
 const totalRecords = computed(() => transactionsData.value?.data.total ?? 0)

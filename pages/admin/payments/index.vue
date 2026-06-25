@@ -152,25 +152,36 @@ const loadPayments = () =>
     },
   })
 
-const { data, pending, refresh } = await useAsyncData('admin-payments', loadPayments, {
-  watch: [query],
-})
+const [
+  paymentsAsyncData,
+  flatsAsyncData,
+  residentsAsyncData,
+  periodsAsyncData,
+] = await Promise.all([
+  useAsyncData('admin-payments', loadPayments, {
+    watch: [query],
+  }),
+  useAsyncData('payment-flat-options', () =>
+    api<FlatsResponse>('/api/admin/flats', {
+      query: { page: 1, pageSize: 2000, sortBy: 'flatNumber', sortDirection: 'asc' },
+    }),
+  ),
+  useAsyncData('payment-resident-options', () =>
+    api<ResidentsResponse>('/api/admin/residents', {
+      query: { page: 1, pageSize: 2000, sortBy: 'fullName', sortDirection: 'asc' },
+    }),
+  ),
+  useAsyncData('payment-period-options', () =>
+    api<PeriodsResponse>('/api/admin/billing/periods', {
+      query: { page: 1, pageSize: 2000, sortBy: 'startDate', sortDirection: 'desc' },
+    }),
+  ),
+])
 
-const { data: flatsData } = await useAsyncData('payment-flat-options', () =>
-  api<FlatsResponse>('/api/admin/flats', {
-    query: { page: 1, pageSize: 2000, sortBy: 'flatNumber', sortDirection: 'asc' },
-  }),
-)
-const { data: residentsData } = await useAsyncData('payment-resident-options', () =>
-  api<ResidentsResponse>('/api/admin/residents', {
-    query: { page: 1, pageSize: 2000, sortBy: 'fullName', sortDirection: 'asc' },
-  }),
-)
-const { data: periodsData } = await useAsyncData('payment-period-options', () =>
-  api<PeriodsResponse>('/api/admin/billing/periods', {
-    query: { page: 1, pageSize: 2000, sortBy: 'startDate', sortDirection: 'desc' },
-  }),
-)
+const { data, pending, refresh } = paymentsAsyncData
+const { data: flatsData } = flatsAsyncData
+const { data: residentsData } = residentsAsyncData
+const { data: periodsData } = periodsAsyncData
 
 const payments = computed(() => data.value?.data.items ?? [])
 const totalRecords = computed(() => data.value?.data.total ?? 0)

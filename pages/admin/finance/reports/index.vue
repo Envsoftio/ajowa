@@ -70,17 +70,27 @@ const query = computed(() => ({
   search: filters.search || undefined,
 }))
 
-const { data, pending, refresh } = await useAsyncData(
-  'finance-reports',
-  () => api<ReportResponse>('/api/admin/finance/reports', { query: query.value }),
-  { watch: [query] },
-)
-const { data: flatsData } = await useAsyncData('finance-report-flats', () =>
-  api<FlatsResponse>('/api/admin/flats', { query: { pageSize: 300, 'filters[isActive]': 'true' } }),
-)
-const { data: ownersData } = await useAsyncData('finance-report-owners', () =>
-  api<ResidentsResponse>('/api/admin/residents', { query: { pageSize: 300, 'filters[isActive]': 'true' } }),
-)
+const [
+  reportAsyncData,
+  flatsAsyncData,
+  ownersAsyncData,
+] = await Promise.all([
+  useAsyncData(
+    'finance-reports',
+    () => api<ReportResponse>('/api/admin/finance/reports', { query: query.value }),
+    { watch: [query] },
+  ),
+  useAsyncData('finance-report-flats', () =>
+    api<FlatsResponse>('/api/admin/flats', { query: { pageSize: 300, 'filters[isActive]': 'true' } }),
+  ),
+  useAsyncData('finance-report-owners', () =>
+    api<ResidentsResponse>('/api/admin/residents', { query: { pageSize: 300, 'filters[isActive]': 'true' } }),
+  ),
+])
+
+const { data, pending, refresh } = reportAsyncData
+const { data: flatsData } = flatsAsyncData
+const { data: ownersData } = ownersAsyncData
 
 const report = computed(() => data.value?.data)
 const rows = computed(() => report.value?.rows ?? [])

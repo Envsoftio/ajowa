@@ -64,7 +64,7 @@ const priorityLabel = (priority: string) => {
 }
 
 const refreshInbox = async () => {
-  await Promise.all([refresh(), notificationsStore.refresh()])
+  await Promise.all([refresh(), notificationsStore.refresh({ force: true })])
 }
 
 const markRead = async (item: NotificationItem) => {

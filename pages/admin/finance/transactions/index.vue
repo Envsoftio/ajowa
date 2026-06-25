@@ -98,25 +98,37 @@ const applyRouteFilters = (routeQuery: Record<string, unknown>) => {
 
 applyRouteFilters(route.query)
 
-const { data: categoriesData } = await useAsyncData(
-  'finance-transactions-categories',
-  () => api<CategoriesResponse>('/api/categories', { query: { isActive: 'true' } }),
-)
-const { data: bankAccountsData } = await useAsyncData(
-  'finance-transactions-bank-accounts',
-  () =>
-    api<BankAccountsResponse>('/api/admin/finance/bank-accounts', {
-      query: { isActive: 'true' },
-    }),
-)
-const { data: periodsData } = await useAsyncData(
-  'finance-transactions-periods',
-  () => api<PeriodsResponse>('/api/admin/billing/periods', { query: { pageSize: 200 } }),
-)
-const { data: societyData } = await useAsyncData(
-  'finance-transactions-society',
-  () => api<SocietyResponse>('/api/admin/society/profile'),
-)
+const [
+  categoriesAsyncData,
+  bankAccountsAsyncData,
+  periodsAsyncData,
+  societyAsyncData,
+] = await Promise.all([
+  useAsyncData(
+    'finance-transactions-categories',
+    () => api<CategoriesResponse>('/api/categories', { query: { isActive: 'true' } }),
+  ),
+  useAsyncData(
+    'finance-transactions-bank-accounts',
+    () =>
+      api<BankAccountsResponse>('/api/admin/finance/bank-accounts', {
+        query: { isActive: 'true' },
+      }),
+  ),
+  useAsyncData(
+    'finance-transactions-periods',
+    () => api<PeriodsResponse>('/api/admin/billing/periods', { query: { pageSize: 200 } }),
+  ),
+  useAsyncData(
+    'finance-transactions-society',
+    () => api<SocietyResponse>('/api/admin/society/profile'),
+  ),
+])
+
+const { data: categoriesData } = categoriesAsyncData
+const { data: bankAccountsData } = bankAccountsAsyncData
+const { data: periodsData } = periodsAsyncData
+const { data: societyData } = societyAsyncData
 
 const categories = computed(() => categoriesData.value?.data.items ?? [])
 const bankAccounts = computed(() => bankAccountsData.value?.data.items ?? [])

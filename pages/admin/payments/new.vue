@@ -158,46 +158,58 @@ const emptyDuesResponse = (): DuesResponse => ({
   data: { items: [], total: 0, page: 1, pageSize: 100 },
 })
 
-const { data: flatsData } = await useAsyncData('manual-payment-flats', () =>
-  api<FlatsResponse>('/api/admin/flats', {
-    query: { page: 1, pageSize: 2000, sortBy: 'flatNumber', sortDirection: 'asc', isActive: 'true' },
-  }),
-)
+const [
+  flatsAsyncData,
+  selectedFlatDetailAsyncData,
+  bankAccountsAsyncData,
+  duesAsyncData,
+] = await Promise.all([
+  useAsyncData('manual-payment-flats', () =>
+    api<FlatsResponse>('/api/admin/flats', {
+      query: { page: 1, pageSize: 2000, sortBy: 'flatNumber', sortDirection: 'asc', isActive: 'true' },
+    }),
+  ),
+  useAsyncData(
+    'manual-payment-selected-flat',
+    () =>
+      form.flatId
+        ? api<FlatDetailResponse>(`/api/admin/flats/${form.flatId}`)
+        : Promise.resolve(null),
+    { watch: [() => form.flatId] },
+  ),
+  useAsyncData('manual-payment-bank-accounts', () =>
+    api<BankAccountsResponse>('/api/admin/finance/bank-accounts', { query: { isActive: 'true' } }),
+  ),
+  useAsyncData(
+    'manual-payment-dues',
+    () =>
+      form.flatId
+        ? api<DuesResponse>('/api/admin/billing/dues', {
+            query: {
+              page: 1,
+              pageSize: 100,
+              flatId: form.flatId,
+              balance: 'outstanding',
+              sortBy: 'dueDate',
+              sortDirection: 'asc',
+            },
+          })
+        : Promise.resolve(emptyDuesResponse()),
+    { watch: [() => form.flatId] },
+  ),
+])
+
+const { data: flatsData } = flatsAsyncData
 const {
   data: selectedFlatDetailData,
   pending: payerPending,
-} = await useAsyncData(
-  'manual-payment-selected-flat',
-  () =>
-    form.flatId
-      ? api<FlatDetailResponse>(`/api/admin/flats/${form.flatId}`)
-      : Promise.resolve(null),
-  { watch: [() => form.flatId] },
-)
-const { data: bankAccountsData } = await useAsyncData('manual-payment-bank-accounts', () =>
-  api<BankAccountsResponse>('/api/admin/finance/bank-accounts', { query: { isActive: 'true' } }),
-)
+} = selectedFlatDetailAsyncData
+const { data: bankAccountsData } = bankAccountsAsyncData
 const {
   data: duesData,
   pending: duesPending,
   refresh: refreshDues,
-} = await useAsyncData(
-  'manual-payment-dues',
-  () =>
-    form.flatId
-      ? api<DuesResponse>('/api/admin/billing/dues', {
-          query: {
-            page: 1,
-            pageSize: 100,
-            flatId: form.flatId,
-            balance: 'outstanding',
-            sortBy: 'dueDate',
-            sortDirection: 'asc',
-          },
-        })
-      : Promise.resolve(emptyDuesResponse()),
-  { watch: [() => form.flatId] },
-)
+} = duesAsyncData
 
 const flatOptions = computed(() =>
   (flatsData.value?.data.items ?? []).map((flat) => ({

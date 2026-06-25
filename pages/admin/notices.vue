@@ -63,13 +63,6 @@ const form = reactive({
   flatId: null as string | null,
 })
 
-const { data, pending, refresh } = await useAsyncData('admin-notices', () =>
-  api<{ ok: true; data: { items: NoticeRow[]; total: number } }>('/api/admin/notices', {
-    query: { page: 1, pageSize: 100 },
-  }),
-)
-const rows = computed(() => data.value?.data.items ?? [])
-
 const channelOptions = [
   { label: 'Push', value: 'PUSH' },
   { label: 'Email', value: 'EMAIL' },
@@ -87,17 +80,31 @@ const audienceOptions = [
   { label: 'Billing contacts', value: 'BILLING_CONTACTS' },
 ] satisfies { label: string; value: AudienceScope }[]
 
-const { data: flatsData } = await useAsyncData('notice-flat-owner-options', () =>
-  api<PaginatedResponse<FlatSummary>>('/api/admin/flats', {
-    query: {
-      page: 1,
-      pageSize: 2000,
-      sortBy: 'flatNumber',
-      sortDirection: 'asc',
-      'filters[isActive]': 'true',
-    },
-  }),
-)
+const [
+  noticesAsyncData,
+  flatsAsyncData,
+] = await Promise.all([
+  useAsyncData('admin-notices', () =>
+    api<{ ok: true; data: { items: NoticeRow[]; total: number } }>('/api/admin/notices', {
+      query: { page: 1, pageSize: 100 },
+    }),
+  ),
+  useAsyncData('notice-flat-owner-options', () =>
+    api<PaginatedResponse<FlatSummary>>('/api/admin/flats', {
+      query: {
+        page: 1,
+        pageSize: 2000,
+        sortBy: 'flatNumber',
+        sortDirection: 'asc',
+        'filters[isActive]': 'true',
+      },
+    }),
+  ),
+])
+
+const { data, pending, refresh } = noticesAsyncData
+const { data: flatsData } = flatsAsyncData
+const rows = computed(() => data.value?.data.items ?? [])
 
 const flatOptions = computed(() =>
   (flatsData.value?.data.items ?? []).map((flat) => {

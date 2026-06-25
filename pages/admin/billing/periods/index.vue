@@ -160,24 +160,31 @@ const loadPeriods = () =>
     },
   })
 
+const [
+  periodsAsyncData,
+  flatsAsyncData,
+] = await Promise.all([
+  useAsyncData('admin-billing-periods', loadPeriods, {
+    watch: [periodQuery],
+  }),
+  useAsyncData('billing-flat-options', () =>
+    api<FlatsResponse>('/api/admin/flats', {
+      query: {
+        page: 1,
+        pageSize: 2000,
+        sortBy: 'flatNumber',
+        sortDirection: 'asc',
+      },
+    }),
+  ),
+])
+
 const {
   data: periodsData,
   pending: periodsPending,
   refresh: refreshPeriods,
-} = await useAsyncData('admin-billing-periods', loadPeriods, {
-  watch: [periodQuery],
-})
-
-const { data: flatsData } = await useAsyncData('billing-flat-options', () =>
-  api<FlatsResponse>('/api/admin/flats', {
-    query: {
-      page: 1,
-      pageSize: 2000,
-      sortBy: 'flatNumber',
-      sortDirection: 'asc',
-    },
-  }),
-)
+} = periodsAsyncData
+const { data: flatsData } = flatsAsyncData
 
 const periods = computed(() => periodsData.value?.data.items ?? [])
 const flatOptions = computed(() =>

@@ -95,22 +95,29 @@ const loadDues = () =>
     query: buildDueQuery(),
   })
 
-const { data, pending, refresh } = await useAsyncData(
-  'admin-billing-dues',
-  loadDues,
-  { watch: [query] },
-)
+const [
+  duesAsyncData,
+  periodsAsyncData,
+] = await Promise.all([
+  useAsyncData(
+    'admin-billing-dues',
+    loadDues,
+    { watch: [query] },
+  ),
+  useAsyncData('due-period-options', () =>
+    api<PeriodResponse>('/api/admin/billing/periods', {
+      query: {
+        page: 1,
+        pageSize: 2000,
+        sortBy: 'startDate',
+        sortDirection: 'desc',
+      },
+    }),
+  ),
+])
 
-const { data: periodsData } = await useAsyncData('due-period-options', () =>
-  api<PeriodResponse>('/api/admin/billing/periods', {
-    query: {
-      page: 1,
-      pageSize: 2000,
-      sortBy: 'startDate',
-      sortDirection: 'desc',
-    },
-  }),
-)
+const { data, pending, refresh } = duesAsyncData
+const { data: periodsData } = periodsAsyncData
 
 const dues = computed(() => data.value?.data.items ?? [])
 const totalRecords = computed(() => data.value?.data.total ?? 0)

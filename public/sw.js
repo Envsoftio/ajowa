@@ -47,7 +47,23 @@ self.addEventListener('push', (event) => {
     actions: Array.isArray(payload.actions) ? payload.actions : [],
   }
 
-  event.waitUntil(self.registration.showNotification(title, options))
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+      clients.forEach((client) => {
+        client.postMessage({
+          type: 'AJOWA_PUSH_NOTIFICATION',
+          payload,
+        })
+      })
+
+      const hasVisibleClient = clients.some((client) => client.visibilityState === 'visible')
+      if (hasVisibleClient) {
+        return undefined
+      }
+
+      return self.registration.showNotification(title, options)
+    }),
+  )
 })
 
 self.addEventListener('notificationclick', (event) => {

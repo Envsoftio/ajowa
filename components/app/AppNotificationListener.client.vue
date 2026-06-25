@@ -6,8 +6,14 @@ const authStore = useAuthStore()
 const notificationsStore = useNotificationsStore()
 const notificationSound = useNotificationSound()
 
-let pollTimer: ReturnType<typeof setInterval> | null = null
 let soundUnlocked = false
+let refreshAfterPushTimer: ReturnType<typeof setTimeout> | null = null
+
+type PushNotificationPayload = {
+  title?: unknown
+  body?: unknown
+  priority?: unknown
+}
 
 const toastSeverity = (priority: string) => {
   if (priority === 'EMERGENCY') return 'error'
@@ -15,7 +21,9 @@ const toastSeverity = (priority: string) => {
   return 'info'
 }
 
-const showNotificationToast = async (item: NotificationSummaryItem) => {
+const showNotificationToast = async (
+  item: Pick<NotificationSummaryItem, 'title' | 'body' | 'priority'>,
+) => {
   toast.add({
     severity: toastSeverity(item.priority),
     summary: item.title,
@@ -28,14 +36,26 @@ const showNotificationToast = async (item: NotificationSummaryItem) => {
   }
 }
 
-const poll = async (notifyNew = false) => {
+const showPushToast = async (payload: PushNotificationPayload | undefined) => {
+  if (document.visibilityState !== 'visible') {
+    return
+  }
+
+  await showNotificationToast({
+    title: typeof payload?.title === 'string' ? payload.title : 'AJOWA',
+    body: typeof payload?.body === 'string' ? payload.body : '',
+    priority: typeof payload?.priority === 'string' ? payload.priority : 'MEDIUM',
+  })
+}
+
+const refreshNotifications = async (options: { notifyNew?: boolean; force?: boolean } = {}) => {
   try {
-    const result = await notificationsStore.refresh({ notifyNew })
+    const result = await notificationsStore.refresh(options)
     if (result.isNew && result.newest) {
       await showNotificationToast(result.newest)
     }
   } catch {
-    // Notification polling is progressive enhancement; the dashboard still works.
+    // Live notification updates are progressive enhancement; the dashboard still works.
   }
 }
 
@@ -56,21 +76,40 @@ const unbindSoundUnlock = () => {
   window.removeEventListener('touchstart', unlockSound)
 }
 
+const handlePushMessage = (event: MessageEvent) => {
+  if (event.data?.type !== 'AJOWA_PUSH_NOTIFICATION') {
+    return
+  }
+  if (!authStore.isAuthenticated) {
+    return
+  }
+
+  void showPushToast(event.data.payload)
+  void refreshNotifications({ force: true })
+
+  if (refreshAfterPushTimer) {
+    clearTimeout(refreshAfterPushTimer)
+  }
+  refreshAfterPushTimer = setTimeout(() => {
+    refreshAfterPushTimer = null
+    void refreshNotifications({ force: true })
+  }, 1500)
+}
+
 const start = () => {
-  if (pollTimer || !authStore.isAuthenticated) return
+  if (!authStore.isAuthenticated) return
 
   notificationsStore.hydrateSoundPreference()
   bindSoundUnlock()
-  void poll(false)
-  pollTimer = setInterval(() => {
-    void poll(true)
-  }, 15000)
+  void refreshNotifications({ force: !notificationsStore.loaded })
+  navigator.serviceWorker?.addEventListener('message', handlePushMessage)
 }
 
 const stop = () => {
-  if (pollTimer) {
-    clearInterval(pollTimer)
-    pollTimer = null
+  navigator.serviceWorker?.removeEventListener('message', handlePushMessage)
+  if (refreshAfterPushTimer) {
+    clearTimeout(refreshAfterPushTimer)
+    refreshAfterPushTimer = null
   }
   unbindSoundUnlock()
   notificationsStore.reset()
