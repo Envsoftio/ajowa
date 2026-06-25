@@ -1500,7 +1500,7 @@ export const generateMaintenanceBillPdf = async (
               {},
               invoiceMetaCell('Delivery Note'),
               {},
-              invoiceMetaCell('Mode/Terms of Payment'),
+              invoiceMetaCell('Due Date', formatInvoiceDate(due.due_date), true),
               {},
             ],
             [

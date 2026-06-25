@@ -20,16 +20,45 @@ type Preference = {
 
 const api = useApi()
 const toast = useToast()
-const runtimeConfig = useRuntimeConfig()
+const pushNotifications = usePushNotifications()
 const preferences = ref<Preference[]>([])
 const subscriptions = ref<{ id: string; deviceLabel: string | null; status: string; lastSeenAt: string | null }[]>([])
 const pushState = ref('idle')
+const pushMessage = ref('')
 const saving = ref(false)
+
+const notificationPermissionGuide = computed(() => {
+  if (!import.meta.client) return []
+
+  const userAgent = navigator.userAgent
+  if (userAgent.includes('Firefox/')) {
+    return [
+      'Click the lock icon beside the address bar.',
+      'Clear the blocked notification permission or set notifications to Allow.',
+      'Reload AJOWA and click Enable push again.',
+    ]
+  }
+
+  if (userAgent.includes('Safari/') && !userAgent.includes('Chrome/') && !userAgent.includes('CriOS/')) {
+    return [
+      'Open Safari Settings and select Websites.',
+      'Choose Notifications and allow AJOWA.',
+      'Return to AJOWA, reload the page, and click Enable push again.',
+    ]
+  }
+
+  return [
+    'Click the site controls icon beside the address bar.',
+    'Open Site settings and set Notifications to Allow.',
+    'Reload AJOWA and click Enable push again.',
+  ]
+})
 
 const load = async () => {
   const response = await api<{ ok: true; data: { preferences: Preference[]; subscriptions: typeof subscriptions.value } }>('/api/my/settings/notifications')
   preferences.value = response.data.preferences
   subscriptions.value = response.data.subscriptions
+  return response.data
 }
 
 await useAsyncData('my-notification-settings', load)
@@ -44,46 +73,14 @@ const save = async () => {
   }
 }
 
-const urlBase64ToUint8Array = (base64String: string) => {
-  const padding = '='.repeat((4 - (base64String.length % 4)) % 4)
-  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/')
-  const rawData = window.atob(base64)
-  return Uint8Array.from([...rawData].map((char) => char.charCodeAt(0)))
-}
-
 const subscribePush = async () => {
-  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-    pushState.value = 'unsupported'
-    return
-  }
+  const result = await pushNotifications.subscribe({ requestPermission: true, showErrorToast: true })
+  pushState.value = result.state
+  pushMessage.value = result.message ?? ''
 
-  const keyResponse = await api<{ ok: true; data: { enabled: boolean; publicKey: string | null; reason: string | null } }>('/api/notifications/push/public-key')
-  if (!keyResponse.data.enabled || !keyResponse.data.publicKey) {
-    pushState.value = keyResponse.data.reason ?? 'Push is not configured.'
-    return
+  if (result.state === 'subscribed') {
+    await load()
   }
-
-  const permission = await Notification.requestPermission()
-  if (permission !== 'granted') {
-    pushState.value = 'denied'
-    return
-  }
-
-  const registration = await navigator.serviceWorker.ready
-  const subscription = await registration.pushManager.subscribe({
-    userVisibleOnly: true,
-    applicationServerKey: urlBase64ToUint8Array(keyResponse.data.publicKey),
-  })
-  await api('/api/my/notifications/push/subscribe', {
-    method: 'POST',
-    body: {
-      ...subscription.toJSON(),
-      deviceLabel: navigator.platform || runtimeConfig.public.appName,
-      platform: navigator.platform,
-    },
-  })
-  pushState.value = 'subscribed'
-  await load()
 }
 </script>
 
@@ -101,7 +98,18 @@ const subscribePush = async () => {
         </div>
       </header>
 
-      <Message v-if="pushState && pushState !== 'idle' && pushState !== 'subscribed'" severity="warn">{{ pushState }}</Message>
+      <Message v-if="pushState === 'denied'" severity="warn">
+        <div class="notification-permission-help">
+          <strong>Notifications are blocked in this browser.</strong>
+          <span>Turn them on from browser site settings, then try again.</span>
+          <ol>
+            <li v-for="step in notificationPermissionGuide" :key="step">{{ step }}</li>
+          </ol>
+        </div>
+      </Message>
+      <Message v-else-if="pushState && pushState !== 'idle' && pushState !== 'subscribed'" severity="warn">
+        {{ pushMessage || pushState }}
+      </Message>
       <Message v-if="pushState === 'subscribed'" severity="success">Push subscription refreshed.</Message>
 
       <AppDataTable :value="preferences" responsive-layout="scroll" class="list-page__table">
@@ -173,3 +181,15 @@ const subscribePush = async () => {
     </section>
   </div>
 </template>
+
+<style scoped>
+.notification-permission-help {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.notification-permission-help ol {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+</style>

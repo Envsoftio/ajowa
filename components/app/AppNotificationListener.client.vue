@@ -5,8 +5,10 @@ const toast = useToast()
 const authStore = useAuthStore()
 const notificationsStore = useNotificationsStore()
 const notificationSound = useNotificationSound()
+const pushNotifications = usePushNotifications()
 
 let soundUnlocked = false
+let pushAttemptedForSession: string | null = null
 let refreshAfterPushTimer: ReturnType<typeof setTimeout> | null = null
 
 type PushNotificationPayload = {
@@ -96,11 +98,24 @@ const handlePushMessage = (event: MessageEvent) => {
   }, 1500)
 }
 
+const refreshPushSubscription = async () => {
+  const sessionId = authStore.me?.session.id
+  if (!sessionId || pushAttemptedForSession === sessionId) return
+
+  pushAttemptedForSession = sessionId
+  try {
+    await pushNotifications.subscribe({ requestPermission: true, showErrorToast: false })
+  } catch {
+    // Browser push setup should never block the app shell.
+  }
+}
+
 const start = () => {
   if (!authStore.isAuthenticated) return
 
   notificationsStore.hydrateSoundPreference()
   bindSoundUnlock()
+  void refreshPushSubscription()
   void refreshNotifications({ force: !notificationsStore.loaded })
   navigator.serviceWorker?.addEventListener('message', handlePushMessage)
 }
@@ -112,6 +127,9 @@ const stop = () => {
     refreshAfterPushTimer = null
   }
   unbindSoundUnlock()
+  if (!authStore.isAuthenticated) {
+    pushAttemptedForSession = null
+  }
   notificationsStore.reset()
 }
 

@@ -10,6 +10,7 @@ definePageMeta({
 const authStore = useAuthStore()
 const route = useRoute()
 const toast = useToast()
+const pushNotifications = usePushNotifications()
 
 const form = reactive({
   email: '',
@@ -35,6 +36,10 @@ const submit = async () => {
     if (me?.access.requiresEmailVerification) {
       await navigateTo('/verify-email')
       return
+    }
+
+    if (me) {
+      void pushNotifications.subscribe({ requestPermission: true, showErrorToast: false })
     }
 
     await navigateTo(allowedRedirect ?? me?.landingRoute ?? '/')

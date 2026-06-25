@@ -19,8 +19,8 @@ export default defineEventHandler(async (event) => {
   await queryRows(
     `
       insert into user_notification_preferences (society_id, user_id, event_category)
-      select $1, $2, category::notification_event_category
-      from unnest($3::text[]) as category
+      select $1, $2, category.value::notification_event_category
+      from unnest($3::text[]) as category(value)
       on conflict (user_id, event_category) do nothing
     `,
     [authMe.user.societyId, authMe.user.id, categories],
