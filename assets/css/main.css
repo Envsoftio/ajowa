@@ -2715,11 +2715,14 @@ th.expense-summary-table__first-data-column {
 }
 
 .bill-pdf-download-progress {
-  display: inline-flex;
+  display: inline-grid;
+  grid-template-rows: auto auto;
+  gap: 0.35rem;
   align-items: center;
+  min-width: min(100%, 18rem);
   min-height: 2.15rem;
   margin: 0;
-  padding: 0.45rem 0.7rem;
+  padding: 0.5rem 0.75rem;
   border: 1px solid color-mix(in srgb, var(--color-info) 34%, transparent);
   border-left-width: 3px;
   border-radius: var(--radius-sm);
@@ -2728,6 +2731,28 @@ th.expense-summary-table__first-data-column {
   font-size: 0.86rem;
   font-weight: 800;
   line-height: 1.35;
+}
+
+.bill-pdf-download-progress__text,
+.bill-pdf-download-progress__track {
+  display: block;
+}
+
+.bill-pdf-download-progress__track {
+  width: 100%;
+  height: 0.4rem;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--color-info) 24%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-surface) 72%, var(--color-info-soft));
+}
+
+.bill-pdf-download-progress__track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--color-info);
+  transition: width 160ms ease;
 }
 
 .admin-charge-section,
@@ -3780,6 +3805,15 @@ button *,
   border-left-color: #93c5fd;
   background: rgba(96, 165, 250, 0.18);
   color: #dbeafe;
+}
+
+.app-theme-dark .bill-pdf-download-progress__track {
+  border-color: rgba(147, 197, 253, 0.36);
+  background: rgba(15, 23, 42, 0.66);
+}
+
+.app-theme-dark .bill-pdf-download-progress__track span {
+  background: #93c5fd;
 }
 
 .qr-access-grid {

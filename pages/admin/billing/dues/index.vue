@@ -466,6 +466,16 @@ const billPdfDownloadProgressLabel = computed(() => {
 
   return `${prefix}: ${progress.processedCount} / ${progress.totalCount} bill PDFs processed${failed}.`
 })
+const billPdfDownloadProgressPercent = computed(() => {
+  const progress = billPdfDownloadProgress.value
+
+  if (!progress?.totalCount) return 0
+
+  return Math.min(
+    100,
+    Math.max(0, Math.round((progress.processedCount / progress.totalCount) * 100)),
+  )
+})
 
 const hasBulkSelection = computed(() => bulkSelectedDues.value.length > 0)
 const notificationSelectedDues = computed(() =>
@@ -1148,7 +1158,12 @@ watch(
             v-if="billPdfDownloadProgressLabel"
             class="table-muted bill-pdf-download-progress"
           >
-            {{ billPdfDownloadProgressLabel }}
+            <span class="bill-pdf-download-progress__text">
+              {{ billPdfDownloadProgressLabel }}
+            </span>
+            <span class="bill-pdf-download-progress__track" aria-hidden="true">
+              <span :style="{ width: `${billPdfDownloadProgressPercent}%` }" />
+            </span>
           </small>
         </div>
       </header>
