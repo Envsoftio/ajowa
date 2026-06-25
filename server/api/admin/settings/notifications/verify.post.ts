@@ -6,7 +6,15 @@ import { sendProviderVerification } from '~/server/utils/notifications'
 
 const schema = z.object({
   channel: z.enum(['EMAIL', 'WHATSAPP', 'PUSH']),
-  target: z.string().min(1),
+  target: z.string().trim().optional().default(''),
+}).superRefine((value, context) => {
+  if (value.channel !== 'PUSH' && !value.target) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['target'],
+      message: 'Target is required for email and WhatsApp verification.',
+    })
+  }
 })
 
 export default defineEventHandler(async (event) => {

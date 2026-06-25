@@ -873,7 +873,15 @@ const enqueueServiceRequestNotification = async (
   }
 }
 
-const enqueueServiceRequestManagerNotification = async (serviceRequestId: string) => {
+const enqueueServiceRequestManagerNotification = async (
+  serviceRequestId: string,
+  input?: {
+    title: string
+    body: string
+    idempotencyKey: string
+    triggeredByUserId?: string
+  },
+) => {
   const client = await getDatabasePool().connect()
 
   try {
@@ -935,6 +943,10 @@ const enqueueServiceRequestManagerNotification = async (serviceRequestId: string
     })
     const requesterLabel = ticket.requester_name ?? 'A resident'
     const locationLabel = ticket.flat_label ? ` for ${ticket.flat_label}` : ''
+    const title = input?.title ?? 'New service request'
+    const body =
+      input?.body ??
+      `${requesterLabel} raised ${ticket.request_number}${locationLabel}: ${ticket.title}.`
 
     const queued = await enqueueNotificationForUsers(client, {
       societyId: ticket.society_id,
@@ -943,8 +955,8 @@ const enqueueServiceRequestManagerNotification = async (serviceRequestId: string
       sourceTable: 'service_requests',
       sourceId: ticket.id,
       priority: ticket.priority === 'EMERGENCY' ? 'HIGH' : 'MEDIUM',
-      title: 'New service request',
-      body: `${requesterLabel} raised ${ticket.request_number}${locationLabel}: ${ticket.title}.`,
+      title,
+      body,
       payload: {
         serviceRequestId: ticket.id,
         requestNumber: ticket.request_number,
@@ -954,8 +966,9 @@ const enqueueServiceRequestManagerNotification = async (serviceRequestId: string
         deepLinkUrl: `/admin/service-requests/${ticket.id}`,
         actionLabel: 'Open service request',
       },
-      idempotencyKey: `service_request.manager.created:${ticket.id}`,
+      idempotencyKey: input?.idempotencyKey ?? `service_request.manager.created:${ticket.id}`,
       idempotencyWindowSeconds: 31536000,
+      ...(input?.triggeredByUserId ? { triggeredByUserId: input.triggeredByUserId } : {}),
       users,
       channels: ['PUSH', 'EMAIL', 'IN_APP'],
       audienceLabel: 'Service request managers',
@@ -1540,13 +1553,24 @@ export const updateServiceRequestStatus = async (
     await client.query(
       `
         update service_requests
-        set status = $2,
-            first_responded_at = case when first_responded_at is null and $2 in ('ACKNOWLEDGED', 'IN_PROGRESS', 'ON_HOLD', 'RESOLVED') then now() else first_responded_at end,
-            acknowledged_at = case when $2 = 'ACKNOWLEDGED' then coalesce(acknowledged_at, now()) else acknowledged_at end,
-            resolved_at = case when $2 = 'RESOLVED' then now() else resolved_at end,
-            closed_at = case when $2 = 'CLOSED' then now() else closed_at end,
-            reopened_at = case when $2 = 'REOPENED' then now() else reopened_at end,
-            is_sla_breached = case when due_by_at is not null and due_by_at < now() and $2 not in ('RESOLVED', 'CLOSED', 'CANCELLED') then true else is_sla_breached end,
+        set status = $2::service_request_status,
+            first_responded_at = case
+              when first_responded_at is null
+                and $2::service_request_status in ('ACKNOWLEDGED', 'IN_PROGRESS', 'ON_HOLD', 'RESOLVED')
+              then now()
+              else first_responded_at
+            end,
+            acknowledged_at = case when $2::service_request_status = 'ACKNOWLEDGED' then coalesce(acknowledged_at, now()) else acknowledged_at end,
+            resolved_at = case when $2::service_request_status = 'RESOLVED' then now() else resolved_at end,
+            closed_at = case when $2::service_request_status = 'CLOSED' then now() else closed_at end,
+            reopened_at = case when $2::service_request_status = 'REOPENED' then now() else reopened_at end,
+            is_sla_breached = case
+              when due_by_at is not null
+                and due_by_at < now()
+                and $2::service_request_status not in ('RESOLVED', 'CLOSED', 'CANCELLED')
+              then true
+              else is_sla_breached
+            end,
             updated_at = now()
         where id = $1
       `,
@@ -1678,10 +1702,21 @@ export const addServiceRequestComment = async (
     )
 
     await client.query('commit')
-    if (visibility === 'RESIDENT_VISIBLE' && authMe.user.id !== ticket.requester_user_id) {
+    if (visibility === 'RESIDENT_VISIBLE' && scope === 'resident') {
+      try {
+        await enqueueServiceRequestManagerNotification(id, {
+          title: 'Service request note added',
+          body: `${authMe.user.fullName} added a note to ${ticket.request_number}: ${ticket.title}.`,
+          idempotencyKey: `service_request.manager.comment:${comment.rows[0]?.id ?? Date.now()}`,
+          triggeredByUserId: authMe.user.id,
+        })
+      } catch (notificationError) {
+        warnNotificationFailure(id, notificationError)
+      }
+    } else if (visibility === 'RESIDENT_VISIBLE' && authMe.user.id !== ticket.requester_user_id) {
       try {
         await enqueueServiceRequestNotification(id, {
-          title: 'Service request comment added',
+          title: 'Service request note added',
           body: `A new update was added to ${ticket.request_number}.`,
           idempotencyKey: `service_request.comment:${comment.rows[0]?.id ?? Date.now()}`,
         })

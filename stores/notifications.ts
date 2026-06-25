@@ -58,6 +58,7 @@ export const useNotificationsStore = defineStore('notifications', {
       const previousNewestId = this.lastSeenNewestId
 
       let request!: Promise<NotificationRefreshResult>
+      // eslint-disable-next-line prefer-const
       request = (async () => {
         const response = await $fetch<ApiSuccessResponse<NotificationSummary>>(
           '/api/my/notifications/summary',

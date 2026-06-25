@@ -55,6 +55,12 @@ const test = reactive({ channel: 'EMAIL', target: '' })
 const saving = ref(false)
 const verifying = ref(false)
 
+const verificationTargetPlaceholder = computed(() =>
+  test.channel === 'PUSH' ? 'Current browser push subscription' : 'Email or WhatsApp number',
+)
+
+const canVerifyProvider = computed(() => test.channel === 'PUSH' || Boolean(test.target.trim()))
+
 const emailSettingsSourceLabel = computed(() =>
   emailSettings.source === 'SOCIETY' ? 'Admin settings' : 'Not saved',
 )
@@ -175,8 +181,8 @@ const verify = async () => {
         <h2>Provider verification</h2>
         <div class="surface-grid">
           <Select v-model="test.channel" :options="['EMAIL', 'WHATSAPP', 'PUSH']" />
-          <InputText v-model="test.target" placeholder="Email, WhatsApp number, or current user push" />
-          <Button label="Send test" icon="pi pi-send" severity="secondary" outlined :loading="verifying" :disabled="saving || !test.target.trim()" @click="verify" />
+          <InputText v-model="test.target" :placeholder="verificationTargetPlaceholder" />
+          <Button label="Send test" icon="pi pi-send" severity="secondary" outlined :loading="verifying" :disabled="saving || !canVerifyProvider" @click="verify" />
         </div>
       </div>
     </section>

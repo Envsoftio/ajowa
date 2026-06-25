@@ -549,6 +549,67 @@ const getEmailActionUrlForJob = (job: ClaimedJobRow) => {
   }
 }
 
+const defaultPushLink = '/my/notifications'
+
+const truncatePushText = (value: string, maxLength: number) => {
+  if (value.length <= maxLength) {
+    return value
+  }
+
+  return `${value.slice(0, Math.max(0, maxLength - 3))}...`
+}
+
+const normalizePushLink = (value: unknown, appUrl: string) => {
+  const rawLink = typeof value === 'string' && value.trim() ? value.trim() : defaultPushLink
+
+  try {
+    const appOrigin = new URL(appUrl).origin
+    const url = new URL(rawLink, appOrigin)
+
+    if (url.origin !== appOrigin) {
+      return defaultPushLink
+    }
+
+    return `${url.pathname}${url.search}${url.hash}` || defaultPushLink
+  } catch {
+    return defaultPushLink
+  }
+}
+
+const getPushActions = (value: unknown) => {
+  if (!Array.isArray(value)) {
+    return undefined
+  }
+
+  const actions = value
+    .filter(
+      (action): action is { action: string; title: string; icon?: string } =>
+        Boolean(action) &&
+        typeof action === 'object' &&
+        typeof (action as { action?: unknown }).action === 'string' &&
+        typeof (action as { title?: unknown }).title === 'string',
+    )
+    .slice(0, 2)
+    .map((action) => ({
+      action: action.action,
+      title: truncatePushText(action.title, 40),
+      ...(typeof action.icon === 'string' && action.icon.trim() ? { icon: action.icon.trim() } : {}),
+    }))
+
+  return actions.length ? actions : undefined
+}
+
+const isExpiredPushSubscriptionStatus = (statusCode: number | undefined) =>
+  statusCode === 404 || statusCode === 410
+
+const isPermanentPushFailureStatus = (statusCode: number | undefined) =>
+  Boolean(
+    statusCode &&
+      statusCode >= 400 &&
+      statusCode < 500 &&
+      ![408, 409, 425, 429].includes(statusCode),
+  )
+
 export const resolveNotificationAudience = async (
   client: PoolClient,
   societyId: string,
@@ -1045,20 +1106,23 @@ const sendPushForJob = async (
   webpush.setVapidDetails(status.config.subject, status.config.publicKey, status.config.privateKey)
   const runtimeConfig = getValidatedRuntimeConfig(useRuntimeConfig())
   const link = typeof job.payload.deepLinkUrl === 'string' ? job.payload.deepLinkUrl : '/my/notifications'
+  const actions = getPushActions(job.payload.actions)
   const payload = JSON.stringify({
-    title: job.title ?? 'AJOWA',
-    body: job.body ?? '',
+    title: truncatePushText(job.title ?? 'AJOWA', 120),
+    body: truncatePushText(job.body ?? '', 240),
     icon: '/icons/ajowa-icon-192.png',
     badge: '/icons/ajowa-icon-192.png',
-    link: new URL(link, runtimeConfig.appUrl).toString(),
+    link: normalizePushLink(link, runtimeConfig.appUrl),
     tag: typeof job.payload.tag === 'string' ? job.payload.tag : job.event_key,
     priority: job.priority,
     image: typeof job.payload.image === 'string' ? job.payload.image : undefined,
-    actions: Array.isArray(job.payload.actions) ? job.payload.actions : undefined,
+    ...(actions ? { actions } : {}),
   })
 
   const responses: Record<string, unknown>[] = []
   let successCount = 0
+  let failureCount = 0
+  let permanentFailureCount = 0
   let lastFailure = ''
 
   for (const subscription of subscriptions.rows) {
@@ -1088,14 +1152,19 @@ const sendPushForJob = async (
       )
     } catch (error) {
       const pushError = error as { statusCode?: number; body?: string; message?: string }
+      const permanentFailure = isPermanentPushFailureStatus(pushError.statusCode)
+      failureCount += 1
+      permanentFailureCount += permanentFailure ? 1 : 0
       lastFailure = pushError.message ?? 'Push provider request failed.'
       responses.push({
         subscriptionId: subscription.id,
         statusCode: pushError.statusCode,
         error: lastFailure,
+        permanentFailure,
+        ...(pushError.body ? { body: pushError.body.slice(0, 1000) } : {}),
       })
 
-      if (pushError.statusCode === 404 || pushError.statusCode === 410) {
+      if (isExpiredPushSubscriptionStatus(pushError.statusCode)) {
         await client.query(
           `
             update push_subscriptions
@@ -1104,16 +1173,27 @@ const sendPushForJob = async (
           `,
           [subscription.id, lastFailure],
         )
+      } else {
+        await client.query(
+          `
+            update push_subscriptions
+            set last_error = $2, updated_at = now()
+            where id = $1
+          `,
+          [subscription.id, lastFailure],
+        )
       }
     }
   }
+
+  const allFailuresArePermanent = failureCount > 0 && permanentFailureCount === failureCount
 
   return {
     ok: successCount > 0,
     providerName: 'WEB_PUSH',
     responseBody: { responses, successCount },
     ...(successCount > 0 ? {} : { failureReason: lastFailure || 'Push delivery failed for all subscriptions.' }),
-    permanentFailure: successCount === 0,
+    permanentFailure: successCount === 0 && allFailuresArePermanent,
   }
 }
 

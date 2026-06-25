@@ -40,7 +40,7 @@ const submit = async () => {
     }
 
     if (me) {
-      void pushNotifications.subscribe({ requestPermission: true, showErrorToast: false })
+      void pushNotifications.subscribe({ requestPermission: false, showErrorToast: false })
     }
 
     await navigateTo(allowedRedirect ?? me?.landingRoute ?? '/')

@@ -27,6 +27,25 @@ const urlBase64ToUint8Array = (base64String: string) => {
   return Uint8Array.from([...rawData].map((char) => char.charCodeAt(0)))
 }
 
+const uint8ArraysEqual = (left: Uint8Array, right: Uint8Array) => {
+  if (left.length !== right.length) return false
+
+  return left.every((value, index) => value === right[index])
+}
+
+const subscriptionUsesApplicationServerKey = (
+  subscription: PushSubscription,
+  applicationServerKey: Uint8Array,
+) => {
+  const subscriptionKey = subscription.options.applicationServerKey
+
+  if (!subscriptionKey) {
+    return true
+  }
+
+  return uint8ArraysEqual(new Uint8Array(subscriptionKey), applicationServerKey)
+}
+
 const detectBrowserName = () => {
   const userAgent = navigator.userAgent
 
@@ -53,6 +72,10 @@ const getBrowserPushErrorMessage = (error: unknown) => {
 
     if (error.name === 'AbortError') {
       return 'The browser could not finish push setup. Reload AJOWA and try again.'
+    }
+
+    if (error.name === 'InvalidCharacterError') {
+      return 'The push public key is invalid. Regenerate the VAPID keys and try again.'
     }
 
     return error.message || 'The browser could not create a push subscription.'
@@ -135,13 +158,29 @@ export const usePushNotifications = () => {
       let subscription: PushSubscription
 
       try {
+        const applicationServerKey = urlBase64ToUint8Array(keyResponse.data.publicKey)
         const registration = await navigator.serviceWorker.ready
-        const existingSubscription = await registration.pushManager.getSubscription()
+        let existingSubscription = await registration.pushManager.getSubscription()
+
+        if (
+          existingSubscription &&
+          !subscriptionUsesApplicationServerKey(existingSubscription, applicationServerKey)
+        ) {
+          const unsubscribed = await existingSubscription.unsubscribe()
+          if (!unsubscribed) {
+            throw new DOMException(
+              'The browser could not replace the previous push subscription.',
+              'AbortError',
+            )
+          }
+          existingSubscription = null
+        }
+
         subscription =
           existingSubscription ??
           (await registration.pushManager.subscribe({
             userVisibleOnly: true,
-            applicationServerKey: urlBase64ToUint8Array(keyResponse.data.publicKey),
+            applicationServerKey,
           }))
       } catch (error) {
         return {

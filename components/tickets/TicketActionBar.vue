@@ -68,10 +68,15 @@ const quickAction = (status: ServiceRequestStatus) => {
       />
     </div>
     <div class="ticket-action-bar__form">
-      <Select v-model="selectedStatus" :options="statusOptions" placeholder="Status" />
-      <Textarea v-model="comment" rows="2" auto-resize placeholder="Update note or resolution comment" />
-      <InputText v-if="selectedStatus === 'REOPENED' || selectedStatus === 'NEEDS_REASSIGNMENT'" v-model="reason" placeholder="Reason" />
-      <Button label="Apply" icon="pi pi-save" :loading="saving" @click="quickAction(selectedStatus)" />
+      <Select v-model="selectedStatus" class="ticket-action-bar__status" :options="statusOptions" placeholder="Status" />
+      <Textarea v-model="comment" class="ticket-action-bar__note" rows="1" auto-resize placeholder="Update note or resolution comment" />
+      <InputText
+        v-if="selectedStatus === 'REOPENED' || selectedStatus === 'NEEDS_REASSIGNMENT'"
+        v-model="reason"
+        class="ticket-action-bar__reason"
+        placeholder="Reason"
+      />
+      <Button class="ticket-action-bar__apply" label="Apply" icon="pi pi-save" :loading="saving" @click="quickAction(selectedStatus)" />
     </div>
   </section>
 </template>
@@ -87,11 +92,51 @@ const quickAction = (status: ServiceRequestStatus) => {
   display: flex;
   gap: 0.65rem;
   flex-wrap: wrap;
-  align-items: stretch;
+  align-items: center;
 }
 
-.ticket-action-bar__form .p-textarea,
-.ticket-action-bar__form .p-inputtext {
-  min-width: min(100%, 18rem);
+.ticket-action-bar__form {
+  align-items: flex-start;
+}
+
+.ticket-action-bar__status {
+  flex: 0 1 11rem;
+}
+
+.ticket-action-bar__note {
+  flex: 1 1 18rem;
+  line-height: 1.35;
+  resize: vertical;
+}
+
+.ticket-action-bar__reason {
+  flex: 1 1 14rem;
+}
+
+.ticket-action-bar__apply {
+  flex: 0 0 auto;
+}
+
+.ticket-action-bar__status,
+.ticket-action-bar__note,
+.ticket-action-bar__reason,
+.ticket-action-bar__apply {
+  min-height: 2.6rem;
+}
+
+.ticket-action-bar__status :deep(.p-select-label) {
+  display: flex;
+  align-items: center;
+  padding-block: 0.55rem;
+}
+
+@media (max-width: 640px) {
+  .ticket-action-bar__status,
+  .ticket-action-bar__note,
+  .ticket-action-bar__reason,
+  .ticket-action-bar__apply {
+    flex-basis: 100%;
+    width: 100%;
+  }
 }
 </style>

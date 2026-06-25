@@ -27,6 +27,7 @@ export const useAuthStore = defineStore('auth', {
       this.loading = true
 
       let request!: Promise<AuthMe | null>
+      // eslint-disable-next-line prefer-const
       request = (async () => {
         try {
           const requestHeaders = useRequestHeaders(['cookie'])

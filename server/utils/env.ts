@@ -8,10 +8,22 @@ const whatsappIntegrationSchema = z.object({
   senderId: z.string().min(1, 'WHATSAPP_SENDER_ID is required'),
 })
 
+const vapidKeySchema = (name: string) =>
+  z
+    .string()
+    .min(1, `${name} is required`)
+    .regex(/^[A-Za-z0-9_-]+={0,2}$/, `${name} must be URL-safe base64`)
+
 const pushIntegrationSchema = z.object({
-  publicKey: z.string().min(1, 'VAPID_PUBLIC_KEY is required'),
-  privateKey: z.string().min(1, 'VAPID_PRIVATE_KEY is required'),
-  subject: z.string().min(1, 'PUSH_SUBJECT is required'),
+  publicKey: vapidKeySchema('VAPID_PUBLIC_KEY'),
+  privateKey: vapidKeySchema('VAPID_PRIVATE_KEY'),
+  subject: z
+    .string()
+    .min(1, 'PUSH_SUBJECT is required')
+    .refine(
+      (value) => value.startsWith('mailto:') || /^https?:\/\//.test(value),
+      'PUSH_SUBJECT must be a mailto: address or an http(s) URL',
+    ),
 })
 
 const runtimeConfigSchema = z.object({

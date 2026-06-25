@@ -104,7 +104,7 @@ const refreshPushSubscription = async () => {
 
   pushAttemptedForSession = sessionId
   try {
-    await pushNotifications.subscribe({ requestPermission: true, showErrorToast: false })
+    await pushNotifications.subscribe({ requestPermission: false, showErrorToast: false })
   } catch {
     // Browser push setup should never block the app shell.
   }
