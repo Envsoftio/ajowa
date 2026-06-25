@@ -154,8 +154,17 @@ const mapJobRow = (row: BillPdfExportJobRow): BillPdfExportJobSummary => ({
   updatedAt: row.updated_at,
 })
 
-const getErrorMessage = (error: unknown, fallback: string) =>
-  error instanceof Error ? error.message : fallback
+const getErrorMessage = (error: unknown, fallback: string) => {
+  if (error instanceof AppError) {
+    const cause = error.details?.cause
+
+    if (typeof cause === 'string' && cause.trim() && cause !== error.message) {
+      return `${error.message} ${cause}`
+    }
+  }
+
+  return error instanceof Error ? error.message : fallback
+}
 
 const parsePositiveInteger = (value: string | undefined, fallback: number) => {
   const parsed = Number(value)
