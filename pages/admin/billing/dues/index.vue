@@ -428,11 +428,25 @@ const billSendTargets = ref<MaintenanceDue[]>([])
 const billChannels = ref<BillChannel[]>(['EMAIL', 'WHATSAPP'])
 const sendingBills = ref(false)
 const confirmAction = useAppConfirm()
-const { downloadingBillPdfs, downloadBillPdfs } = useBillPdfZipDownload()
+const {
+  downloadingBillPdfs,
+  billPdfExportProgress,
+  downloadBillPdfs,
+} = useBillPdfZipDownload()
 const downloadingFilteredBillPdfs = ref(false)
 const isDownloadingBillPdfs = computed(
   () => downloadingBillPdfs.value || downloadingFilteredBillPdfs.value,
 )
+const billPdfExportProgressLabel = computed(() => {
+  const progress = billPdfExportProgress.value
+
+  if (!progress) return ''
+
+  const prefix = progress.status === 'QUEUED' ? 'Queued' : 'Preparing'
+  const failed = progress.failedCount > 0 ? `, ${progress.failedCount} failed` : ''
+
+  return `${prefix}: ${progress.processedCount} / ${progress.totalCount} bill PDFs prepared${failed}.`
+})
 
 const hasBulkSelection = computed(() => bulkSelectedDues.value.length > 0)
 const notificationSelectedDues = computed(() =>
@@ -1166,6 +1180,9 @@ watch(
             :disabled="!hasActiveFilters"
             @click="resetFilters"
           />
+          <small v-if="billPdfExportProgressLabel" class="table-muted">
+            {{ billPdfExportProgressLabel }}
+          </small>
         </div>
       </header>
 

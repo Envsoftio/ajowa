@@ -7,6 +7,7 @@ import { getSupabaseAdminClient } from './supabase'
 import type { StoredFileMetadata, StoredFileUploadStatus } from '~/types/domain'
 
 const TEN_MEGABYTES = 10 * 1024 * 1024
+const HUNDRED_MEGABYTES = 100 * 1024 * 1024
 
 export const STORAGE_TARGETS = {
   residentDocuments: {
@@ -45,6 +46,7 @@ export const STORAGE_TARGETS = {
 
 export const STORAGE_ALLOWED_MIME_TYPES = [
   'application/pdf',
+  'application/zip',
   'application/vnd.ms-excel',
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   'image/jpeg',
@@ -52,7 +54,8 @@ export const STORAGE_ALLOWED_MIME_TYPES = [
   'image/webp',
 ] as const
 
-export const STORAGE_MAX_FILE_SIZE_BYTES = TEN_MEGABYTES
+export const STORAGE_DEFAULT_MAX_FILE_SIZE_BYTES = TEN_MEGABYTES
+export const STORAGE_REPORT_EXPORT_MAX_FILE_SIZE_BYTES = HUNDRED_MEGABYTES
 
 const STORAGE_TARGET_VALUES = Object.values(STORAGE_TARGETS)
 const STORAGE_TARGET_KEYS = STORAGE_TARGET_VALUES.map((target) => target.key)
@@ -198,12 +201,19 @@ const assertAllowedMimeType = (mimeType: string) => {
   }
 }
 
-const assertAllowedFileSize = (sizeBytes: number) => {
-  if (sizeBytes <= 0 || sizeBytes > STORAGE_MAX_FILE_SIZE_BYTES) {
+const getStorageMaxFileSizeBytes = (storageTargetKey: StorageTargetKey) =>
+  storageTargetKey === STORAGE_TARGETS.reportExports.key
+    ? STORAGE_REPORT_EXPORT_MAX_FILE_SIZE_BYTES
+    : STORAGE_DEFAULT_MAX_FILE_SIZE_BYTES
+
+const assertAllowedFileSize = (sizeBytes: number, storageTargetKey: StorageTargetKey) => {
+  const maxFileSizeBytes = getStorageMaxFileSizeBytes(storageTargetKey)
+
+  if (sizeBytes <= 0 || sizeBytes > maxFileSizeBytes) {
     throw new AppError({
       code: 'VALIDATION_ERROR',
       statusCode: 400,
-      message: `Files must be between 1 byte and ${STORAGE_MAX_FILE_SIZE_BYTES} bytes.`,
+      message: `Files must be between 1 byte and ${maxFileSizeBytes} bytes.`,
     })
   }
 }
@@ -276,7 +286,7 @@ const validateStorageUploadInput = (input: StorageUploadInput) => {
   const storageObjectKey = normalizeStorageObjectKey(input.storageObjectKey)
 
   assertAllowedMimeType(input.mimeType)
-  assertAllowedFileSize(input.sizeBytes)
+  assertAllowedFileSize(input.sizeBytes, storageTargetKey)
 
   if (!input.originalFileName.trim()) {
     throw new AppError({

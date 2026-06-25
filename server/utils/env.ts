@@ -1,3 +1,4 @@
+import process from 'node:process'
 import { z } from 'zod'
 
 const whatsappIntegrationSchema = z.object({
@@ -81,6 +82,50 @@ export type OptionalIntegrationStatus<T> =
 
 let validatedConfig: ValidatedRuntimeConfig | null = null
 
+const defaultAppUrl = 'https://ajowa.in'
+
+const readRuntimeConfig = () => {
+  if (typeof useRuntimeConfig === 'function') {
+    return useRuntimeConfig()
+  }
+
+  const appUrl = process.env.APP_URL ?? process.env.NUXT_PUBLIC_APP_URL ?? defaultAppUrl
+  const publicAppUrl = process.env.NUXT_PUBLIC_APP_URL ?? appUrl
+
+  return {
+    databaseUrl: process.env.DATABASE_URL ?? process.env.SUPABASE_DB_URL ?? '',
+    supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
+    betterAuthSecret: process.env.BETTER_AUTH_SECRET ?? '',
+    betterAuthUrl: process.env.BETTER_AUTH_URL ?? appUrl,
+    smtp: {
+      pass: process.env.SMTP_PASS ?? '',
+    },
+    whatsappProvider: process.env.WHATSAPP_PROVIDER ?? '',
+    whatsappApiUrl: process.env.WHATSAPP_API_URL ?? '',
+    whatsappApiKey: process.env.WHATSAPP_API_KEY ?? '',
+    whatsappSenderId: process.env.WHATSAPP_SENDER_ID ?? '',
+    whatsappNotificationsEnabled: process.env.WHATSAPP_NOTIFICATIONS_ENABLED === 'true',
+    vapidPublicKey: process.env.VAPID_PUBLIC_KEY ?? '',
+    vapidPrivateKey: process.env.VAPID_PRIVATE_KEY ?? '',
+    pushSubject: process.env.PUSH_SUBJECT ?? '',
+    pushNotificationsEnabled: process.env.PUSH_NOTIFICATIONS_ENABLED === 'true',
+    razorpayKeyId: process.env.RAZORPAY_KEY_ID ?? '',
+    razorpayKeySecret: process.env.RAZORPAY_KEY_SECRET ?? '',
+    razorpayWebhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET ?? '',
+    appUrl,
+    qrSecret: process.env.QR_SECRET ?? '',
+    societyCode: process.env.SOCIETY_CODE ?? 'AJOWA',
+    public: {
+      appName: process.env.NUXT_PUBLIC_APP_NAME ?? 'AJOWA',
+      appUrl: publicAppUrl,
+      supabaseUrl: process.env.NUXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? '',
+      supabaseAnonKey:
+        process.env.NUXT_PUBLIC_SUPABASE_ANON_KEY ?? process.env.SUPABASE_ANON_KEY ?? '',
+      societyCode: process.env.NUXT_PUBLIC_SOCIETY_CODE ?? 'AJOWA',
+    },
+  }
+}
+
 const buildDisabledMessage = (label: string, requirements: readonly string[]) =>
   `${label} integration is disabled. Configure ${requirements.join(', ')} to enable it.`
 
@@ -117,17 +162,17 @@ const validateOptionalIntegration = <T>(
   }
 }
 
-export const getValidatedRuntimeConfig = (config: Record<string, unknown>) => {
+export const getValidatedRuntimeConfig = (config?: Record<string, unknown>) => {
   if (validatedConfig) {
     return validatedConfig
   }
 
-  validatedConfig = runtimeConfigSchema.parse(config)
+  validatedConfig = runtimeConfigSchema.parse(config ?? readRuntimeConfig())
   return validatedConfig
 }
 
 export const getWhatsAppIntegrationStatus = (
-  config: Record<string, unknown> = useRuntimeConfig(),
+  config?: Record<string, unknown>,
 ): OptionalIntegrationStatus<WhatsAppIntegrationConfig> => {
   const runtimeConfig = getValidatedRuntimeConfig(config)
 
@@ -146,7 +191,7 @@ export const getWhatsAppIntegrationStatus = (
 }
 
 export const getPushIntegrationStatus = (
-  config: Record<string, unknown> = useRuntimeConfig(),
+  config?: Record<string, unknown>,
 ): OptionalIntegrationStatus<PushIntegrationConfig> => {
   const runtimeConfig = getValidatedRuntimeConfig(config)
 

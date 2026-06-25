@@ -82,6 +82,14 @@ watch(
 <template>
   <aside class="app-sidebar">
     <div class="app-sidebar__header">
+      <button
+        type="button"
+        class="app-sidebar__close"
+        aria-label="Close navigation"
+        @click="appStore.closeSidebar()"
+      >
+        <i class="pi pi-times" aria-hidden="true" />
+      </button>
       <NuxtLink to="/" class="app-sidebar__brand" aria-label="AJOWA home">
         <AppBrandLogo />
       </NuxtLink>

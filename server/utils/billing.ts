@@ -1052,6 +1052,30 @@ const getBillTypeCode = (charges: ChargeBreakdownItem[]) => {
 const sumBillCharges = (charges: ChargeBreakdownItem[]) =>
   roundBillMoney(charges.reduce((sum, charge) => sum + Number(charge.amount ?? 0), 0))
 
+const sumBillCamAdvanceAdjustments = (charges: ChargeBreakdownItem[]) =>
+  roundBillMoney(
+    charges.reduce((sum, charge) => sum + Number(charge.camAdvanceAdjustmentAmount ?? 0), 0),
+  )
+
+const formatBillMonthCount = (value: number) =>
+  `${formatBillPlainNumber(value)} ${value === 1 ? 'month' : 'months'}`
+
+const getBillCamAdvanceSummaryText = (charges: ChargeBreakdownItem[]) => {
+  const advanceCharge = charges.find((charge) => Number(charge.camAdvanceAdjustmentAmount ?? 0) > 0)
+  if (!advanceCharge) return null
+
+  const coveredMonths = Number(advanceCharge.camAdvanceCoveredMonths ?? 0)
+  const billedMonths = Number(advanceCharge.camAdvanceBilledMonths ?? 0)
+  const totalMonths = Number(advanceCharge.camAdvanceTotalMonths ?? 0)
+
+  if (coveredMonths > 0 && totalMonths > 0) {
+    const billedText = billedMonths > 0 ? `${formatBillMonthCount(billedMonths)} billed` : 'no months billed'
+    return `${formatBillMonthCount(coveredMonths)} advance paid; ${billedText} of ${formatBillMonthCount(totalMonths)}`
+  }
+
+  return advanceCharge.camAdvanceNote ?? null
+}
+
 const getCompactFlatNumber = (row: MaintenanceBillDueRow) => {
   const block = row.block_name.trim()
   const flat = row.flat_number.trim()
@@ -1398,14 +1422,28 @@ export const generateMaintenanceBillPdf = async (
     const invoiceFlatNumber = due.block_name && !due.flat_number.toLowerCase().includes(due.block_name.toLowerCase())
       ? `${due.block_name}-${due.flat_number}`
       : due.flat_number
+    const camAdvanceAdjustmentAmount = sumBillCamAdvanceAdjustments(invoiceCharges)
+    const grossMaintenanceAmount = roundBillMoney(maintenanceAmount + camAdvanceAdjustmentAmount)
+    const camAdvanceSummaryText = camAdvanceAdjustmentAmount > 0
+      ? getBillCamAdvanceSummaryText(invoiceCharges)
+      : null
     const mainParticular = invoiceCharges.some(isCamCharge)
-      ? `Maintenance Charges for the Period ${invoicePeriodLabel}`
+      ? `${camAdvanceAdjustmentAmount > 0 ? 'Gross ' : ''}Maintenance Charges for the Period ${invoicePeriodLabel}`
       : `${invoiceCharges[0]?.label ?? 'Maintenance Charges'} for the Period ${invoicePeriodLabel}`
     const lateFeeAmount = hasSeparateDgBill ? 0 : roundBillMoney(currentAmounts.lateFeeAmount)
     const waivedAmount = hasSeparateDgBill ? 0 : roundBillMoney(Number(due.waived_amount))
     const paidAmount = hasSeparateDgBill ? 0 : roundBillMoney(Number(due.paid_amount))
     const invoiceLineItems = [
-      { serial: '1', particulars: mainParticular, amount: maintenanceAmount },
+      { serial: '1', particulars: mainParticular, amount: grossMaintenanceAmount },
+      ...(camAdvanceAdjustmentAmount > 0
+        ? [{
+            serial: '',
+            particulars: camAdvanceSummaryText
+              ? `Less: CAM advance paid (${camAdvanceSummaryText})`
+              : 'Less: CAM advance paid',
+            amount: -camAdvanceAdjustmentAmount,
+          }]
+        : []),
       ...(lateFeeAmount > 0
         ? [{ serial: '', particulars: 'Late Payment Charges', amount: lateFeeAmount }]
         : []),
@@ -1441,6 +1479,11 @@ export const generateMaintenanceBillPdf = async (
           ? `${formatBillPlainNumber(areaSqFt)} Sq Feet`
           : '',
       invoiceFlatNumber,
+      ...(camAdvanceAdjustmentAmount > 0
+        ? [
+            `CAM advance paid: ${formatInvoiceCurrency(camAdvanceAdjustmentAmount)} deducted; remaining CAM dues: ${formatInvoiceCurrency(maintenanceAmount)}`,
+          ]
+        : []),
     ].filter(Boolean)
 
     const invoiceMetaCell = (label: string, value = '', bold = false) => ({

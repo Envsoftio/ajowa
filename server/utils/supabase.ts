@@ -8,7 +8,7 @@ export const getSupabaseAdminClient = () => {
     return adminClient
   }
 
-  const config = getValidatedRuntimeConfig(useRuntimeConfig())
+  const config = getValidatedRuntimeConfig()
 
   adminClient = createClient(config.public.supabaseUrl, config.supabaseServiceRoleKey, {
     auth: {

@@ -1,4 +1,5 @@
 import { cleanupFailedUploads } from '../utils/storage'
+import { cleanupExpiredBillPdfExports } from '../utils/bill-pdf-export-jobs'
 
 type StorageCleanupState = {
   timer: ReturnType<typeof setInterval> | null
@@ -38,9 +39,20 @@ export default defineNitroPlugin((nitroApp) => {
     state.processing = true
 
     try {
-      const result = await cleanupFailedUploads(olderThanHours)
-      if (result.deletedFileRecords > 0 || result.deletedStorageObjects > 0) {
-        console.info(JSON.stringify({ level: 'info', message: 'Storage cleanup processed.', ...result }))
+      const uploadResult = await cleanupFailedUploads(olderThanHours)
+      const exportResult = await cleanupExpiredBillPdfExports()
+      if (
+        uploadResult.deletedFileRecords > 0 ||
+        uploadResult.deletedStorageObjects > 0 ||
+        exportResult.expiredJobs > 0 ||
+        exportResult.deletedFiles > 0
+      ) {
+        console.info(JSON.stringify({
+          level: 'info',
+          message: 'Storage cleanup processed.',
+          ...uploadResult,
+          ...exportResult,
+        }))
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Storage cleanup failed.'

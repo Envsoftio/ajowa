@@ -108,7 +108,7 @@ export const getDatabasePool = () => {
     return databasePool
   }
 
-  const runtimeConfig = getValidatedRuntimeConfig(useRuntimeConfig())
+  const runtimeConfig = getValidatedRuntimeConfig()
 
   databasePool = new Pool(createDatabasePoolConfig(runtimeConfig.databaseUrl))
 
