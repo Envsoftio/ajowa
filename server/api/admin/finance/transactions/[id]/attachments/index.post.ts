@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto'
+import { getRequestURL, setResponseStatus, type H3Event } from 'h3'
 import { createApiSuccess } from '~/server/utils/api'
 import { requireRole } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
-import { AppError } from '~/server/utils/errors'
+import { AppError, type AppErrorCode } from '~/server/utils/errors'
 import { readMultipartFormParts } from '~/server/utils/multipart'
 import {
   createStorageObjectKey,
@@ -16,32 +17,213 @@ const normalizeFinanceAttachmentMimeType = (mimeType: string) =>
     ? 'image/jpeg'
     : mimeType
 
-const getErrorMessage = (error: unknown) =>
-  error instanceof Error ? error.message : 'Unknown finance attachment error.'
+const getErrorMessage = (error: unknown) => {
+  if (error instanceof Error) {
+    return error.message
+  }
 
-const toFinanceStorageError = (error: unknown) => {
-  if (error instanceof AppError && error.code === 'VALIDATION_ERROR') {
+  if (
+    error &&
+    typeof error === 'object' &&
+    'message' in error &&
+    typeof error.message === 'string'
+  ) {
+    return error.message
+  }
+
+  return 'Unknown finance attachment error.'
+}
+
+const getErrorCause = (error: unknown) => {
+  if (
+    error instanceof AppError &&
+    typeof error.details?.cause === 'string' &&
+    error.details.cause.trim()
+  ) {
+    return error.details.cause.trim().replace(/\s+/g, ' ').slice(0, 500)
+  }
+
+  return getErrorMessage(error).replace(/\s+/g, ' ').slice(0, 500)
+}
+
+const formatErrorMessage = (message: string, error: unknown) => {
+  const cause = getErrorCause(error)
+
+  if (!cause || cause === message) {
+    return message
+  }
+
+  return `${message}: ${cause}`
+}
+
+type FinanceAttachmentFailure = {
+  code: AppErrorCode
+  statusCode: number
+  message: string
+  details?: Record<string, unknown>
+}
+
+const isFinanceAttachmentFailure = (value: unknown): value is FinanceAttachmentFailure => {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+
+  const failure = value as Partial<FinanceAttachmentFailure>
+
+  return (
+    typeof failure.code === 'string' &&
+    typeof failure.statusCode === 'number' &&
+    typeof failure.message === 'string'
+  )
+}
+
+const toFinanceAttachmentFailure = (
+  error: unknown,
+  fallbackMessage: string,
+): FinanceAttachmentFailure => {
+  if (isFinanceAttachmentFailure(error)) {
     return error
   }
 
-  const details =
-    error instanceof AppError
-      ? {
-          ...error.details,
-          cause: error.message,
-        }
-      : {
-          cause: getErrorMessage(error),
-        }
+  if (error instanceof AppError) {
+    return {
+      code: error.code,
+      statusCode: error.statusCode,
+      message:
+        error.statusCode >= 500
+          ? formatErrorMessage(error.message, error)
+          : error.message,
+      ...(error.details ? { details: error.details } : {}),
+    }
+  }
 
-  return new AppError({
+  return {
     code: 'INTERNAL_ERROR',
     statusCode: 500,
-    message:
-      'Finance attachment storage is not ready. Check the finance-attachments bucket and file metadata setup, then retry.',
-    details,
-  })
+    message: formatErrorMessage(fallbackMessage, error),
+    details: {
+      cause: getErrorCause(error),
+    },
+  }
 }
+
+const createFinanceAttachmentErrorResponse = (
+  event: H3Event,
+  failure: FinanceAttachmentFailure,
+) => {
+  setResponseStatus(event, failure.statusCode, failure.code)
+
+  return {
+    error: true,
+    ok: false,
+    url: getRequestURL(event).toString(),
+    statusCode: failure.statusCode,
+    statusMessage: failure.code,
+    code: failure.code,
+    message: failure.message,
+    data: {
+      code: failure.code,
+      message: failure.message,
+      ...(failure.details ? { details: failure.details } : {}),
+    },
+    ...(failure.details ? { details: failure.details } : {}),
+  }
+}
+
+const warnFinanceAttachmentFailure = (
+  transactionId: string,
+  phase: string,
+  failure: FinanceAttachmentFailure,
+) => {
+  console.warn(JSON.stringify({
+    level: 'warn',
+    message: 'Finance attachment upload failed.',
+    phase,
+    transactionId,
+    code: failure.code,
+    statusCode: failure.statusCode,
+    failureMessage: failure.message,
+    details: failure.details,
+  }))
+}
+
+const createStaticFailure = (
+  event: H3Event,
+  failure: FinanceAttachmentFailure,
+) => {
+  warnFinanceAttachmentFailure(
+    String(event.context.params?.id ?? ''),
+    'request-validation',
+    failure,
+  )
+  return createFinanceAttachmentErrorResponse(event, failure)
+}
+
+const createStorageFailure = (
+  event: H3Event,
+  transactionId: string,
+  error: unknown,
+) => {
+  const failure = toFinanceAttachmentFailure(
+    error,
+    'Finance attachment upload failed before the file could be linked to the entry.',
+  )
+
+  warnFinanceAttachmentFailure(transactionId, 'storage-upload', failure)
+  return createFinanceAttachmentErrorResponse(event, failure)
+}
+
+const createPersistenceFailure = (
+  event: H3Event,
+  transactionId: string,
+  error: unknown,
+) => {
+  const failure = toFinanceAttachmentFailure(
+    error,
+    'The file uploaded, but AJOWA could not attach it to this finance entry. Please retry the attachment upload.',
+  )
+
+  warnFinanceAttachmentFailure(transactionId, 'metadata-persistence', failure)
+  return createFinanceAttachmentErrorResponse(event, failure)
+}
+
+const createCleanupFailure = (
+  transactionId: string,
+  storageObjectKey: string,
+  storedFile: StoredFileMetadata,
+  error: unknown,
+) => {
+  console.warn(JSON.stringify({
+    level: 'warn',
+    message: 'Unable to clean up a finance attachment after database persistence failed.',
+    transactionId,
+    storageObjectKey,
+    fileId: storedFile.id,
+    cause: getErrorCause(error),
+  }))
+}
+
+const notFoundFailure = (message: string): FinanceAttachmentFailure => ({
+  code: 'NOT_FOUND',
+  statusCode: 404,
+  message,
+})
+
+const validationFailure = (message: string): FinanceAttachmentFailure => ({
+  code: 'VALIDATION_ERROR',
+  statusCode: 400,
+  message,
+})
+
+const internalFailure = (
+  message: string,
+  details?: Record<string, unknown>,
+): FinanceAttachmentFailure => ({
+  code: 'INTERNAL_ERROR',
+  statusCode: 500,
+  message,
+  ...(details ? { details } : {}),
+})
 
 const cleanupStoredFinanceAttachment = async (
   transactionId: string,
@@ -55,16 +237,7 @@ const cleanupStoredFinanceAttachment = async (
       fileId: storedFile.id,
     })
   } catch (error) {
-    console.warn(
-      JSON.stringify({
-        level: 'warn',
-        message: 'Unable to clean up a finance attachment after database persistence failed.',
-        transactionId,
-        storageObjectKey,
-        fileId: storedFile.id,
-        cause: getErrorMessage(error),
-      }),
-    )
+    createCleanupFailure(transactionId, storageObjectKey, storedFile, error)
   }
 }
 
@@ -78,7 +251,7 @@ export default defineEventHandler(async (event) => {
     [transactionId, authMe.user.societyId],
   )
   if (!transaction.rows[0]) {
-    throw new AppError({ code: 'NOT_FOUND', statusCode: 404, message: 'Transaction not found.' })
+    return createStaticFailure(event, notFoundFailure('Transaction not found.'))
   }
 
   const parts = await readMultipartFormParts(event)
@@ -89,11 +262,7 @@ export default defineEventHandler(async (event) => {
     : undefined
 
   if (!filePart?.filename || !filePart.type) {
-    throw new AppError({
-      code: 'VALIDATION_ERROR',
-      statusCode: 400,
-      message: 'A file attachment is required.',
-    })
+    return createStaticFailure(event, validationFailure('A file attachment is required.'))
   }
 
   const storageObjectKey = createStorageObjectKey({
@@ -121,7 +290,7 @@ export default defineEventHandler(async (event) => {
       checksum,
     })
   } catch (error) {
-    throw toFinanceStorageError(error)
+    return createStorageFailure(event, transactionId, error)
   }
 
   const client = await pool.connect()
@@ -189,11 +358,7 @@ export default defineEventHandler(async (event) => {
     )
     const row = result.rows[0]
     if (!row) {
-      throw new AppError({
-        code: 'INTERNAL_ERROR',
-        statusCode: 500,
-        message: 'Attachment save failed.',
-      })
+      throw internalFailure('Attachment save failed.')
     }
 
     await client.query('commit')
@@ -219,21 +384,7 @@ export default defineEventHandler(async (event) => {
   } catch (error) {
     await client.query('rollback')
     await cleanupStoredFinanceAttachment(transactionId, storageObjectKey, storedFile)
-
-    if (error instanceof AppError) {
-      throw error
-    }
-
-    throw new AppError({
-      code: 'INTERNAL_ERROR',
-      statusCode: 500,
-      message:
-        'The file uploaded, but AJOWA could not attach it to this finance entry. Please retry the attachment upload.',
-      details: {
-        cause: getErrorMessage(error),
-        transactionId,
-      },
-    })
+    return createPersistenceFailure(event, transactionId, error)
   } finally {
     client.release()
   }
