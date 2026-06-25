@@ -441,21 +441,30 @@ const sendingBills = ref(false)
 const confirmAction = useAppConfirm()
 const {
   downloadingBillPdfs,
-  billPdfExportProgress,
+  billPdfDownloadProgress,
   downloadBillPdfs,
 } = useBillPdfZipDownload()
 const isDownloadingBillPdfs = computed(
   () => downloadingBillPdfs.value,
 )
-const billPdfExportProgressLabel = computed(() => {
-  const progress = billPdfExportProgress.value
+const billPdfDownloadProgressLabel = computed(() => {
+  const progress = billPdfDownloadProgress.value
 
   if (!progress) return ''
 
-  const prefix = progress.status === 'QUEUED' ? 'Queued' : 'Preparing'
+  const prefix = {
+    SELECTING: 'Collecting bills',
+    DOWNLOADING: 'Downloading PDFs',
+    ZIPPING: 'Creating ZIP',
+    READY: 'Starting download',
+  }[progress.status]
   const failed = progress.failedCount > 0 ? `, ${progress.failedCount} failed` : ''
 
-  return `${prefix}: ${progress.processedCount} / ${progress.totalCount} bill PDFs prepared${failed}.`
+  if (progress.totalCount === 0) {
+    return `${prefix}...`
+  }
+
+  return `${prefix}: ${progress.processedCount} / ${progress.totalCount} bill PDFs processed${failed}.`
 })
 
 const hasBulkSelection = computed(() => bulkSelectedDues.value.length > 0)
@@ -1135,8 +1144,8 @@ watch(
             :disabled="!hasActiveFilters"
             @click="resetFilters"
           />
-          <small v-if="billPdfExportProgressLabel" class="table-muted">
-            {{ billPdfExportProgressLabel }}
+          <small v-if="billPdfDownloadProgressLabel" class="table-muted">
+            {{ billPdfDownloadProgressLabel }}
           </small>
         </div>
       </header>
