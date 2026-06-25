@@ -139,7 +139,7 @@ export const canUserAccessRoute = (path: string, user: RouteAccessUser) => {
   }
 
   if (pathname.startsWith('/guard')) {
-    return user.role === 'GUARD' && pathname === '/guard/scan'
+    return user.role === 'GUARD' && ['/guard/scan', '/guard/notifications'].includes(pathname)
   }
 
   if (pathname.startsWith('/service')) {

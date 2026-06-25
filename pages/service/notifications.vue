@@ -1,6 +1,6 @@
 <script setup lang="ts">
 definePageMeta({
-  layout: 'resident',
+  layout: 'service-staff',
   middleware: ['protected'],
   title: 'Notifications',
 })
@@ -8,6 +8,6 @@ definePageMeta({
 
 <template>
   <div class="landing-page">
-    <AppNotificationInbox />
+    <AppNotificationInbox description="Ticket and assignment updates will appear here." />
   </div>
 </template>

@@ -177,6 +177,26 @@ a {
   border-radius: var(--radius-md);
 }
 
+.topbar-icon-button {
+  position: relative;
+  width: 2.1rem;
+  min-width: 2.1rem;
+  padding-inline: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.topbar-notification-button .p-badge {
+  position: absolute;
+  top: -0.3rem;
+  right: -0.35rem;
+  min-width: 1.15rem;
+  height: 1.15rem;
+  font-size: 0.66rem;
+  line-height: 1;
+}
+
 .topbar-loading {
   display: inline-flex;
   align-items: center;

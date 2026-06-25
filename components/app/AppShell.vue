@@ -14,6 +14,7 @@ const shell = computed(() => props.shell ?? 'public')
   <div :class="['app-shell', theme.isDark.value ? 'app-theme-dark' : 'app-theme-light']">
     <Toast />
     <ConfirmDialog />
+    <AppNotificationListener />
     <div class="app-shell__layout">
       <AppSidebar :shell="shell" />
       <div class="app-frame">

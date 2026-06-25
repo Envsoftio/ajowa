@@ -105,6 +105,7 @@ export const shellNavigation: Record<AppShellType, AppNavGroup[]> = {
       icon: 'pi pi-megaphone',
       items: [
         { label: 'Notices', to: '/admin/notices', icon: 'pi pi-megaphone' },
+        { label: 'My Alerts', to: '/admin/my-notifications', icon: 'pi pi-inbox' },
         { label: 'Notifications', to: '/admin/notifications', icon: 'pi pi-bell' },
         { label: 'Compose', to: '/admin/notifications/compose', icon: 'pi pi-send' },
         { label: 'Templates', to: '/admin/notifications/templates', icon: 'pi pi-file-edit' },
@@ -161,14 +162,20 @@ export const shellNavigation: Record<AppShellType, AppNavGroup[]> = {
     {
       label: 'Account',
       icon: 'pi pi-user',
-      items: [{ label: 'Password Change', to: '/change-password', icon: 'pi pi-key' }],
+      items: [
+        { label: 'Notifications', to: '/service/notifications', icon: 'pi pi-bell' },
+        { label: 'Password Change', to: '/change-password', icon: 'pi pi-key' },
+      ],
     },
   ],
   guard: [
     {
       label: 'Gate',
       icon: 'pi pi-qrcode',
-      items: [{ label: 'Scan Desk', to: '/guard/scan', icon: 'pi pi-qrcode' }],
+      items: [
+        { label: 'Scan Desk', to: '/guard/scan', icon: 'pi pi-qrcode' },
+        { label: 'Notifications', to: '/guard/notifications', icon: 'pi pi-bell' },
+      ],
     },
   ],
 }

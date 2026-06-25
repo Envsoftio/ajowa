@@ -79,6 +79,9 @@ const {
 
 const detail = computed(() => data.value?.data ?? null)
 const transaction = computed(() => detail.value?.transaction ?? null)
+const activeAttachment = computed(
+  () => detail.value?.attachments.find((attachment) => !attachment.replacedAt) ?? null,
+)
 const categories = computed(() => categoriesData.value?.data.items ?? [])
 const bankAccounts = computed(() => bankAccountsData.value?.data.items ?? [])
 const periods = computed(() => periodsData.value?.data.items ?? [])
@@ -186,6 +189,7 @@ const onUpdated = async (payload: { attachmentUploaded: boolean }) => {
         :bank-accounts="bankAccounts"
         :periods="periods"
         :policy="policy"
+        :replaces-attachment-id="activeAttachment?.id ?? null"
         @updated="onUpdated"
       />
 

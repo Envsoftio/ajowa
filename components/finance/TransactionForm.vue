@@ -24,6 +24,7 @@ const props = defineProps<{
   bankAccounts: BankAccount[]
   periods: BillingPeriod[]
   policy: SocietyPolicySettings
+  replacesAttachmentId?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -357,9 +358,14 @@ const submit = async (submitForPosting: boolean) => {
     let attachmentUploaded = false
     if (attachment.value) {
       try {
-        await uploadAttachment(response.data.id, attachment.value.file, null, {
-          showErrorToast: false,
-        })
+        await uploadAttachment(
+          response.data.id,
+          attachment.value.file,
+          props.replacesAttachmentId ?? null,
+          {
+            showErrorToast: false,
+          },
+        )
         attachmentUploaded = true
       } catch (error) {
         const attachmentError = getApiErrorMessage(

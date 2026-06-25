@@ -1,6 +1,6 @@
 <script setup lang="ts">
 definePageMeta({
-  layout: 'resident',
+  layout: 'guard',
   middleware: ['protected'],
   title: 'Notifications',
 })
@@ -8,6 +8,6 @@ definePageMeta({
 
 <template>
   <div class="landing-page">
-    <AppNotificationInbox />
+    <AppNotificationInbox description="Gate desk updates will appear here." />
   </div>
 </template>
