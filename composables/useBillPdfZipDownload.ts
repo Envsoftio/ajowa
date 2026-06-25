@@ -60,11 +60,53 @@ type BrowserZipEntry = {
   checksum: number
 }
 
-const billPdfDownloadConcurrency = 6
+type BrowserNetworkInformation = {
+  effectiveType?: string | undefined
+  saveData?: boolean | undefined
+}
+
+type NavigatorWithConnection = Navigator & {
+  connection?: BrowserNetworkInformation | undefined
+  mozConnection?: BrowserNetworkInformation | undefined
+  webkitConnection?: BrowserNetworkInformation | undefined
+}
+
+const billPdfDownloadMinConcurrency = 6
+const billPdfDownloadMaxConcurrency = 10
+const billPdfDownloadSlowConnectionConcurrency = 4
+const billPdfDownloadMaxAttempts = 3
+const billPdfDownloadRetryBaseDelayMs = 650
 const textEncoder = new TextEncoder()
 let crcTable: number[] | null = null
 
 const toBlobPart = (bytes: Uint8Array): BlobPart => bytes as unknown as BlobPart
+
+const sleep = (milliseconds: number) =>
+  new Promise((resolve) => window.setTimeout(resolve, milliseconds))
+
+const getBrowserConnection = () => {
+  const nav = navigator as NavigatorWithConnection
+  return nav.connection ?? nav.mozConnection ?? nav.webkitConnection ?? null
+}
+
+const getBillPdfDownloadConcurrency = () => {
+  const connection = getBrowserConnection()
+
+  if (connection?.saveData || ['slow-2g', '2g'].includes(connection?.effectiveType ?? '')) {
+    return billPdfDownloadSlowConnectionConcurrency
+  }
+
+  const hardwareConcurrency = navigator.hardwareConcurrency || billPdfDownloadMinConcurrency
+  const adaptiveConcurrency = Math.ceil(hardwareConcurrency * 1.25)
+
+  return Math.min(
+    billPdfDownloadMaxConcurrency,
+    Math.max(billPdfDownloadMinConcurrency, adaptiveConcurrency),
+  )
+}
+
+const isRetryableDownloadStatus = (status: number) =>
+  status === 408 || status === 429 || status >= 500
 
 const getCrcTable = () => {
   if (crcTable) return crcTable
@@ -315,31 +357,55 @@ export const useBillPdfZipDownload = () => {
   }
 
   const downloadBillPdf = async (dueId: string): Promise<BrowserPdfDownloadResult> => {
-    try {
-      const response = await fetch(`/api/admin/billing/dues/${encodeURIComponent(dueId)}/bill`, {
-        credentials: 'include',
-      })
+    let lastMessage = 'Could not download this bill PDF.'
 
-      if (!response.ok) {
-        throw new Error(await readDownloadError(response))
-      }
+    for (let attempt = 1; attempt <= billPdfDownloadMaxAttempts; attempt += 1) {
+      try {
+        const response = await fetch(`/api/admin/billing/dues/${encodeURIComponent(dueId)}/bill`, {
+          credentials: 'include',
+        })
 
-      const fileName = parseContentDispositionFileName(
-        response.headers.get('content-disposition'),
-      ) ?? `maintenance-bill-${dueId}.pdf`
+        if (!response.ok) {
+          lastMessage = await readDownloadError(response)
 
-      return {
-        ok: true,
-        dueId,
-        fileName: fileName.replace(/\.zip$/i, '.pdf'),
-        data: new Uint8Array(await response.arrayBuffer()),
+          if (
+            attempt < billPdfDownloadMaxAttempts &&
+            isRetryableDownloadStatus(response.status)
+          ) {
+            await sleep(billPdfDownloadRetryBaseDelayMs * attempt)
+            continue
+          }
+
+          return {
+            ok: false,
+            dueId,
+            message: lastMessage,
+          }
+        }
+
+        const fileName = parseContentDispositionFileName(
+          response.headers.get('content-disposition'),
+        ) ?? `maintenance-bill-${dueId}.pdf`
+
+        return {
+          ok: true,
+          dueId,
+          fileName: fileName.replace(/\.zip$/i, '.pdf'),
+          data: new Uint8Array(await response.arrayBuffer()),
+        }
+      } catch (error) {
+        lastMessage = error instanceof Error ? error.message : lastMessage
+
+        if (attempt < billPdfDownloadMaxAttempts) {
+          await sleep(billPdfDownloadRetryBaseDelayMs * attempt)
+        }
       }
-    } catch (error) {
-      return {
-        ok: false,
-        dueId,
-        message: error instanceof Error ? error.message : 'Could not download this bill PDF.',
-      }
+    }
+
+    return {
+      ok: false,
+      dueId,
+      message: lastMessage,
     }
   }
 
@@ -374,7 +440,7 @@ export const useBillPdfZipDownload = () => {
 
     await Promise.all(
       Array.from(
-        { length: Math.min(billPdfDownloadConcurrency, dueIds.length) },
+        { length: Math.min(getBillPdfDownloadConcurrency(), dueIds.length) },
         runWorker,
       ),
     )

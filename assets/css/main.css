@@ -2714,6 +2714,22 @@ th.expense-summary-table__first-data-column {
   font-size: 0.9rem;
 }
 
+.bill-pdf-download-progress {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.15rem;
+  margin: 0;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid color-mix(in srgb, var(--color-info) 34%, transparent);
+  border-left-width: 3px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-info-soft) 82%, var(--color-surface));
+  color: var(--color-info);
+  font-size: 0.86rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
 .admin-charge-section,
 .admin-charge-card,
 .resident-due-groups,
@@ -3759,6 +3775,13 @@ button *,
   color: #f8fafc;
 }
 
+.app-theme-dark .bill-pdf-download-progress {
+  border-color: rgba(147, 197, 253, 0.48);
+  border-left-color: #93c5fd;
+  background: rgba(96, 165, 250, 0.18);
+  color: #dbeafe;
+}
+
 .qr-access-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(280px, 420px);
@@ -4258,6 +4281,11 @@ button *,
     width: 100%;
     min-width: 0;
     justify-content: center;
+  }
+
+  .list-page__exports .bill-pdf-download-progress {
+    grid-column: 1 / -1;
+    width: 100%;
   }
 
   .list-page__toolbar {

@@ -1144,7 +1144,10 @@ watch(
             :disabled="!hasActiveFilters"
             @click="resetFilters"
           />
-          <small v-if="billPdfDownloadProgressLabel" class="table-muted">
+          <small
+            v-if="billPdfDownloadProgressLabel"
+            class="table-muted bill-pdf-download-progress"
+          >
             {{ billPdfDownloadProgressLabel }}
           </small>
         </div>
