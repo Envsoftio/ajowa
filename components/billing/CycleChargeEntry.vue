@@ -861,7 +861,11 @@ const normalizeChargeNumber = (value: number | null | undefined) => {
 }
 
 const roundChargeValue = (value: number) => Math.round(value * 100) / 100
-const roundAreaRateChargeValue = (value: number) => Math.ceil(value)
+const roundAreaRateChargeValue = (
+  areaSqFt: number,
+  ratePerSqFt: number,
+  cycleMultiplier = 1,
+) => Math.ceil(areaSqFt * ratePerSqFt) * Math.max(1, cycleMultiplier)
 
 const getEntryCycleMultiplier = (
   entry: Pick<VariableChargeEntry, 'cycleMultiplier'>,
@@ -1032,7 +1036,7 @@ const getEntryNetBillableAmount = (
   const ratePerSqFt = normalizeChargeNumber(entry.ratePerSqFt)
 
   if (props.showAreaRate && areaSqFt != null && ratePerSqFt != null) {
-    return roundAreaRateChargeValue(areaSqFt * ratePerSqFt * coverage.remainingMonths)
+    return roundAreaRateChargeValue(areaSqFt, ratePerSqFt, coverage.remainingMonths)
   }
 
   return roundChargeValue(grossAmount * (coverage.remainingMonths / coverage.totalMonths))
@@ -1149,7 +1153,9 @@ const recalculateCharge = (entry: VariableChargeEntry) => {
     if (areaSqFt != null && areaSqFt > 0 && ratePerSqFt != null) {
       entry.ratePerSqFt = ratePerSqFt
       entry.amount = roundAreaRateChargeValue(
-        areaSqFt * ratePerSqFt * getEntryCycleMultiplier(entry),
+        areaSqFt,
+        ratePerSqFt,
+        getEntryCycleMultiplier(entry),
       )
     } else if (!props.allowManualAmount) {
       entry.amount = null

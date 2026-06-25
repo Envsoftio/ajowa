@@ -1439,7 +1439,10 @@ const areaCounts = importRows.reduce((acc, row) => {
 }, {})
 const realOwnerLoginEmails = importRows.filter((row) => row.ownerLoginEmail).length
 const ownersWithoutLoginEmail = importRows.length - realOwnerLoginEmails
-const monthlyCamTotal = importRows.reduce((sum, row) => sum + row.areaSqFt * row.ratePerSqFt, 0)
+const monthlyCamTotal = importRows.reduce(
+  (sum, row) => sum + Math.ceil(row.areaSqFt * row.ratePerSqFt),
+  0,
+)
 
 console.log(`Generated ${outputPath}`)
 console.log(`Imported flats: ${importRows.length}`)

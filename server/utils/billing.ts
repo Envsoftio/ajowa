@@ -113,6 +113,12 @@ export const dueUpdateSchema = z.object({
   message: 'Change the due date or base amount before saving.',
 })
 
+export const dueBulkDueDateUpdateSchema = z.object({
+  dueIds: z.array(z.string().uuid()).min(1).max(500),
+  dueDate: z.string().date(),
+  note: z.string().trim().max(500).nullable().optional(),
+})
+
 export const dueReminderSchema = z.object({
   dueIds: z.array(z.string().uuid()).min(1).max(500),
 })
@@ -128,6 +134,7 @@ export type ChargeConfigInput = z.infer<typeof chargeConfigSchema>
 export type DueGenerationInput = z.infer<typeof dueGenerationSchema>
 export type DueWaiveInput = z.infer<typeof dueWaiveSchema>
 export type DueUpdateInput = z.infer<typeof dueUpdateSchema>
+export type DueBulkDueDateUpdateInput = z.infer<typeof dueBulkDueDateUpdateSchema>
 export type DueReminderInput = z.infer<typeof dueReminderSchema>
 export type DueBillSendInput = z.infer<typeof dueBillSendSchema>
 
@@ -183,7 +190,11 @@ export const getBillingCycleMultiplier = (period: {
 export const getBillingCycleLabel = (cycleMultiplier: number) =>
   `${cycleMultiplier} ${cycleMultiplier === 1 ? 'month' : 'months'}`
 
-const roundAreaRateChargeAmount = (value: number) => Math.ceil(value)
+const roundAreaRateChargeAmount = (
+  areaSqFt: number,
+  ratePerSqFt: number,
+  cycleMultiplier = 1,
+) => Math.ceil(areaSqFt * ratePerSqFt) * Math.max(1, cycleMultiplier)
 
 export type DueAmountInput = {
   dueDate: string
@@ -382,7 +393,7 @@ export const materializeChargeBreakdown = (
     const areaSqFt = flatAreaSqFt ?? charge.areaSqFt
     const cycleMultiplier = charge.cycleMultiplier ?? options.cycleMultiplier ?? 1
     const amount = areaSqFt
-      ? roundAreaRateChargeAmount(areaSqFt * ratePerSqFt * cycleMultiplier)
+      ? roundAreaRateChargeAmount(areaSqFt, ratePerSqFt, cycleMultiplier)
       : 0
 
     const materialized: ChargeBreakdownItem = {
@@ -561,7 +572,7 @@ export const applyCamAdvanceCoverageToChargeBreakdown = (
 
       const amount =
         charge.calculationMethod === 'AREA_RATE' && areaSqFt
-          ? roundAreaRateChargeAmount(areaSqFt * ratePerSqFt * coverage.remainingMonths)
+          ? roundAreaRateChargeAmount(areaSqFt, ratePerSqFt, coverage.remainingMonths)
           : roundProratedChargeAmount(Number(charge.amount ?? 0) * coverage.remainingRatio)
 
       if (amount <= 0) {

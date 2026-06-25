@@ -69,7 +69,11 @@ type VariableChargeConfig = {
 
 const roundVariableChargeMoney = (value: number) =>
   Math.round(value * 100) / 100
-const roundAreaRateChargeAmount = (value: number) => Math.ceil(value)
+const roundAreaRateChargeAmount = (
+  areaSqFt: number,
+  ratePerSqFt: number,
+  cycleMultiplier = 1,
+) => Math.ceil(areaSqFt * ratePerSqFt) * Math.max(1, cycleMultiplier)
 
 const normalizeOptionalText = (value: string | null | undefined) => {
   const normalized = value?.trim()
@@ -154,9 +158,7 @@ const normalizeVariableChargeEntry = (
     areaSqFt != null &&
     areaSqFt > 0 &&
     ratePerSqFt != null
-      ? roundAreaRateChargeAmount(
-          areaSqFt * ratePerSqFt * Math.max(1, cycleMultiplier ?? 1),
-        )
+      ? roundAreaRateChargeAmount(areaSqFt, ratePerSqFt, cycleMultiplier ?? 1)
       : consumedUnits != null && ratePerUnit != null
         ? consumedUnits * ratePerUnit
         : (normalizeOptionalNumber(entry.amount) ?? 0)

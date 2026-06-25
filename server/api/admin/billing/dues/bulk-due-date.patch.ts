@@ -1,0 +1,285 @@
+import { createApiSuccess, readJsonBody } from '~/server/utils/api'
+import { requireRole } from '~/server/utils/auth'
+import {
+  computeDueAmounts,
+  dueBulkDueDateUpdateSchema,
+  todayDate,
+  type DueBulkDueDateUpdateInput,
+} from '~/server/utils/billing'
+import { camAdvanceCoverageExistsSql } from '~/server/utils/cam-advance'
+import { getDatabasePool } from '~/server/utils/database'
+import {
+  normalizeSocietySettings,
+  validatePayload,
+  writeMasterAudit,
+} from '~/server/utils/master-data'
+import { recomputeUserAccess } from '~/server/utils/qr-access'
+
+type BulkDueDateRow = {
+  id: string
+  billing_period_id: string
+  billing_period_label: string
+  billing_period_start_date: string
+  flat_id: string
+  flat_number: string
+  block_name: string
+  due_date: string
+  base_amount: string
+  late_fee_amount: string
+  paid_amount: string
+  waived_amount: string
+  total_amount: string
+  balance_amount: string
+  status: string
+  is_locked: boolean
+  is_cam_advance_covered: boolean
+}
+
+type BulkDueDateUpdatePayload = {
+  id: string
+  dueDate: string
+  lateFeeAmount: number
+  totalAmount: number
+  balanceAmount: number
+  status: string
+}
+
+const incrementCount = (counts: Record<string, number>, key: string) => {
+  counts[key] = (counts[key] ?? 0) + 1
+}
+
+export default defineEventHandler(async (event) => {
+  const authMe = await requireRole(event, ['ADMIN', 'MANAGER'])
+  const body = validatePayload<DueBulkDueDateUpdateInput>(
+    dueBulkDueDateUpdateSchema,
+    await readJsonBody(event),
+  )
+  const dueIds = Array.from(new Set(body.dueIds))
+  const pool = getDatabasePool()
+  const client = await pool.connect()
+
+  try {
+    await client.query('begin')
+
+    const settingsResult = await client.query<{ settings: Record<string, unknown> }>(
+      `select settings from society_profile where id = $1 limit 1`,
+      [authMe.user.societyId],
+    )
+    const settings = normalizeSocietySettings(settingsResult.rows[0]?.settings)
+
+    const dueResult = await client.query<BulkDueDateRow>(
+      `
+        select
+          md.id,
+          md.billing_period_id,
+          bp.label as billing_period_label,
+          bp.start_date::text as billing_period_start_date,
+          md.flat_id,
+          f.flat_number,
+          b.name as block_name,
+          md.due_date::text,
+          md.base_amount::text,
+          md.late_fee_amount::text,
+          md.paid_amount::text,
+          md.waived_amount::text,
+          md.total_amount::text,
+          md.balance_amount::text,
+          md.status::text,
+          bp.is_locked,
+          (
+            bp.charge_type = 'CAM'
+            and ${camAdvanceCoverageExistsSql('f', 'bp')}
+          ) as is_cam_advance_covered
+        from maintenance_dues md
+        inner join billing_periods bp on bp.id = md.billing_period_id
+        inner join flats f on f.id = md.flat_id
+        inner join blocks b on b.id = f.block_id
+        where md.society_id = $1
+          and md.id = any($2::uuid[])
+        order by bp.start_date asc, b.sort_order asc, f.flat_number asc
+      `,
+      [authMe.user.societyId, dueIds],
+    )
+
+    const today = todayDate()
+    const updatePayload: BulkDueDateUpdatePayload[] = []
+    const unchangedRows: BulkDueDateRow[] = []
+    const skipped = {
+      notFound: Math.max(0, dueIds.length - dueResult.rows.length),
+      locked: 0,
+      closed: 0,
+      covered: 0,
+      beforePeriodStart: 0,
+      paymentConflict: 0,
+    }
+    const previousDueDateCounts: Record<string, number> = {}
+
+    for (const due of dueResult.rows) {
+      incrementCount(previousDueDateCounts, due.due_date)
+
+      if (due.is_locked) {
+        skipped.locked += 1
+        continue
+      }
+
+      if (['PAID', 'WAIVED', 'CANCELLED'].includes(due.status)) {
+        skipped.closed += 1
+        continue
+      }
+
+      if (due.is_cam_advance_covered) {
+        skipped.covered += 1
+        continue
+      }
+
+      if (body.dueDate < due.billing_period_start_date) {
+        skipped.beforePeriodStart += 1
+        continue
+      }
+
+      if (body.dueDate === due.due_date) {
+        unchangedRows.push(due)
+        continue
+      }
+
+      const paidAmount = Number(due.paid_amount)
+      const computed = computeDueAmounts(
+        {
+          dueDate: body.dueDate,
+          baseAmount: Number(due.base_amount),
+          paidAmount,
+          waivedAmount: Number(due.waived_amount),
+          storedStatus: due.status,
+        },
+        today,
+        settings.graceDays,
+        settings.lateFeePerDay,
+      )
+
+      if (computed.totalAmount < paidAmount) {
+        skipped.paymentConflict += 1
+        continue
+      }
+
+      updatePayload.push({
+        id: due.id,
+        dueDate: body.dueDate,
+        lateFeeAmount: computed.lateFeeAmount,
+        totalAmount: computed.totalAmount,
+        balanceAmount: computed.balanceAmount,
+        status: computed.status,
+      })
+    }
+
+    if (updatePayload.length > 0) {
+      await client.query(
+        `
+          update maintenance_dues md
+          set
+            due_date = payload.due_date,
+            late_fee_amount = payload.late_fee_amount,
+            total_amount = payload.total_amount,
+            balance_amount = payload.balance_amount,
+            status = payload.status::due_status,
+            updated_at = now()
+          from jsonb_to_recordset($1::jsonb) as payload(
+            id uuid,
+            due_date date,
+            late_fee_amount numeric,
+            total_amount numeric,
+            balance_amount numeric,
+            status text
+          )
+          where md.id = payload.id
+            and md.society_id = $2
+        `,
+        [
+          JSON.stringify(updatePayload.map((due) => ({
+            id: due.id,
+            due_date: due.dueDate,
+            late_fee_amount: due.lateFeeAmount,
+            total_amount: due.totalAmount,
+            balance_amount: due.balanceAmount,
+            status: due.status,
+          }))),
+          authMe.user.societyId,
+        ],
+      )
+
+      const affectedUsers = await client.query<{
+        user_id: string
+        billing_period_id: string
+      }>(
+        `
+          select distinct fr.user_id, md.billing_period_id
+          from maintenance_dues md
+          inner join flat_residents fr on fr.flat_id = md.flat_id
+          where md.id = any($1::uuid[])
+            and md.society_id = $2
+            and fr.is_active = true
+        `,
+        [updatePayload.map((due) => due.id), authMe.user.societyId],
+      )
+
+      for (const user of affectedUsers.rows) {
+        await recomputeUserAccess(user.user_id, user.billing_period_id, client)
+      }
+    }
+
+    const eligible = updatePayload.length + unchangedRows.length
+
+    await writeMasterAudit({
+      client,
+      event,
+      actorUserId: authMe.user.id,
+      actorAuthUserId: authMe.authUser.id,
+      action: 'UPDATED',
+      eventKey: 'maintenance_due.bulk_due_date_updated',
+      beforeState: {
+        dueDateCounts: previousDueDateCounts,
+      },
+      afterState: {
+        dueDate: body.dueDate,
+        note: body.note ?? null,
+      },
+      metadata: {
+        requestedDueCount: dueIds.length,
+        matchedDueCount: dueResult.rows.length,
+        eligibleDueCount: eligible,
+        updatedDueCount: updatePayload.length,
+        unchangedDueCount: unchangedRows.length,
+        skipped,
+        note: body.note ?? null,
+      },
+      relatedEntities: [
+        {
+          entityTable: 'society_profile',
+          entityId: authMe.user.societyId,
+          entityLabel: 'AJOWA',
+        },
+      ],
+    })
+
+    await client.query('commit')
+
+    return createApiSuccess(event, {
+      dueDate: body.dueDate,
+      requested: dueIds.length,
+      matched: dueResult.rows.length,
+      eligible,
+      updated: updatePayload.length,
+      unchanged: unchangedRows.length,
+      skippedNotFound: skipped.notFound,
+      skippedLocked: skipped.locked,
+      skippedClosed: skipped.closed,
+      skippedCovered: skipped.covered,
+      skippedBeforePeriodStart: skipped.beforePeriodStart,
+      skippedPaymentConflict: skipped.paymentConflict,
+    })
+  } catch (error) {
+    await client.query('rollback')
+    throw error
+  } finally {
+    client.release()
+  }
+})

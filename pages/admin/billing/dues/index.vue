@@ -36,11 +36,29 @@ type DueUpdateResponse = {
     status: MaintenanceDue['status']
   }
 }
+type BulkDueDateUpdateResponse = {
+  ok: true
+  data: {
+    dueDate: string
+    requested: number
+    matched: number
+    eligible: number
+    updated: number
+    unchanged: number
+    skippedNotFound: number
+    skippedLocked: number
+    skippedClosed: number
+    skippedCovered: number
+    skippedBeforePeriodStart: number
+    skippedPaymentConflict: number
+  }
+}
 
 const api = useApi()
 const toast = useToast()
 const authStore = useAuthStore()
 const notificationBatchSize = 500
+const dueMutationBatchSize = 500
 
 const hasPermission = (permission: StaffPermission) =>
   authStore.me?.user.permissions.includes(permission) ?? false
@@ -369,6 +387,12 @@ const editForm = reactive({
   baseAmount: null as number | null,
   note: '',
 })
+const bulkDueDateDialogVisible = ref(false)
+const savingBulkDueDate = ref(false)
+const bulkDueDateForm = reactive({
+  dueDate: '',
+  note: '',
+})
 const sendingReminder = ref(false)
 const billSendDialogVisible = ref(false)
 const billSendTargets = ref<MaintenanceDue[]>([])
@@ -390,7 +414,15 @@ const selectedBillDues = computed(() =>
 const selectedPdfDues = computed(() =>
   notificationSelectedDues.value.filter((due) => !due.isAdvanceCoverageRow),
 )
+const selectedEditableDues = computed(() =>
+  notificationSelectedDues.value.filter(canEditDue),
+)
+const selectedDueCount = computed(() => notificationSelectedDues.value.length)
 const selectedPdfCount = computed(() => selectedPdfDues.value.length)
+const selectedEditableDueCount = computed(() => selectedEditableDues.value.length)
+const bulkDueDateExcludedCount = computed(() =>
+  Math.max(0, notificationSelectedDues.value.length - selectedEditableDueCount.value),
+)
 const notificationSelectionText = computed(() => {
   if (hasBulkSelection.value) {
     return `${bulkSelectedDues.value.length} matching due${bulkSelectedDues.value.length === 1 ? '' : 's'} selected across every page.`
@@ -402,6 +434,20 @@ const notificationSelectionText = computed(() => {
 
   return 'Select dues on this page, or select every due matching the current filters.'
 })
+const bulkDueDateMinDate = computed(() =>
+  selectedEditableDues.value.reduce((latest, due) => {
+    const startDate = due.billingPeriodStartDate
+    if (!startDate) return latest
+
+    return !latest || startDate > latest ? startDate : latest
+  }, ''),
+)
+const canSubmitBulkDueDate = computed(
+  () =>
+    selectedEditableDueCount.value > 0 &&
+    Boolean(bulkDueDateForm.dueDate) &&
+    (!bulkDueDateMinDate.value || bulkDueDateForm.dueDate >= bulkDueDateMinDate.value),
+)
 
 const billChannelOptions = [
   { label: 'Email', value: 'EMAIL' },
@@ -427,6 +473,40 @@ const sumNotificationResponses = (responses: NotificationQueueResponse['data'][]
       jobCount: total.jobCount + item.jobCount,
     }),
     { eligible: 0, jobCount: 0 },
+  )
+
+const sumBulkDueDateResponses = (responses: BulkDueDateUpdateResponse['data'][]) =>
+  responses.reduce(
+    (total, item) => ({
+      dueDate: item.dueDate,
+      requested: total.requested + item.requested,
+      matched: total.matched + item.matched,
+      eligible: total.eligible + item.eligible,
+      updated: total.updated + item.updated,
+      unchanged: total.unchanged + item.unchanged,
+      skippedNotFound: total.skippedNotFound + item.skippedNotFound,
+      skippedLocked: total.skippedLocked + item.skippedLocked,
+      skippedClosed: total.skippedClosed + item.skippedClosed,
+      skippedCovered: total.skippedCovered + item.skippedCovered,
+      skippedBeforePeriodStart:
+        total.skippedBeforePeriodStart + item.skippedBeforePeriodStart,
+      skippedPaymentConflict:
+        total.skippedPaymentConflict + item.skippedPaymentConflict,
+    }),
+    {
+      dueDate: '',
+      requested: 0,
+      matched: 0,
+      eligible: 0,
+      updated: 0,
+      unchanged: 0,
+      skippedNotFound: 0,
+      skippedLocked: 0,
+      skippedClosed: 0,
+      skippedCovered: 0,
+      skippedBeforePeriodStart: 0,
+      skippedPaymentConflict: 0,
+    },
   )
 
 const fetchAllMatchingDues = async () => {
@@ -526,6 +606,77 @@ const submitDueEdit = async () => {
     await refresh()
   } finally {
     savingDueEdit.value = false
+  }
+}
+
+const openBulkDueDate = () => {
+  if (selectedEditableDueCount.value === 0) {
+    toast.add({
+      severity: 'info',
+      summary: 'No editable dues selected',
+      detail: 'Select open bill rows before changing due dates in bulk.',
+      life: 8000,
+    })
+    return
+  }
+
+  bulkDueDateForm.dueDate = ''
+  bulkDueDateForm.note = ''
+  bulkDueDateDialogVisible.value = true
+}
+
+const submitBulkDueDate = async () => {
+  if (!canSubmitBulkDueDate.value) return
+  const dueIds = selectedEditableDues.value.map((due) => due.id)
+  if (dueIds.length === 0) return
+
+  savingBulkDueDate.value = true
+
+  try {
+    const responses: BulkDueDateUpdateResponse['data'][] = []
+
+    for (let index = 0; index < dueIds.length; index += dueMutationBatchSize) {
+      const response = await api<BulkDueDateUpdateResponse>(
+        '/api/admin/billing/dues/bulk-due-date',
+        {
+          method: 'PATCH',
+          body: {
+            dueIds: dueIds.slice(index, index + dueMutationBatchSize),
+            dueDate: bulkDueDateForm.dueDate,
+            note: bulkDueDateForm.note || null,
+          },
+        },
+      )
+      responses.push(response.data)
+    }
+
+    const result = sumBulkDueDateResponses(responses)
+    const skipped =
+      result.skippedNotFound +
+      result.skippedLocked +
+      result.skippedClosed +
+      result.skippedCovered +
+      result.skippedBeforePeriodStart +
+      result.skippedPaymentConflict
+
+    toast.add({
+      severity: result.updated > 0 ? 'success' : 'warn',
+      summary: result.updated > 0 ? 'Due dates updated' : 'No due dates changed',
+      detail: [
+        `${result.updated} updated`,
+        result.unchanged > 0 ? `${result.unchanged} already matched` : '',
+        skipped > 0 ? `${skipped} skipped` : '',
+      ]
+        .filter(Boolean)
+        .join(', ') + '.',
+      life: 10000,
+    })
+
+    bulkDueDateDialogVisible.value = false
+    clearNotificationSelection()
+    await refresh()
+  } finally {
+    savingBulkDueDate.value = false
   }
 }
 
@@ -842,6 +993,20 @@ watch(
           <Button
             v-if="canManageDues"
             :label="
+              selectedEditableDueCount > 0
+                ? `Change due date (${selectedEditableDueCount})`
+                : 'Change due date'
+            "
+            icon="pi pi-calendar"
+            severity="secondary"
+            outlined
+            :loading="savingBulkDueDate"
+            :disabled="selectedEditableDueCount === 0"
+            @click="openBulkDueDate"
+          />
+          <Button
+            v-if="canManageDues"
+            :label="
               selectedReminderCount > 0
                 ? `Remind ${selectedReminderCount}`
                 : 'Remind selected'
@@ -907,7 +1072,11 @@ watch(
           </div>
           <div v-if="canManageDues">
             <dt>Selected</dt>
-            <dd>{{ selectedBillCount }}</dd>
+            <dd>{{ selectedDueCount }}</dd>
+          </div>
+          <div v-if="canManageDues">
+            <dt>Can edit</dt>
+            <dd>{{ selectedEditableDueCount }}</dd>
           </div>
           <div v-if="canManageDues">
             <dt>Can remind</dt>
@@ -1379,6 +1548,77 @@ watch(
           <strong>{{ formatMoney(selectedDue.balanceAmount) }}</strong>
         </div>
       </div>
+    </Dialog>
+
+    <Dialog
+      v-model:visible="bulkDueDateDialogVisible"
+      header="Change due date"
+      modal
+      :style="{ width: '520px' }"
+    >
+      <form class="admin-form-layout" @submit.prevent="submitBulkDueDate">
+        <div class="billing-dialog-intro billing-dialog-intro--compact">
+          <div>
+            <p class="eyebrow">Bulk correction</p>
+            <h2>
+              {{ selectedEditableDueCount }} editable due{{
+                selectedEditableDueCount === 1 ? '' : 's'
+              }}
+            </h2>
+            <p v-if="bulkDueDateExcludedCount > 0">
+              {{ bulkDueDateExcludedCount }} selected row{{
+                bulkDueDateExcludedCount === 1 ? '' : 's'
+              }}
+              cannot be edited and will stay unchanged.
+            </p>
+            <p v-else>Apply one payment deadline to the selected dues.</p>
+          </div>
+        </div>
+
+        <Message v-if="bulkDueDateMinDate" severity="info">
+          Selected dues require a due date on or after
+          {{ formatDate(bulkDueDateMinDate) }}.
+        </Message>
+
+        <div class="admin-form-grid">
+          <label>
+            <span class="field-label">
+              Due date
+              <AppHelpIcon text="Payment deadline applied to every editable selected due." />
+            </span>
+            <InputText
+              v-model="bulkDueDateForm.dueDate"
+              type="date"
+              :min="bulkDueDateMinDate || undefined"
+              required
+            />
+          </label>
+          <label class="admin-form-grid__full">
+            <span class="field-label">
+              Note
+              <AppHelpIcon text="Optional audit note for this bulk correction." />
+            </span>
+            <Textarea v-model="bulkDueDateForm.note" rows="3" auto-resize />
+          </label>
+        </div>
+
+        <div class="admin-inline-actions dialog-actions">
+          <Button
+            type="button"
+            label="Cancel"
+            severity="secondary"
+            outlined
+            @click="bulkDueDateDialogVisible = false"
+          />
+          <Button
+            type="submit"
+            label="Update due dates"
+            icon="pi pi-calendar"
+            :loading="savingBulkDueDate"
+            :disabled="!canSubmitBulkDueDate"
+          />
+        </div>
+      </form>
     </Dialog>
 
     <Dialog
