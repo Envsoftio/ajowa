@@ -14,7 +14,7 @@ import {
   validatePayload,
   writeMasterAudit,
 } from '~/server/utils/master-data'
-import { recomputeUserAccess } from '~/server/utils/qr-access'
+import { recomputeUserAccessForPairs } from '~/server/utils/qr-access'
 
 type BulkDueDateRow = {
   id: string
@@ -208,6 +208,8 @@ export default defineEventHandler(async (event) => {
       paymentConflict: 0,
     }
     const previousDueDateCounts: Record<string, number> = {}
+    let accessRecomputed = 0
+    let accessRevoked = 0
 
     for (const due of dueResult.rows) {
       incrementCount(previousDueDateCounts, due.due_date)
@@ -316,9 +318,15 @@ export default defineEventHandler(async (event) => {
         [updatePayload.map((due) => due.id), authMe.user.societyId],
       )
 
-      for (const user of affectedUsers.rows) {
-        await recomputeUserAccess(user.user_id, user.billing_period_id, client)
-      }
+      const accessResult = await recomputeUserAccessForPairs(
+        client,
+        affectedUsers.rows.map((user) => ({
+          userId: user.user_id,
+          billingPeriodId: user.billing_period_id,
+        })),
+      )
+      accessRecomputed = accessResult.recomputed
+      accessRevoked = accessResult.revoked
     }
 
     const eligible = updatePayload.length + unchangedRows.length
@@ -347,6 +355,8 @@ export default defineEventHandler(async (event) => {
         filters: body.filters ?? null,
         skipped,
         note: body.note ?? null,
+        accessRecomputedCount: accessRecomputed,
+        accessRevokedCount: accessRevoked,
       },
       relatedEntities: [
         {
@@ -372,6 +382,8 @@ export default defineEventHandler(async (event) => {
       skippedCovered: skipped.covered,
       skippedBeforePeriodStart: skipped.beforePeriodStart,
       skippedPaymentConflict: skipped.paymentConflict,
+      accessRecomputed,
+      accessRevoked,
     })
   } catch (error) {
     await client.query('rollback')

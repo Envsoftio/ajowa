@@ -48,6 +48,20 @@ type AccessStatusRow = {
   computed_at: string
 }
 
+type AccessRecomputePair = {
+  userId: string
+  billingPeriodId: string
+}
+
+type BatchAccessStatusRow = {
+  id: string
+  society_id: string
+  user_id: string
+  billing_period_id: string
+  is_access_granted: boolean
+  was_access_granted: boolean | null
+}
+
 type BillingPeriodQrRow = {
   id: string
   society_id: string
@@ -398,6 +412,349 @@ export const recomputeUserAccess = async (
     throw error
   } finally {
     if (ownedClient) client.release()
+  }
+}
+
+const enqueueBulkAccessRevokedNotifications = async (
+  client: PoolClient,
+  revokedRows: BatchAccessStatusRow[],
+) => {
+  if (revokedRows.length === 0) return
+
+  const rowsBySociety = new Map<string, BatchAccessStatusRow[]>()
+  for (const row of revokedRows) {
+    rowsBySociety.set(row.society_id, [
+      ...(rowsBySociety.get(row.society_id) ?? []),
+      row,
+    ])
+  }
+
+  for (const [societyId, rows] of rowsBySociety.entries()) {
+    const userIds = [...new Set(rows.map((row) => row.user_id))]
+    const users = await client.query<NotificationUserRow>(
+      `
+        select
+          u.id,
+          coalesce(nullif(btrim(u.email::text), ''), imported_email.email) as email,
+          u.mobile_number,
+          u.whatsapp_number,
+          u.preferred_notification_channels,
+          u.notification_push_enabled,
+          u.notification_email_enabled,
+          u.notification_whatsapp_enabled,
+          u.notification_in_app_enabled
+        from users u
+        ${importedOwnerEmailJoin}
+        where u.id = any($1::uuid[]) and u.is_active = true
+      `,
+      [userIds],
+    )
+
+    await enqueueNotificationForUsers(client, {
+      societyId,
+      eventKey: 'access_qr.revoked',
+      category: 'ACCESS_QR',
+      sourceTable: 'user_access_status',
+      priority: 'HIGH',
+      title: 'Gate QR access blocked',
+      body: 'Your gate QR access is currently blocked. Please check your maintenance status.',
+      payload: { path: '/my/qr', deepLinkUrl: '/my/qr' },
+      idempotencyKey: `access_qr.revoked:bulk:${sha256(
+        rows
+          .map((row) => `${row.user_id}:${row.billing_period_id}`)
+          .sort()
+          .join('|'),
+      )}`,
+      users: users.rows.map(mapNotificationUser),
+    })
+  }
+}
+
+export const recomputeUserAccessForPairs = async (
+  client: PoolClient,
+  pairs: AccessRecomputePair[],
+) => {
+  const uniquePairs = [
+    ...new Map(
+      pairs
+        .filter((pair) => pair.userId && pair.billingPeriodId)
+        .map((pair) => [`${pair.userId}:${pair.billingPeriodId}`, pair]),
+    ).values(),
+  ]
+
+  if (uniquePairs.length === 0) {
+    return { recomputed: 0, revoked: 0 }
+  }
+
+  const payload = JSON.stringify(
+    uniquePairs.map((pair) => ({
+      user_id: pair.userId,
+      billing_period_id: pair.billingPeriodId,
+    })),
+  )
+
+  const upserted = await client.query<BatchAccessStatusRow>(
+    `
+      with input_pairs as (
+        select distinct user_id, billing_period_id
+        from jsonb_to_recordset($1::jsonb) as payload(
+          user_id uuid,
+          billing_period_id uuid
+        )
+      ),
+      active_input as (
+        select
+          u.society_id,
+          input_pairs.user_id,
+          input_pairs.billing_period_id
+        from input_pairs
+        inner join users u on u.id = input_pairs.user_id and u.is_active = true
+      ),
+      society_settings as (
+        select
+          sp.id as society_id,
+          case
+            when jsonb_typeof(sp.settings->'familyAccessEnabled') = 'boolean'
+              then (sp.settings->>'familyAccessEnabled')::boolean
+            when jsonb_typeof(sp.settings->'familyAccess') = 'boolean'
+              then (sp.settings->>'familyAccess')::boolean
+            else true
+          end as family_access_enabled
+        from society_profile sp
+        where sp.id in (select distinct society_id from active_input)
+      ),
+      relationship_rows as (
+        select distinct on (ai.user_id, ai.billing_period_id, fr.flat_id)
+          ai.society_id,
+          ai.user_id,
+          ai.billing_period_id,
+          fr.flat_id,
+          concat(b.name, ' ', f.flat_number) as label,
+          fr.relationship_type::text as relationship_type
+        from active_input ai
+        inner join society_settings ss on ss.society_id = ai.society_id
+        inner join flat_residents fr on fr.user_id = ai.user_id
+        inner join flats f on f.id = fr.flat_id
+        inner join blocks b on b.id = f.block_id
+        where fr.is_active = true
+          and (fr.ended_at is null or fr.ended_at > now())
+          and (
+            fr.relationship_type = 'OWNER'
+            or (
+              fr.relationship_type = 'TENANT'
+              and (fr.lease_start_date is null or fr.lease_start_date <= current_date)
+              and (fr.lease_end_date is null or fr.lease_end_date >= current_date)
+            )
+            or fr.relationship_type = 'FAMILY_MEMBER'
+          )
+          and (
+            fr.relationship_type <> 'FAMILY_MEMBER'
+            or (ss.family_access_enabled and coalesce(fr.access_scope, 'HOUSEHOLD') = 'HOUSEHOLD')
+          )
+        order by ai.user_id, ai.billing_period_id, fr.flat_id, b.name, f.flat_number, fr.created_at
+      ),
+      access_rows as (
+        select
+          rr.*,
+          md.id as due_id,
+          coalesce(md.total_amount, 0) as total_amount,
+          coalesce(md.paid_amount, 0) as paid_amount,
+          coalesce(md.balance_amount, 0) as balance_amount,
+          md.status::text as status,
+          (
+            bp.charge_type = 'CAM'
+            and exists (
+              select 1
+              from cam_advance_coverages coverage
+              where coverage.society_id = bp.society_id
+                and coverage.flat_id = rr.flat_id
+                and coverage.is_active = true
+                and coverage.covered_from <= bp.start_date
+                and coverage.covered_until >= bp.end_date
+            )
+          ) as is_cam_advance_covered
+        from relationship_rows rr
+        inner join billing_periods bp on bp.id = rr.billing_period_id
+        left join maintenance_dues md
+          on md.billing_period_id = rr.billing_period_id
+          and md.flat_id = rr.flat_id
+      ),
+      access_agg as (
+        select
+          ar.society_id,
+          ar.user_id,
+          ar.billing_period_id,
+          count(*)::integer as total_flats,
+          case
+            when bool_or(ar.relationship_type = 'OWNER') then 'OWNERSHIP'::access_scope
+            when bool_or(ar.relationship_type = 'TENANT') then 'TENANCY'::access_scope
+            when bool_or(ar.relationship_type = 'FAMILY_MEMBER') then 'HOUSEHOLD'::access_scope
+            else null::access_scope
+          end as access_basis,
+          coalesce(
+            array_agg(ar.label order by ar.label) filter (
+              where not ar.is_cam_advance_covered
+                and (ar.due_id is null or ar.status not in ('PAID', 'WAIVED'))
+            ),
+            array[]::text[]
+          ) as unpaid_flat_numbers,
+          count(*) filter (
+            where ar.is_cam_advance_covered
+              or (ar.due_id is not null and ar.status in ('PAID', 'WAIVED'))
+          )::integer as total_paid_flats,
+          count(*) filter (
+            where not ar.is_cam_advance_covered
+              and (ar.due_id is null or ar.status not in ('PAID', 'WAIVED'))
+          )::integer as total_unpaid_flats,
+          coalesce(sum(ar.total_amount), 0) as total_due_all_flats,
+          coalesce(sum(ar.paid_amount), 0) as total_paid_all_flats,
+          coalesce(sum(ar.balance_amount), 0) as total_balance_all_flats
+        from access_rows ar
+        group by ar.society_id, ar.user_id, ar.billing_period_id
+      ),
+      computed as (
+        select
+          ai.society_id,
+          ai.user_id,
+          ai.billing_period_id,
+          (
+            coalesce(aa.total_flats, 0) > 0
+            and coalesce(aa.total_unpaid_flats, 0) = 0
+          ) as is_access_granted,
+          aa.access_basis,
+          coalesce(aa.unpaid_flat_numbers, array[]::text[]) as unpaid_flat_numbers,
+          coalesce(aa.total_flats, 0)::integer as total_flats,
+          coalesce(aa.total_paid_flats, 0)::integer as total_paid_flats,
+          coalesce(aa.total_unpaid_flats, 0)::integer as total_unpaid_flats,
+          coalesce(aa.total_due_all_flats, 0) as total_due_all_flats,
+          coalesce(aa.total_paid_all_flats, 0) as total_paid_all_flats,
+          coalesce(aa.total_balance_all_flats, 0) as total_balance_all_flats
+        from active_input ai
+        left join access_agg aa
+          on aa.user_id = ai.user_id
+          and aa.billing_period_id = ai.billing_period_id
+      ),
+      previous as (
+        select
+          uas.user_id,
+          uas.billing_period_id,
+          uas.is_access_granted
+        from user_access_status uas
+        inner join computed c
+          on c.user_id = uas.user_id
+          and c.billing_period_id = uas.billing_period_id
+      ),
+      upserted as (
+        insert into user_access_status (
+          society_id,
+          user_id,
+          billing_period_id,
+          is_access_granted,
+          access_basis,
+          unpaid_flat_numbers,
+          total_flats,
+          total_paid_flats,
+          total_unpaid_flats,
+          total_due_all_flats,
+          total_paid_all_flats,
+          total_balance_all_flats,
+          computed_at
+        )
+        select
+          c.society_id,
+          c.user_id,
+          c.billing_period_id,
+          c.is_access_granted,
+          c.access_basis,
+          c.unpaid_flat_numbers,
+          c.total_flats,
+          c.total_paid_flats,
+          c.total_unpaid_flats,
+          c.total_due_all_flats,
+          c.total_paid_all_flats,
+          c.total_balance_all_flats,
+          now()
+        from computed c
+        on conflict (user_id, billing_period_id)
+        do update set
+          is_access_granted = case
+            when user_access_status.override_state = 'GRANTED'
+              and (user_access_status.override_expires_at is null or user_access_status.override_expires_at > now()) then true
+            when user_access_status.override_state = 'BLOCKED'
+              and (user_access_status.override_expires_at is null or user_access_status.override_expires_at > now()) then false
+            else excluded.is_access_granted
+          end,
+          access_basis = excluded.access_basis,
+          unpaid_flat_numbers = excluded.unpaid_flat_numbers,
+          total_flats = excluded.total_flats,
+          total_paid_flats = excluded.total_paid_flats,
+          total_unpaid_flats = excluded.total_unpaid_flats,
+          total_due_all_flats = excluded.total_due_all_flats,
+          total_paid_all_flats = excluded.total_paid_all_flats,
+          total_balance_all_flats = excluded.total_balance_all_flats,
+          computed_at = now(),
+          updated_at = now()
+        returning
+          id,
+          society_id,
+          user_id,
+          billing_period_id,
+          is_access_granted
+      )
+      select
+        upserted.id,
+        upserted.society_id,
+        upserted.user_id,
+        upserted.billing_period_id,
+        upserted.is_access_granted,
+        previous.is_access_granted as was_access_granted
+      from upserted
+      left join previous
+        on previous.user_id = upserted.user_id
+        and previous.billing_period_id = upserted.billing_period_id
+    `,
+    [payload],
+  )
+
+  const revokedRows = upserted.rows.filter(
+    (row) => row.was_access_granted && !row.is_access_granted,
+  )
+
+  if (revokedRows.length > 0) {
+    await client.query(
+      `
+        update access_tokens token
+        set status = 'REVOKED',
+            is_valid = false,
+            revoked_at = coalesce(token.revoked_at, now()),
+            revoked_reason = $2,
+            updated_at = now()
+        from jsonb_to_recordset($1::jsonb) as payload(
+          user_id uuid,
+          billing_period_id uuid
+        )
+        where token.user_id = payload.user_id
+          and token.billing_period_id = payload.billing_period_id
+          and token.status = 'ACTIVE'
+          and token.is_valid = true
+      `,
+      [
+        JSON.stringify(
+          revokedRows.map((row) => ({
+            user_id: row.user_id,
+            billing_period_id: row.billing_period_id,
+          })),
+        ),
+        'Access is currently blocked by maintenance status.',
+      ],
+    )
+
+    await enqueueBulkAccessRevokedNotifications(client, revokedRows)
+  }
+
+  return {
+    recomputed: upserted.rows.length,
+    revoked: revokedRows.length,
   }
 }
 
