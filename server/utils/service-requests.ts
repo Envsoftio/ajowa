@@ -5,7 +5,12 @@ import { z } from 'zod'
 import { AppError } from './errors'
 import { getDatabasePool } from './database'
 import { parseListQuery } from './master-data'
-import { enqueueNotificationForUsers, resolveNotificationAudience } from './notifications'
+import {
+  dispatchNotificationJobs,
+  enqueueNotificationForUsers,
+  resolveNotificationAudience,
+  type NotificationUser,
+} from './notifications'
 import { createStorageObjectKey, downloadPrivateFile, uploadPrivateFile } from './storage'
 import type { AuthMe } from '~/types/auth'
 import type {
@@ -143,6 +148,7 @@ type TicketNotificationRow = {
   id: string
   society_id: string
   requester_user_id: string | null
+  flat_id: string | null
   request_number: string
   title: string
   status: string
@@ -717,6 +723,79 @@ const warnNotificationFailure = (serviceRequestId: string, error: unknown) => {
   console.warn(JSON.stringify({ level: 'warn', message, serviceRequestId }))
 }
 
+const mergeNotificationUsers = (groups: NotificationUser[][]) => {
+  const usersById = new Map<string, NotificationUser>()
+
+  for (const group of groups) {
+    for (const user of group) {
+      const existing = usersById.get(user.id)
+
+      if (!existing) {
+        usersById.set(user.id, user)
+        continue
+      }
+
+      usersById.set(user.id, {
+        ...existing,
+        email: existing.email ?? user.email,
+        mobileNumber: existing.mobileNumber ?? user.mobileNumber,
+        whatsappNumber: existing.whatsappNumber ?? user.whatsappNumber,
+        pushEnabled: existing.pushEnabled || user.pushEnabled,
+        emailEnabled: existing.emailEnabled || user.emailEnabled,
+        whatsappEnabled: existing.whatsappEnabled || user.whatsappEnabled,
+        inAppEnabled: existing.inAppEnabled || user.inAppEnabled,
+        isActive: existing.isActive ?? user.isActive ?? true,
+      })
+    }
+  }
+
+  return [...usersById.values()]
+}
+
+const resolveServiceRequestResidentAudience = async (
+  client: PoolClient,
+  ticket: TicketNotificationRow,
+) => {
+  const audienceGroups: NotificationUser[][] = []
+
+  if (ticket.flat_id) {
+    audienceGroups.push(
+      await resolveNotificationAudience(client, ticket.society_id, {
+        scope: 'OWNER_OF_FLAT',
+        flatIds: [ticket.flat_id],
+      }),
+    )
+  }
+
+  if (ticket.requester_user_id) {
+    audienceGroups.push(
+      await resolveNotificationAudience(client, ticket.society_id, {
+        scope: 'USERS',
+        userIds: [ticket.requester_user_id],
+      }),
+    )
+  }
+
+  return mergeNotificationUsers(audienceGroups)
+}
+
+const dispatchServiceRequestNotificationJobs = async (
+  client: PoolClient,
+  societyId: string,
+  eventId: string | null,
+) => {
+  if (!eventId) {
+    return
+  }
+
+  await dispatchNotificationJobs(client, {
+    societyId,
+    eventId,
+    limit: 50,
+    lockTimeoutMinutes: 1,
+  })
+}
+
 const enqueueServiceRequestNotification = async (
   serviceRequestId: string,
   input: {
@@ -734,6 +813,7 @@ const enqueueServiceRequestNotification = async (
           id,
           society_id,
           requester_user_id,
+          flat_id,
           request_number,
           title,
           status::text,
@@ -746,16 +826,17 @@ const enqueueServiceRequestNotification = async (
     )
     const ticket = result.rows[0]
 
-    if (!ticket?.requester_user_id) {
+    if (!ticket) {
       return { eventId: null, audienceCount: 0, jobCount: 0 }
     }
 
-    const users = await resolveNotificationAudience(client, ticket.society_id, {
-      scope: 'USERS',
-      userIds: [ticket.requester_user_id],
-    })
+    const users = await resolveServiceRequestResidentAudience(client, ticket)
 
-    return enqueueNotificationForUsers(client, {
+    if (users.length === 0) {
+      return { eventId: null, audienceCount: 0, jobCount: 0 }
+    }
+
+    const queued = await enqueueNotificationForUsers(client, {
       societyId: ticket.society_id,
       eventKey: 'service_request.updated',
       category: 'SERVICE_REQUESTS',
@@ -775,9 +856,18 @@ const enqueueServiceRequestNotification = async (
       idempotencyKey: input.idempotencyKey,
       idempotencyWindowSeconds: 31536000,
       users,
-      audienceLabel: 'Service request requester',
-      audienceSnapshot: { eventKey: 'service_request.updated', serviceRequestId: ticket.id },
+      channels: ['PUSH', 'EMAIL', 'IN_APP'],
+      audienceLabel: 'Service request flat owners and requester',
+      audienceSnapshot: {
+        eventKey: 'service_request.updated',
+        serviceRequestId: ticket.id,
+        recipientScope: ticket.flat_id ? 'OWNER_OF_FLAT_AND_REQUESTER' : 'REQUESTER',
+      },
     })
+
+    await dispatchServiceRequestNotificationJobs(client, ticket.society_id, queued.eventId)
+
+    return queued
   } finally {
     client.release()
   }
@@ -793,6 +883,7 @@ const enqueueServiceRequestManagerNotification = async (serviceRequestId: string
           sr.id,
           sr.society_id,
           sr.requester_user_id,
+          sr.flat_id,
           sr.request_number,
           sr.title,
           sr.status::text,
@@ -845,7 +936,7 @@ const enqueueServiceRequestManagerNotification = async (serviceRequestId: string
     const requesterLabel = ticket.requester_name ?? 'A resident'
     const locationLabel = ticket.flat_label ? ` for ${ticket.flat_label}` : ''
 
-    return enqueueNotificationForUsers(client, {
+    const queued = await enqueueNotificationForUsers(client, {
       societyId: ticket.society_id,
       eventKey: 'service_request.updated',
       category: 'SERVICE_REQUESTS',
@@ -866,6 +957,7 @@ const enqueueServiceRequestManagerNotification = async (serviceRequestId: string
       idempotencyKey: `service_request.manager.created:${ticket.id}`,
       idempotencyWindowSeconds: 31536000,
       users,
+      channels: ['PUSH', 'EMAIL', 'IN_APP'],
       audienceLabel: 'Service request managers',
       audienceSnapshot: {
         eventKey: 'service_request.updated',
@@ -873,6 +965,10 @@ const enqueueServiceRequestManagerNotification = async (serviceRequestId: string
         recipientScope: 'ADMIN_AND_MANAGER',
       },
     })
+
+    await dispatchServiceRequestNotificationJobs(client, ticket.society_id, queued.eventId)
+
+    return queued
   } finally {
     client.release()
   }
