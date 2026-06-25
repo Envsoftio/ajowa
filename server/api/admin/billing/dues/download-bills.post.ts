@@ -5,7 +5,10 @@ import { camAdvanceCoverageLateralSql } from '~/server/utils/cam-advance'
 import { getDatabasePool } from '~/server/utils/database'
 import { AppError } from '~/server/utils/errors'
 import { generateMaintenanceBillPdf, todayDate } from '~/server/utils/billing'
+import { getRequestLogger } from '~/server/utils/logging'
 import { createZipBuffer } from '~/server/utils/zip'
+
+const maxBillsPerZip = 50
 
 const billingChargeTypeSchema = z.enum(['GENERAL', 'CAM', 'DG_SET'])
 
@@ -25,10 +28,24 @@ const downloadFiltersSchema = z.object({
 const downloadBillsSchema = z.object({
   dueIds: z.array(z.string().uuid()).max(1000).optional(),
   filters: downloadFiltersSchema.optional(),
+  limit: z.coerce.number().int().min(1).max(maxBillsPerZip).optional(),
+  offset: z.coerce.number().int().min(0).optional().default(0),
 })
 
 type DownloadDueRow = {
   id: string
+}
+
+type DownloadDueSelection = {
+  ids: string[]
+  total: number
+  offset: number
+  limit: number
+}
+
+type DownloadSelectionOptions = {
+  limit: number | undefined
+  offset: number
 }
 
 const flatNumberSortExpression =
@@ -75,7 +92,7 @@ const getSelectedDueIds = async (societyId: string, dueIds: string[]) => {
   return result.rows.map((row) => row.id)
 }
 
-const getFilteredDueIds = async (
+const buildFilteredDueQuery = (
   societyId: string,
   filters: z.output<typeof downloadFiltersSchema> = {},
 ) => {
@@ -131,8 +148,7 @@ const getFilteredDueIds = async (
     ? `b.sort_order ${direction}, ${flatNumberSortExpression} ${direction}, f.flat_number ${direction}`
     : `${orderBy} ${direction}, b.sort_order asc, ${flatNumberSortExpression} asc, f.flat_number asc`
 
-  const result = await getDatabasePool().query<DownloadDueRow>(
-    `
+  const fromSql = `
       select md.id::text
       from maintenance_dues md
       inner join billing_periods bp on bp.id = md.billing_period_id
@@ -151,22 +167,89 @@ const getFilteredDueIds = async (
         limit 1
       ) billing_contact on true
       where ${where.join(' and ')}
+  `
+
+  return { fromSql, orderSql, values }
+}
+
+const assertSafeZipSize = (total: number, limit: number | undefined) => {
+  if (limit || total <= maxBillsPerZip) {
+    return
+  }
+
+  throw new AppError({
+    code: 'VALIDATION_ERROR',
+    statusCode: 413,
+    message: `This download matches ${total} bill PDFs. Please retry from the latest app version so the PDFs can be downloaded in batches of ${maxBillsPerZip}.`,
+  })
+}
+
+const getSelectedDueSelection = async (
+  societyId: string,
+  dueIds: string[],
+  options: DownloadSelectionOptions,
+): Promise<DownloadDueSelection> => {
+  const allIds = await getSelectedDueIds(societyId, dueIds)
+  assertSafeZipSize(allIds.length, options.limit)
+
+  const limit = options.limit ?? maxBillsPerZip
+  const offset = options.offset
+
+  return {
+    ids: allIds.slice(offset, offset + limit),
+    total: allIds.length,
+    offset,
+    limit,
+  }
+}
+
+const getFilteredDueSelection = async (
+  societyId: string,
+  filters: z.output<typeof downloadFiltersSchema> = {},
+  options: DownloadSelectionOptions,
+): Promise<DownloadDueSelection> => {
+  const { fromSql, orderSql, values } = buildFilteredDueQuery(societyId, filters)
+  const pool = getDatabasePool()
+  const countSql = `select count(*)::text as count from (${fromSql}) downloadable_dues`
+  const countResult = await pool.query<{ count: string }>(countSql, values)
+  const total = Number(countResult.rows[0]?.count ?? 0)
+  assertSafeZipSize(total, options.limit)
+
+  const limit = options.limit ?? maxBillsPerZip
+  const offset = options.offset
+  const result = await pool.query<DownloadDueRow>(
+    `
+      ${fromSql}
       order by ${orderSql}
+      limit $${values.length + 1}
+      offset $${values.length + 2}
     `,
-    values,
+    [...values, limit, offset],
   )
 
-  return result.rows.map((row) => row.id)
+  return {
+    ids: result.rows.map((row) => row.id),
+    total,
+    offset,
+    limit,
+  }
 }
 
 export default defineEventHandler(async (event) => {
   const authMe = await requireRole(event, ['ADMIN', 'MANAGER'])
+  const logger = getRequestLogger(event)
   const body = validateInput(downloadBillsSchema, await readJsonBody(event))
-  const dueIds = body.dueIds?.length
-    ? await getSelectedDueIds(authMe.user.societyId, body.dueIds)
-    : await getFilteredDueIds(authMe.user.societyId, body.filters)
+  const selection = body.dueIds?.length
+    ? await getSelectedDueSelection(authMe.user.societyId, body.dueIds, {
+        limit: body.limit,
+        offset: body.offset,
+      })
+    : await getFilteredDueSelection(authMe.user.societyId, body.filters, {
+        limit: body.limit,
+        offset: body.offset,
+      })
 
-  if (dueIds.length === 0) {
+  if (selection.ids.length === 0) {
     throw new AppError({
       code: 'NOT_FOUND',
       statusCode: 404,
@@ -177,16 +260,29 @@ export default defineEventHandler(async (event) => {
   const usedNames = new Map<string, number>()
   const zipEntries = []
 
-  for (const dueId of dueIds) {
-    const bill = await generateMaintenanceBillPdf(dueId, {
-      societyId: authMe.user.societyId,
-      isStaff: true,
-    })
+  for (const dueId of selection.ids) {
+    try {
+      const bill = await generateMaintenanceBillPdf(dueId, {
+        societyId: authMe.user.societyId,
+        isStaff: true,
+      })
 
-    zipEntries.push({
-      name: uniqueZipEntryName(bill.fileName, usedNames),
-      data: bill.buffer,
-    })
+      zipEntries.push({
+        name: uniqueZipEntryName(bill.fileName, usedNames),
+        data: bill.buffer,
+      })
+    } catch (error) {
+      logger.error('Bill PDF generation failed during ZIP download.', {
+        dueId,
+        societyId: authMe.user.societyId,
+        error: error instanceof Error ? error.message : String(error),
+      })
+      throw new AppError({
+        code: 'INTERNAL_ERROR',
+        statusCode: 500,
+        message: 'Could not generate one of the bill PDFs. Please try downloading that bill individually to identify the affected record.',
+      })
+    }
   }
 
   const zipBuffer = createZipBuffer(zipEntries)
@@ -197,6 +293,9 @@ export default defineEventHandler(async (event) => {
       'content-type': 'application/zip',
       'content-disposition': `attachment; filename="${fileName}"`,
       'x-bill-count': String(zipEntries.length),
+      'x-total-bill-count': String(selection.total),
+      'x-bill-offset': String(selection.offset),
+      'x-bill-limit': String(selection.limit),
     },
   })
 })

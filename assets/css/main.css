@@ -425,6 +425,7 @@ a {
 }
 
 .public-hero__logo {
+  display: flex;
   width: clamp(5.75rem, 13vw, 7.5rem);
   height: clamp(5.75rem, 13vw, 7.5rem);
   margin-bottom: 0.9rem;
