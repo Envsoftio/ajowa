@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { getApiErrorMessage } from '~/composables/useApi'
 import type {
   BankAccount,
   BillingPeriod,
@@ -8,6 +9,13 @@ import type {
   FinanceTransactionType,
   SocietyPolicySettings,
 } from '~/types/domain'
+
+type TransactionSavePayload = {
+  id: string
+  status: string
+  attachmentUploaded: boolean
+  attachmentError?: string
+}
 
 const props = defineProps<{
   initialType: FinanceTransactionType
@@ -19,8 +27,8 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  created: [payload: { id: string; status: string; attachmentUploaded: boolean }]
-  updated: [payload: { id: string; status: string; attachmentUploaded: boolean }]
+  created: [payload: TransactionSavePayload]
+  updated: [payload: TransactionSavePayload]
 }>()
 
 type SaveResponse = { ok: true; data: { id: string; status: string } }
@@ -338,18 +346,44 @@ const submit = async (submitForPosting: boolean) => {
       },
     )
 
-    let attachmentUploaded = false
-    if (attachment.value) {
-      await uploadAttachment(response.data.id, attachment.value.file)
-      attachmentUploaded = true
-    }
-
     if (import.meta.client) {
       const storageKey =
         form.transactionType === 'EXPENSE'
           ? 'finance:lastPaidFromAccountId'
           : 'finance:lastReceivingAccountId'
       localStorage.setItem(storageKey, form.bankAccountId)
+    }
+
+    let attachmentUploaded = false
+    if (attachment.value) {
+      try {
+        await uploadAttachment(response.data.id, attachment.value.file, null, {
+          showErrorToast: false,
+        })
+        attachmentUploaded = true
+      } catch (error) {
+        const attachmentError = getApiErrorMessage(
+          error,
+          'The entry was saved, but the attachment could not be uploaded.',
+        )
+        toast.add({
+          severity: 'error',
+          summary: 'Attachment upload failed',
+          detail: `Entry saved. ${attachmentError}`,
+          life: 15000,
+        })
+
+        if (!isEditing.value) {
+          emit('created', {
+            id: response.data.id,
+            status: response.data.status,
+            attachmentUploaded: false,
+            attachmentError,
+          })
+        }
+
+        return
+      }
     }
 
     const payload = {

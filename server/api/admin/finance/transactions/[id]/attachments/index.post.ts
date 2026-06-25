@@ -2,17 +2,71 @@ import { createHash } from 'node:crypto'
 import { createApiSuccess } from '~/server/utils/api'
 import { requireRole } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
+import { AppError } from '~/server/utils/errors'
 import { readMultipartFormParts } from '~/server/utils/multipart'
 import {
   createStorageObjectKey,
+  deletePrivateFile,
   uploadPrivateFile,
 } from '~/server/utils/storage'
-import type { FinanceTransactionAttachment } from '~/types/domain'
+import type { FinanceTransactionAttachment, StoredFileMetadata } from '~/types/domain'
 
 const normalizeFinanceAttachmentMimeType = (mimeType: string) =>
   mimeType === 'image/jpg' || mimeType === 'image/pjpeg'
     ? 'image/jpeg'
     : mimeType
+
+const getErrorMessage = (error: unknown) =>
+  error instanceof Error ? error.message : 'Unknown finance attachment error.'
+
+const toFinanceStorageError = (error: unknown) => {
+  if (error instanceof AppError && error.code === 'VALIDATION_ERROR') {
+    return error
+  }
+
+  const details =
+    error instanceof AppError
+      ? {
+          ...error.details,
+          cause: error.message,
+        }
+      : {
+          cause: getErrorMessage(error),
+        }
+
+  return new AppError({
+    code: 'INTERNAL_ERROR',
+    statusCode: 500,
+    message:
+      'Finance attachment storage is not ready. Check the finance-attachments bucket and file metadata setup, then retry.',
+    details,
+  })
+}
+
+const cleanupStoredFinanceAttachment = async (
+  transactionId: string,
+  storageObjectKey: string,
+  storedFile: StoredFileMetadata,
+) => {
+  try {
+    await deletePrivateFile({
+      storageTargetKey: 'finance_attachments',
+      storageObjectKey,
+      fileId: storedFile.id,
+    })
+  } catch (error) {
+    console.warn(
+      JSON.stringify({
+        level: 'warn',
+        message: 'Unable to clean up a finance attachment after database persistence failed.',
+        transactionId,
+        storageObjectKey,
+        fileId: storedFile.id,
+        cause: getErrorMessage(error),
+      }),
+    )
+  }
+}
 
 export default defineEventHandler(async (event) => {
   const authMe = await requireRole(event, ['ADMIN', 'MANAGER'])
@@ -24,7 +78,7 @@ export default defineEventHandler(async (event) => {
     [transactionId, authMe.user.societyId],
   )
   if (!transaction.rows[0]) {
-    throw createError({ statusCode: 404, statusMessage: 'Transaction not found.' })
+    throw new AppError({ code: 'NOT_FOUND', statusCode: 404, message: 'Transaction not found.' })
   }
 
   const parts = await readMultipartFormParts(event)
@@ -35,7 +89,11 @@ export default defineEventHandler(async (event) => {
     : undefined
 
   if (!filePart?.filename || !filePart.type) {
-    throw createError({ statusCode: 400, statusMessage: 'A file attachment is required.' })
+    throw new AppError({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message: 'A file attachment is required.',
+    })
   }
 
   const storageObjectKey = createStorageObjectKey({
@@ -46,20 +104,25 @@ export default defineEventHandler(async (event) => {
   const mimeType = normalizeFinanceAttachmentMimeType(filePart.type)
   const checksum = createHash('sha256').update(filePart.data).digest('hex')
 
-  await uploadPrivateFile({
-    storageTargetKey: 'finance_attachments',
-    storageObjectKey,
-    originalFileName: filePart.filename,
-    mimeType,
-    sizeBytes: filePart.data.byteLength,
-    body: filePart.data,
-    uploadedBy: authMe.user.id,
-    relation: {
-      recordType: 'transactions',
-      recordId: transactionId,
-    },
-    checksum,
-  })
+  let storedFile: StoredFileMetadata
+  try {
+    storedFile = await uploadPrivateFile({
+      storageTargetKey: 'finance_attachments',
+      storageObjectKey,
+      originalFileName: filePart.filename,
+      mimeType,
+      sizeBytes: filePart.data.byteLength,
+      body: filePart.data,
+      uploadedBy: authMe.user.id,
+      relation: {
+        recordType: 'transactions',
+        recordId: transactionId,
+      },
+      checksum,
+    })
+  } catch (error) {
+    throw toFinanceStorageError(error)
+  }
 
   const client = await pool.connect()
   try {
@@ -124,12 +187,16 @@ export default defineEventHandler(async (event) => {
         replacesAttachmentId || null,
       ],
     )
-    await client.query('commit')
-
     const row = result.rows[0]
     if (!row) {
-      throw createError({ statusCode: 500, statusMessage: 'Attachment save failed.' })
+      throw new AppError({
+        code: 'INTERNAL_ERROR',
+        statusCode: 500,
+        message: 'Attachment save failed.',
+      })
     }
+
+    await client.query('commit')
 
     const attachment: FinanceTransactionAttachment = {
       id: row.id,
@@ -151,7 +218,22 @@ export default defineEventHandler(async (event) => {
     return createApiSuccess(event, attachment)
   } catch (error) {
     await client.query('rollback')
-    throw error
+    await cleanupStoredFinanceAttachment(transactionId, storageObjectKey, storedFile)
+
+    if (error instanceof AppError) {
+      throw error
+    }
+
+    throw new AppError({
+      code: 'INTERNAL_ERROR',
+      statusCode: 500,
+      message:
+        'The file uploaded, but AJOWA could not attach it to this finance entry. Please retry the attachment upload.',
+      details: {
+        cause: getErrorMessage(error),
+        transactionId,
+      },
+    })
   } finally {
     client.release()
   }

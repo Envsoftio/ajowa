@@ -83,6 +83,7 @@ const success = ref<{
   id: string
   status: string
   attachmentUploaded: boolean
+  attachmentError?: string
 } | null>(null)
 
 const categories = computed(() => categoriesData.value?.data.items ?? [])
@@ -135,6 +136,9 @@ const refresh = async () => {
     <section v-else-if="success" class="surface-card finance-success">
       <p class="eyebrow">Saved</p>
       <h1>Entry saved</h1>
+      <Message v-if="success.attachmentError" severity="error" :closable="false">
+        Entry saved, but the attachment upload failed: {{ success.attachmentError }}
+      </Message>
       <dl>
         <div>
           <dt>Entry</dt>
@@ -146,7 +150,15 @@ const refresh = async () => {
         </div>
         <div>
           <dt>Attachment</dt>
-          <dd>{{ success.attachmentUploaded ? 'Uploaded' : 'Not attached' }}</dd>
+          <dd>
+            {{
+              success.attachmentError
+                ? 'Upload failed'
+                : success.attachmentUploaded
+                  ? 'Uploaded'
+                  : 'Not attached'
+            }}
+          </dd>
         </div>
       </dl>
       <div class="admin-inline-actions">

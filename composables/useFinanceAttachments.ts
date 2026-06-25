@@ -63,19 +63,24 @@ export const useFinanceAttachments = () => {
     transactionId: string,
     file: File,
     replacesAttachmentId?: string | null,
+    options?: { showErrorToast?: boolean },
   ) => {
     const formData = new FormData()
     formData.append('file', file)
     if (replacesAttachmentId) {
       formData.append('replacesAttachmentId', replacesAttachmentId)
     }
+    const requestOptions = {
+      method: 'POST',
+      body: formData,
+      ...(options?.showErrorToast === undefined
+        ? {}
+        : { showErrorToast: options.showErrorToast }),
+    }
 
     return await api<{ ok: true; data: FinanceTransactionAttachment }>(
       `/api/admin/finance/transactions/${transactionId}/attachments`,
-      {
-        method: 'POST',
-        body: formData,
-      },
+      requestOptions,
     )
   }
 

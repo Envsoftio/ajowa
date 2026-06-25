@@ -3258,6 +3258,17 @@ th.expense-summary-table__first-data-column {
   font-weight: 700;
 }
 
+button,
+button *,
+.p-button,
+.p-button *,
+.p-button:hover,
+.p-button:focus,
+.p-button:active,
+.p-button:visited {
+  text-decoration: none;
+}
+
 .p-button.p-button-outlined {
   background: rgba(255, 255, 255, 0.56);
 }

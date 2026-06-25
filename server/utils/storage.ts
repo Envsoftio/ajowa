@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { SupabaseClient } from '@supabase/supabase-js'
+import type { QueryResultRow } from 'pg'
+import { getDatabasePool } from './database'
 import { AppError } from './errors'
 import { getSupabaseAdminClient } from './supabase'
 import type { StoredFileMetadata, StoredFileUploadStatus } from '~/types/domain'
@@ -58,13 +60,13 @@ const STORAGE_TARGET_KEYS = STORAGE_TARGET_VALUES.map((target) => target.key)
 type StorageTarget = (typeof STORAGE_TARGET_VALUES)[number]
 type StorageTargetKey = (typeof STORAGE_TARGET_KEYS)[number]
 
-type StorageFileRecordRow = {
+type StorageFileRecordRow = QueryResultRow & {
   id: string
   storage_target_key: StorageTargetKey
   storage_object_key: string
   original_file_name: string
   mime_type: string
-  size_bytes: number
+  size_bytes: number | string
   checksum: string | null
   uploaded_by: string
   uploaded_at: string
@@ -75,6 +77,24 @@ type StorageFileRecordRow = {
   created_at: string
   updated_at: string
 }
+
+type StorageFileRecordUpdate = Partial<
+  Pick<
+    StorageFileRecordRow,
+    | 'storage_target_key'
+    | 'storage_object_key'
+    | 'original_file_name'
+    | 'mime_type'
+    | 'size_bytes'
+    | 'checksum'
+    | 'uploaded_by'
+    | 'uploaded_at'
+    | 'related_record_type'
+    | 'related_record_id'
+    | 'upload_status'
+    | 'last_error'
+  >
+>
 
 type StorageRelation = {
   recordType: string
@@ -194,7 +214,7 @@ const mapStoredFileRecord = (row: StorageFileRecordRow): StoredFileMetadata => (
   storageObjectKey: row.storage_object_key,
   originalFileName: row.original_file_name,
   mimeType: row.mime_type,
-  sizeBytes: row.size_bytes,
+  sizeBytes: Number(row.size_bytes),
   ...(row.checksum ? { checksum: row.checksum } : {}),
   uploadedBy: row.uploaded_by,
   uploadedAt: row.uploaded_at,
@@ -213,6 +233,43 @@ const toStorageError = (message: string, details?: Record<string, unknown>) =>
     message,
     details,
   })
+
+const fileRecordColumns = `
+  id,
+  storage_target_key,
+  storage_object_key,
+  original_file_name,
+  mime_type,
+  size_bytes::text as size_bytes,
+  checksum,
+  uploaded_by,
+  uploaded_at::text as uploaded_at,
+  related_record_type,
+  related_record_id,
+  upload_status,
+  last_error,
+  created_at::text as created_at,
+  updated_at::text as updated_at
+`
+
+const fileRecordUpdateColumns = new Set([
+  'storage_target_key',
+  'storage_object_key',
+  'original_file_name',
+  'mime_type',
+  'size_bytes',
+  'checksum',
+  'uploaded_by',
+  'uploaded_at',
+  'related_record_type',
+  'related_record_id',
+  'upload_status',
+  'last_error',
+  'updated_at',
+])
+
+const unknownErrorMessage = (error: unknown, fallback: string) =>
+  error instanceof Error ? error.message : fallback
 
 const validateStorageUploadInput = (input: StorageUploadInput) => {
   const storageTargetKey = assertStorageTargetKey(input.storageTargetKey)
@@ -245,69 +302,101 @@ const validateStorageUploadInput = (input: StorageUploadInput) => {
 }
 
 const insertPendingFileRecord = async (
-  supabaseAdmin: SupabaseClient,
   fileId: string,
   input: ReturnType<typeof validateStorageUploadInput>,
 ) => {
   const timestamp = new Date().toISOString()
-  const payload = {
-    id: fileId,
-    storage_target_key: input.storageTargetKey,
-    storage_object_key: input.storageObjectKey,
-    original_file_name: input.originalFileName,
-    mime_type: input.mimeType,
-    size_bytes: input.sizeBytes,
-    checksum: input.checksum ?? null,
-    uploaded_by: input.uploadedBy,
-    uploaded_at: timestamp,
-    related_record_type: input.relation.recordType,
-    related_record_id: input.relation.recordId,
-    upload_status: 'PENDING' as const,
-    last_error: null,
-    created_at: timestamp,
-    updated_at: timestamp,
-  }
+  try {
+    const result = await getDatabasePool().query<StorageFileRecordRow>(
+      `
+        insert into public.file_objects (
+          id,
+          storage_target_key,
+          storage_object_key,
+          original_file_name,
+          mime_type,
+          size_bytes,
+          checksum,
+          uploaded_by,
+          uploaded_at,
+          related_record_type,
+          related_record_id,
+          upload_status,
+          last_error,
+          created_at,
+          updated_at
+        )
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'PENDING', null, $9, $9)
+        returning ${fileRecordColumns}
+      `,
+      [
+        fileId,
+        input.storageTargetKey,
+        input.storageObjectKey,
+        input.originalFileName,
+        input.mimeType,
+        input.sizeBytes,
+        input.checksum ?? null,
+        input.uploadedBy,
+        timestamp,
+        input.relation.recordType,
+        input.relation.recordId,
+      ],
+    )
+    const row = result.rows[0]
 
-  const { data, error } = await supabaseAdmin
-    .from('file_objects')
-    .insert(payload)
-    .select('*')
-    .single<StorageFileRecordRow>()
+    if (!row) {
+      throw new Error('Insert returned no file metadata row.')
+    }
 
-  if (error || !data) {
+    return row
+  } catch (error) {
     throw toStorageError('Unable to create the file metadata record.', {
-      cause: error?.message,
+      cause: unknownErrorMessage(error, 'Unknown file metadata insert error.'),
       storageTargetKey: input.storageTargetKey,
       storageObjectKey: input.storageObjectKey,
     })
   }
-
-  return data
 }
 
 const updateFileRecord = async (
-  supabaseAdmin: SupabaseClient,
   fileId: string,
-  updates: Partial<StorageFileRecordRow>,
+  updates: StorageFileRecordUpdate,
 ) => {
-  const { data, error } = await supabaseAdmin
-    .from('file_objects')
-    .update({
-      ...updates,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', fileId)
-    .select('*')
-    .single<StorageFileRecordRow>()
+  const payload = {
+    ...updates,
+    updated_at: new Date().toISOString(),
+  }
+  const entries = Object.entries(payload).filter((entry) => {
+    const [column, value] = entry
+    return value !== undefined && fileRecordUpdateColumns.has(column)
+  })
 
-  if (error || !data) {
+  try {
+    const assignments = entries.map(([column], index) => `${column} = $${index + 2}`)
+    const values = [fileId, ...entries.map(([, value]) => value)]
+    const result = await getDatabasePool().query<StorageFileRecordRow>(
+      `
+        update public.file_objects
+        set ${assignments.join(', ')}
+        where id = $1
+        returning ${fileRecordColumns}
+      `,
+      values,
+    )
+    const row = result.rows[0]
+
+    if (!row) {
+      throw new Error('Update returned no file metadata row.')
+    }
+
+    return row
+  } catch (error) {
     throw toStorageError('Unable to update the file metadata record.', {
-      cause: error?.message,
+      cause: unknownErrorMessage(error, 'Unknown file metadata update error.'),
       fileId,
     })
   }
-
-  return data
 }
 
 const removeStorageObjectQuietly = async (
@@ -351,12 +440,11 @@ const removeStorageObjectQuietly = async (
 }
 
 const markFileRecordFailedQuietly = async (
-  supabaseAdmin: SupabaseClient,
   fileId: string,
   message: string,
 ) => {
   try {
-    await updateFileRecord(supabaseAdmin, fileId, {
+    await updateFileRecord(fileId, {
       upload_status: 'FAILED',
       last_error: message,
     })
@@ -402,7 +490,7 @@ export const uploadPrivateFile = async (input: StorageUploadInput) => {
   const storageTarget = getStorageTarget(validInput.storageTargetKey)
   const fileId = randomUUID()
 
-  await insertPendingFileRecord(supabaseAdmin, fileId, validInput)
+  await insertPendingFileRecord(fileId, validInput)
 
   try {
     const { error } = await supabaseAdmin
@@ -421,7 +509,7 @@ export const uploadPrivateFile = async (input: StorageUploadInput) => {
       })
     }
 
-    const readyRecord = await updateFileRecord(supabaseAdmin, fileId, {
+    const readyRecord = await updateFileRecord(fileId, {
       upload_status: 'READY',
       uploaded_at: new Date().toISOString(),
       last_error: null,
@@ -436,7 +524,7 @@ export const uploadPrivateFile = async (input: StorageUploadInput) => {
       validInput.storageTargetKey,
       validInput.storageObjectKey,
     )
-    await markFileRecordFailedQuietly(supabaseAdmin, fileId, message)
+    await markFileRecordFailedQuietly(fileId, message)
 
     throw error
   }
@@ -446,13 +534,18 @@ export const replacePrivateFile = async (input: ReplaceStoredFileInput) => {
   const supabaseAdmin = getSupabaseAdminClient()
   const validInput = validateStorageUploadInput(input)
   const storageTarget = getStorageTarget(validInput.storageTargetKey)
-  const { data: existingRecord, error } = await supabaseAdmin
-    .from('file_objects')
-    .select('*')
-    .eq('id', input.fileId)
-    .single<StorageFileRecordRow>()
+  const existingResult = await getDatabasePool().query<StorageFileRecordRow>(
+    `
+      select ${fileRecordColumns}
+      from public.file_objects
+      where id = $1
+      limit 1
+    `,
+    [input.fileId],
+  )
+  const existingRecord = existingResult.rows[0]
 
-  if (error || !existingRecord) {
+  if (!existingRecord) {
     throw new AppError({
       code: 'NOT_FOUND',
       statusCode: 404,
@@ -460,7 +553,7 @@ export const replacePrivateFile = async (input: ReplaceStoredFileInput) => {
     })
   }
 
-  await updateFileRecord(supabaseAdmin, input.fileId, {
+  await updateFileRecord(input.fileId, {
     storage_target_key: validInput.storageTargetKey,
     storage_object_key: validInput.storageObjectKey,
     original_file_name: validInput.originalFileName,
@@ -491,7 +584,7 @@ export const replacePrivateFile = async (input: ReplaceStoredFileInput) => {
       })
     }
 
-    const readyRecord = await updateFileRecord(supabaseAdmin, input.fileId, {
+    const readyRecord = await updateFileRecord(input.fileId, {
       upload_status: 'READY',
       uploaded_at: new Date().toISOString(),
       last_error: null,
@@ -522,7 +615,7 @@ export const replacePrivateFile = async (input: ReplaceStoredFileInput) => {
         validInput.storageObjectKey,
       )
     }
-    await markFileRecordFailedQuietly(supabaseAdmin, input.fileId, message)
+    await markFileRecordFailedQuietly(input.fileId, message)
 
     throw error
   }
@@ -593,14 +686,14 @@ export const deletePrivateFile = async (input: DeleteStoredFileInput) => {
   }
 
   if (input.fileId) {
-    const { error: metadataError } = await supabaseAdmin.from('file_objects').delete().eq('id', input.fileId)
-
-    if (metadataError) {
+    try {
+      await getDatabasePool().query('delete from public.file_objects where id = $1', [input.fileId])
+    } catch (error) {
       throw toStorageError(
         'The file was removed from storage, but its metadata record could not be deleted.',
         {
           fileId: input.fileId,
-          cause: metadataError.message,
+          cause: unknownErrorMessage(error, 'Unknown file metadata delete error.'),
         },
       )
     }
@@ -610,16 +703,22 @@ export const deletePrivateFile = async (input: DeleteStoredFileInput) => {
 export const cleanupFailedUploads = async (olderThanHours = 24): Promise<CleanupFailedUploadsResult> => {
   const supabaseAdmin = getSupabaseAdminClient()
   const cutoff = new Date(Date.now() - olderThanHours * 60 * 60 * 1000).toISOString()
-  const { data, error } = await supabaseAdmin
-    .from('file_objects')
-    .select('*')
-    .in('upload_status', ['PENDING', 'FAILED'])
-    .lte('updated_at', cutoff)
-    .returns<StorageFileRecordRow[]>()
+  let rows: StorageFileRecordRow[]
 
-  if (error) {
+  try {
+    const result = await getDatabasePool().query<StorageFileRecordRow>(
+      `
+        select ${fileRecordColumns}
+        from public.file_objects
+        where upload_status = any($1::text[])
+          and updated_at <= $2
+      `,
+      [['PENDING', 'FAILED'], cutoff],
+    )
+    rows = result.rows
+  } catch (error) {
     throw toStorageError('Unable to query failed or stale uploads for cleanup.', {
-      cause: error.message,
+      cause: unknownErrorMessage(error, 'Unknown failed upload cleanup query error.'),
       olderThanHours,
     })
   }
@@ -627,7 +726,7 @@ export const cleanupFailedUploads = async (olderThanHours = 24): Promise<Cleanup
   let deletedStorageObjects = 0
   let deletedFileRecords = 0
 
-  for (const row of data ?? []) {
+  for (const row of rows) {
     const storageObjectDeleted = await removeStorageObjectQuietly(
       supabaseAdmin,
       row.storage_target_key,
@@ -638,11 +737,11 @@ export const cleanupFailedUploads = async (olderThanHours = 24): Promise<Cleanup
       deletedStorageObjects += 1
     }
 
-    const { error: deleteError } = await supabaseAdmin.from('file_objects').delete().eq('id', row.id)
-
-    if (deleteError) {
+    try {
+      await getDatabasePool().query('delete from public.file_objects where id = $1', [row.id])
+    } catch (error) {
       throw toStorageError('Unable to delete a stale file metadata record during cleanup.', {
-        cause: deleteError.message,
+        cause: unknownErrorMessage(error, 'Unknown stale file metadata delete error.'),
         fileId: row.id,
       })
     }
