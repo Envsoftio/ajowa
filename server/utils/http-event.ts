@@ -7,6 +7,14 @@ type EventWithWebResponse = H3Event & {
   }
 }
 
+type HeaderRecord = Record<string, string | string[] | undefined>
+
+type EventWithRequestHeaders = H3Event & {
+  req?: {
+    headers?: Headers | HeaderRecord
+  }
+}
+
 type EventWithRouterParams = H3Event & {
   context?: {
     params?: Record<string, string | undefined>
@@ -19,6 +27,42 @@ type EventErrorInput = {
   message?: string
   data?: unknown
 }
+
+const normalizeHeaderValue = (value: string | string[] | undefined) => {
+  if (Array.isArray(value)) {
+    return value[0]
+  }
+
+  return value
+}
+
+const readHeaderValue = (headers: Headers | HeaderRecord | undefined, name: string) => {
+  if (!headers) {
+    return undefined
+  }
+
+  if (typeof (headers as Headers).get === 'function') {
+    return (headers as Headers).get(name) ?? undefined
+  }
+
+  const lowerName = name.toLowerCase()
+  const record = headers as HeaderRecord
+  const directValue = normalizeHeaderValue(record[lowerName] ?? record[name])
+
+  if (directValue !== undefined) {
+    return directValue
+  }
+
+  const matchingValue = Object.entries(record).find(
+    ([key]) => key.toLowerCase() === lowerName,
+  )?.[1]
+
+  return normalizeHeaderValue(matchingValue)
+}
+
+export const getEventHeader = (event: H3Event, name: string) =>
+  readHeaderValue((event as EventWithRequestHeaders).req?.headers, name) ??
+  readHeaderValue(event.node?.req.headers, name)
 
 export const getEventQuery = (event: H3Event): Record<string, string | string[]> => {
   const rawUrl = event.url ?? event.node?.req?.url ?? event.req?.url ?? '/'

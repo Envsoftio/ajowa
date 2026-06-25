@@ -57,16 +57,21 @@ type DueFilterPayload = {
   search?: string
   billingPeriodId?: string
   chargeType?: 'GENERAL' | 'CAM' | 'DG_SET'
+  chargeTypes?: Array<'GENERAL' | 'CAM' | 'DG_SET'>
   status?: MaintenanceDue['status']
   balance?: 'outstanding' | 'paid'
   overdue?: 'true'
   advance?: 'covered' | 'billable'
+  sortBy?: 'flatNumber' | 'blockName' | 'dueDate' | 'totalAmount' | 'balanceAmount' | 'status'
+  sortDirection?: 'asc' | 'desc'
 }
 type BulkDueDateMode = 'selected' | 'filtered'
 type DueFilterChargeType = NonNullable<DueFilterPayload['chargeType']>
 type DueFilterStatus = NonNullable<DueFilterPayload['status']>
 type DueFilterBalance = NonNullable<DueFilterPayload['balance']>
 type DueFilterAdvance = NonNullable<DueFilterPayload['advance']>
+type DueFilterSortBy = NonNullable<DueFilterPayload['sortBy']>
+type DueFilterSortDirection = NonNullable<DueFilterPayload['sortDirection']>
 
 const api = useApi()
 const toast = useToast()
@@ -135,6 +140,12 @@ const buildDueFilters = (): DueFilterPayload => {
 
   return filters
 }
+
+const buildBillPdfExportFilters = (): DueFilterPayload => ({
+  ...buildDueFilters(),
+  sortBy: query.sortBy as DueFilterSortBy,
+  sortDirection: query.sortDirection as DueFilterSortDirection,
+})
 
 const loadDues = () =>
   api<DueResponse>('/api/admin/billing/dues', {
@@ -433,9 +444,8 @@ const {
   billPdfExportProgress,
   downloadBillPdfs,
 } = useBillPdfZipDownload()
-const downloadingFilteredBillPdfs = ref(false)
 const isDownloadingBillPdfs = computed(
-  () => downloadingBillPdfs.value || downloadingFilteredBillPdfs.value,
+  () => downloadingBillPdfs.value,
 )
 const billPdfExportProgressLabel = computed(() => {
   const progress = billPdfExportProgress.value
@@ -938,82 +948,27 @@ const sendBills = async () => {
   }
 }
 
-const getDownloadableDueIds = (items: MaintenanceDue[]) =>
-  items.filter((due) => !due.isAdvanceCoverageRow).map((due) => due.id)
-
 const downloadVisibleBillPdfs = async () => {
   if (selectedPdfDues.value.length > 0) {
-    void downloadBillPdfs({
+    await downloadBillPdfs({
       dueIds: selectedPdfDues.value.map((due) => due.id),
     })
     return
   }
 
-  downloadingFilteredBillPdfs.value = true
-
-  try {
-    const dueIds = getDownloadableDueIds(await fetchAllMatchingDues())
-
-    if (dueIds.length === 0) {
-      toast.add({
-        severity: 'warn',
-        summary: 'No bill PDFs found',
-        detail: 'No downloadable bill PDFs matched the current filters.',
-        life: 8000,
-      })
-      return
-    }
-
-    await downloadBillPdfs({ dueIds })
-  } finally {
-    downloadingFilteredBillPdfs.value = false
-  }
+  await downloadBillPdfs({
+    filters: buildBillPdfExportFilters(),
+  })
 }
 
 const downloadCamAndDgBillPdfs = async () => {
-  downloadingFilteredBillPdfs.value = true
-
-  try {
-    const [camDues, dgDues] = await Promise.all([
-      fetchAllMatchingDues({
-        search: '',
-        billingPeriodId: '',
-        chargeType: 'CAM',
-        status: '',
-        balance: '',
-        overdue: '',
-        advance: '',
-        sortBy: query.sortBy,
-        sortDirection: query.sortDirection,
-      }),
-      fetchAllMatchingDues({
-        search: '',
-        billingPeriodId: '',
-        chargeType: 'DG_SET',
-        status: '',
-        balance: '',
-        overdue: '',
-        advance: '',
-        sortBy: query.sortBy,
-        sortDirection: query.sortDirection,
-      }),
-    ])
-    const dueIds = Array.from(new Set(getDownloadableDueIds([...camDues, ...dgDues])))
-
-    if (dueIds.length === 0) {
-      toast.add({
-        severity: 'warn',
-        summary: 'No bill PDFs found',
-        detail: 'No CAM or DG Set bill PDFs are available to download.',
-        life: 8000,
-      })
-      return
-    }
-
-    await downloadBillPdfs({ dueIds })
-  } finally {
-    downloadingFilteredBillPdfs.value = false
-  }
+  await downloadBillPdfs({
+    filters: {
+      chargeTypes: ['CAM', 'DG_SET'],
+      sortBy: query.sortBy as DueFilterSortBy,
+      sortDirection: query.sortDirection as DueFilterSortDirection,
+    },
+  })
 }
 
 const resetFilters = () => {

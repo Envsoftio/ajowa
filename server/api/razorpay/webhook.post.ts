@@ -7,6 +7,7 @@ import {
 import { createApiSuccess } from '~/server/utils/api'
 import { getDatabasePool } from '~/server/utils/database'
 import { AppError } from '~/server/utils/errors'
+import { getEventHeader } from '~/server/utils/http-event'
 import type { H3Event } from 'h3'
 
 const readRawBody = async (event: H3Event) =>
@@ -27,7 +28,7 @@ const readRawBody = async (event: H3Event) =>
 
 export default defineEventHandler(async (event) => {
   const rawBody = await readRawBody(event)
-  const signature = getHeader(event, 'x-razorpay-signature') ?? ''
+  const signature = getEventHeader(event, 'x-razorpay-signature') ?? ''
 
   if (!verifyRazorpayWebhookSignature(rawBody, signature)) {
     throw new AppError({ code: 'FORBIDDEN', statusCode: 401, message: 'Invalid Razorpay signature.' })

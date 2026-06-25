@@ -32,6 +32,11 @@ type BillPdfExportJobPayload = {
   dueIds: string[]
 }
 
+type GeneratedBillPdf = {
+  fileName: string
+  buffer: Buffer
+}
+
 export type BillPdfExportJobRow = QueryResultRow & {
   id: string
   society_id: string
@@ -151,6 +156,18 @@ const mapJobRow = (row: BillPdfExportJobRow): BillPdfExportJobSummary => ({
 
 const getErrorMessage = (error: unknown, fallback: string) =>
   error instanceof Error ? error.message : fallback
+
+const parsePositiveInteger = (value: string | undefined, fallback: number) => {
+  const parsed = Number(value)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback
+}
+
+const getBillPdfGenerationConcurrency = (dueCount: number) =>
+  Math.min(
+    dueCount,
+    parsePositiveInteger(process.env.BILL_EXPORT_PDF_CONCURRENCY, 4),
+    8,
+  )
 
 const getStoredPayload = (job: BillPdfExportJobRow): BillPdfExportJobPayload => {
   const parsed = storedPayloadSchema.safeParse(parseJsonValue(job.request_payload))
@@ -356,35 +373,62 @@ export const processBillPdfExportJob = async (jobId: string) => {
 
   const payload = getStoredPayload(claimedJob)
   const usedNames = new Map<string, number>()
-  const zipEntries: Array<{ name: string; data: Buffer }> = []
+  const generatedBills = new Array<GeneratedBillPdf | null>(payload.dueIds.length).fill(null)
   const failedItems: BillPdfExportFailedItem[] = []
   let processedCount = 0
+  let nextDueIndex = 0
 
   try {
-    for (const dueId of payload.dueIds) {
-      try {
-        const bill = await generateMaintenanceBillPdf(dueId, {
-          societyId: claimedJob.society_id,
-          isStaff: true,
-        })
+    const generateWorker = async () => {
+      while (nextDueIndex < payload.dueIds.length) {
+        const dueIndex = nextDueIndex
+        nextDueIndex += 1
 
-        zipEntries.push({
-          name: uniqueBillPdfZipEntryName(bill.fileName, usedNames),
-          data: bill.buffer,
-        })
-      } catch (error) {
-        failedItems.push({
-          dueId,
-          message: getErrorMessage(error, 'Unable to generate this bill PDF.'),
-        })
-      } finally {
-        processedCount += 1
+        const dueId = payload.dueIds[dueIndex]
+        if (!dueId) continue
 
-        if (processedCount % 5 === 0 || processedCount === payload.dueIds.length) {
-          await updateBillPdfExportProgress(claimedJob.id, processedCount, failedItems)
+        try {
+          const bill = await generateMaintenanceBillPdf(dueId, {
+            societyId: claimedJob.society_id,
+            isStaff: true,
+          })
+
+          generatedBills[dueIndex] = {
+            fileName: bill.fileName,
+            buffer: bill.buffer,
+          }
+        } catch (error) {
+          failedItems.push({
+            dueId,
+            message: getErrorMessage(error, 'Unable to generate this bill PDF.'),
+          })
+        } finally {
+          processedCount += 1
+
+          if (processedCount % 5 === 0 || processedCount === payload.dueIds.length) {
+            await updateBillPdfExportProgress(claimedJob.id, processedCount, failedItems)
+          }
         }
       }
     }
+
+    await Promise.all(
+      Array.from(
+        { length: getBillPdfGenerationConcurrency(payload.dueIds.length) },
+        generateWorker,
+      ),
+    )
+
+    const zipEntries = generatedBills.flatMap((bill) => {
+      if (!bill) {
+        return []
+      }
+
+      return [{
+        name: uniqueBillPdfZipEntryName(bill.fileName, usedNames),
+        data: bill.buffer,
+      }]
+    })
 
     if (zipEntries.length === 0) {
       throw new AppError({

@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { createApiSuccess, readJsonBody, validateInput } from '~/server/utils/api'
 import { requireAuth } from '~/server/utils/auth'
 import { queryRows } from '~/server/utils/database'
+import { getEventHeader } from '~/server/utils/http-event'
 
 const optionalText = (maxLength: number) =>
   z.preprocess(
@@ -23,7 +24,7 @@ const schema = z.object({
 export default defineEventHandler(async (event) => {
   const authMe = await requireAuth(event)
   const body = validateInput(schema, await readJsonBody(event))
-  const userAgent = getHeader(event, 'user-agent') ?? null
+  const userAgent = getEventHeader(event, 'user-agent') ?? null
 
   const result = await queryRows<{ id: string }>(
     `
