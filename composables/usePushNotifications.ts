@@ -1,3 +1,5 @@
+import { getApiErrorMessage } from '~/composables/useApi'
+
 type PushSubscriptionState =
   | 'subscribed'
   | 'unsupported'
@@ -35,6 +37,30 @@ const detectBrowserName = () => {
   if (userAgent.includes('Safari/')) return 'Safari'
 
   return null
+}
+
+const optionalString = (value: string | null | undefined) => {
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  return trimmed ? trimmed : undefined
+}
+
+const getBrowserPushErrorMessage = (error: unknown) => {
+  if (typeof DOMException !== 'undefined' && error instanceof DOMException) {
+    if (error.name === 'NotAllowedError') {
+      return 'Notifications are blocked in this browser. Allow notifications from site settings, then try again.'
+    }
+
+    if (error.name === 'AbortError') {
+      return 'The browser could not finish push setup. Reload AJOWA and try again.'
+    }
+
+    return error.message || 'The browser could not create a push subscription.'
+  }
+
+  return error instanceof Error && error.message
+    ? error.message
+    : 'The browser could not create a push subscription.'
 }
 
 export const usePushNotifications = () => {
@@ -106,32 +132,44 @@ export const usePushNotifications = () => {
         }
       }
 
+      let subscription: PushSubscription
+
       try {
         const registration = await navigator.serviceWorker.ready
         const existingSubscription = await registration.pushManager.getSubscription()
-        const subscription =
+        subscription =
           existingSubscription ??
           (await registration.pushManager.subscribe({
             userVisibleOnly: true,
             applicationServerKey: urlBase64ToUint8Array(keyResponse.data.publicKey),
           }))
+      } catch (error) {
+        return {
+          state: 'failed',
+          message: getBrowserPushErrorMessage(error),
+        }
+      }
+
+      try {
+        const platform = optionalString(navigator.platform)
+        const browserName = optionalString(detectBrowserName())
 
         await api('/api/my/notifications/push/subscribe', {
           method: 'POST',
           showErrorToast,
           body: {
             ...subscription.toJSON(),
-            deviceLabel: navigator.platform || runtimeConfig.public.appName,
-            browserName: detectBrowserName(),
-            platform: navigator.platform,
+            deviceLabel: platform ?? runtimeConfig.public.appName,
+            ...(browserName ? { browserName } : {}),
+            ...(platform ? { platform } : {}),
           },
         })
 
         return { state: 'subscribed', message: 'Push subscription refreshed.' }
-      } catch {
+      } catch (error) {
         return {
           state: 'failed',
-          message: 'Push subscription could not be created.',
+          message: getApiErrorMessage(error, 'Push subscription could not be saved.'),
         }
       }
     })()

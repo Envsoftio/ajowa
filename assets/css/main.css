@@ -93,6 +93,47 @@ a {
   padding: 0.9rem 1.2rem 3rem;
 }
 
+.app-shell--public-compact,
+.app-shell--public-compact .app-shell__layout,
+.app-shell--public-compact .app-frame {
+  min-height: 100dvh;
+}
+
+.app-shell--public-compact .app-content {
+  display: grid;
+  align-items: center;
+  padding-block: clamp(0.75rem, 2vw, 1.25rem);
+}
+
+@media (min-width: 769px) {
+  .app-shell--resident {
+    height: 100dvh;
+    min-height: 100dvh;
+    overflow: hidden;
+  }
+
+  .app-shell--resident .app-shell__layout,
+  .app-shell--resident .app-frame {
+    height: 100%;
+    min-height: 0;
+  }
+
+  .app-shell--resident .app-frame {
+    overflow: hidden;
+  }
+
+  .app-shell--resident .app-content {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding-bottom: 1rem;
+  }
+
+  .app-shell--resident .app-footer {
+    flex: 0 0 auto;
+  }
+}
+
 .app-footer {
   display: flex;
   align-items: center;
@@ -181,20 +222,39 @@ a {
   position: relative;
   width: 2.1rem;
   min-width: 2.1rem;
+  min-height: 2.1rem;
   padding-inline: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
 }
 
+.topbar-notification-button {
+  overflow: visible;
+  isolation: isolate;
+}
+
+.topbar-notification-button .pi {
+  position: relative;
+  z-index: 1;
+}
+
 .topbar-notification-button .p-badge {
   position: absolute;
-  top: -0.3rem;
-  right: -0.35rem;
+  top: 0;
+  right: 0;
+  transform: translate(42%, -42%);
+  z-index: 3;
   min-width: 1.15rem;
   height: 1.15rem;
+  padding: 0 0.32rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font-size: 0.66rem;
   line-height: 1;
+  box-shadow: 0 0 0 2px var(--admin-topbar-bg);
+  pointer-events: none;
 }
 
 .topbar-loading {
@@ -1013,6 +1073,11 @@ a {
   display: grid;
   place-items: center;
   padding: 1rem 0 3rem;
+}
+
+.auth-page--login {
+  min-height: 0;
+  padding: 0;
 }
 
 .auth-card {
@@ -3811,10 +3876,17 @@ button *,
     min-width: 0;
   }
 
-  .topbar-actions .p-button:not(.avatar-trigger) {
+  .topbar-actions .p-button:not(.avatar-trigger):not(.topbar-icon-button) {
     width: 100%;
     min-width: 0;
     justify-content: center;
+  }
+
+  .topbar-icon-button {
+    justify-self: end;
+    width: 2.25rem;
+    min-width: 2.25rem;
+    min-height: 2.25rem;
   }
 
   .avatar-trigger {

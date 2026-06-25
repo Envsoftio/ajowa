@@ -113,10 +113,38 @@ export const dueUpdateSchema = z.object({
   message: 'Change the due date or base amount before saving.',
 })
 
+const dueFilterSchema = z.object({
+  search: z.string().trim().max(200).optional(),
+  billingPeriodId: z.string().uuid().optional(),
+  chargeType: z.enum(['GENERAL', 'CAM', 'DG_SET']).optional(),
+  status: z.enum(['OPEN', 'PARTIALLY_PAID', 'PAID', 'OVERDUE', 'WAIVED', 'CANCELLED']).optional(),
+  balance: z.enum(['outstanding', 'paid']).optional(),
+  overdue: z.literal('true').optional(),
+  advance: z.enum(['covered', 'billable']).optional(),
+}).refine(
+  (filters) =>
+    Object.values(filters).some((value) => value !== undefined && value !== ''),
+  {
+    message: 'Choose at least one filter before changing due dates in bulk.',
+  },
+)
+
 export const dueBulkDueDateUpdateSchema = z.object({
-  dueIds: z.array(z.string().uuid()).min(1).max(500),
+  dueIds: z.array(z.string().uuid()).min(1).max(500).optional(),
+  filters: dueFilterSchema.optional(),
   dueDate: z.string().date(),
   note: z.string().trim().max(500).nullable().optional(),
+}).superRefine((value, ctx) => {
+  const hasDueIds = Boolean(value.dueIds?.length)
+  const hasFilters = Boolean(value.filters)
+
+  if (hasDueIds === hasFilters) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['dueIds'],
+      message: 'Provide either selected due IDs or filters, but not both.',
+    })
+  }
 })
 
 export const dueReminderSchema = z.object({

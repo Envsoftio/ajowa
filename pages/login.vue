@@ -4,6 +4,7 @@ import { canUserAccessRoute, isSafeRedirectPath } from '~/shared/auth'
 definePageMeta({
   layout: 'public',
   middleware: ['guest-only'],
+  publicShell: 'compact',
   title: 'Login',
 })
 
@@ -57,7 +58,7 @@ const submit = async () => {
 </script>
 
 <template>
-  <section class="auth-page">
+  <section class="auth-page auth-page--login">
     <div class="auth-card">
       <Tag severity="contrast" value="Account Access" rounded />
       <h1>Welcome back</h1>

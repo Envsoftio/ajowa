@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { AppNavGroup, AppNavItem, AppShellType } from '~/shared/shell'
+import type { AuthMe } from '~/types/auth'
 import { canUserAccessRoute } from '~/shared/auth'
 import { shellNavigation } from '~/shared/shell'
 
@@ -10,18 +11,33 @@ const props = defineProps<{
 const appStore = useAppStore()
 const authStore = useAuthStore()
 const route = useRoute()
+
+const getPathname = (value: string) => value.split(/[?#]/)[0] || '/'
+
+const shouldShowNavItem = (item: AppNavItem, me: AuthMe) => {
+  if (!canUserAccessRoute(item.to, me.user)) {
+    return false
+  }
+
+  if (getPathname(item.to) === '/verify-email') {
+    return me.access.requiresEmailVerification
+  }
+
+  return true
+}
+
 const groups = computed<AppNavGroup[]>(() => {
   const navigation = shellNavigation[props.shell]
-  const user = authStore.me?.user
+  const me = authStore.me
 
-  if (!user) {
+  if (!me) {
     return navigation
   }
 
   return navigation
     .map((group) => ({
       ...group,
-      items: group.items.filter((item) => canUserAccessRoute(item.to, user)),
+      items: group.items.filter((item) => shouldShowNavItem(item, me)),
     }))
     .filter((group) => group.items.length > 0)
 })
