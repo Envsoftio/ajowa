@@ -12,7 +12,7 @@ const pageTitle = computed(() => String(route.meta.title ?? shellTitles[props.sh
 
 <template>
   <div class="app-breadcrumb">
-    <span>AJOWA</span>
+    <AppBrandLogo variant="mark" />
     <span>/</span>
     <span>{{ shellTitles[props.shell] }}</span>
     <span>/</span>

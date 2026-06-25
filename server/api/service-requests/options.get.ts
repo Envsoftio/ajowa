@@ -6,10 +6,13 @@ import { listServiceDepartments, listServiceStaffOptions } from '~/server/utils/
 export default defineEventHandler(async (event) => {
   const authMe = await requireActiveUser(event)
   const pool = getDatabasePool()
-  const departments = ['ADMIN', 'MANAGER', 'SERVICE_STAFF'].includes(authMe.user.role)
+  const canManageServiceRequests =
+    authMe.user.role === 'ADMIN' ||
+    authMe.user.permissions.includes('service-requests.manage')
+  const departments = canManageServiceRequests || authMe.user.role === 'SERVICE_STAFF'
     ? await listServiceDepartments(authMe, false)
     : []
-  const staff = ['ADMIN', 'MANAGER'].includes(authMe.user.role)
+  const staff = canManageServiceRequests
     ? await listServiceStaffOptions(authMe)
     : []
   const routes = await pool.query<{

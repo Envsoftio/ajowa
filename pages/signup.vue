@@ -9,6 +9,7 @@ definePageMeta({
 <template>
   <section class="auth-page">
     <div class="auth-card">
+      <AppBrandLogo class="auth-card__logo" />
       <Tag severity="warn" value="Admin Managed" rounded />
       <h1>Public sign-up is disabled</h1>
       <p>

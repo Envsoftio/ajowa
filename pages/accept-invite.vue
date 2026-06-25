@@ -131,6 +131,7 @@ const submit = async () => {
 <template>
   <section class="auth-page">
     <div class="auth-card">
+      <AppBrandLogo class="auth-card__logo" />
       <Tag severity="success" value="Invitation" rounded />
       <h1>Accept your invite</h1>
       <p>Finish your profile, choose a password, and activate your AJOWA account.</p>

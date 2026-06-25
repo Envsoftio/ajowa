@@ -555,8 +555,12 @@ export const resolveNotificationAudience = async (
   filter: NotificationAudienceFilter,
 ) => {
   const params: unknown[] = [societyId]
-  const where: string[] = ['u.society_id = $1', 'u.is_active = true', "u.role = 'RESIDENT'"]
+  const where: string[] = ['u.society_id = $1', 'u.is_active = true']
   let joins = ''
+
+  if (filter.scope !== 'USERS') {
+    where.push("u.role = 'RESIDENT'")
+  }
 
   if (filter.scope === 'ACTIVE_PUSH_SUBSCRIBERS') {
     joins += " inner join push_subscriptions ps on ps.user_id = u.id and ps.status = 'ACTIVE'"
@@ -1044,8 +1048,8 @@ const sendPushForJob = async (
   const payload = JSON.stringify({
     title: job.title ?? 'AJOWA',
     body: job.body ?? '',
-    icon: '/ajowa-icon.svg',
-    badge: '/ajowa-icon.svg',
+    icon: '/icons/ajowa-icon-192.png',
+    badge: '/icons/ajowa-icon-192.png',
     link: new URL(link, runtimeConfig.appUrl).toString(),
     tag: typeof job.payload.tag === 'string' ? job.payload.tag : job.event_key,
     priority: job.priority,

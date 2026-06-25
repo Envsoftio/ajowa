@@ -1,5 +1,13 @@
-const CACHE_NAME = 'ajowa-guard-v1'
-const APP_SHELL = ['/guard/scan', '/manifest.webmanifest', '/ajowa-icon.svg']
+const CACHE_NAME = 'ajowa-app-v2'
+const APP_SHELL = [
+  '/',
+  '/guard/scan',
+  '/manifest.webmanifest',
+  '/ajowa-icon.svg',
+  '/icons/ajowa-icon-192.png',
+  '/icons/ajowa-icon-512.png',
+  '/icons/ajowa-maskable-512.png',
+]
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)).catch(() => undefined))
@@ -27,7 +35,7 @@ self.addEventListener('fetch', (event) => {
         caches.open(CACHE_NAME).then((cache) => cache.put(request, copy)).catch(() => undefined)
         return response
       })
-      .catch(() => caches.match(request).then((response) => response || caches.match('/guard/scan'))),
+      .catch(() => caches.match(request).then((response) => response || caches.match('/'))),
   )
 })
 
@@ -36,8 +44,8 @@ self.addEventListener('push', (event) => {
   const title = payload.title || 'AJOWA'
   const options = {
     body: payload.body || '',
-    icon: payload.icon || '/ajowa-icon.svg',
-    badge: payload.badge || '/ajowa-icon.svg',
+    icon: payload.icon || '/icons/ajowa-icon-192.png',
+    badge: payload.badge || '/icons/ajowa-icon-192.png',
     image: payload.image,
     tag: payload.tag,
     renotify: payload.priority === 'EMERGENCY',

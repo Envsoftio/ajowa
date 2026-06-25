@@ -19,10 +19,12 @@ const getAdminApiPermission = (path: string, method: string): StaffPermission | 
   if (
     path.startsWith('/api/admin/staff') ||
     path.startsWith('/api/admin/auth/invites') ||
-    path.startsWith('/api/admin/service-departments') ||
-    path.startsWith('/api/admin/service-requests')
+    path.startsWith('/api/admin/service-departments')
   ) {
     return 'staff.manage'
+  }
+  if (path.startsWith('/api/admin/service-requests')) {
+    return 'service-requests.manage'
   }
   if (path.startsWith('/api/admin/society')) {
     return 'society.manage'

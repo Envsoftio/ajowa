@@ -10,6 +10,7 @@ export const staffPermissions = [
   'finance.view',
   'finance.manage',
   'staff.manage',
+  'service-requests.manage',
   'notifications.view',
   'notifications.manage',
 ] as const
@@ -27,7 +28,8 @@ export const staffPermissionLabels: Record<StaffPermission, string> = {
   'defaulters.view': 'Defaulters',
   'finance.view': 'Finance view',
   'finance.manage': 'Finance accounts',
-  'staff.manage': 'Staff and service console',
+  'staff.manage': 'Staff and departments',
+  'service-requests.manage': 'Service requests',
   'notifications.view': 'Notification history',
   'notifications.manage': 'Notification settings and broadcasts',
 }
@@ -41,9 +43,11 @@ export const managerDefaultPermissions: StaffPermission[] = [
   'residents.manage',
   'billing.view',
   'billing.manage',
+  'dues.manage',
   'defaulters.view',
   'finance.view',
   'finance.manage',
+  'service-requests.manage',
   'notifications.view',
   'notifications.manage',
 ]
@@ -58,7 +62,7 @@ export const staffRoleAccessDescriptions: Record<StaffManagedRole, {
 }> = {
   MANAGER: {
     title: 'Manager workspace',
-    description: 'Managers use selected admin permissions for society, billing, finance, residents, staff, and notifications.',
+    description: 'Managers use selected admin permissions for society, billing, finance, residents, service requests, staff, and notifications.',
     permissionsEditable: true,
     accessLabel: 'Configurable admin access',
   },

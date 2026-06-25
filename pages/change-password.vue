@@ -76,6 +76,7 @@ const submit = async () => {
 <template>
   <section class="auth-page">
     <div class="auth-card">
+      <AppBrandLogo class="auth-card__logo" />
       <Tag severity="contrast" value="First Login" rounded />
       <h1>Change your password</h1>
       <p>AJOWA requires a permanent password before protected access is unlocked.</p>

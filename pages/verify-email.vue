@@ -68,6 +68,7 @@ const resend = async () => {
 <template>
   <section class="auth-page">
     <div class="auth-card">
+      <AppBrandLogo class="auth-card__logo" />
       <Tag severity="info" value="Email Verification" rounded />
       <h1>Verify your email</h1>
       <p>AJOWA needs a verified email before your access becomes fully active.</p>

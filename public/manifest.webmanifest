@@ -1,19 +1,37 @@
 {
-  "name": "AJOWA Guard",
+  "name": "AJOWA",
   "short_name": "AJOWA",
-  "description": "Mobile-first guard scanning and resident society access.",
-  "start_url": "/guard/scan",
+  "description": "AJOWA society management dashboard.",
+  "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#f4efe6",
-  "theme_color": "#0f5f4d",
+  "background_color": "#ffffff",
+  "theme_color": "#0645c3",
   "orientation": "portrait",
   "icons": [
     {
       "src": "/ajowa-icon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/ajowa-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/ajowa-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/ajowa-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
     }
   ]
 }

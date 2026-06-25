@@ -31,6 +31,7 @@ const nextLabel = computed(() => (authStore.me ? 'Go to my workspace' : 'Back to
 <template>
   <section class="auth-page">
     <div class="auth-card">
+      <AppBrandLogo class="auth-card__logo" />
       <Tag severity="danger" value="403" rounded />
       <h1>Permission denied</h1>
       <p>Your account is signed in, but this route or action is outside your current AJOWA access.</p>

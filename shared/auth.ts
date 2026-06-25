@@ -78,7 +78,7 @@ export const getAdminRoutePermission = (path: string) => {
     return 'staff.manage'
   }
   if (pathname.startsWith('/admin/service-requests')) {
-    return 'staff.manage'
+    return 'service-requests.manage'
   }
   if (pathname.startsWith('/admin/settings/notifications')) {
     return 'notifications.manage'

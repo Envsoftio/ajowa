@@ -40,6 +40,7 @@ const submit = async () => {
 <template>
   <section class="auth-page">
     <div class="auth-card">
+      <AppBrandLogo class="auth-card__logo" />
       <Tag severity="info" value="Password Recovery" rounded />
       <h1>Forgot password</h1>
       <p>Enter your account email and we’ll send you a secure reset link.</p>

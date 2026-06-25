@@ -149,6 +149,11 @@ type TicketNotificationRow = {
   priority: string
 }
 
+type ManagerTicketNotificationRow = TicketNotificationRow & {
+  requester_name: string | null
+  flat_label: string | null
+}
+
 export const serviceDepartmentSchema = z.object({
   code: z.string().trim().min(2).max(40).transform((value) => value.toUpperCase().replace(/\s+/g, '_')),
   name: z.string().trim().min(2).max(120),
@@ -778,6 +783,101 @@ const enqueueServiceRequestNotification = async (
   }
 }
 
+const enqueueServiceRequestManagerNotification = async (serviceRequestId: string) => {
+  const client = await getDatabasePool().connect()
+
+  try {
+    const result = await client.query<ManagerTicketNotificationRow>(
+      `
+        select
+          sr.id,
+          sr.society_id,
+          sr.requester_user_id,
+          sr.request_number,
+          sr.title,
+          sr.status::text,
+          sr.priority::text,
+          requester.full_name as requester_name,
+          case when f.id is not null then concat(b.name, ' ', f.flat_number) else null end as flat_label
+        from service_requests sr
+        left join users requester on requester.id = sr.requester_user_id
+        left join flats f on f.id = sr.flat_id
+        left join blocks b on b.id = f.block_id
+        where sr.id = $1
+        limit 1
+      `,
+      [serviceRequestId],
+    )
+    const ticket = result.rows[0]
+
+    if (!ticket) {
+      return { eventId: null, audienceCount: 0, jobCount: 0 }
+    }
+
+    const managerResult = await client.query<{ id: string }>(
+      `
+        select id
+        from users
+        where society_id = $1
+          and role in ('ADMIN', 'MANAGER')
+          and is_active = true
+          and can_login = true
+          and deleted_at is null
+          and (
+            role = 'ADMIN'
+            or cardinality(staff_permissions) = 0
+            or 'service-requests.manage' = any(staff_permissions)
+          )
+        order by role asc, full_name asc
+      `,
+      [ticket.society_id],
+    )
+    const managerIds = managerResult.rows.map((row) => row.id)
+
+    if (managerIds.length === 0) {
+      return { eventId: null, audienceCount: 0, jobCount: 0 }
+    }
+
+    const users = await resolveNotificationAudience(client, ticket.society_id, {
+      scope: 'USERS',
+      userIds: managerIds,
+    })
+    const requesterLabel = ticket.requester_name ?? 'A resident'
+    const locationLabel = ticket.flat_label ? ` for ${ticket.flat_label}` : ''
+
+    return enqueueNotificationForUsers(client, {
+      societyId: ticket.society_id,
+      eventKey: 'service_request.updated',
+      category: 'SERVICE_REQUESTS',
+      sourceTable: 'service_requests',
+      sourceId: ticket.id,
+      priority: ticket.priority === 'EMERGENCY' ? 'HIGH' : 'MEDIUM',
+      title: 'New service request',
+      body: `${requesterLabel} raised ${ticket.request_number}${locationLabel}: ${ticket.title}.`,
+      payload: {
+        serviceRequestId: ticket.id,
+        requestNumber: ticket.request_number,
+        ticketNumber: ticket.request_number,
+        status: ticket.status,
+        ticketTitle: ticket.title,
+        deepLinkUrl: `/admin/service-requests/${ticket.id}`,
+        actionLabel: 'Open service request',
+      },
+      idempotencyKey: `service_request.manager.created:${ticket.id}`,
+      idempotencyWindowSeconds: 31536000,
+      users,
+      audienceLabel: 'Service request managers',
+      audienceSnapshot: {
+        eventKey: 'service_request.updated',
+        serviceRequestId: ticket.id,
+        recipientScope: 'ADMIN_AND_MANAGER',
+      },
+    })
+  } finally {
+    client.release()
+  }
+}
+
 export const createServiceRequest = async (
   authMe: AuthMe,
   input: z.infer<typeof serviceRequestCreateSchema>,
@@ -942,11 +1042,22 @@ export const createServiceRequest = async (
 
     await client.query('commit')
     try {
-      await enqueueServiceRequestNotification(id, {
-        title: 'Service request created',
-        body: `${requestNumber} has been created and is currently ${status.replaceAll('_', ' ').toLowerCase()}.`,
-        idempotencyKey: `service_request.created:${id}`,
-      })
+      const notifications = await Promise.allSettled([
+        enqueueServiceRequestNotification(id, {
+          title: 'Service request created',
+          body: `${requestNumber} has been created and is currently ${status.replaceAll('_', ' ').toLowerCase()}.`,
+          idempotencyKey: `service_request.created:${id}`,
+        }),
+        mode === 'resident'
+          ? enqueueServiceRequestManagerNotification(id)
+          : Promise.resolve({ eventId: null, audienceCount: 0, jobCount: 0 }),
+      ])
+
+      for (const notification of notifications) {
+        if (notification.status === 'rejected') {
+          warnNotificationFailure(id, notification.reason)
+        }
+      }
     } catch (notificationError) {
       warnNotificationFailure(id, notificationError)
     }

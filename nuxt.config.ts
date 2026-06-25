@@ -1,9 +1,45 @@
 import process from 'node:process'
+import { definePreset } from '@primevue/themes'
 import Aura from '@primevue/themes/aura'
 
 const defaultAppUrl = 'https://ajowa.in'
 const appUrl = process.env.APP_URL ?? process.env.NUXT_PUBLIC_APP_URL ?? defaultAppUrl
 const publicAppUrl = process.env.NUXT_PUBLIC_APP_URL ?? appUrl
+const AjowaPreset = definePreset(Aura, {
+  semantic: {
+    primary: {
+      50: '#eff6ff',
+      100: '#dbeafe',
+      200: '#bfdbfe',
+      300: '#93c5fd',
+      400: '#60a5fa',
+      500: '#0645c3',
+      600: '#013fba',
+      700: '#063797',
+      800: '#102f78',
+      900: '#12265a',
+      950: '#0b1738',
+    },
+    colorScheme: {
+      light: {
+        primary: {
+          color: '#0645c3',
+          contrastColor: '#ffffff',
+          hoverColor: '#013fba',
+          activeColor: '#063797',
+        },
+      },
+      dark: {
+        primary: {
+          color: '#7db2ff',
+          contrastColor: '#0b1738',
+          hoverColor: '#9fc5ff',
+          activeColor: '#bfdbfe',
+        },
+      },
+    },
+  },
+})
 
 export default defineNuxtConfig({
   compatibilityDate: '2025-01-01',
@@ -79,7 +115,19 @@ export default defineNuxtConfig({
         },
         {
           name: 'theme-color',
-          content: '#0f5f4d',
+          content: '#0645c3',
+        },
+        {
+          name: 'application-name',
+          content: 'AJOWA',
+        },
+        {
+          name: 'apple-mobile-web-app-title',
+          content: 'AJOWA',
+        },
+        {
+          name: 'msapplication-TileColor',
+          content: '#0645c3',
         },
       ],
       link: [
@@ -90,6 +138,10 @@ export default defineNuxtConfig({
           href: 'https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&display=swap',
         },
         { rel: 'manifest', href: '/manifest.webmanifest' },
+        { rel: 'icon', type: 'image/svg+xml', href: '/ajowa-icon.svg' },
+        { rel: 'icon', type: 'image/png', sizes: '32x32', href: '/favicon-32x32.png' },
+        { rel: 'icon', type: 'image/png', sizes: '16x16', href: '/favicon-16x16.png' },
+        { rel: 'apple-touch-icon', sizes: '180x180', href: '/apple-touch-icon.png' },
       ],
     },
   },
@@ -114,7 +166,7 @@ export default defineNuxtConfig({
     options: {
       ripple: true,
       theme: {
-        preset: Aura,
+        preset: AjowaPreset,
         options: {
           darkModeSelector: '.app-theme-dark',
         },

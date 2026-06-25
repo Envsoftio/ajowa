@@ -82,8 +82,10 @@ watch(
 <template>
   <aside class="app-sidebar">
     <div class="app-sidebar__header">
+      <NuxtLink to="/" class="app-sidebar__brand" aria-label="AJOWA home">
+        <AppBrandLogo />
+      </NuxtLink>
       <p class="eyebrow">Navigation</p>
-      <h3>AJOWA</h3>
     </div>
     <nav class="app-sidebar__nav" aria-label="Primary">
       <section

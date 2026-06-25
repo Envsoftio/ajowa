@@ -97,6 +97,9 @@ onMounted(() => {
         aria-label="Toggle navigation"
         @click="appStore.toggleSidebar()"
       />
+      <NuxtLink to="/" class="topbar-brand" aria-label="AJOWA home">
+        <AppBrandLogo variant="mark" />
+      </NuxtLink>
       <h2>{{ pageTitle }}</h2>
     </div>
 

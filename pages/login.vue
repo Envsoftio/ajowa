@@ -60,6 +60,7 @@ const submit = async () => {
 <template>
   <section class="auth-page auth-page--login">
     <div class="auth-card">
+      <AppBrandLogo class="auth-card__logo" />
       <Tag severity="contrast" value="Account Access" rounded />
       <h1>Welcome back</h1>
       <p>Sign in with your AJOWA email and password.</p>

@@ -79,6 +79,7 @@ const submit = async () => {
 <template>
   <section class="auth-page">
     <div class="auth-card">
+      <AppBrandLogo class="auth-card__logo" />
       <Tag severity="danger" value="Secure Reset" rounded />
       <h1>Reset password</h1>
       <p>Create a new password for your AJOWA account.</p>
