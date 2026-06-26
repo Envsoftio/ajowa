@@ -981,7 +981,7 @@ const enqueueServiceRequestManagerNotification = async (
         select id
         from users
         where society_id = $1
-          and role in ('ADMIN', 'MANAGER')
+          and role in ('ADMIN', 'MANAGER', 'SERVICE_STAFF')
           and is_active = true
           and can_login = true
           and deleted_at is null
