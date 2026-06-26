@@ -69,6 +69,14 @@ type BillingPeriodQrRow = {
   is_current: boolean
 }
 
+type ParsedQrPayload = {
+  userId: string
+  billingPeriodId: string
+  societyId?: string
+  tokenId?: string
+  validUntil: string
+}
+
 type NotificationUserRow = {
   id: string
   email: string | null
@@ -95,6 +103,14 @@ export const accessOverrideSchema = z.object({
   expiresAt: z.string().datetime().optional(),
 })
 
+const qrPayloadSchema = z.object({
+  userId: z.string().uuid(),
+  billingPeriodId: z.string().uuid(),
+  societyId: z.string().uuid().optional(),
+  tokenId: z.string().uuid().optional(),
+  validUntil: z.string().datetime(),
+})
+
 const base64url = (input: string | Buffer) => Buffer.from(input).toString('base64url')
 const sha256 = (value: string) => createHash('sha256').update(value).digest('hex')
 
@@ -114,16 +130,19 @@ const signQrPayload = (payload: Record<string, unknown>) => {
 }
 
 export const parseQrPayload = (token: string) => {
-  const [encoded, signature] = token.split('.')
+  const tokenParts = token.split('.')
+  if (tokenParts.length !== 2) {
+    throw new AppError({ code: 'VALIDATION_ERROR', statusCode: 400, message: 'QR code is invalid.' })
+  }
+  const [encoded, signature] = tokenParts
   if (!encoded || !signature || !safeEqual(sign(encoded), signature)) {
     throw new AppError({ code: 'VALIDATION_ERROR', statusCode: 400, message: 'QR code is invalid.' })
   }
 
-  return JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')) as {
-    userId: string
-    billingPeriodId: string
-    societyId?: string
-    validUntil: string
+  try {
+    return qrPayloadSchema.parse(JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'))) as ParsedQrPayload
+  } catch {
+    throw new AppError({ code: 'VALIDATION_ERROR', statusCode: 400, message: 'QR code is invalid.' })
   }
 }
 
@@ -323,7 +342,9 @@ export const recomputeUserAccess = async (
     const unpaidLabels = accessRows
       .filter((flat) => {
         const due = dueByFlat.get(flat.flat_id)
-        return !coveredFlatIds.has(flat.flat_id) && (!due || !['PAID', 'WAIVED'].includes(due.status))
+        return due
+          ? !['PAID', 'WAIVED'].includes(due.status)
+          : !coveredFlatIds.has(flat.flat_id)
       })
       .map((flat) => flat.label)
 
@@ -593,18 +614,18 @@ export const recomputeUserAccessForPairs = async (
           end as access_basis,
           coalesce(
             array_agg(ar.label order by ar.label) filter (
-              where not ar.is_cam_advance_covered
-                and (ar.due_id is null or ar.status not in ('PAID', 'WAIVED'))
+              where (ar.due_id is not null and ar.status not in ('PAID', 'WAIVED'))
+                or (ar.due_id is null and not ar.is_cam_advance_covered)
             ),
             array[]::text[]
           ) as unpaid_flat_numbers,
           count(*) filter (
-            where ar.is_cam_advance_covered
-              or (ar.due_id is not null and ar.status in ('PAID', 'WAIVED'))
+            where (ar.due_id is not null and ar.status in ('PAID', 'WAIVED'))
+              or (ar.due_id is null and ar.is_cam_advance_covered)
           )::integer as total_paid_flats,
           count(*) filter (
-            where not ar.is_cam_advance_covered
-              and (ar.due_id is null or ar.status not in ('PAID', 'WAIVED'))
+            where (ar.due_id is not null and ar.status not in ('PAID', 'WAIVED'))
+              or (ar.due_id is null and not ar.is_cam_advance_covered)
           )::integer as total_unpaid_flats,
           coalesce(sum(ar.total_amount), 0) as total_due_all_flats,
           coalesce(sum(ar.paid_amount), 0) as total_paid_all_flats,
@@ -904,14 +925,15 @@ export const ensureQrForAccess = async (userId: string, billingPeriodId: string)
       return { access, token: existing.rows[0] }
     }
 
+    const tokenId = randomUUID()
     const payload = {
       userId,
       billingPeriodId,
       societyId: grantedAccess.society_id,
+      tokenId,
       validUntil: periodValidUntil,
     }
     const signedToken = signQrPayload(payload)
-    const tokenId = randomUUID()
     const qrImage = await QRCode.toDataURL(signedToken, { margin: 1, width: 360 })
     const imageMatch = qrImage.match(/^data:image\/png;base64,(.+)$/)
     if (!imageMatch?.[1]) {
@@ -1015,6 +1037,10 @@ export const verifyQrToken = async (
         society_id: string
         billing_period_id: string
         is_current_period: boolean
+        access_is_granted: boolean | null
+        unpaid_flat_numbers: string[] | null
+        resident_name: string | null
+        flat_labels: string[] | null
       }>(
         `
           select
@@ -1028,10 +1054,26 @@ export const verifyQrToken = async (
             (
               bp.start_date <= (now() at time zone sp.timezone)::date
               and bp.end_date >= (now() at time zone sp.timezone)::date
-            ) as is_current_period
+            ) as is_current_period,
+            uas.is_access_granted as access_is_granted,
+            uas.unpaid_flat_numbers,
+            u.full_name as resident_name,
+            coalesce(flat_lookup.flat_labels, array[]::text[]) as flat_labels
           from access_tokens at
           inner join billing_periods bp on bp.id = at.billing_period_id
           inner join society_profile sp on sp.id = at.society_id
+          inner join users u on u.id = at.user_id and u.is_active = true
+          left join user_access_status uas
+            on uas.user_id = at.user_id
+            and uas.billing_period_id = at.billing_period_id
+          left join lateral (
+            select array_agg(distinct concat(b.name, ' ', f.flat_number) order by concat(b.name, ' ', f.flat_number)) as flat_labels
+            from flat_residents fr
+            inner join flats f on f.id = fr.flat_id
+            inner join blocks b on b.id = f.block_id
+            where fr.user_id = at.user_id
+              and fr.is_active = true
+          ) flat_lookup on true
           where at.token_hash = $1 and at.society_id = $2
           limit 1
         `,
@@ -1040,7 +1082,13 @@ export const verifyQrToken = async (
       const row = token.rows[0]
       tokenId = row?.id ?? null
 
-      if (!row || row.user_id !== parsed.userId || row.billing_period_id !== parsed.billingPeriodId || row.society_id !== societyId) {
+      if (
+        !row ||
+        row.user_id !== parsed.userId ||
+        row.billing_period_id !== parsed.billingPeriodId ||
+        row.society_id !== societyId ||
+        (parsed.tokenId && row.id !== parsed.tokenId)
+      ) {
         scanResult = 'INVALID'
         denialReason = 'QR code is not recognized.'
       } else if (new Date(parsed.validUntil).getTime() <= Date.now() || (row.expires_at && new Date(row.expires_at).getTime() <= Date.now())) {
@@ -1053,29 +1101,30 @@ export const verifyQrToken = async (
         scanResult = 'REVOKED'
         denialReason = 'QR code has been revoked.'
       } else {
-        const access = await recomputeUserAccess(row.user_id, row.billing_period_id, client)
-        if (!access?.is_access_granted) {
+        let accessAllowed = row.access_is_granted
+        let unpaidFlatNumbers = row.unpaid_flat_numbers ?? []
+
+        if (accessAllowed === null) {
+          try {
+            const access = await recomputeUserAccess(row.user_id, row.billing_period_id, client)
+            accessAllowed = access?.is_access_granted ?? false
+            unpaidFlatNumbers = access?.unpaid_flat_numbers ?? []
+          } catch {
+            accessAllowed = false
+            denialReason = 'Access status could not be verified.'
+          }
+        }
+
+        if (!accessAllowed) {
           scanResult = 'DENIED'
-          denialReason = access?.unpaid_flat_numbers.length
-            ? `Blocked by unpaid flat(s): ${access.unpaid_flat_numbers.join(', ')}`
+          if (denialReason === 'Invalid QR code.') {
+            denialReason = unpaidFlatNumbers.length
+            ? `Blocked by unpaid flat(s): ${unpaidFlatNumbers.join(', ')}`
             : 'Access is currently blocked.'
+          }
         } else {
-          const resident = await client.query<{ full_name: string; flat_labels: string[] }>(
-            `
-              select
-                u.full_name,
-                coalesce(array_agg(distinct concat(b.name, ' ', f.flat_number) order by concat(b.name, ' ', f.flat_number)), array[]::text[]) as flat_labels
-              from users u
-              left join flat_residents fr on fr.user_id = u.id and fr.is_active = true
-              left join flats f on f.id = fr.flat_id
-              left join blocks b on b.id = f.block_id
-              where u.id = $1
-              group by u.id
-            `,
-            [row.user_id],
-          )
-          residentName = resident.rows[0]?.full_name ?? null
-          flatLabels = resident.rows[0]?.flat_labels ?? []
+          residentName = row.resident_name
+          flatLabels = row.flat_labels ?? []
           scanResult = 'GRANTED'
           denialReason = ''
         }

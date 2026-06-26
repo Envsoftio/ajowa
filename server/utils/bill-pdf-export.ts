@@ -121,24 +121,24 @@ const buildFilteredDueQuery = (
 
   if (filters.status) {
     values.push(filters.status)
-    where.push(`case when coverage.id is not null then 'PAID' else md.status::text end = $${values.length}`)
+    where.push(`case when coverage.id is not null and md.balance_amount::numeric = 0 then 'PAID' else md.status::text end = $${values.length}`)
   }
 
   if (filters.balance === 'outstanding') {
-    where.push('coverage.id is null and md.balance_amount::numeric > 0')
+    where.push('md.balance_amount::numeric > 0')
   } else if (filters.balance === 'paid') {
-    where.push('(coverage.id is not null or md.balance_amount::numeric = 0)')
+    where.push('md.balance_amount::numeric = 0')
   }
 
   if (filters.overdue === true || filters.overdue === 'true') {
     values.push(today)
-    where.push(`coverage.id is null and md.balance_amount::numeric > 0 and md.due_date < $${values.length}::date`)
+    where.push(`md.balance_amount::numeric > 0 and md.due_date < $${values.length}::date`)
   }
 
   if (filters.advance === 'covered') {
-    where.push('coverage.id is not null')
+    where.push('coverage.id is not null and md.balance_amount::numeric = 0')
   } else if (filters.advance === 'billable') {
-    where.push('coverage.id is null')
+    where.push('(coverage.id is null or md.balance_amount::numeric > 0)')
   }
 
   const orderBy = sortColumns[filters.sortBy ?? 'flatNumber'] ?? flatNumberSortExpression

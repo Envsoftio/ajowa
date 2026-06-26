@@ -25,18 +25,6 @@ export default defineEventHandler(async (event) => {
           and md.balance_amount > 0
           and md.status not in ('PAID', 'WAIVED', 'CANCELLED')
           and bp.is_locked = false
-          and not (
-            bp.charge_type = 'CAM'
-            and exists (
-              select 1
-              from cam_advance_coverages coverage
-              where coverage.society_id = bp.society_id
-                and coverage.flat_id = f.id
-                and coverage.is_active = true
-                and coverage.covered_from <= bp.start_date
-                and coverage.covered_until >= bp.end_date
-            )
-          )
       `,
       [authMe.user.societyId, body.dueIds],
     )

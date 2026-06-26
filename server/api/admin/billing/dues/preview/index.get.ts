@@ -141,9 +141,9 @@ export default defineEventHandler(async (event) => {
   const existingFlatIds = new Set(existingResult.rows.map((row) => row.flat_id))
   const isCamPeriod = period.charge_type === 'CAM'
   const advanceCoverageResult = isCamPeriod && flatsResult.rows.length
-    ? await pool.query<{ flat_id: string; covered_from: string; covered_until: string }>(
+    ? await pool.query<{ flat_id: string; covered_from: string; covered_until: string; amount: string | null }>(
         `
-          select flat_id, covered_from::text, covered_until::text
+          select flat_id, covered_from::text, covered_until::text, amount::text
           from cam_advance_coverages
           where society_id = $1
             and flat_id = any($2::uuid[])
@@ -166,6 +166,7 @@ export default defineEventHandler(async (event) => {
     coverages.push({
       coveredFrom: row.covered_from,
       coveredUntil: row.covered_until,
+      amount: row.amount == null ? null : Number(row.amount),
     })
     advanceCoverageByFlatId.set(row.flat_id, coverages)
   }
@@ -300,7 +301,7 @@ export default defineEventHandler(async (event) => {
             amount: 2000,
             ...(isCamPeriod ? { chargeType: 'CAM' as const } : {}),
           }]
-    const effectiveCharges = isCamPeriod && coverageSummary?.coveredMonths
+    const effectiveCharges = isCamPeriod && coverageSummary && (coverageSummary.coveredMonths > 0 || coverageSummary.advanceAmount > 0)
       ? applyCamAdvanceCoverageToChargeBreakdown(configuredCharges, coverageSummary, {
           flatAreaSqFt,
           treatUnclassifiedChargesAsCam: true,

@@ -55,6 +55,7 @@ type DueInsertPayload = {
   flatId: string
   baseAmount: number
   totalAmount: number
+  status: 'OPEN' | 'PAID'
   chargeBreakdown: ChargeBreakdownItem[]
 }
 
@@ -206,9 +207,9 @@ export default defineEventHandler(async (event) => {
     )
     const isCamPeriod = period.charge_type === 'CAM'
     const advanceCoverageResult = isCamPeriod
-      ? await client.query<{ flat_id: string; covered_from: string; covered_until: string }>(
+      ? await client.query<{ flat_id: string; covered_from: string; covered_until: string; amount: string | null }>(
           `
-            select flat_id, covered_from::text, covered_until::text
+            select flat_id, covered_from::text, covered_until::text, amount::text
             from cam_advance_coverages
             where society_id = $1
               and flat_id = any($2::uuid[])
@@ -232,6 +233,7 @@ export default defineEventHandler(async (event) => {
       coverages.push({
         coveredFrom: row.covered_from,
         coveredUntil: row.covered_until,
+        amount: row.amount == null ? null : Number(row.amount),
       })
       advanceCoverageByFlatId.set(row.flat_id, coverages)
     }
@@ -334,7 +336,7 @@ export default defineEventHandler(async (event) => {
       }
 
       const originalBase = roundMoney(breakdown.reduce((sum, item) => sum + item.amount, 0))
-      const adjustedBreakdown = isCamPeriod && coverageSummary?.coveredMonths
+      const adjustedBreakdown = isCamPeriod && coverageSummary && (coverageSummary.coveredMonths > 0 || coverageSummary.advanceAmount > 0)
         ? applyCamAdvanceCoverageToChargeBreakdown(breakdown, coverageSummary, {
             flatAreaSqFt,
             treatUnclassifiedChargesAsCam: true,
@@ -347,7 +349,6 @@ export default defineEventHandler(async (event) => {
         if (coverageSummary?.isFullyCovered || advanceReduction > 0) {
           advanceCoveredCount += 1
         }
-        continue
       }
 
       if (advanceReduction > 0) {
@@ -370,6 +371,7 @@ export default defineEventHandler(async (event) => {
         flatId: flat.flatId,
         baseAmount: totalBase,
         totalAmount,
+        status: totalAmount <= 0 ? 'PAID' : 'OPEN',
         chargeBreakdown: adjustedBreakdown,
       })
     }
@@ -394,12 +396,13 @@ export default defineEventHandler(async (event) => {
               0,
               payload.total_amount,
               payload.total_amount,
-              'OPEN',
+              payload.status::due_status,
               payload.charge_breakdown
             from jsonb_to_recordset($5::jsonb) as payload(
               flat_id uuid,
               base_amount numeric,
               total_amount numeric,
+              status text,
               charge_breakdown jsonb
             )
             on conflict (billing_period_id, flat_id) do nothing
@@ -414,6 +417,7 @@ export default defineEventHandler(async (event) => {
               flat_id: payload.flatId,
               base_amount: payload.baseAmount,
               total_amount: payload.totalAmount,
+              status: payload.status,
               charge_breakdown: payload.chargeBreakdown,
             }))),
           ],

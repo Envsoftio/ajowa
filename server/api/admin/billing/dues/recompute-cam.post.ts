@@ -171,7 +171,9 @@ const buildCamBreakdownForFlat = (
           chargeType: 'CAM' as const,
           calculationMethod: 'FIXED' as const,
         }]
-  const hasCoverage = (coverageSummary?.coveredMonths ?? 0) > 0
+  const hasCoverage =
+    (coverageSummary?.coveredMonths ?? 0) > 0 ||
+    (coverageSummary?.advanceAmount ?? 0) > 0
   const effectiveBreakdown =
     cycleMultiplier > 0 && hasCoverage && coverageSummary
       ? applyCamAdvanceCoverageToChargeBreakdown(
@@ -307,9 +309,9 @@ export default defineEventHandler(async (event) => {
 
     const chargeLookups = buildChargeLookups(chargesResult.rows, period.id, true)
     const cycleMultiplier = getBillingCycleMultiplier(period)
-    const coverageResult = await client.query<{ flat_id: string; covered_from: string; covered_until: string }>(
+    const coverageResult = await client.query<{ flat_id: string; covered_from: string; covered_until: string; amount: string | null }>(
       `
-        select flat_id, covered_from::text as covered_from, covered_until::text as covered_until
+        select flat_id, covered_from::text as covered_from, covered_until::text as covered_until, amount::text
         from cam_advance_coverages
         where society_id = $1
           and flat_id = any($2::uuid[])
@@ -329,7 +331,11 @@ export default defineEventHandler(async (event) => {
     const coveragesByFlatId = new Map<string, CamAdvanceCoverageRange[]>()
     for (const coverage of coverageResult.rows) {
       const mapped = coveragesByFlatId.get(coverage.flat_id) ?? []
-      mapped.push({ coveredFrom: coverage.covered_from, coveredUntil: coverage.covered_until })
+      mapped.push({
+        coveredFrom: coverage.covered_from,
+        coveredUntil: coverage.covered_until,
+        amount: coverage.amount == null ? null : Number(coverage.amount),
+      })
       coveragesByFlatId.set(coverage.flat_id, mapped)
     }
     const coverageSummaryByFlatId = new Map<string, ReturnType<typeof summarizeCamAdvanceCoverage>>()

@@ -84,15 +84,21 @@ export default defineEventHandler(async (event) => {
           md.waived_amount::text as waived_amount,
           md.paid_amount::text as paid_amount,
           md.total_amount::text as total_amount,
-          case when coverage.id is not null then '0' else md.balance_amount::text end as balance_amount,
-          case when coverage.id is not null then 'PAID' else md.status::text end as status,
+          case
+            when coverage.id is not null and md.balance_amount = 0 then '0'
+            else md.balance_amount::text
+          end as balance_amount,
+          case
+            when coverage.id is not null and md.balance_amount = 0 then 'PAID'
+            else md.status::text
+          end as status,
           md.charge_breakdown,
           md.generated_at::text,
           md.created_at::text,
           md.updated_at::text,
           fr.relationship_type::text,
           fr.is_billing_contact,
-          (coverage.id is not null) as is_cam_advance_covered
+          (coverage.id is not null and md.balance_amount = 0) as is_cam_advance_covered
         from maintenance_dues md
         inner join billing_periods bp on bp.id = md.billing_period_id
         inner join flats f on f.id = md.flat_id

@@ -448,7 +448,11 @@ export const materializeChargeBreakdown = (
   })
 
 export const hasUnresolvedAreaRateCharge = (charges: ChargeBreakdownItem[]) =>
-  charges.some((charge) => charge.calculationMethod === 'AREA_RATE' && charge.amount <= 0)
+  charges.some((charge) =>
+    charge.calculationMethod === 'AREA_RATE' &&
+    charge.amount <= 0 &&
+    Number(charge.camAdvanceAdjustmentAmount ?? 0) <= 0,
+  )
 
 export const isCamCharge = (charge: ChargeBreakdownItem) =>
   charge.chargeType === 'CAM' ||
@@ -467,6 +471,7 @@ export type BillingMonthSegment = {
 export type CamAdvanceCoverageRange = {
   coveredFrom: string
   coveredUntil: string
+  amount?: number | null
 }
 
 export type CamAdvanceCoverageSummary = {
@@ -475,6 +480,7 @@ export type CamAdvanceCoverageSummary = {
   remainingMonths: number
   remainingRatio: number
   isFullyCovered: boolean
+  advanceAmount: number
 }
 
 const formatBillingDate = (date: Date) => date.toISOString().slice(0, 10)
@@ -489,7 +495,9 @@ const roundProratedChargeAmount = (value: number) =>
 const pluralizeMonth = (count: number) => `${count} ${count === 1 ? 'month' : 'months'}`
 
 const getCamAdvanceCoverageNote = (coverage: CamAdvanceCoverageSummary) =>
-  `${coverage.remainingMonths} of ${coverage.totalMonths} ${coverage.totalMonths === 1 ? 'month' : 'months'} billed; ${pluralizeMonth(coverage.coveredMonths)} covered by advance`
+  coverage.advanceAmount > 0
+    ? `Rs. ${coverage.advanceAmount.toFixed(2)} deducted by advance`
+    : `${coverage.remainingMonths} of ${coverage.totalMonths} ${coverage.totalMonths === 1 ? 'month' : 'months'} billed; ${pluralizeMonth(coverage.coveredMonths)} covered by advance`
 
 const appendCamAdvanceCoverageNote = (label: string, note: string) => {
   if (label.includes(note)) {
@@ -546,6 +554,9 @@ export const summarizeCamAdvanceCoverage = (
     ),
   ).length
   const remainingMonths = Math.max(0, totalMonths - coveredMonths)
+  const advanceAmount = roundProratedChargeAmount(
+    coverages.reduce((sum, coverage) => sum + Number(coverage.amount ?? 0), 0),
+  )
 
   return {
     totalMonths,
@@ -553,6 +564,7 @@ export const summarizeCamAdvanceCoverage = (
     remainingMonths,
     remainingRatio: remainingMonths / totalMonths,
     isFullyCovered: coveredMonths >= totalMonths,
+    advanceAmount,
   }
 }
 
@@ -564,21 +576,57 @@ export const applyCamAdvanceCoverageToChargeBreakdown = (
     treatUnclassifiedChargesAsCam?: boolean
   } = {},
 ): ChargeBreakdownItem[] => {
-  if (coverage.coveredMonths <= 0) {
+  if (coverage.coveredMonths <= 0 && coverage.advanceAmount <= 0) {
     return charges.map((charge) => ({ ...charge }))
+  }
+
+  const shouldApplyAdvanceAmount = coverage.advanceAmount > 0
+  const shouldDeductCharge = (charge: ChargeBreakdownItem) => {
+    const isExplicitNonCamCharge =
+      charge.chargeType === 'DG_SET' ||
+      charge.chargeType === 'OTHER' ||
+      isDgSetCharge(charge)
+
+    return isCamCharge(charge) ||
+      (options.treatUnclassifiedChargesAsCam && !isExplicitNonCamCharge)
+  }
+
+  if (shouldApplyAdvanceAmount) {
+    let remainingAdvanceAmount = coverage.advanceAmount
+    const camAdvanceNote = getCamAdvanceCoverageNote(coverage)
+
+    return charges
+      .map((charge) => {
+        if (!shouldDeductCharge(charge)) {
+          return { ...charge }
+        }
+
+        const originalAmount = Number(charge.amount ?? 0)
+        const adjustmentAmount = roundProratedChargeAmount(
+          Math.min(originalAmount, remainingAdvanceAmount),
+        )
+        remainingAdvanceAmount = roundProratedChargeAmount(remainingAdvanceAmount - adjustmentAmount)
+        const amount = roundProratedChargeAmount(originalAmount - adjustmentAmount)
+
+        const adjustedCharge: ChargeBreakdownItem = {
+          ...charge,
+          label: appendCamAdvanceCoverageNote(charge.label, camAdvanceNote),
+          amount,
+          camAdvanceCoveredMonths: coverage.coveredMonths,
+          camAdvanceBilledMonths: coverage.remainingMonths,
+          camAdvanceTotalMonths: coverage.totalMonths,
+          camAdvanceAdjustmentAmount: adjustmentAmount,
+          camAdvanceNote,
+        }
+
+        return amount <= 0 && adjustmentAmount <= 0 ? null : adjustedCharge
+      })
+      .filter((charge): charge is ChargeBreakdownItem => Boolean(charge))
   }
 
   return charges
     .map((charge) => {
-      const isExplicitNonCamCharge =
-        charge.chargeType === 'DG_SET' ||
-        charge.chargeType === 'OTHER' ||
-        isDgSetCharge(charge)
-      const shouldProrate =
-        isCamCharge(charge) ||
-        (options.treatUnclassifiedChargesAsCam && !isExplicitNonCamCharge)
-
-      if (!shouldProrate) {
+      if (!shouldDeductCharge(charge)) {
         return { ...charge }
       }
 
@@ -709,6 +757,7 @@ type MaintenanceBillDueRow = {
   cam_advance_coverage_id: string | null
   cam_advance_covered_from: string | null
   cam_advance_paid_until: string | null
+  cam_advance_amount: string | null
 }
 
 type PreviousDueRow = {
@@ -1245,7 +1294,8 @@ export const getMaintenanceBillData = async (
         payment_qr.mime_type as payment_qr_mime_type,
         cam_coverage.id::text as cam_advance_coverage_id,
         cam_coverage.covered_from::text as cam_advance_covered_from,
-        cam_coverage.covered_until::text as cam_advance_paid_until
+        cam_coverage.covered_until::text as cam_advance_paid_until,
+        cam_coverage.amount::text as cam_advance_amount
       from maintenance_dues md
       inner join society_profile sp on sp.id = md.society_id
       inner join billing_periods bp on bp.id = md.billing_period_id
@@ -1399,6 +1449,7 @@ export const getMaintenanceBillData = async (
         [{
           coveredFrom: due.cam_advance_covered_from,
           coveredUntil: due.cam_advance_paid_until,
+          amount: due.cam_advance_amount == null ? null : Number(due.cam_advance_amount),
         }],
       ),
       {

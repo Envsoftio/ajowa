@@ -54,6 +54,7 @@ const incrementCount = (counts: Record<string, number>, key: string) => {
 const camAdvanceCoveredSql = `(
   bp.charge_type = 'CAM'
   and ${camAdvanceCoverageExistsSql('f', 'bp')}
+  and md.balance_amount = 0
 )`
 
 const bulkDueDateRowsSql = (whereSql: string) => `
