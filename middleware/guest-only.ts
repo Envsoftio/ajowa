@@ -7,12 +7,12 @@ export default defineNuxtRouteMiddleware(async () => {
   }
 
   if (me.access.requiresPasswordChange) {
-    return navigateTo('/change-password')
+    return navigateTo('/change-password', { replace: true })
   }
 
   if (me.access.requiresEmailVerification) {
-    return navigateTo('/verify-email')
+    return navigateTo('/verify-email', { replace: true })
   }
 
-  return navigateTo(me.landingRoute)
+  return navigateTo(me.landingRoute, { replace: true })
 })

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 definePageMeta({
+  middleware: ['guest-only'],
   title: 'Welcome',
 })
 

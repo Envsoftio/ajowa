@@ -30,12 +30,12 @@ const submit = async () => {
     const allowedRedirect = me && redirect && canUserAccessRoute(redirect, me.user) ? redirect : undefined
 
     if (me?.access.requiresPasswordChange) {
-      await navigateTo('/change-password')
+      await navigateTo('/change-password', { replace: true })
       return
     }
 
     if (me?.access.requiresEmailVerification) {
-      await navigateTo('/verify-email')
+      await navigateTo('/verify-email', { replace: true })
       return
     }
 
@@ -43,7 +43,7 @@ const submit = async () => {
       void pushNotifications.subscribe({ requestPermission: false, showErrorToast: false })
     }
 
-    await navigateTo(allowedRedirect ?? me?.landingRoute ?? '/')
+    await navigateTo(allowedRedirect ?? me?.landingRoute ?? '/', { replace: true })
   } catch {
     toast.add({
       severity: 'error',

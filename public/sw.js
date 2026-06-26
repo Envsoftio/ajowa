@@ -1,8 +1,6 @@
-const CACHE_NAME = 'ajowa-app-v3'
+const CACHE_NAME = 'ajowa-app-v4'
 const DEFAULT_NOTIFICATION_LINK = '/my/notifications'
 const APP_SHELL = [
-  '/',
-  '/guard/scan',
   '/manifest.webmanifest',
   '/ajowa-icon.svg',
   '/icons/ajowa-icon-192.png',
@@ -84,16 +82,44 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const request = event.request
   if (request.method !== 'GET') return
-  if (new URL(request.url).pathname.startsWith('/api/')) return
+  const url = new URL(request.url)
+  if (url.origin !== self.location.origin) return
+  if (url.pathname.startsWith('/api/')) return
+
+  const isNavigation = request.mode === 'navigate'
+  const shouldCacheRequest =
+    request.destination !== 'audio' &&
+    request.destination !== 'video' &&
+    request.destination !== 'font' &&
+    request.destination !== '' &&
+    request.destination !== 'manifest'
 
   event.respondWith(
     fetch(request)
       .then((response) => {
-        const copy = response.clone()
-        caches.open(CACHE_NAME).then((cache) => cache.put(request, copy)).catch(() => undefined)
+        if (response.ok && shouldCacheRequest) {
+          const copy = response.clone()
+          caches.open(CACHE_NAME).then((cache) => cache.put(request, copy)).catch(() => undefined)
+        }
+
         return response
       })
-      .catch(() => caches.match(request).then((response) => response || caches.match('/'))),
+      .catch(async () => {
+        const cached = await caches.match(request)
+        if (cached) {
+          return cached
+        }
+
+        if (isNavigation) {
+          return new Response('Offline', {
+            status: 503,
+            statusText: 'Offline',
+            headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+          })
+        }
+
+        return caches.match('/').then((fallback) => fallback ?? null)
+      }),
   )
 })
 

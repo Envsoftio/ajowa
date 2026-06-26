@@ -37,7 +37,7 @@ export default defineNuxtRouteMiddleware(async (to) => {
     const me = await authStore.fetchMe()
 
     if (!me) {
-      return navigateTo({ path: '/login', query: { redirect: to.fullPath } })
+      return navigateTo({ path: '/login', query: { redirect: to.fullPath }, replace: true })
     }
 
     if (!canUserAccessRoute(to.path, me.user)) {
@@ -45,10 +45,10 @@ export default defineNuxtRouteMiddleware(async (to) => {
         isCrossRoleRoute(to.path, me.user.role) &&
         canUserAccessRoute(me.landingRoute, me.user)
       ) {
-        return navigateTo(me.landingRoute)
+        return navigateTo(me.landingRoute, { replace: true })
       }
 
-      return navigateTo('/forbidden')
+      return navigateTo('/forbidden', { replace: true })
     }
   }
 })

@@ -6,15 +6,18 @@ export default defineNuxtRouteMiddleware(async (to) => {
 
   if (!me) {
     const redirect = isSafeRedirectPath(to.fullPath) ? to.fullPath : undefined
-    return navigateTo(redirect ? { path: '/login', query: { redirect } } : '/login')
+    return navigateTo(
+      redirect ? { path: '/login', query: { redirect } } : '/login',
+      { replace: true },
+    )
   }
 
   if (me.access.requiresPasswordChange && to.path !== '/change-password') {
-    return navigateTo('/change-password')
+    return navigateTo('/change-password', { replace: true })
   }
 
   if (me.access.requiresEmailVerification && to.path !== '/verify-email') {
-    return navigateTo('/verify-email')
+    return navigateTo('/verify-email', { replace: true })
   }
 
   if (to.path === '/change-password' || to.path === '/verify-email') {
@@ -22,6 +25,6 @@ export default defineNuxtRouteMiddleware(async (to) => {
   }
 
   if (!me.access.hasAppAccess && to.path !== '/forbidden') {
-    return navigateTo('/forbidden')
+    return navigateTo('/forbidden', { replace: true })
   }
 })
