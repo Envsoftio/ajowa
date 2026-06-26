@@ -86,6 +86,13 @@ const getBrowserPushErrorMessage = (error: unknown) => {
     : 'The browser could not create a push subscription.'
 }
 
+const ensureServiceWorkerRegistration = async () => {
+  const registration = await navigator.serviceWorker.register('/sw.js')
+  await registration.update().catch(() => undefined)
+
+  return navigator.serviceWorker.ready
+}
+
 export const usePushNotifications = () => {
   const api = useApi()
   const runtimeConfig = useRuntimeConfig()
@@ -159,7 +166,7 @@ export const usePushNotifications = () => {
 
       try {
         const applicationServerKey = urlBase64ToUint8Array(keyResponse.data.publicKey)
-        const registration = await navigator.serviceWorker.ready
+        const registration = await ensureServiceWorkerRegistration()
         let existingSubscription = await registration.pushManager.getSubscription()
 
         if (

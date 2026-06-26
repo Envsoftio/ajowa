@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ajowa-app-v4'
+const CACHE_NAME = 'ajowa-app-v5'
 const DEFAULT_NOTIFICATION_LINK = '/my/notifications'
 const APP_SHELL = [
   '/manifest.webmanifest',
@@ -64,6 +64,9 @@ const getNotificationActions = (actions) => {
 }
 
 const optionalText = (value) => (typeof value === 'string' && value.trim() ? value : undefined)
+
+const isVisibleClient = (client) =>
+  client && (client.visibilityState === 'visible' || client.focused === true)
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)).catch(() => undefined))
@@ -141,12 +144,18 @@ self.addEventListener('push', (event) => {
 
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+      const hasVisibleClient = clients.some(isVisibleClient)
+
       clients.forEach((client) => {
         client.postMessage({
           type: 'AJOWA_PUSH_NOTIFICATION',
           payload,
         })
       })
+
+      if (hasVisibleClient) {
+        return undefined
+      }
 
       return self.registration.showNotification(title, options).catch(() => undefined)
     }),

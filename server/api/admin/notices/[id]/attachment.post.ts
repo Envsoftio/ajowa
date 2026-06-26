@@ -4,17 +4,19 @@ import { requireRole } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
 import { AppError } from '~/server/utils/errors'
 import { readUuidParam } from '~/server/utils/master-data'
+import { readMultipartFormParts } from '~/server/utils/multipart'
 import { createStorageObjectKey, uploadPrivateFile } from '~/server/utils/storage'
 
 export default defineEventHandler(async (event) => {
   const authMe = await requireRole(event, ['ADMIN', 'MANAGER'])
   const noticeId = readUuidParam(event)
-  const parts = await readMultipartFormData(event)
+  const parts = await readMultipartFormParts(event)
   const filePart = parts?.find((part) => part.name === 'file' && part.filename)
   const labelPart = parts?.find((part) => part.name === 'label')
   const label = labelPart ? Buffer.from(labelPart.data).toString('utf8').trim() : ''
+  const fileMimeType = filePart?.type || 'application/octet-stream'
 
-  if (!filePart?.filename || !filePart.type) {
+  if (!filePart?.filename || !filePart.data?.byteLength) {
     throw createError({ statusCode: 400, statusMessage: 'A notice attachment file is required.' })
   }
 
@@ -38,7 +40,7 @@ export default defineEventHandler(async (event) => {
     storageTargetKey: 'notice_attachments',
     storageObjectKey,
     originalFileName: filePart.filename,
-    mimeType: filePart.type,
+    mimeType: fileMimeType,
     sizeBytes: filePart.data.byteLength,
     body: filePart.data,
     uploadedBy: authMe.user.id,

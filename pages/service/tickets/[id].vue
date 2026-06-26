@@ -19,7 +19,13 @@ const { data, pending, refresh } = await useAsyncData(`service-ticket-${route.pa
   }>(`/api/service/tickets/${route.params.id}`),
 )
 
-const ticket = computed(() => data.value?.data ?? null)
+const ticketState = shallowRef<ServiceRequestDetail | null>(data.value?.data ?? null)
+watch(data, (value) => {
+  if (value?.data) {
+    ticketState.value = value.data
+  }
+}, { immediate: true })
+const ticket = computed(() => ticketState.value)
 
 const updateStatus = async (payload: { status: ServiceRequestStatus; comment?: string | null; reason?: string | null }) => {
   saving.value = true
@@ -43,11 +49,18 @@ const addComment = async (payload: { visibility: 'INTERNAL_NOTE' | 'RESIDENT_VIS
   }
 }
 
-const uploadAttachment = async (file: File) => {
+const uploadAttachment = async (files: File[]) => {
   saving.value = true
   try {
-    await serviceRequests.uploadAttachment(String(route.params.id), file)
-    toast.add({ severity: 'success', summary: 'Attachment uploaded', life: 10000 })
+    for (const file of files) {
+      await serviceRequests.uploadAttachment(String(route.params.id), file)
+    }
+    toast.add({
+      severity: 'success',
+      summary: files.length === 1 ? 'Attachment uploaded' : 'Attachments uploaded',
+      detail: files.length === 1 ? files[0]?.name : `${files.length} files uploaded successfully.`,
+      life: 10000,
+    })
     await refresh()
   } finally {
     saving.value = false
@@ -57,7 +70,7 @@ const uploadAttachment = async (file: File) => {
 
 <template>
   <div class="landing-page">
-    <AppSkeletonState v-if="pending" />
+    <AppSkeletonState v-if="pending && !ticket" />
     <template v-else-if="ticket">
       <TicketSummaryCard :ticket="ticket" />
       <section class="admin-two-column--wide">

@@ -47,9 +47,17 @@ export const getApiErrorMessage = (
     data?: FetchErrorPayload
   }
   const errorPayload = fetchError.data?.data ?? fetchError.data
+  const details = (errorPayload?.details as Record<string, unknown> | undefined) ?? {}
+  const detailCause =
+    typeof details.cause === 'string'
+      ? details.cause
+      : typeof details.message === 'string'
+        ? details.message
+        : null
 
   return (
     formatFirstFieldError(errorPayload) ??
+    detailCause ??
     errorPayload?.message ??
     fetchError.data?.message ??
     fallback

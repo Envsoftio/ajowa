@@ -1,12 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { QueryResultRow } from 'pg'
+import type { PoolClient, QueryResultRow } from 'pg'
 import { getDatabasePool } from './database'
 import { getValidatedRuntimeConfig } from './env'
 import { AppError } from './errors'
 import { getSupabaseAdminClient } from './supabase'
 import type { StoredFileMetadata, StoredFileUploadStatus } from '~/types/domain'
 
+const FIVE_MEGABYTES = 5 * 1024 * 1024
 const SIX_MEGABYTES = 6 * 1024 * 1024
 const TEN_MEGABYTES = 10 * 1024 * 1024
 const HUNDRED_MEGABYTES = 100 * 1024 * 1024
@@ -55,6 +56,17 @@ export const STORAGE_ALLOWED_MIME_TYPES = [
   'image/png',
   'image/webp',
 ] as const
+
+const STORAGE_MIME_TYPE_BY_EXTENSION: Record<string, (typeof STORAGE_ALLOWED_MIME_TYPES)[number]> = {
+  pdf: 'application/pdf',
+  zip: 'application/zip',
+  xls: 'application/vnd.ms-excel',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+}
 
 export const STORAGE_DEFAULT_MAX_FILE_SIZE_BYTES = TEN_MEGABYTES
 export const STORAGE_REPORT_EXPORT_MAX_FILE_SIZE_BYTES = HUNDRED_MEGABYTES
@@ -129,6 +141,8 @@ type StorageUploadInput = {
   relation: StorageRelation
   checksum?: string
 }
+
+type StorageQueryClient = Pick<PoolClient, 'query'>
 
 type ReplaceStoredFileInput = StorageUploadInput & {
   fileId: string
@@ -205,9 +219,28 @@ const assertAllowedMimeType = (mimeType: string) => {
   }
 }
 
+export const resolveStorageUploadMimeType = (fileName: string, mimeType?: string | null) => {
+  const normalizedMimeType = mimeType?.trim().toLowerCase() ?? ''
+
+  if (STORAGE_ALLOWED_MIME_TYPES.includes(normalizedMimeType as (typeof STORAGE_ALLOWED_MIME_TYPES)[number])) {
+    return normalizedMimeType
+  }
+
+  const extension = fileName.includes('.') ? fileName.split('.').pop()?.trim().toLowerCase() ?? '' : ''
+  const inferredMimeType = STORAGE_MIME_TYPE_BY_EXTENSION[extension]
+
+  if (inferredMimeType) {
+    return inferredMimeType
+  }
+
+  return normalizedMimeType || 'application/octet-stream'
+}
+
 const getStorageMaxFileSizeBytes = (storageTargetKey: StorageTargetKey) =>
   storageTargetKey === STORAGE_TARGETS.reportExports.key
     ? STORAGE_REPORT_EXPORT_MAX_FILE_SIZE_BYTES
+    : storageTargetKey === STORAGE_TARGETS.ticketAttachments.key
+      ? FIVE_MEGABYTES
     : STORAGE_DEFAULT_MAX_FILE_SIZE_BYTES
 
 const assertAllowedFileSize = (sizeBytes: number, storageTargetKey: StorageTargetKey) => {
@@ -527,10 +560,12 @@ const validateStorageUploadInput = (input: StorageUploadInput) => {
 const insertPendingFileRecord = async (
   fileId: string,
   input: ReturnType<typeof validateStorageUploadInput>,
+  dbClient?: StorageQueryClient,
 ) => {
   const timestamp = new Date().toISOString()
   try {
-    const result = await getDatabasePool().query<StorageFileRecordRow>(
+    const queryable = dbClient ?? getDatabasePool()
+    const result = await queryable.query<StorageFileRecordRow>(
       `
         insert into public.file_objects (
           id,
@@ -585,6 +620,7 @@ const insertPendingFileRecord = async (
 const updateFileRecord = async (
   fileId: string,
   updates: StorageFileRecordUpdate,
+  dbClient?: StorageQueryClient,
 ) => {
   const payload = {
     ...updates,
@@ -598,7 +634,8 @@ const updateFileRecord = async (
   try {
     const assignments = entries.map(([column], index) => `${column} = $${index + 2}`)
     const values = [fileId, ...entries.map(([, value]) => value)]
-    const result = await getDatabasePool().query<StorageFileRecordRow>(
+    const queryable = dbClient ?? getDatabasePool()
+    const result = await queryable.query<StorageFileRecordRow>(
       `
         update public.file_objects
         set ${assignments.join(', ')}
@@ -703,17 +740,22 @@ export const createStorageObjectKey = ({
   const extension = fileName.includes('.') ? fileName.split('.').pop()?.toLowerCase() ?? '' : ''
   const baseName = safeSegment(fileName.replace(/\.[^.]+$/, '')) || 'file'
   const suffix = extension ? `.${extension}` : ''
+  const uniqueSuffix = randomUUID().slice(0, 8)
 
-  return `${safeSegment(recordType)}/${safeSegment(recordId)}/${Date.now()}-${baseName}${suffix}`
+  return `${safeSegment(recordType)}/${safeSegment(recordId)}/${Date.now()}-${uniqueSuffix}-${baseName}${suffix}`
 }
 
-export const uploadPrivateFile = async (input: StorageUploadInput) => {
+export const uploadPrivateFile = async (
+  input: StorageUploadInput,
+  options?: { dbClient?: StorageQueryClient },
+) => {
   const supabaseAdmin = getSupabaseAdminClient()
   const validInput = validateStorageUploadInput(input)
   const storageTarget = getStorageTarget(validInput.storageTargetKey)
   const fileId = randomUUID()
+  const dbClient = options?.dbClient
 
-  await insertPendingFileRecord(fileId, validInput)
+  await insertPendingFileRecord(fileId, validInput, dbClient)
 
   try {
     if (shouldUseResumableStorageUpload(validInput)) {
@@ -740,7 +782,7 @@ export const uploadPrivateFile = async (input: StorageUploadInput) => {
       upload_status: 'READY',
       uploaded_at: new Date().toISOString(),
       last_error: null,
-    })
+    }, dbClient)
 
     return mapStoredFileRecord(readyRecord)
   } catch (error) {

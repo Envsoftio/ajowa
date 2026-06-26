@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { ServiceRequestSummary } from '~/types/domain'
+import { closedTicketStatuses } from '~/shared/service-requests'
 
 defineProps<{
   tickets: ServiceRequestSummary[]
@@ -19,12 +20,15 @@ const locationLabel = (ticket: ServiceRequestSummary) =>
 
 const formatDate = (value: string | null) =>
   value ? new Intl.DateTimeFormat('en-IN', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) : '-'
+
+const isClosedTicket = (status: ServiceRequestSummary['status']) => closedTicketStatuses.includes(status)
 </script>
 
 <template>
   <AppDataTable
     :value="tickets"
     :loading="loading"
+    :row-class="(row: ServiceRequestSummary) => (isClosedTicket(row.status) ? 'ticket-data-table__row--closed' : 'ticket-data-table__row')"
     responsive-layout="scroll"
     class="list-page__table"
   >
@@ -89,6 +93,18 @@ const formatDate = (value: string | null) =>
 .ticket-table-stack {
   display: grid;
   gap: 0.15rem;
+}
+
+:deep(.ticket-data-table__row > td:first-child) {
+  border-left: 0.25rem solid var(--color-info);
+}
+
+:deep(.ticket-data-table__row--closed > td) {
+  opacity: 0.92;
+}
+
+:deep(.ticket-data-table__row--closed > td:first-child) {
+  border-left: 0.25rem solid var(--color-muted);
 }
 
 .ticket-table-stack span {

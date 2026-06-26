@@ -4,6 +4,7 @@ import { requireRole } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
 import { AppError } from '~/server/utils/errors'
 import { readUuidParam, writeMasterAudit } from '~/server/utils/master-data'
+import { readMultipartFormParts } from '~/server/utils/multipart'
 import {
   createStorageObjectKey,
   uploadPrivateFile,
@@ -67,10 +68,11 @@ const isResidentFileField = (value: string): value is ResidentFileField =>
 export default defineEventHandler(async (event) => {
   const authMe = await requireRole(event, ['ADMIN', 'MANAGER'])
   const id = readUuidParam(event)
-  const parts = await readMultipartFormData(event)
+  const parts = await readMultipartFormParts(event)
   const fieldPart = parts?.find((part) => part.name === 'field')
   const filePart = parts?.find((part) => part.name === 'file' && part.filename)
   const field = fieldPart ? Buffer.from(fieldPart.data).toString('utf8') : ''
+  const fileMimeType = filePart?.type || 'application/octet-stream'
 
   if (!isResidentFileField(field)) {
     throw createError({ statusCode: 400, statusMessage: 'Unsupported resident file field.' })
@@ -78,11 +80,11 @@ export default defineEventHandler(async (event) => {
 
   const config = residentFileFields[field]
 
-  if (!filePart?.filename || !filePart.type) {
+  if (!filePart?.filename || !filePart.data?.byteLength) {
     throw createError({ statusCode: 400, statusMessage: `${config.label} file is required.` })
   }
 
-  if (!config.allowedMimeTypes.has(filePart.type)) {
+  if (!config.allowedMimeTypes.has(fileMimeType)) {
     throw createError({ statusCode: 400, statusMessage: config.invalidTypeMessage })
   }
 
@@ -124,7 +126,7 @@ export default defineEventHandler(async (event) => {
     storageTargetKey: 'resident_documents',
     storageObjectKey,
     originalFileName: filePart.filename,
-    mimeType: filePart.type,
+    mimeType: fileMimeType,
     sizeBytes: filePart.data.byteLength,
     body: filePart.data,
     uploadedBy: authMe.user.id,

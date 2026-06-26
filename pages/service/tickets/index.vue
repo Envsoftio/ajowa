@@ -28,6 +28,9 @@ const query = computed(() => {
   if (filter.value === 'resolved') {
     filters.status = 'RESOLVED'
   }
+  if (filter.value === 'closed') {
+    filters.closedOnly = 'true'
+  }
   if (filter.value === 'active') {
     filters.activeOnly = 'true'
   }
@@ -79,6 +82,12 @@ const updateTicketStatus = async (ticket: ServiceRequestSummary, status: Service
         <Button label="In progress" size="small" :outlined="filter !== 'progress'" @click="filter = 'progress'" />
         <Button label="Overdue" size="small" severity="danger" :outlined="filter !== 'overdue'" @click="filter = 'overdue'" />
         <Button label="Resolved today" size="small" severity="success" :outlined="filter !== 'resolved'" @click="filter = 'resolved'" />
+        <Button
+          label="Closed"
+          size="small"
+          :outlined="filter !== 'closed'"
+          @click="filter = 'closed'"
+        />
       </div>
       <ServiceStaffWorkList
         :tickets="tickets"

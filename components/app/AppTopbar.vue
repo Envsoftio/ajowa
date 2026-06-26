@@ -128,17 +128,26 @@ onMounted(() => {
         class="topbar-icon-button topbar-notification-button"
         text
         rounded
+        :pt="{
+          root: {
+            style: {
+              overflow: 'visible',
+            },
+          },
+        }"
         aria-label="Open notifications"
         title="Notifications"
         @click="openNotifications"
       >
         <template #default>
           <i class="pi pi-bell" aria-hidden="true" />
-          <Badge v-if="notificationBadge" :value="notificationBadge" severity="warning" />
+          <Badge v-if="notificationBadge" class="topbar-notification-badge" :value="notificationBadge" severity="warning" />
         </template>
       </Button>
       <Button
-        :label="theme.isDark.value ? 'Light Mode' : 'Dark Mode'"
+        :icon="theme.isDark.value ? 'pi pi-sun' : 'pi pi-moon'"
+        :aria-label="theme.isDark.value ? 'Switch to light mode' : 'Switch to dark mode'"
+        :title="theme.isDark.value ? 'Switch to light mode' : 'Switch to dark mode'"
         severity="secondary"
         outlined
         @click="theme.toggle()"

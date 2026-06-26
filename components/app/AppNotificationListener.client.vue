@@ -15,6 +15,16 @@ type PushNotificationPayload = {
   title?: unknown
   body?: unknown
   priority?: unknown
+  link?: unknown
+  tag?: unknown
+}
+
+type BrowserNotificationPayload = {
+  title: string
+  body: string
+  priority: string
+  link: string | null
+  tag: string | null
 }
 
 const toastSeverity = (priority: string) => {
@@ -38,16 +48,80 @@ const showNotificationToast = async (
   }
 }
 
+const optionalText = (value: unknown) => {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  return trimmed ? trimmed : null
+}
+
+const normalizeNotificationLink = (value: unknown) => {
+  const rawLink = optionalText(value)
+  if (!rawLink) return null
+
+  try {
+    const url = new URL(rawLink, window.location.origin)
+
+    if (url.origin !== window.location.origin) {
+      return null
+    }
+
+    return `${url.pathname}${url.search}${url.hash}` || null
+  } catch {
+    return null
+  }
+}
+
+const getBrowserNotificationPayload = (
+  payload: PushNotificationPayload | undefined,
+): BrowserNotificationPayload => ({
+  title: optionalText(payload?.title) ?? 'AJOWA',
+  body: optionalText(payload?.body) ?? '',
+  priority: optionalText(payload?.priority) ?? 'MEDIUM',
+  link: normalizeNotificationLink(payload?.link),
+  tag: optionalText(payload?.tag),
+})
+
+const showBrowserNotification = (item: BrowserNotificationPayload) => {
+  if (!('Notification' in window) || Notification.permission !== 'granted') {
+    return
+  }
+
+  try {
+    const options: NotificationOptions = {
+      body: item.body,
+      icon: '/icons/ajowa-icon-192.png',
+      data: {
+        link: item.link,
+      },
+    }
+
+    if (item.tag) {
+      options.tag = item.tag
+    }
+
+    const notification = new Notification(item.title, options)
+
+    notification.onclick = (event) => {
+      event.preventDefault()
+      window.focus()
+      if (item.link) {
+        void navigateTo(item.link)
+      }
+      notification.close()
+    }
+  } catch {
+    // Some browsers only allow service-worker notifications. The in-app toast still covers the foreground case.
+  }
+}
+
 const showPushToast = async (payload: PushNotificationPayload | undefined) => {
   if (document.visibilityState !== 'visible') {
     return
   }
 
-  await showNotificationToast({
-    title: typeof payload?.title === 'string' ? payload.title : 'AJOWA',
-    body: typeof payload?.body === 'string' ? payload.body : '',
-    priority: typeof payload?.priority === 'string' ? payload.priority : 'MEDIUM',
-  })
+  const item = getBrowserNotificationPayload(payload)
+  showBrowserNotification(item)
+  await showNotificationToast(item)
 }
 
 const refreshNotifications = async (options: { notifyNew?: boolean; force?: boolean } = {}) => {

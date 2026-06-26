@@ -1,7 +1,9 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { ServiceRequestSummary } from '~/types/domain'
+import { closedTicketStatuses } from '~/shared/service-requests'
 
-defineProps<{
+const props = defineProps<{
   ticket: ServiceRequestSummary
   compact?: boolean
 }>()
@@ -10,10 +12,19 @@ const locationLabel = (ticket: ServiceRequestSummary) =>
   ticket.locationType === 'FLAT'
     ? ticket.flatLabel ?? 'Flat'
     : ticket.assetReference || ticket.areaName || ticket.locationType.replace('_', ' ')
+
+const isClosedTicket = computed(() => closedTicketStatuses.includes(props.ticket.status))
 </script>
 
 <template>
-  <article class="ticket-summary-card" :class="{ 'ticket-summary-card--compact': compact }">
+  <article
+    class="ticket-summary-card"
+    :class="{
+      'ticket-summary-card--compact': compact,
+      'ticket-summary-card--closed': isClosedTicket,
+      'ticket-summary-card--open': !isClosedTicket,
+    }"
+  >
     <div class="ticket-summary-card__main">
       <div>
         <p class="eyebrow">{{ ticket.requestNumber }}</p>
@@ -53,6 +64,15 @@ const locationLabel = (ticket: ServiceRequestSummary) =>
   padding: 1rem;
   border: 1px solid var(--color-border);
   background: var(--color-surface);
+}
+
+.ticket-summary-card--open {
+  border-left: 0.4rem solid var(--color-info);
+}
+
+.ticket-summary-card--closed {
+  border-left: 0.4rem solid var(--color-muted);
+  opacity: 0.92;
 }
 
 .ticket-summary-card__main,
