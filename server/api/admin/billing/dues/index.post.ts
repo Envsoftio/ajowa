@@ -64,7 +64,7 @@ const flatNumberSortExpression =
 const roundMoney = (value: number) => Math.round(value * 100) / 100
 
 export default defineEventHandler(async (event) => {
-  const authMe = await requireRole(event, ['ADMIN'])
+  const authMe = await requireRole(event, ['ADMIN', 'MANAGER'])
   const body = validatePayload<DueGenerationInput>(dueGenerationSchema, await readJsonBody(event))
   const pool = getDatabasePool()
   const client = await pool.connect()

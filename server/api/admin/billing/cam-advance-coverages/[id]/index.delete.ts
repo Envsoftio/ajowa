@@ -5,7 +5,7 @@ import { AppError } from '~/server/utils/errors'
 import { readUuidParam, writeMasterAudit } from '~/server/utils/master-data'
 
 export default defineEventHandler(async (event) => {
-  const authMe = await requireRole(event, ['ADMIN'])
+  const authMe = await requireRole(event, ['ADMIN', 'MANAGER'])
   const id = readUuidParam(event)
   const pool = getDatabasePool()
   const client = await pool.connect()

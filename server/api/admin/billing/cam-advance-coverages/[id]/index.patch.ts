@@ -19,7 +19,7 @@ type CoverageBeforeRow = {
 }
 
 export default defineEventHandler(async (event) => {
-  const authMe = await requireRole(event, ['ADMIN'])
+  const authMe = await requireRole(event, ['ADMIN', 'MANAGER'])
   const id = readUuidParam(event)
   const body = validatePayload(camAdvanceCoverageSchema, await readJsonBody(event))
   const pool = getDatabasePool()
