@@ -10,16 +10,15 @@ import {
   computeDueAmounts,
   getBillingCycleMultiplier,
   hasUnresolvedAreaRateCharge,
-  normalizeSocietySettings,
   removeChargesOverriddenByPeriod,
   resolveChargeBreakdown,
   summarizeCamAdvanceCoverage,
   todayDate,
   type CamAdvanceCoverageRange,
   type CamDueRecomputeInput,
-  type ChargeBreakdownItem,
 } from '~/server/utils/billing'
-import { validatePayload, writeMasterAudit } from '~/server/utils/master-data'
+import type { ChargeBreakdownItem } from '~/types/domain'
+import { normalizeSocietySettings, validatePayload, writeMasterAudit } from '~/server/utils/master-data'
 
 type BillingPeriodRow = {
   id: string
@@ -98,15 +97,20 @@ const buildChargeLookups = (
     const items = (Array.isArray(charge.charge_breakdown) && charge.charge_breakdown.length > 0
       ? charge.charge_breakdown
       : [{ label: charge.charge_name, amount: Number(charge.amount) }]
-    ).map((item) => ({
-      ...item,
-      calculationMethod: charge.calculation_method,
-      amount: charge.calculation_method === 'AREA_RATE' ? fallbackRate : Number(item.amount),
-      ...(charge.calculation_method === 'AREA_RATE' ? { ratePerSqFt: fallbackRate } : {}),
-      ...(charge.charge_name.match(/^cam(?:\s+charges?)?$/i)
-        ? { chargeType: periodIsCam ? 'CAM' : undefined }
-        : {}),
-    }))
+    ).map((item) => {
+      const chargeItem: ChargeBreakdownItem = {
+        ...item,
+        calculationMethod: charge.calculation_method,
+        amount: charge.calculation_method === 'AREA_RATE' ? fallbackRate : Number(item.amount),
+        ...(charge.calculation_method === 'AREA_RATE' ? { ratePerSqFt: fallbackRate } : {}),
+      }
+
+      if (charge.charge_name.match(/^cam(?:\s+charges?)?$/i) && periodIsCam) {
+        chargeItem.chargeType = 'CAM'
+      }
+
+      return chargeItem
+    })
 
     const isPeriodCharge = charge.billing_period_id === periodId
     if (charge.scope === 'SOCIETY_DEFAULT') {
@@ -164,8 +168,8 @@ const buildCamBreakdownForFlat = (
       : [{
           label: 'Maintenance Charges',
           amount: 2000,
-          chargeType: 'CAM',
-          calculationMethod: 'FIXED',
+          chargeType: 'CAM' as const,
+          calculationMethod: 'FIXED' as const,
         }]
   const hasCoverage = (coverageSummary?.coveredMonths ?? 0) > 0
   const effectiveBreakdown =
