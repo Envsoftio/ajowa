@@ -3,6 +3,7 @@ import { z } from 'zod'
 import type { PoolClient } from 'pg'
 import type { ChargeBreakdownItem } from '~/types/domain'
 import { AppError } from './errors'
+import { camAdvanceCoverageLateralSql } from './cam-advance'
 import { getDatabasePool } from './database'
 import { normalizeSocietySettings } from './master-data'
 import { createPdfBuffer, getSocietyStampImageForPdf } from './pdf'
@@ -10,7 +11,7 @@ import { downloadPrivateFile } from './storage'
 
 export const chargeBreakdownItemSchema = z.object({
   label: z.string().trim().min(1).max(200),
-  amount: z.coerce.number().positive(),
+  amount: z.coerce.number().nonnegative(),
   chargeType: z.enum(['CAM', 'DG_SET', 'OTHER']).optional(),
   calculationMethod: z.enum(['FIXED', 'AREA_RATE']).optional().default('FIXED'),
   ratePerSqFt: z.coerce.number().positive().optional(),
@@ -581,14 +582,23 @@ export const applyCamAdvanceCoverageToChargeBreakdown = (
         return { ...charge }
       }
 
-      if (coverage.remainingMonths <= 0) {
-        return null
-      }
-
       const originalAmount = Number(charge.amount ?? 0)
       const ratePerSqFt = charge.ratePerSqFt ?? charge.amount
       const areaSqFt = charge.areaSqFt ?? options.flatAreaSqFt
       const camAdvanceNote = getCamAdvanceCoverageNote(coverage)
+      if (coverage.remainingMonths <= 0) {
+        return {
+          ...charge,
+          label: appendCamAdvanceCoverageNote(charge.label, camAdvanceNote),
+          amount: 0,
+          camAdvanceCoveredMonths: coverage.coveredMonths,
+          camAdvanceBilledMonths: coverage.remainingMonths,
+          camAdvanceTotalMonths: coverage.totalMonths,
+          camAdvanceAdjustmentAmount: originalAmount,
+          camAdvanceNote,
+        }
+      }
+
       if (charge.calculationMethod === 'AREA_RATE' && !areaSqFt) {
         return {
           ...charge,
@@ -666,6 +676,7 @@ type MaintenanceBillDueRow = {
   settings: Record<string, unknown> | null
   billing_period_id: string
   billing_period_label: string
+  billing_period_charge_type: string
   period_start_date: string
   period_end_date: string
   due_date: string
@@ -695,6 +706,9 @@ type MaintenanceBillDueRow = {
   upi_id: string | null
   payment_qr_storage_object_key: string | null
   payment_qr_mime_type: string | null
+  cam_advance_coverage_id: string | null
+  cam_advance_covered_from: string | null
+  cam_advance_paid_until: string | null
 }
 
 type PreviousDueRow = {
@@ -1199,6 +1213,7 @@ export const getMaintenanceBillData = async (
         sp.settings,
         md.billing_period_id,
         bp.label as billing_period_label,
+        bp.charge_type::text as billing_period_charge_type,
         bp.start_date::text as period_start_date,
         bp.end_date::text as period_end_date,
         md.due_date::text,
@@ -1227,7 +1242,10 @@ export const getMaintenanceBillData = async (
         bank.upi_id,
         bank_accounts.bank_accounts,
         payment_qr.storage_object_key as payment_qr_storage_object_key,
-        payment_qr.mime_type as payment_qr_mime_type
+        payment_qr.mime_type as payment_qr_mime_type,
+        cam_coverage.id::text as cam_advance_coverage_id,
+        cam_coverage.covered_from::text as cam_advance_covered_from,
+        cam_coverage.covered_until::text as cam_advance_paid_until
       from maintenance_dues md
       inner join society_profile sp on sp.id = md.society_id
       inner join billing_periods bp on bp.id = md.billing_period_id
@@ -1284,6 +1302,9 @@ export const getMaintenanceBillData = async (
         on payment_qr.id = sp.payment_qr_file_id
         and payment_qr.storage_target_key = 'qr_images'
         and payment_qr.upload_status = 'READY'
+      left join lateral (
+        ${camAdvanceCoverageLateralSql('f', 'bp')}
+      ) cam_coverage on bp.charge_type = 'CAM'
       where ${filters.join(' and ')}
       limit 1
     `,
@@ -1300,7 +1321,10 @@ export const getMaintenanceBillData = async (
   }
 
   const settings = normalizeSocietySettings(due.settings)
-  const currentAmounts = computeDueAmounts(
+  const hasFullCamAdvanceCoverage =
+    due.billing_period_charge_type === 'CAM' &&
+    Boolean(due.cam_advance_coverage_id)
+  const computedCurrentAmounts = computeDueAmounts(
     {
       dueDate: due.due_date,
       baseAmount: Number(due.base_amount),
@@ -1312,6 +1336,14 @@ export const getMaintenanceBillData = async (
     settings.graceDays,
     settings.lateFeePerDay,
   )
+  const currentAmounts = hasFullCamAdvanceCoverage
+    ? {
+        lateFeeAmount: 0,
+        totalAmount: 0,
+        balanceAmount: 0,
+        status: 'PAID' as import('~/types/domain').DueStatus,
+      }
+    : computedCurrentAmounts
 
   const previousResult = await queryable.query<PreviousDueRow>(
     `
@@ -1352,7 +1384,29 @@ export const getMaintenanceBillData = async (
     }, 0),
   )
 
-  const chargeBreakdown = normalizeBillChargeBreakdown(due.charge_breakdown, Number(due.base_amount))
+  let chargeBreakdown = normalizeBillChargeBreakdown(due.charge_breakdown, Number(due.base_amount))
+  if (
+    hasFullCamAdvanceCoverage &&
+    due.cam_advance_covered_from &&
+    due.cam_advance_paid_until &&
+    sumBillCamAdvanceAdjustments(chargeBreakdown) <= 0
+  ) {
+    chargeBreakdown = applyCamAdvanceCoverageToChargeBreakdown(
+      chargeBreakdown,
+      summarizeCamAdvanceCoverage(
+        due.period_start_date,
+        due.period_end_date,
+        [{
+          coveredFrom: due.cam_advance_covered_from,
+          coveredUntil: due.cam_advance_paid_until,
+        }],
+      ),
+      {
+        flatAreaSqFt: due.area_sq_ft ? Number(due.area_sq_ft) : null,
+        treatUnclassifiedChargesAsCam: true,
+      },
+    )
+  }
   const billNumber = buildMaintenanceBillNumber(due)
   const fileName = buildMaintenanceBillFileName(due, chargeBreakdown)
   const currentBalance = currentAmounts.balanceAmount

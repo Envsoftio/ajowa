@@ -723,6 +723,26 @@ const warnNotificationFailure = (serviceRequestId: string, error: unknown) => {
   console.warn(JSON.stringify({ level: 'warn', message, serviceRequestId }))
 }
 
+const logServiceRequestNotificationQueueResult = (
+  serviceRequestId: string,
+  scope: 'resident' | 'manager',
+  result: { eventId: string | null, audienceCount: number, jobCount: number },
+) => {
+  if (result.eventId && result.jobCount > 0) {
+    return
+  }
+
+  console.warn(JSON.stringify({
+    level: 'warn',
+    message: 'Service request notification queued zero jobs.',
+    serviceRequestId,
+    notificationScope: scope,
+    eventId: result.eventId,
+    audienceCount: result.audienceCount,
+    jobCount: result.jobCount,
+  }))
+}
+
 const mergeNotificationUsers = (groups: NotificationUser[][]) => {
   const usersById = new Map<string, NotificationUser>()
 
@@ -780,7 +800,6 @@ const resolveServiceRequestResidentAudience = async (
 }
 
 const dispatchServiceRequestNotificationJobs = async (
-  client: PoolClient,
   societyId: string,
   eventId: string | null,
 ) => {
@@ -788,12 +807,31 @@ const dispatchServiceRequestNotificationJobs = async (
     return
   }
 
-  await dispatchNotificationJobs(client, {
-    societyId,
-    eventId,
-    limit: 50,
-    lockTimeoutMinutes: 1,
-  })
+  const client = await getDatabasePool().connect()
+
+  try {
+    await dispatchNotificationJobs(client, {
+      societyId,
+      eventId,
+      limit: 50,
+      lockTimeoutMinutes: 1,
+    })
+  } finally {
+    client.release()
+  }
+}
+
+const scheduleServiceRequestNotificationDispatch = (
+  serviceRequestId: string,
+  societyId: string,
+  eventId: string | null,
+) => {
+  if (!eventId) {
+    return
+  }
+
+  void dispatchServiceRequestNotificationJobs(societyId, eventId)
+    .catch((error) => warnNotificationFailure(serviceRequestId, error))
 }
 
 const enqueueServiceRequestNotification = async (
@@ -828,6 +866,12 @@ const enqueueServiceRequestNotification = async (
     const ticket = result.rows[0]
 
     if (!ticket) {
+      console.warn(JSON.stringify({
+        level: 'warn',
+        message: 'Service request notification skipped because ticket was not found.',
+        serviceRequestId,
+        notificationScope: 'resident',
+      }))
       return { eventId: null, audienceCount: 0, jobCount: 0 }
     }
 
@@ -835,6 +879,15 @@ const enqueueServiceRequestNotification = async (
       .filter((user) => user.id !== input.triggeredByUserId)
 
     if (users.length === 0) {
+      console.warn(JSON.stringify({
+        level: 'warn',
+        message: 'Service request notification skipped because no resident recipients were resolved.',
+        serviceRequestId,
+        notificationScope: 'resident',
+        flatId: ticket.flat_id,
+        requesterUserId: ticket.requester_user_id,
+        triggeredByUserId: input.triggeredByUserId ?? null,
+      }))
       return { eventId: null, audienceCount: 0, jobCount: 0 }
     }
 
@@ -868,7 +921,8 @@ const enqueueServiceRequestNotification = async (
       },
     })
 
-    await dispatchServiceRequestNotificationJobs(client, ticket.society_id, queued.eventId)
+    logServiceRequestNotificationQueueResult(serviceRequestId, 'resident', queued)
+    scheduleServiceRequestNotificationDispatch(serviceRequestId, ticket.society_id, queued.eventId)
 
     return queued
   } finally {
@@ -913,6 +967,12 @@ const enqueueServiceRequestManagerNotification = async (
     const ticket = result.rows[0]
 
     if (!ticket) {
+      console.warn(JSON.stringify({
+        level: 'warn',
+        message: 'Service request notification skipped because ticket was not found.',
+        serviceRequestId,
+        notificationScope: 'manager',
+      }))
       return { eventId: null, audienceCount: 0, jobCount: 0 }
     }
 
@@ -938,6 +998,13 @@ const enqueueServiceRequestManagerNotification = async (
     const managerIds = managerResult.rows.map((row) => row.id)
 
     if (managerIds.length === 0) {
+      console.warn(JSON.stringify({
+        level: 'warn',
+        message: 'Service request notification skipped because no manager recipients were resolved.',
+        serviceRequestId,
+        notificationScope: 'manager',
+        triggeredByUserId: input?.triggeredByUserId ?? null,
+      }))
       return { eventId: null, audienceCount: 0, jobCount: 0 }
     }
 
@@ -983,7 +1050,8 @@ const enqueueServiceRequestManagerNotification = async (
       },
     })
 
-    await dispatchServiceRequestNotificationJobs(client, ticket.society_id, queued.eventId)
+    logServiceRequestNotificationQueueResult(serviceRequestId, 'manager', queued)
+    scheduleServiceRequestNotificationDispatch(serviceRequestId, ticket.society_id, queued.eventId)
 
     return queued
   } finally {
