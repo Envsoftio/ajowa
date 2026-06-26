@@ -100,6 +100,11 @@ export const dueGenerationSchema = z.object({
   billDate: z.string().date().optional(),
 })
 
+export const camDueRecomputeSchema = z.object({
+  billingPeriodId: z.string().uuid(),
+  flatIds: z.array(z.string().uuid()).optional(),
+})
+
 export const dueWaiveSchema = z.object({
   waived: z.boolean(),
   reason: z.string().trim().min(2).max(500),
@@ -160,6 +165,7 @@ export type BillingPeriodInput = z.infer<typeof billingPeriodSchema>
 export type BillingPeriodUpdateInput = z.infer<typeof billingPeriodUpdateSchema>
 export type ChargeConfigInput = z.infer<typeof chargeConfigSchema>
 export type DueGenerationInput = z.infer<typeof dueGenerationSchema>
+export type CamDueRecomputeInput = z.infer<typeof camDueRecomputeSchema>
 export type DueWaiveInput = z.infer<typeof dueWaiveSchema>
 export type DueUpdateInput = z.infer<typeof dueUpdateSchema>
 export type DueBulkDueDateUpdateInput = z.infer<typeof dueBulkDueDateUpdateSchema>
