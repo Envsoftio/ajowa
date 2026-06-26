@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ajowa-app-v2'
+const CACHE_NAME = 'ajowa-app-v3'
 const DEFAULT_NOTIFICATION_LINK = '/my/notifications'
 const APP_SHELL = [
   '/',
@@ -121,11 +121,6 @@ self.addEventListener('push', (event) => {
           payload,
         })
       })
-
-      const hasVisibleClient = clients.some((client) => client.visibilityState === 'visible')
-      if (hasVisibleClient) {
-        return undefined
-      }
 
       return self.registration.showNotification(title, options).catch(() => undefined)
     }),

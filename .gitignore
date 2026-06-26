@@ -16,3 +16,6 @@ dist
 supabase/.temp
 .playwright-mcp/
 .agents/
+society-management-prd.md
+.gitignore
+docs/notifications-web-push-guide.md

@@ -4,6 +4,66 @@ import { getPushIntegrationStatus, getWhatsAppIntegrationStatus } from '~/server
 import { getResolvedEmailIntegrationStatus, getResolvedEmailSettings } from '~/server/utils/email'
 import { queryRows } from '~/server/utils/database'
 
+const defaultNotificationSettings = [
+  {
+    eventKey: 'manual.broadcast',
+    category: 'NOTICES_ANNOUNCEMENTS',
+    pushEnabled: true,
+    emailEnabled: true,
+    whatsappEnabled: false,
+    inAppEnabled: true,
+    recipientScope: 'ALL_ACTIVE_RESIDENTS',
+    cooldownMinutes: 0,
+    priority: 'MEDIUM',
+    channelPauseUntil: null,
+    quietHoursStart: null,
+    quietHoursEnd: null,
+    senderName: 'AJOWA',
+    throttlePerHour: 0,
+    retryMaxAttempts: 3,
+    managerBroadcastScope: 'ALL_ACTIVE_RESIDENTS',
+    criticalBypassQuietHours: true,
+  },
+  {
+    eventKey: 'notice.published',
+    category: 'NOTICES_ANNOUNCEMENTS',
+    pushEnabled: true,
+    emailEnabled: true,
+    whatsappEnabled: true,
+    inAppEnabled: true,
+    recipientScope: 'ALL_ACTIVE_RESIDENTS',
+    cooldownMinutes: 0,
+    priority: 'MEDIUM',
+    channelPauseUntil: null,
+    quietHoursStart: null,
+    quietHoursEnd: null,
+    senderName: 'AJOWA',
+    throttlePerHour: 0,
+    retryMaxAttempts: 3,
+    managerBroadcastScope: 'ALL_ACTIVE_RESIDENTS',
+    criticalBypassQuietHours: true,
+  },
+  {
+    eventKey: 'service_request.updated',
+    category: 'SERVICE_REQUESTS',
+    pushEnabled: true,
+    emailEnabled: true,
+    whatsappEnabled: false,
+    inAppEnabled: true,
+    recipientScope: 'SERVICE_REQUEST_PARTICIPANTS',
+    cooldownMinutes: 0,
+    priority: 'MEDIUM',
+    channelPauseUntil: null,
+    quietHoursStart: null,
+    quietHoursEnd: null,
+    senderName: 'AJOWA',
+    throttlePerHour: 0,
+    retryMaxAttempts: 3,
+    managerBroadcastScope: 'ALL_ACTIVE_RESIDENTS',
+    criticalBypassQuietHours: true,
+  },
+]
+
 export default defineEventHandler(async (event) => {
   const authMe = await requireRole(event, ['ADMIN', 'MANAGER'])
   const [settings, metrics] = await Promise.all([
@@ -84,7 +144,8 @@ export default defineEventHandler(async (event) => {
       activePushSubscribers: Number(metrics.rows[0]?.active_push_subscribers ?? 0),
       activeResidents: Number(metrics.rows[0]?.active_residents ?? 0),
     },
-    settings: settings.rows.map((row) => ({
+    settings: [
+      ...settings.rows.map((row) => ({
       id: row.id,
       eventKey: row.event_key,
       category: row.category,
@@ -103,6 +164,10 @@ export default defineEventHandler(async (event) => {
       retryMaxAttempts: row.retry_max_attempts,
       managerBroadcastScope: row.manager_broadcast_scope,
       criticalBypassQuietHours: row.critical_bypass_quiet_hours,
-    })),
+      })),
+      ...defaultNotificationSettings.filter(
+        (setting) => !settings.rows.some((row) => row.event_key === setting.eventKey),
+      ),
+    ],
   })
 })
