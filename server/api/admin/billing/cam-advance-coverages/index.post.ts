@@ -6,7 +6,7 @@ import { camAdvanceCoverageSchema } from '~/server/utils/cam-advance'
 import { validatePayload, writeMasterAudit } from '~/server/utils/master-data'
 
 export default defineEventHandler(async (event) => {
-  const authMe = await requireRole(event, ['ADMIN'])
+  const authMe = await requireRole(event, ['ADMIN', 'MANAGER'])
   const body = validatePayload(camAdvanceCoverageSchema, await readJsonBody(event))
   const pool = getDatabasePool()
   const client = await pool.connect()

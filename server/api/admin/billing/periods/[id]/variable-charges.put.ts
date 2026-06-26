@@ -251,7 +251,7 @@ const shouldPersistVariableCharge = (
   (config.chargeType === 'DG_SET' && hasVariableChargeData(entry))
 
 export default defineEventHandler(async (event) => {
-  const authMe = await requireRole(event, ['ADMIN'])
+  const authMe = await requireRole(event, ['ADMIN', 'MANAGER'])
   const periodId = readUuidParam(event, 'id')
   const body = validatePayload<VariableChargesInput>(
     variableChargesSchema,
