@@ -84,6 +84,7 @@ export const getAdminRoutePermission = (path: string) => {
     return 'notifications.manage'
   }
   if (
+    pathname.startsWith('/admin/notifications/web-push-test') ||
     pathname.startsWith('/admin/notifications/compose') ||
     pathname.startsWith('/admin/notifications/templates')
   ) {
@@ -153,6 +154,10 @@ export const canUserAccessRoute = (path: string, user: RouteAccessUser) => {
   if (pathname.startsWith('/admin')) {
     if (!['ADMIN', 'MANAGER'].includes(user.role)) {
       return false
+    }
+
+    if (pathname.startsWith('/admin/notifications/web-push-test')) {
+      return user.role === 'ADMIN'
     }
 
     const requiredPermission = getAdminRoutePermission(pathname)

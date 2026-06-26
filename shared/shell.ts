@@ -108,6 +108,7 @@ export const shellNavigation: Record<AppShellType, AppNavGroup[]> = {
         { label: 'My Alerts', to: '/admin/my-notifications', icon: 'pi pi-inbox' },
         { label: 'Notifications', to: '/admin/notifications', icon: 'pi pi-bell' },
         { label: 'Compose', to: '/admin/notifications/compose', icon: 'pi pi-send' },
+        { label: 'Web Push Test', to: '/admin/notifications/web-push-test', icon: 'pi pi-wifi' },
         { label: 'Templates', to: '/admin/notifications/templates', icon: 'pi pi-file-edit' },
         { label: 'Notification Settings', to: '/admin/settings/notifications', icon: 'pi pi-sliders-h' },
       ],

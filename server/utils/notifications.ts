@@ -148,7 +148,7 @@ type ClaimedJobRow = {
   priority: NotificationPriority
 }
 
-type ProviderSendResult = {
+export type ProviderSendResult = {
   ok: boolean
   providerName: string
   providerMessageId?: string | null | undefined
@@ -1195,6 +1195,42 @@ const sendPushForJob = async (
     ...(successCount > 0 ? {} : { failureReason: lastFailure || 'Push delivery failed for all subscriptions.' }),
     permanentFailure: successCount === 0 && allFailuresArePermanent,
   }
+}
+
+export const sendWebPushDebugNotification = async (
+  client: PoolClient,
+  input: {
+    societyId: string
+    targetUserId: string
+    title: string
+    body: string
+    deepLinkUrl?: string | undefined
+    tag?: string | undefined
+  },
+) => {
+  const job: ClaimedJobRow = {
+    id: randomUUID(),
+    society_id: input.societyId,
+    notification_event_id: randomUUID(),
+    audience_id: null,
+    target_user_id: input.targetUserId,
+    channel: 'PUSH',
+    attempt_count: 0,
+    max_attempts: 1,
+    provider_message_id: null,
+    resolved_address: null,
+    payload: {
+      deepLinkUrl: input.deepLinkUrl ?? '/my/notifications',
+      tag: input.tag ?? 'debug-web-push-test',
+    },
+    event_key: 'debug.web_push.test',
+    category: 'NOTICES_ANNOUNCEMENTS',
+    title: input.title,
+    body: input.body,
+    priority: 'LOW',
+  }
+
+  return sendPushForJob(client, job)
 }
 
 const sendInAppForJob = async (

@@ -221,7 +221,7 @@ export default defineEventHandler(async (event) => {
 
   const overdueFilter = query.filters.overdue?.[0]
   if (overdueFilter === 'true') {
-    where.push(`c.balance_amount::numeric > 0 and c.due_date < $${values.length + 1}::date`)
+    where.push(`c.balance_amount::numeric > 0 and c.due_date::date < $${values.length + 1}::date`)
     values.push(today)
   }
 
