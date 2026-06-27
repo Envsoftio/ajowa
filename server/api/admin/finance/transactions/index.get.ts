@@ -166,7 +166,7 @@ export default defineEventHandler(async (event) => {
   }
 
   const pool = getDatabasePool()
-  const summary = await pool.query<{
+    const summary = await pool.query<{
     count: string
     incomeTotal: string
     expenseTotal: string
@@ -180,7 +180,7 @@ export default defineEventHandler(async (event) => {
         coalesce(
           sum(
             case
-              when tc.requires_attachment and coalesce(ta_counts.attachment_count, 0) = 0 then 1
+              when coalesce(ta_counts.attachment_count, 0) = 0 then 1
               else 0
             end
           ),

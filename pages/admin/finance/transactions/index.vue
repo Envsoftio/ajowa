@@ -226,9 +226,7 @@ const kpis = computed(() => ({
       .reduce((sum, item) => sum + item.amount, 0),
   entryCount: summary.value ? totalRecords.value : transactions.value.length,
   missingAttachments: summary.value?.missingAttachments
-    ?? transactions.value.filter(
-      (item) => item.attachmentRequired && !item.hasAttachments,
-    ).length,
+    ?? transactions.value.filter((item) => !item.hasAttachments).length,
 }))
 
 watch(query, () => {
@@ -278,7 +276,7 @@ const onSort = (event: { sortField?: string; sortOrder?: number }) => {
       <section class="surface-card">
         <p class="eyebrow">Missing files</p>
         <h3>{{ kpis.missingAttachments }}</h3>
-        <p>{{ hasSummary ? 'Required attachments not yet uploaded in the current filter.' : 'Required attachments not yet uploaded.' }}</p>
+        <p>{{ hasSummary ? 'Attachments not yet uploaded in the current filter.' : 'Attachments not yet uploaded.' }}</p>
       </section>
     </div>
 
