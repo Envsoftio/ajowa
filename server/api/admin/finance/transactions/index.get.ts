@@ -166,9 +166,26 @@ export default defineEventHandler(async (event) => {
   }
 
   const pool = getDatabasePool()
-  const total = await pool.query<{ count: string }>(
+  const summary = await pool.query<{
+    count: string
+    incomeTotal: string
+    expenseTotal: string
+    missingAttachments: string
+  }>(
     `
-      select count(*)::text as count
+      select
+        count(*)::text as count,
+        coalesce(sum(case when t.transaction_type = 'INCOME' then t.amount else 0 end), 0)::text as "incomeTotal",
+        coalesce(sum(case when t.transaction_type = 'EXPENSE' then t.amount else 0 end), 0)::text as "expenseTotal",
+        coalesce(
+          sum(
+            case
+              when tc.requires_attachment and coalesce(ta_counts.attachment_count, 0) = 0 then 1
+              else 0
+            end
+          ),
+          0
+        )::text as "missingAttachments"
       from transactions t
       join transaction_categories tc on tc.id = t.category_id
       left join (
@@ -234,7 +251,12 @@ export default defineEventHandler(async (event) => {
 
   return createApiSuccess(event, {
     items: result.rows.map(mapTransaction),
-    total: Number(total.rows[0]?.count ?? 0),
+    total: Number(summary.rows[0]?.count ?? 0),
+    summary: {
+      income: Number(summary.rows[0]?.incomeTotal ?? 0),
+      expense: Number(summary.rows[0]?.expenseTotal ?? 0),
+      missingAttachments: Number(summary.rows[0]?.missingAttachments ?? 0),
+    },
     page: pagination.page,
     pageSize: pagination.pageSize,
   })

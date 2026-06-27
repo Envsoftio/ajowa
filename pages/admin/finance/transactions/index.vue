@@ -20,6 +20,11 @@ type TransactionsResponse = {
   data: {
     items: FinanceTransaction[]
     total: number
+    summary?: {
+      income: number
+      expense: number
+      missingAttachments: number
+    }
     page: number
     pageSize: number
   }
@@ -171,6 +176,8 @@ const {
 
 const transactions = computed(() => transactionsData.value?.data.items ?? [])
 const totalRecords = computed(() => transactionsData.value?.data.total ?? 0)
+const summary = computed(() => transactionsData.value?.data.summary ?? null)
+const hasSummary = computed(() => summary.value !== null)
 const reportRouteMatchesFilters = () => {
   const transactionType = queryText(route.query.transactionType).toUpperCase()
   const status = queryText(route.query.status).toUpperCase()
@@ -209,16 +216,19 @@ const reportDrilldown = computed(() => {
 })
 
 const kpis = computed(() => ({
-  income: transactions.value
-    .filter((item) => item.transactionType === 'INCOME')
-    .reduce((sum, item) => sum + item.amount, 0),
-  expense: transactions.value
-    .filter((item) => item.transactionType === 'EXPENSE')
-    .reduce((sum, item) => sum + item.amount, 0),
-  entryCount: transactions.value.length,
-  missingAttachments: transactions.value.filter(
-    (item) => item.attachmentRequired && !item.hasAttachments,
-  ).length,
+  income: summary.value?.income
+    ?? transactions.value
+      .filter((item) => item.transactionType === 'INCOME')
+      .reduce((sum, item) => sum + item.amount, 0),
+  expense: summary.value?.expense
+    ?? transactions.value
+      .filter((item) => item.transactionType === 'EXPENSE')
+      .reduce((sum, item) => sum + item.amount, 0),
+  entryCount: summary.value ? totalRecords.value : transactions.value.length,
+  missingAttachments: summary.value?.missingAttachments
+    ?? transactions.value.filter(
+      (item) => item.attachmentRequired && !item.hasAttachments,
+    ).length,
 }))
 
 watch(query, () => {
@@ -253,22 +263,22 @@ const onSort = (event: { sortField?: string; sortOrder?: number }) => {
       <section class="surface-card">
         <p class="eyebrow">Income</p>
         <h3>{{ formatMoney(kpis.income) }}</h3>
-        <p>Visible income in the current result set.</p>
+        <p>{{ hasSummary ? 'Total income in the current filter.' : 'Visible income in the current result set.' }}</p>
       </section>
       <section class="surface-card">
         <p class="eyebrow">Expense</p>
         <h3>{{ formatMoney(kpis.expense) }}</h3>
-        <p>Visible expenses in the current result set.</p>
+        <p>{{ hasSummary ? 'Total expenses in the current filter.' : 'Visible expenses in the current result set.' }}</p>
       </section>
       <section class="surface-card">
         <p class="eyebrow">Entries</p>
         <h3>{{ kpis.entryCount }}</h3>
-        <p>Visible entries in the current result set.</p>
+        <p>{{ hasSummary ? 'Entries in the current filter.' : 'Visible entries in the current result set.' }}</p>
       </section>
       <section class="surface-card">
         <p class="eyebrow">Missing files</p>
         <h3>{{ kpis.missingAttachments }}</h3>
-        <p>Required attachments not yet uploaded.</p>
+        <p>{{ hasSummary ? 'Required attachments not yet uploaded in the current filter.' : 'Required attachments not yet uploaded.' }}</p>
       </section>
     </div>
 
