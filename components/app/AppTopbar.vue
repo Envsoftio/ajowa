@@ -148,6 +148,7 @@ onMounted(() => {
         :icon="theme.isDark.value ? 'pi pi-sun' : 'pi pi-moon'"
         :aria-label="theme.isDark.value ? 'Switch to light mode' : 'Switch to dark mode'"
         :title="theme.isDark.value ? 'Switch to light mode' : 'Switch to dark mode'"
+        class="topbar-icon-button"
         severity="secondary"
         outlined
         @click="theme.toggle()"
