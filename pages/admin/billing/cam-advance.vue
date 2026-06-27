@@ -192,7 +192,7 @@ const saveCoverage = async () => {
     toast.add({
       severity: 'success',
       summary: editingCoverage.value ? 'Coverage updated' : 'Coverage added',
-      detail: `CAM advance coverage ${response.data.id ? 'saved' : 'updated'}.`,
+      detail: `CAM advance coverage ${response.data.id ? 'saved' : 'updated'}. Recompute generated CAM dues for affected flats before sending bills.`,
       life: 8000,
     })
     dialogVisible.value = false
@@ -220,7 +220,7 @@ const deactivateCoverage = async (coverage: CamAdvanceCoverage) => {
   toast.add({
     severity: 'success',
     summary: 'Coverage deactivated',
-    detail: 'The CAM advance record is inactive now.',
+    detail: 'The CAM advance record is inactive now. Recompute generated CAM dues for affected flats before sending bills.',
     life: 8000,
   })
   await refresh()

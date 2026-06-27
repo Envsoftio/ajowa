@@ -229,7 +229,7 @@ const roundAreaRateChargeAmount = (
   areaSqFt: number,
   ratePerSqFt: number,
   cycleMultiplier = 1,
-) => Math.ceil(areaSqFt * ratePerSqFt) * Math.max(1, cycleMultiplier)
+) => Math.ceil(areaSqFt * ratePerSqFt * Math.max(1, cycleMultiplier))
 
 export type DueAmountInput = {
   dueDate: string

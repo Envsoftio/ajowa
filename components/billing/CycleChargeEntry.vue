@@ -108,6 +108,18 @@ type BillSendResponse = {
   }
 }
 
+type CamRecomputeResponse = {
+  ok: true
+  data: {
+    billingPeriodId: string
+    billingPeriodLabel: string
+    requested: number
+    recalculated: number
+    accessRecomputed: number
+    accessRevoked: number
+  }
+}
+
 const props = withDefaults(
   defineProps<{
     mode: 'CAM' | 'DG'
@@ -397,6 +409,7 @@ const generationPreview = ref<
 const loadingGenerationPreview = ref(false)
 const selectedFlatIds = ref<string[]>([])
 const generating = ref(false)
+const recomputingCamDues = ref(false)
 const sendBillsAfterGeneration = ref(false)
 const billChannels = ref<BillChannel[]>(['EMAIL'])
 const billDeliveryFlatIds = ref<string[]>([])
@@ -1963,6 +1976,103 @@ const generateDues = async () => {
   }
 }
 
+const recomputeCamDues = async () => {
+  if (!props.camRunFlow) return
+
+  const groups = [...camRunGroups.value]
+  if (groups.length === 0) {
+    toast.add({
+      severity: 'warn',
+      summary: 'Apply defaults first',
+      detail: 'Apply the CAM rate before recomputing generated CAM dues.',
+      life: 10000,
+    })
+    return
+  }
+
+  for (const entry of chargeEntries.value) {
+    recalculateCharge(entry)
+  }
+
+  recomputingCamDues.value = true
+
+  try {
+    let requested = 0
+    let recalculated = 0
+    let accessRecomputed = 0
+    let accessRevoked = 0
+    const missingPeriods: string[] = []
+
+    for (const group of groups) {
+      const period = periods.value.find(
+        (item) =>
+          item.chargeType === periodChargeType.value &&
+          item.startDate === group.period.startDate &&
+          item.endDate === group.period.endDate,
+      )
+
+      if (!period) {
+        missingPeriods.push(group.period.label)
+        continue
+      }
+
+      const response = await api<CamRecomputeResponse>(
+        '/api/admin/billing/dues/recompute-cam',
+        {
+          method: 'POST',
+          showErrorToast: false,
+          body: {
+            billingPeriodId: period.id,
+            flatIds: group.entries.map((entry) => entry.flatId),
+          },
+        },
+      )
+
+      requested += response.data.requested
+      recalculated += response.data.recalculated
+      accessRecomputed += response.data.accessRecomputed
+      accessRevoked += response.data.accessRevoked
+    }
+
+    await refreshPeriods()
+    await loadVariableCharges()
+
+    toast.add({
+      severity: missingPeriods.length > 0 ? 'warn' : 'success',
+      summary: 'CAM dues recomputed',
+      detail:
+        [
+          `${recalculated} recalculated`,
+          `${requested} checked`,
+          accessRecomputed > 0
+            ? `${accessRecomputed} access record${accessRecomputed === 1 ? '' : 's'} refreshed`
+            : '',
+          accessRevoked > 0
+            ? `${accessRevoked} access record${accessRevoked === 1 ? '' : 's'} revoked`
+            : '',
+          missingPeriods.length > 0
+            ? `${missingPeriods.length} period${missingPeriods.length === 1 ? '' : 's'} not found`
+            : '',
+        ]
+          .filter(Boolean)
+          .join(', ') + '.',
+      life: 12000,
+    })
+  } catch (error) {
+    toast.add({
+      severity: 'error',
+      summary: 'CAM recompute failed',
+      detail: getApiErrorMessage(
+        error,
+        'CAM dues could not be recomputed. Please check the period and try again.',
+      ),
+      life: 15000,
+    })
+  } finally {
+    recomputingCamDues.value = false
+  }
+}
+
 watch(selectedFlatIds, () => {
   if (generationDialogVisible.value) {
     void loadGenerationPreview()
@@ -2045,6 +2155,16 @@ watch(
             outlined
             :loading="downloadingBillPdfs"
             @click="downloadLastGeneratedBillPdfs"
+          />
+          <Button
+            v-if="camRunFlow"
+            label="Recompute CAM dues"
+            icon="pi pi-refresh"
+            severity="secondary"
+            outlined
+            :loading="recomputingCamDues"
+            :disabled="loadingCharges || generating || camRunGenerationEntries.length === 0"
+            @click="recomputeCamDues"
           />
           <Button
             :label="camRunFlow ? 'Generate CAM bills' : 'Generate bills'"
@@ -2314,6 +2434,16 @@ watch(
             outlined
             as="router-link"
             to="/admin/billing/cam-advance"
+          />
+          <Button
+            v-if="camRunFlow"
+            label="Recompute CAM dues"
+            icon="pi pi-refresh"
+            severity="secondary"
+            outlined
+            :loading="recomputingCamDues"
+            :disabled="loadingCharges || generating || camRunGenerationEntries.length === 0"
+            @click="recomputeCamDues"
           />
           <Button
             v-if="camRunFlow"

@@ -265,7 +265,7 @@ export default defineEventHandler(async (event) => {
         inner join blocks b on b.id = f.block_id
         where md.society_id = $1
           and md.billing_period_id = $2
-          and md.status not in ('PAID', 'WAIVED', 'CANCELLED')
+          and md.status not in ('WAIVED', 'CANCELLED')
           ${flatFilterClause}
         order by b.sort_order asc, md.flat_id asc
       `,
@@ -380,7 +380,9 @@ export default defineEventHandler(async (event) => {
           baseAmount: nextBaseAmount,
           paidAmount,
           waivedAmount,
-          storedStatus: due.status,
+          storedStatus: ['PAID', 'PARTIALLY_PAID', 'OPEN', 'OVERDUE'].includes(due.status)
+            ? 'OPEN'
+            : due.status,
         },
         today,
         settings.graceDays,
