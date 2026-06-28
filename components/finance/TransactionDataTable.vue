@@ -55,6 +55,20 @@ const { formatMoney, formatDate } = useFinanceFormatters()
         {{ formatMoney(row.amount) }}
       </template>
     </Column>
+    <Column header="Payment">
+      <template #body="{ data: row }">
+        <Tag
+          v-if="row.transactionType === 'EXPENSE'"
+          :value="row.expensePaymentCount ? 'Recorded' : 'Pending record'"
+          :severity="row.expensePaymentCount ? 'success' : 'warn'"
+          rounded
+        />
+        <span v-else class="muted-line">-</span>
+        <div v-if="row.latestExpensePaymentDate" class="muted-line">
+          {{ formatDate(row.latestExpensePaymentDate) }}
+        </div>
+      </template>
+    </Column>
     <Column field="status" header="Status" sortable>
       <template #body="{ data: row }">
         <StatusTag :status="row.status" />
@@ -102,6 +116,14 @@ const { formatMoney, formatDate } = useFinanceFormatters()
       <div class="list-card__row">
         <span>Amount</span>
         <strong>{{ formatMoney(row.amount) }}</strong>
+      </div>
+      <div v-if="row.transactionType === 'EXPENSE'" class="list-card__row">
+        <span>Payment</span>
+        <Tag
+          :value="row.expensePaymentCount ? 'Recorded' : 'Pending record'"
+          :severity="row.expensePaymentCount ? 'success' : 'warn'"
+          rounded
+        />
       </div>
       <div class="list-card__row">
         <span>Status</span>

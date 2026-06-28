@@ -715,6 +715,9 @@ export type FinanceTransaction = AuditFields & {
   amount: number
   status: FinanceLifecycleStatus
   journalVoucherNumber: string | null
+  expensePaymentCount?: number
+  expensePaymentTotal?: number
+  latestExpensePaymentDate?: string | null
   attachmentCount?: number
   hasAttachments?: boolean
   attachmentRequired?: boolean
@@ -723,6 +726,22 @@ export type FinanceTransaction = AuditFields & {
   approvedAt: string | null
   postedAt: string | null
   reversedAt: string | null
+}
+
+export type FinanceExpensePayment = AuditFields & {
+  id: string
+  societyId: string
+  transactionId: string
+  bankAccountId: string
+  bankAccountName: string | null
+  paymentDate: string
+  amount: number
+  mode: FinancePaymentMode
+  referenceNumber: string | null
+  notes: string | null
+  journalVoucherNumber: string | null
+  createdByUserId: string | null
+  createdByName: string | null
 }
 
 export type FinanceTransactionAttachment = AuditFields & {
@@ -766,6 +785,7 @@ export type FinanceAuditEvent = {
 
 export type FinanceTransactionDetail = {
   transaction: FinanceTransaction
+  expensePayments: FinanceExpensePayment[]
   attachments: FinanceTransactionAttachment[]
   journals: Array<FinanceJournalEntry & { lines: FinanceJournalLine[] }>
   auditEvents: FinanceAuditEvent[]

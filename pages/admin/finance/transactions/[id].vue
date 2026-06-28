@@ -1,8 +1,10 @@
 <script setup lang="ts">
+import { getApiErrorMessage } from '~/composables/useApi'
 import type {
   BankAccount,
   BillingPeriod,
   FinanceCategory,
+  FinancePaymentMode,
   FinanceTransactionDetail,
   SocietyProfile,
 } from '~/types/domain'
@@ -14,6 +16,7 @@ definePageMeta({
 })
 
 type DetailResponse = { ok: true; data: FinanceTransactionDetail }
+type ExpensePaymentResponse = { ok: true; data: { id: string; amount: number; journalVoucherNumber: string | null } }
 type CategoriesResponse = { ok: true; data: { items: FinanceCategory[] } }
 type BankAccountsResponse = { ok: true; data: { items: BankAccount[] } }
 type PeriodsResponse = { ok: true; data: { items: BillingPeriod[] } }
@@ -38,6 +41,24 @@ const toast = useToast()
 const { formatMoney, formatDate, formatDateTime } = useFinanceFormatters()
 const { buildTransactionCreateLink } = useFinanceSharedReportLinks()
 const editing = ref(false)
+const paymentDialogVisible = ref(false)
+const recordingPayment = ref(false)
+
+const paymentModes: Array<{ label: string; value: FinancePaymentMode }> = [
+  { label: 'Cash', value: 'CASH' },
+  { label: 'Bank transfer', value: 'BANK_TRANSFER' },
+  { label: 'UPI', value: 'UPI' },
+  { label: 'Cheque', value: 'CHEQUE' },
+  { label: 'Card', value: 'CARD' },
+  { label: 'Other', value: 'OTHER' },
+]
+
+const paymentForm = reactive({
+  paymentDate: '',
+  mode: 'BANK_TRANSFER' as FinancePaymentMode,
+  referenceNumber: '',
+  notes: '',
+})
 
 const [
   detailAsyncData,
@@ -93,6 +114,7 @@ const {
 
 const detail = computed(() => data.value?.data ?? null)
 const transaction = computed(() => detail.value?.transaction ?? null)
+const expensePayments = computed(() => detail.value?.expensePayments ?? [])
 const activeAttachment = computed(
   () => detail.value?.attachments.find((attachment) => !attachment.replacedAt) ?? null,
 )
@@ -114,6 +136,12 @@ const setupError = computed(
     periodsError.value ||
     societyError.value,
 )
+const canRecordExpensePayment = computed(
+  () =>
+    transaction.value?.transactionType === 'EXPENSE' &&
+    transaction.value.status === 'POSTED' &&
+    expensePayments.value.length === 0,
+)
 
 const onUpdated = async (payload: { attachmentUploaded: boolean }) => {
   toast.add({
@@ -124,6 +152,68 @@ const onUpdated = async (payload: { attachmentUploaded: boolean }) => {
   })
   editing.value = false
   await refreshDetail()
+}
+
+const resetPaymentForm = () => {
+  paymentForm.paymentDate = transaction.value?.transactionDate ?? new Date().toISOString().slice(0, 10)
+  paymentForm.mode = 'BANK_TRANSFER'
+  paymentForm.referenceNumber = transaction.value?.voucherNumber ?? ''
+  paymentForm.notes = ''
+}
+
+const openPaymentDialog = () => {
+  resetPaymentForm()
+  paymentDialogVisible.value = true
+}
+
+const recordExpensePayment = async () => {
+  if (!transaction.value?.bankAccountId) {
+    toast.add({
+      severity: 'warn',
+      summary: 'Paid-from account missing',
+      detail: 'Edit the expense and select the posted paid-from account first.',
+      life: 10000,
+    })
+    return
+  }
+  if (!paymentForm.paymentDate) {
+    toast.add({ severity: 'warn', summary: 'Payment date required', life: 10000 })
+    return
+  }
+
+  recordingPayment.value = true
+  try {
+    await api<ExpensePaymentResponse>(
+      `/api/admin/finance/transactions/${transaction.value.id}/payments`,
+      {
+        method: 'POST',
+        body: {
+          bankAccountId: transaction.value.bankAccountId,
+          paymentDate: paymentForm.paymentDate,
+          mode: paymentForm.mode,
+          referenceNumber: paymentForm.referenceNumber || null,
+          notes: paymentForm.notes || null,
+        },
+      },
+    )
+    toast.add({
+      severity: 'success',
+      summary: 'Payment recorded',
+      detail: 'The expense now has a linked payment record.',
+      life: 5000,
+    })
+    paymentDialogVisible.value = false
+    await refreshDetail()
+  } catch (error) {
+    toast.add({
+      severity: 'error',
+      summary: 'Payment not recorded',
+      detail: getApiErrorMessage(error, 'The payment record could not be saved.'),
+      life: 12000,
+    })
+  } finally {
+    recordingPayment.value = false
+  }
 }
 </script>
 
@@ -162,6 +252,14 @@ const onUpdated = async (payload: { attachmentUploaded: boolean }) => {
               severity="secondary"
               outlined
               @click="editing = false"
+            />
+            <Button
+              v-if="!editing && canRecordExpensePayment"
+              label="Record payment"
+              icon="pi pi-wallet"
+              severity="secondary"
+              outlined
+              @click="openPaymentDialog"
             />
             <Button
               as="router-link"
@@ -219,6 +317,17 @@ const onUpdated = async (payload: { attachmentUploaded: boolean }) => {
             <h3><StatusTag :status="transaction.status" /></h3>
             <p>{{ transaction.postedAt ? `Recorded ${formatDateTime(transaction.postedAt)}` : 'Draft entry' }}</p>
           </section>
+          <section v-if="transaction.transactionType === 'EXPENSE'" class="surface-card">
+            <p class="eyebrow">Payment</p>
+            <h3>{{ expensePayments.length ? 'Recorded' : 'Pending' }}</h3>
+            <p>
+              {{
+                expensePayments[0]
+                  ? `${formatMoney(expensePayments[0].amount)} on ${formatDate(expensePayments[0].paymentDate)}`
+                  : 'No payment record is linked yet.'
+              }}
+            </p>
+          </section>
           <section class="surface-card">
             <p class="eyebrow">Attachment</p>
             <h3>{{ detail.attachments.length }}</h3>
@@ -266,6 +375,59 @@ const onUpdated = async (payload: { attachmentUploaded: boolean }) => {
           </section>
 
           <aside class="admin-form-layout">
+            <section v-if="transaction.transactionType === 'EXPENSE'" class="surface-card admin-form-section">
+              <div class="admin-form-section__header">
+                <div>
+                  <p class="eyebrow">Payment</p>
+                  <h2>Expense payment</h2>
+                </div>
+                <Button
+                  v-if="canRecordExpensePayment"
+                  label="Record"
+                  icon="pi pi-wallet"
+                  size="small"
+                  @click="openPaymentDialog"
+                />
+              </div>
+              <dl v-if="expensePayments[0]" class="finance-detail-grid">
+                <div>
+                  <dt>Amount</dt>
+                  <dd>{{ formatMoney(expensePayments[0].amount) }}</dd>
+                </div>
+                <div>
+                  <dt>Payment date</dt>
+                  <dd>{{ formatDate(expensePayments[0].paymentDate) }}</dd>
+                </div>
+                <div>
+                  <dt>Paid from</dt>
+                  <dd>{{ expensePayments[0].bankAccountName || '-' }}</dd>
+                </div>
+                <div>
+                  <dt>Mode</dt>
+                  <dd>{{ expensePayments[0].mode }}</dd>
+                </div>
+                <div>
+                  <dt>Reference</dt>
+                  <dd>{{ expensePayments[0].referenceNumber || '-' }}</dd>
+                </div>
+                <div>
+                  <dt>Journal</dt>
+                  <dd>{{ expensePayments[0].journalVoucherNumber || '-' }}</dd>
+                </div>
+                <div>
+                  <dt>Recorded by</dt>
+                  <dd>{{ expensePayments[0].createdByName || '-' }}</dd>
+                </div>
+                <div>
+                  <dt>Recorded at</dt>
+                  <dd>{{ formatDateTime(expensePayments[0].createdAt) }}</dd>
+                </div>
+              </dl>
+              <Message v-else severity="warn" :closable="false">
+                This posted expense does not have a linked payment record yet.
+              </Message>
+            </section>
+
             <section class="surface-card admin-form-section">
               <div class="admin-form-section__header">
                 <div>
@@ -307,5 +469,61 @@ const onUpdated = async (payload: { attachmentUploaded: boolean }) => {
       </template>
     </template>
 
+    <Dialog
+      v-model:visible="paymentDialogVisible"
+      header="Record expense payment"
+      modal
+      :style="{ width: '640px', maxWidth: '95vw' }"
+    >
+      <form class="admin-form-layout" @submit.prevent="recordExpensePayment">
+        <Message severity="info" :closable="false">
+          This creates a payment record for the already-posted expense amount of
+          {{ formatMoney(transaction?.amount ?? 0) }}.
+        </Message>
+        <div class="admin-form-grid">
+          <label>
+            <span class="field-label">Paid-from account</span>
+            <InputText :model-value="transaction?.bankAccountName || '-'" disabled />
+          </label>
+          <label>
+            <span class="field-label">Payment date</span>
+            <InputText v-model="paymentForm.paymentDate" type="date" required />
+          </label>
+          <label>
+            <span class="field-label">Mode</span>
+            <Select
+              v-model="paymentForm.mode"
+              :options="paymentModes"
+              option-label="label"
+              option-value="value"
+            />
+          </label>
+          <label>
+            <span class="field-label">Reference</span>
+            <InputText v-model="paymentForm.referenceNumber" placeholder="UTR, cheque, or voucher" />
+          </label>
+          <label class="admin-form-grid__full">
+            <span class="field-label">Notes</span>
+            <Textarea v-model="paymentForm.notes" rows="3" auto-resize />
+          </label>
+        </div>
+        <div class="admin-inline-actions">
+          <Button
+            type="button"
+            label="Cancel"
+            icon="pi pi-times"
+            severity="secondary"
+            outlined
+            @click="paymentDialogVisible = false"
+          />
+          <Button
+            type="submit"
+            label="Record payment"
+            icon="pi pi-wallet"
+            :loading="recordingPayment"
+          />
+        </div>
+      </form>
+    </Dialog>
   </div>
 </template>

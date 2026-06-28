@@ -202,6 +202,11 @@ const descriptionWithMetadata = computed(() => {
   return [...lines, ...metadata].join('\n')
 })
 
+const paymentReferenceNumber = computed(() => {
+  if (form.mode === 'CHEQUE') return form.chequeNumber.trim()
+  return form.utrNumber.trim() || form.voucherNumber.trim()
+})
+
 const chooseSafeDefaultAccount = () => {
   const storageKey =
     form.transactionType === 'EXPENSE'
@@ -335,6 +340,17 @@ const submit = async (submitForPosting: boolean) => {
       voucherNumber: form.voucherNumber || null,
       transactionDate: form.transactionDate,
       amount: form.amount,
+      ...(form.transactionType === 'EXPENSE' && !isEditing.value
+        ? {
+            payment: {
+              bankAccountId: form.bankAccountId,
+              paymentDate: form.transactionDate,
+              mode: form.mode,
+              referenceNumber: paymentReferenceNumber.value || null,
+              notes: form.internalNotes || null,
+            },
+          }
+        : {}),
       ...(!isEditing.value ? { submitForPosting } : {}),
     }
     const response = await api<SaveResponse>(

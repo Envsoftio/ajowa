@@ -4,6 +4,7 @@ import { getDatabasePool } from '~/server/utils/database'
 import { createPrivateSignedUrl } from '~/server/utils/storage'
 import type {
   FinanceAuditEvent,
+  FinanceExpensePayment,
   FinanceJournalEntry,
   FinanceJournalLine,
   FinanceTransaction,
@@ -31,6 +32,9 @@ type TransactionRow = {
   amount: string
   status: FinanceTransaction['status']
   journal_voucher_number: string | null
+  expense_payment_count: string
+  expense_payment_total: string
+  latest_expense_payment_date: string | null
   attachment_count: string
   created_by_name: string | null
   approved_by_name: string | null
@@ -54,6 +58,24 @@ type AttachmentRow = {
   replaces_attachment_id: string | null
   replaced_at: string | null
   created_at: string
+}
+
+type ExpensePaymentRow = {
+  id: string
+  society_id: string
+  transaction_id: string
+  bank_account_id: string
+  bank_account_name: string | null
+  payment_date: string
+  amount: string
+  mode: FinanceExpensePayment['mode']
+  reference_number: string | null
+  notes: string | null
+  journal_voucher_number: string | null
+  created_by_user_id: string | null
+  created_by_name: string | null
+  created_at: string
+  updated_at: string
 }
 
 type JournalRow = {
@@ -118,6 +140,9 @@ const mapTransaction = (row: TransactionRow): FinanceTransaction => ({
   amount: Number(row.amount),
   status: row.status,
   journalVoucherNumber: row.journal_voucher_number,
+  expensePaymentCount: Number(row.expense_payment_count ?? 0),
+  expensePaymentTotal: Number(row.expense_payment_total ?? 0),
+  latestExpensePaymentDate: row.latest_expense_payment_date,
   attachmentCount: Number(row.attachment_count ?? 0),
   hasAttachments: Number(row.attachment_count ?? 0) > 0,
   attachmentRequired: row.attachment_required,
@@ -126,6 +151,24 @@ const mapTransaction = (row: TransactionRow): FinanceTransaction => ({
   approvedAt: row.approved_at,
   postedAt: row.posted_at,
   reversedAt: row.reversed_at,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+})
+
+const mapExpensePayment = (row: ExpensePaymentRow): FinanceExpensePayment => ({
+  id: row.id,
+  societyId: row.society_id,
+  transactionId: row.transaction_id,
+  bankAccountId: row.bank_account_id,
+  bankAccountName: row.bank_account_name,
+  paymentDate: row.payment_date,
+  amount: Number(row.amount),
+  mode: row.mode,
+  referenceNumber: row.reference_number,
+  notes: row.notes,
+  journalVoucherNumber: row.journal_voucher_number,
+  createdByUserId: row.created_by_user_id,
+  createdByName: row.created_by_name,
   createdAt: row.created_at,
   updatedAt: row.updated_at,
 })
@@ -157,6 +200,9 @@ export default defineEventHandler(async (event) => {
         t.amount::text,
         t.status::text,
         je.voucher_number as journal_voucher_number,
+        coalesce(ep_counts.payment_count, 0)::text as expense_payment_count,
+        coalesce(ep_counts.payment_total, 0)::text as expense_payment_total,
+        ep_counts.latest_payment_date::text as latest_expense_payment_date,
         coalesce(ta_counts.attachment_count, 0)::text as attachment_count,
         creator.full_name as created_by_name,
         approver.full_name as approved_by_name,
@@ -170,6 +216,15 @@ export default defineEventHandler(async (event) => {
       left join society_bank_accounts ba on ba.id = t.bank_account_id
       left join billing_periods bp on bp.id = t.billing_period_id
       left join journal_entries je on je.transaction_id = t.id and je.status = 'POSTED'
+      left join (
+        select
+          transaction_id,
+          count(*)::int as payment_count,
+          coalesce(sum(amount), 0) as payment_total,
+          max(payment_date) as latest_payment_date
+        from expense_payments
+        group by transaction_id
+      ) ep_counts on ep_counts.transaction_id = t.id
       left join (
         select transaction_id, count(*)::int as attachment_count
         from transaction_attachments
@@ -189,8 +244,35 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 404, statusMessage: 'Transaction not found.' })
   }
 
-  const [attachmentResult, journalResult, lineResult, auditResult, reversalResult] =
+  const [expensePaymentResult, attachmentResult, journalResult, lineResult, auditResult, reversalResult] =
     await Promise.all([
+      pool.query<ExpensePaymentRow>(
+        `
+          select
+            ep.id,
+            ep.society_id,
+            ep.transaction_id,
+            ep.bank_account_id,
+            ba.account_name as bank_account_name,
+            ep.payment_date::text,
+            ep.amount::text,
+            ep.mode,
+            ep.reference_number,
+            ep.notes,
+            je.voucher_number as journal_voucher_number,
+            ep.created_by_user_id,
+            creator.full_name as created_by_name,
+            ep.created_at::text,
+            ep.updated_at::text
+          from expense_payments ep
+          left join society_bank_accounts ba on ba.id = ep.bank_account_id
+          left join journal_entries je on je.expense_payment_id = ep.id and je.status = 'POSTED'
+          left join users creator on creator.id = ep.created_by_user_id
+          where ep.transaction_id = $1 and ep.society_id = $2
+          order by ep.payment_date desc, ep.created_at desc
+        `,
+        [id, authMe.user.societyId],
+      ),
       pool.query<AttachmentRow>(
         `
           select
@@ -364,6 +446,7 @@ export default defineEventHandler(async (event) => {
 
   const detail: FinanceTransactionDetail = {
     transaction: mapTransaction(row),
+    expensePayments: expensePaymentResult.rows.map(mapExpensePayment),
     attachments: signedAttachments,
     journals,
     auditEvents: auditResult.rows.map((audit): FinanceAuditEvent => ({

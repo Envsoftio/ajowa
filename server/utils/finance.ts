@@ -6,6 +6,7 @@ import type { AuditAction } from '~/shared/audit'
 import type {
   AccountHead,
   BankAccount,
+  FinancePaymentMode,
   FinanceCategory,
   FinanceJournalEntry,
   FinancialPeriodClose,
@@ -17,6 +18,7 @@ export const accountHeadTypes = ['ASSET', 'LIABILITY', 'INCOME', 'EXPENSE', 'EQU
 export const bankAccountTypes = ['SAVINGS', 'CURRENT', 'CASH_CREDIT', 'OVERDRAFT', 'OTHER'] as const
 export const transactionTypes = ['INCOME', 'EXPENSE'] as const
 export const financeStatuses = ['DRAFT', 'PENDING_REVIEW', 'POSTED', 'REJECTED', 'RETURNED', 'REVERSED', 'CANCELLED'] as const
+export const financePaymentModes = ['CASH', 'BANK_TRANSFER', 'UPI', 'CHEQUE', 'CARD', 'OTHER'] as const
 
 const codeSchema = z
   .string()
@@ -77,6 +79,16 @@ export const categoryUpdateSchema = z.object({
   isActive: z.boolean().optional(),
 })
 
+export const financePaymentModeSchema = z.enum(financePaymentModes)
+
+export const expensePaymentSchema = z.object({
+  bankAccountId: z.string().uuid(),
+  paymentDate: z.string().date(),
+  mode: financePaymentModeSchema,
+  referenceNumber: z.string().trim().max(120).nullable().optional(),
+  notes: z.string().trim().max(1000).nullable().optional(),
+})
+
 export const transactionSchema = z.object({
   transactionType: z.enum(transactionTypes),
   categoryId: z.string().uuid(),
@@ -89,6 +101,7 @@ export const transactionSchema = z.object({
   transactionDate: z.string().date(),
   amount: z.coerce.number().positive(),
   submitForPosting: z.boolean().default(true),
+  payment: expensePaymentSchema.partial().optional(),
 })
 
 export const transactionUpdateSchema = transactionSchema.omit({ submitForPosting: true })
@@ -112,6 +125,7 @@ export type AccountHeadUpdateInput = z.infer<typeof accountHeadUpdateSchema>
 export type BankAccountInput = z.infer<typeof bankAccountSchema>
 export type BankAccountUpdateInput = z.infer<typeof bankAccountUpdateSchema>
 export type CategoryInput = z.infer<typeof categorySchema>
+export type ExpensePaymentInput = z.infer<typeof expensePaymentSchema>
 export type TransactionInput = z.infer<typeof transactionSchema>
 export type TransactionUpdateInput = z.infer<typeof transactionUpdateSchema>
 
@@ -617,6 +631,148 @@ export const postJournalForTransaction = async (
   return entry
 }
 
+export const createExpensePaymentForTransaction = async (
+  client: PoolClient,
+  input: {
+    societyId: string
+    transactionId: string
+    actorUserId: string
+    bankAccountId?: string | null
+    paymentDate?: string | null
+    mode?: FinancePaymentMode | null
+    referenceNumber?: string | null
+    notes?: string | null
+    journalEntryId?: string | null
+  },
+) => {
+  const txResult = await client.query<{
+    id: string
+    transaction_type: 'INCOME' | 'EXPENSE'
+    bank_account_id: string | null
+    transaction_date: string
+    amount: string
+    status: string
+    title: string
+  }>(
+    `
+      select id, transaction_type::text, bank_account_id, transaction_date::text, amount::text, status::text, title
+      from transactions
+      where id = $1 and society_id = $2
+      for update
+    `,
+    [input.transactionId, input.societyId],
+  )
+  const tx = txResult.rows[0]
+  if (!tx) {
+    throw new AppError({ code: 'NOT_FOUND', statusCode: 404, message: 'Expense transaction not found.' })
+  }
+  if (tx.transaction_type !== 'EXPENSE') {
+    throw new AppError({ code: 'VALIDATION_ERROR', statusCode: 400, message: 'Payment records can be added only to expenses.' })
+  }
+  if (tx.status !== 'POSTED') {
+    throw new AppError({ code: 'CONFLICT', statusCode: 409, message: 'Only posted expenses can have payment records.' })
+  }
+
+  const existingPayment = await client.query<{ id: string }>(
+    'select id from expense_payments where transaction_id = $1 limit 1',
+    [input.transactionId],
+  )
+  if (existingPayment.rows[0]) {
+    throw new AppError({ code: 'CONFLICT', statusCode: 409, message: 'A payment record is already linked to this expense.' })
+  }
+
+  const bankAccountId = input.bankAccountId ?? tx.bank_account_id
+  if (!bankAccountId) {
+    throw new AppError({ code: 'VALIDATION_ERROR', statusCode: 400, message: 'Select the paid-from account for this expense payment.' })
+  }
+  if (tx.bank_account_id && bankAccountId !== tx.bank_account_id) {
+    throw new AppError({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message: 'The payment account must match the account used by the posted expense journal.',
+    })
+  }
+
+  const bank = await client.query<{ id: string }>(
+    `
+      select id
+      from society_bank_accounts
+      where id = $1 and society_id = $2
+      limit 1
+    `,
+    [bankAccountId, input.societyId],
+  )
+  const bankRow = bank.rows[0]
+  if (!bankRow) {
+    throw new AppError({ code: 'NOT_FOUND', statusCode: 404, message: 'Paid-from account was not found.' })
+  }
+  const journalResult = await client.query<{ id: string; voucher_number: string; expense_payment_id: string | null }>(
+    `
+      select id, voucher_number, expense_payment_id
+      from journal_entries
+      where transaction_id = $1
+        and society_id = $2
+        and status = 'POSTED'
+        and ($3::uuid is null or id = $3)
+      limit 1
+      for update
+    `,
+    [input.transactionId, input.societyId, input.journalEntryId ?? null],
+  )
+  const journal = journalResult.rows[0]
+  if (!journal) {
+    throw new AppError({ code: 'CONFLICT', statusCode: 409, message: 'Posted expense journal was not found.' })
+  }
+  if (journal.expense_payment_id) {
+    throw new AppError({ code: 'CONFLICT', statusCode: 409, message: 'The posted journal is already linked to a payment record.' })
+  }
+
+  const result = await client.query<{ id: string }>(
+    `
+      insert into expense_payments (
+        society_id,
+        transaction_id,
+        bank_account_id,
+        payment_date,
+        amount,
+        mode,
+        reference_number,
+        notes,
+        created_by_user_id
+      )
+      values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      returning id
+    `,
+    [
+      input.societyId,
+      input.transactionId,
+      bankAccountId,
+      input.paymentDate ?? tx.transaction_date,
+      roundMoney(Number(tx.amount)),
+      input.mode ?? 'BANK_TRANSFER',
+      input.referenceNumber ?? null,
+      input.notes ?? null,
+      input.actorUserId,
+    ],
+  )
+  const paymentId = result.rows[0]?.id
+  if (!paymentId) {
+    throw new AppError({ code: 'INTERNAL_ERROR', statusCode: 500, message: 'Expense payment creation failed.' })
+  }
+
+  await client.query(
+    'update journal_entries set expense_payment_id = $2 where id = $1',
+    [journal.id, paymentId],
+  )
+
+  return {
+    id: paymentId,
+    transactionId: input.transactionId,
+    amount: roundMoney(Number(tx.amount)),
+    journalVoucherNumber: journal.voucher_number,
+  }
+}
+
 export const createFinanceTransaction = async (
   client: PoolClient,
   input: Omit<TransactionInput, 'submitForPosting'> & {
@@ -685,7 +841,7 @@ export const createFinanceTransaction = async (
   }
 
   if (input.submitForPosting !== false) {
-    await postJournalForTransaction(client, {
+    const journal = await postJournalForTransaction(client, {
       societyId: input.societyId,
       transactionId,
       transactionType: input.transactionType,
@@ -697,6 +853,20 @@ export const createFinanceTransaction = async (
       description: input.description ?? input.title,
       postedByUserId: input.actorUserId,
     })
+
+    if (input.transactionType === 'EXPENSE') {
+      await createExpensePaymentForTransaction(client, {
+        societyId: input.societyId,
+        transactionId,
+        actorUserId: input.actorUserId,
+        bankAccountId: input.payment?.bankAccountId ?? input.bankAccountId,
+        paymentDate: input.payment?.paymentDate ?? input.transactionDate,
+        mode: input.payment?.mode ?? 'BANK_TRANSFER',
+        referenceNumber: input.payment?.referenceNumber ?? input.voucherNumber ?? null,
+        notes: input.payment?.notes ?? null,
+        journalEntryId: journal.id,
+      })
+    }
 
     return { id: transactionId, status: 'POSTED' }
   }
@@ -736,7 +906,7 @@ export const approveFinanceTransaction = async (
     throw new AppError({ code: 'CONFLICT', statusCode: 409, message: 'Only draft, returned, or pending transactions can be approved.' })
   }
 
-  await postJournalForTransaction(client, {
+  const journal = await postJournalForTransaction(client, {
     societyId: input.societyId,
     transactionId: tx.id,
     transactionType: tx.transaction_type,
@@ -748,6 +918,20 @@ export const approveFinanceTransaction = async (
     description: tx.description ?? tx.title,
     postedByUserId: input.actorUserId,
   })
+
+  if (tx.transaction_type === 'EXPENSE') {
+    await createExpensePaymentForTransaction(client, {
+      societyId: input.societyId,
+      transactionId: tx.id,
+      actorUserId: input.actorUserId,
+      bankAccountId: tx.bank_account_id,
+      paymentDate: tx.transaction_date,
+      mode: 'BANK_TRANSFER',
+      referenceNumber: null,
+      notes: null,
+      journalEntryId: journal.id,
+    })
+  }
 }
 
 export const reverseFinanceTransaction = async (
