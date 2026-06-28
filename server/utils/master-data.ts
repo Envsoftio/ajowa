@@ -3,7 +3,7 @@ import { z } from 'zod'
 import type { PoolClient } from 'pg'
 import { AppError } from './errors'
 import { getListQueryParams, getPaginationParams, validateInput } from './api'
-import { writeAuditEvent, resolveAuditSeverity } from './audit'
+import { queueAuditEvent, resolveAuditSeverity } from './audit'
 import { getEventQuery, getEventRouterParam } from './http-event'
 import type { AuditAction } from '~/shared/audit'
 import type { SocietyPolicySettings } from '~/types/domain'
@@ -371,7 +371,6 @@ export const ensureResidentRelationshipsAreValid = (input: {
 }
 
 export const writeMasterAudit = async ({
-  client,
   event,
   actorUserId,
   actorAuthUserId,
@@ -401,8 +400,8 @@ export const writeMasterAudit = async ({
   targetUserId?: string
   flatId?: string
 }) =>
-  writeAuditEvent(client, event, {
-    module: 'MASTER',
+  queueAuditEvent(event, {
+    module: resolveMasterAuditModule(eventKey),
     eventKey,
     action,
     severity: resolveAuditSeverity(action),
@@ -415,6 +414,23 @@ export const writeMasterAudit = async ({
     ...(afterState !== undefined ? { afterState } : {}),
     relatedEntities,
   })
+
+const resolveMasterAuditModule = (eventKey: string) => {
+  if (
+    eventKey.startsWith('billing') ||
+    eventKey.startsWith('maintenance_due') ||
+    eventKey.startsWith('maintenance_dues') ||
+    eventKey.startsWith('cam_advance')
+  ) {
+    return 'BILLING'
+  }
+
+  if (eventKey.startsWith('access')) {
+    return 'ACCESS'
+  }
+
+  return 'MASTER'
+}
 
 export const validatePayload = <T>(
   schema: z.ZodType<T, z.ZodTypeDef, unknown>,

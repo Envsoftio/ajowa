@@ -1,7 +1,7 @@
 import type { H3Event } from 'h3'
 import type { PoolClient } from 'pg'
 import { z } from 'zod'
-import { writeAuditEvent, resolveAuditSeverity } from './audit'
+import { queueAuditEvent, resolveAuditSeverity } from './audit'
 import type { AuditAction } from '~/shared/audit'
 import type {
   AccountHead,
@@ -1069,7 +1069,6 @@ export const computePeriodCloseSummary = async (
 }
 
 export const writeFinanceAudit = async ({
-  client,
   event,
   societyId,
   actorUserId,
@@ -1097,7 +1096,7 @@ export const writeFinanceAudit = async ({
     entityLabel?: string
   }>
 }) =>
-  writeAuditEvent(client, event, {
+  queueAuditEvent(event, {
     module: 'FINANCE',
     eventKey,
     action,

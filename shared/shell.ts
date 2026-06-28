@@ -146,6 +146,7 @@ export const shellNavigation: Record<AppShellType, AppNavGroup[]> = {
       icon: 'pi pi-cog',
       items: [
         { label: 'Gate Log', to: '/admin/gate-log', icon: 'pi pi-qrcode' },
+        { label: 'Audit Log', to: '/admin/audit', icon: 'pi pi-history' },
         { label: 'Password Change', to: '/change-password', icon: 'pi pi-key' },
       ],
     },

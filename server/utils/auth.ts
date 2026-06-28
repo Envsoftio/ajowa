@@ -33,6 +33,8 @@ type AuthSessionResult = Awaited<
   ReturnType<ReturnType<typeof betterAuth>['api']['getSession']>
 >
 
+const AUTH_CONTEXT_KEY = 'ajowa:auth-me'
+
 type AppUserRow = {
   id: string
   society_id: string
@@ -694,19 +696,28 @@ export const getAuthSession = async (event: H3Event) => {
 export const getOptionalAuth = async (
   event: H3Event,
 ): Promise<AuthMe | null> => {
+  const context = event.context as Record<string, unknown>
+  if (AUTH_CONTEXT_KEY in context) {
+    return (context[AUTH_CONTEXT_KEY] as AuthMe | null) ?? null
+  }
+
   const session = await getAuthSession(event)
 
   if (!session) {
+    context[AUTH_CONTEXT_KEY] = null
     return null
   }
 
   const appState = await loadAppUserByAuthUserId(session.user.id)
 
   if (!appState) {
+    context[AUTH_CONTEXT_KEY] = null
     return null
   }
 
-  return buildAuthMe(session, appState)
+  const authMe = buildAuthMe(session, appState)
+  context[AUTH_CONTEXT_KEY] = authMe
+  return authMe
 }
 
 export const requireAuth = async (event: H3Event) => {

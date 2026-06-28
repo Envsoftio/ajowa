@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { AppError } from './errors'
 import { getDatabasePool } from './database'
 import { buildAppUrl, sendEmail } from './email'
-import { writeAuditEvent } from './audit'
+import { queueAuditEvent } from './audit'
 import {
   buildReport,
   mapSharedTypeToReportType,
@@ -357,7 +357,7 @@ export const createSharedReportLink = async (event: H3Event, authMe: AuthMe, inp
     shareId = inserted.rows[0]?.id ?? ''
     if (!shareId) throw new Error('Shared report link was not created.')
 
-    await writeAuditEvent(client, event, {
+    queueAuditEvent(event, {
       module: 'REPORT',
       eventKey: 'shared_report.created',
       action: 'CREATED',
@@ -422,7 +422,7 @@ export const revokeSharedReportLink = async (event: H3Event, authMe: AuthMe, sha
       `,
       [shareId, authMe.user.id, reason ?? null],
     )
-    await writeAuditEvent(client, event, {
+    queueAuditEvent(event, {
       module: 'REPORT',
       eventKey: 'shared_report.revoked',
       action: 'STATE_CHANGED',
