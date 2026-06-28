@@ -56,7 +56,7 @@ const query = reactive({
   entityId: '',
   eventKey: '',
   path: '',
-  auditType: 'domain',
+  auditType: '',
   dateFrom: '',
   dateTo: '',
 })
@@ -220,7 +220,7 @@ const clearFilters = () => {
   query.entityId = ''
   query.eventKey = ''
   query.path = ''
-  query.auditType = 'domain'
+  query.auditType = ''
   query.dateFrom = ''
   query.dateTo = ''
   query.page = 1
