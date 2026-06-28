@@ -14,6 +14,7 @@ type NotificationTemplateName =
   | 'due-overdue'
   | 'payment-received'
   | 'receipt-ready'
+  | 'report-shared'
   | 'qr-generated'
   | 'qr-revoked'
   | 'ticket-update'

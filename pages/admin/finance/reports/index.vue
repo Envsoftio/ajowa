@@ -32,7 +32,8 @@ const { formatMoney, formatDate, formatDateTime } = useFinanceFormatters()
 
 const reportOptions = [
   { label: 'Expense summary', value: 'expense-summary', excel: true },
-  { label: 'Income and expense', value: 'income-expense', excel: true },
+  { label: 'Income transactions', value: 'income-only', excel: true },
+  { label: 'Expense transactions', value: 'expense-only', excel: true },
   { label: 'Category expenses', value: 'category-expense', excel: true },
   { label: 'Vendor expenses', value: 'vendor-expense', excel: true },
   { label: 'Missing attachments', value: 'attachment-missing', excel: true },
@@ -51,21 +52,65 @@ const toInputDate = (date: Date) =>
 const firstDay = toInputDate(new Date(today.getFullYear(), today.getMonth() - 11, 1))
 const lastDay = toInputDate(new Date(today.getFullYear(), today.getMonth() + 1, 0))
 
-const filters = reactive({
+type CalendarPeriodMode = 'MONTHLY' | 'QUARTERLY' | 'HALF_YEARLY' | 'YEARLY'
+
+const filters = reactive<{
+  reportType: string
+  periodMode: CalendarPeriodMode | 'CUSTOM'
+  startDate: string
+  endDate: string
+  flatId: string | null
+  ownerUserId: string | null
+  categoryId: string | null
+  status: string
+  search: string
+}>({
   reportType: 'expense-summary',
   periodMode: 'YEARLY',
   startDate: firstDay,
   endDate: lastDay,
   flatId: null as string | null,
   ownerUserId: null as string | null,
+  categoryId: null as string | null,
   status: '',
   search: '',
 })
 
+const setRangeByPeriodMode = (periodMode: CalendarPeriodMode) => {
+  const currentMonthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+  const targets: Record<CalendarPeriodMode, [Date, Date]> = {
+    MONTHLY: [new Date(currentMonthStart), new Date(currentMonthStart.getFullYear(), currentMonthStart.getMonth() + 1, 0)],
+    QUARTERLY: [
+      new Date(currentMonthStart.getFullYear(), currentMonthStart.getMonth() - 2, 1),
+      new Date(currentMonthStart.getFullYear(), currentMonthStart.getMonth() + 1, 0),
+    ],
+    HALF_YEARLY: [
+      new Date(currentMonthStart.getFullYear(), currentMonthStart.getMonth() - 5, 1),
+      new Date(currentMonthStart.getFullYear(), currentMonthStart.getMonth() + 1, 0),
+    ],
+    YEARLY: [
+      new Date(currentMonthStart.getFullYear(), currentMonthStart.getMonth() - 11, 1),
+      new Date(currentMonthStart.getFullYear(), currentMonthStart.getMonth() + 1, 0),
+    ],
+  }
+
+  const [startDate, endDate] = targets[periodMode]
+  filters.startDate = toInputDate(startDate)
+  filters.endDate = toInputDate(endDate)
+}
+
+watch(() => filters.periodMode, (periodMode) => {
+  if (periodMode === 'CUSTOM') return
+  setRangeByPeriodMode(periodMode)
+})
+
+const showFlatFilter = computed(() => ['collection', 'defaulter', 'resident-payment-ledger'].includes(filters.reportType))
+const showOwnerFilter = computed(() => filters.reportType === 'resident-payment-ledger')
+
 const query = computed(() => ({
   ...filters,
-  flatId: filters.flatId ?? undefined,
-  ownerUserId: filters.ownerUserId ?? undefined,
+  flatId: showFlatFilter.value ? filters.flatId ?? undefined : undefined,
+  ownerUserId: showOwnerFilter.value ? filters.ownerUserId ?? undefined : undefined,
   status: filters.status || undefined,
   search: filters.search || undefined,
 }))
@@ -267,11 +312,11 @@ const exportUrl = (format: 'pdf' | 'xlsx') => {
           <span>End</span>
           <InputText v-model="filters.endDate" type="date" />
         </label>
-        <label>
+        <label v-if="showFlatFilter">
           <span>Flat</span>
           <Select v-model="filters.flatId" :options="flatOptions" option-label="label" option-value="value" show-clear filter />
         </label>
-        <label>
+        <label v-if="showOwnerFilter">
           <span>Owner</span>
           <Select v-model="filters.ownerUserId" :options="ownerOptions" option-label="label" option-value="value" show-clear filter />
         </label>
@@ -362,7 +407,7 @@ const exportUrl = (format: 'pdf' | 'xlsx') => {
         </table>
       </div>
 
-      <AppDataTable v-else :value="rows" :loading="pending" responsive-layout="scroll" class="list-page__table" scrollable scroll-height="32rem">
+      <AppDataTable :value="rows" :loading="pending" responsive-layout="scroll" class="list-page__table" scrollable scroll-height="32rem">
         <Column v-for="column in columns" :key="column.key" :field="column.key" :header="column.label">
           <template #body="{ data: row }">
             {{ formatCell(column, row[column.key]) }}

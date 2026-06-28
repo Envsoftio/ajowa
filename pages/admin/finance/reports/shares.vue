@@ -34,8 +34,20 @@ const toast = useToast()
 const { reasonDialog, requestReason, acceptReason, cancelReason } = useAppReasonDialog()
 const { formatDate, formatDateTime } = useFinanceFormatters()
 
-const statusFilter = ref('')
-const query = computed(() => ({ status: statusFilter.value || undefined }))
+const statusFilter = ref('ALL')
+const query = computed(() => ({ status: statusFilter.value === 'ALL' ? undefined : statusFilter.value || undefined }))
+const startOfMonthDate = () => {
+  const today = new Date()
+  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-01`
+}
+
+const endOfMonthDate = () => {
+  const today = new Date()
+  const end = new Date(today.getFullYear(), today.getMonth() + 1, 0)
+  return `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, '0')}-${String(end.getDate()).padStart(2, '0')}`
+}
+const shareStartDate = startOfMonthDate()
+const shareEndDate = endOfMonthDate()
 
 const [
   sharesAsyncData,
@@ -63,7 +75,7 @@ const shares = computed(() => data.value?.data ?? [])
 const flats = computed(() => flatsData.value?.data.items ?? [])
 const owners = computed(() => ownersData.value?.data.items ?? [])
 const statusOptions = [
-  { label: 'All', value: '' },
+  { label: 'All', value: 'ALL' },
   { label: 'Active', value: 'ACTIVE' },
   { label: 'Expired', value: 'EXPIRED' },
   { label: 'Revoked', value: 'REVOKED' },
@@ -111,10 +123,60 @@ const regenerate = async (share: SharedReport) => {
   })
   await refresh()
 }
+
+const copyShare = async (share: SharedReport) => {
+  const response = await api<RegenerateResponse>(`/api/reports/shares/${share.id}/copy`, {
+    method: 'POST',
+  })
+  await navigator.clipboard?.writeText(response.data.link)
+  toast.add({
+    severity: response.data.deliveryFailure ? 'warn' : 'success',
+    summary: 'Shared link copied',
+    detail: response.data.deliveryFailure ?? 'Copied to clipboard',
+    life: 10000,
+  })
+  await refresh()
+}
+
+const sendShareEmail = async (share: SharedReport) => {
+  const response = await api<RegenerateResponse>(`/api/reports/shares/${share.id}/send`, {
+    method: 'POST',
+  })
+  toast.add({
+    severity: response.data.deliveryFailure ? 'warn' : 'success',
+    summary: 'Report sent',
+    detail: response.data.deliveryFailure ?? 'Report link has been sent to owner email.',
+    life: 10000,
+  })
+  await refresh()
+}
+
+const removeShare = async (share: SharedReport) => {
+  const reason = await requestReason({
+    header: 'Delete shared report?',
+    message: `Delete the ${share.reportTypeLabel} link for ${share.ownerName}? This cannot be undone.`,
+    acceptLabel: 'Delete',
+    acceptSeverity: 'danger',
+    placeholder: 'Reason for deletion',
+  })
+
+  if (reason === null) {
+    return
+  }
+
+  await api(`/api/reports/shares/${share.id}/hard`, {
+    method: 'DELETE',
+    body: { reason },
+  })
+  toast.add({ severity: 'success', summary: 'Deleted', detail: 'Shared report deleted.', life: 10000 })
+  await refresh()
+}
 </script>
 
 <template>
   <div class="landing-page shared-report-admin-page">
+    <SharedReportLinkPanel :owners="owners" :flats="flats" :start-date="shareStartDate" :end-date="shareEndDate" @created="refresh" />
+
     <section class="list-page surface-card">
       <header class="list-page__header">
         <div>
@@ -168,7 +230,10 @@ const regenerate = async (share: SharedReport) => {
         <Column header="Actions">
           <template #body="{ data: row }">
             <div class="list-page__exports">
-              <Button icon="pi pi-send" severity="secondary" outlined title="Regenerate" @click="regenerate(row)" />
+              <Button icon="pi pi-refresh" severity="secondary" outlined title="Regenerate" @click="regenerate(row)" />
+              <Button icon="pi pi-envelope" severity="secondary" outlined title="Send email" @click="sendShareEmail(row)" />
+              <Button icon="pi pi-copy" severity="secondary" outlined title="Copy" @click="copyShare(row)" />
+              <Button icon="pi pi-trash" severity="danger" outlined title="Delete" @click="removeShare(row)" />
               <Button
                 icon="pi pi-ban"
                 severity="danger"
@@ -182,8 +247,6 @@ const regenerate = async (share: SharedReport) => {
         </Column>
       </AppDataTable>
     </section>
-
-    <SharedReportLinkPanel :owners="owners" :flats="flats" :start-date="new Date().toISOString().slice(0, 10)" :end-date="new Date().toISOString().slice(0, 10)" @created="refresh" />
 
     <AppReasonDialog
       v-model:visible="reasonDialog.visible"

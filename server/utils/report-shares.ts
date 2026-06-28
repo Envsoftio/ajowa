@@ -3,7 +3,7 @@ import type { H3Event } from 'h3'
 import { z } from 'zod'
 import { AppError } from './errors'
 import { getDatabasePool } from './database'
-import { buildAppUrl, sendEmail } from './email'
+import { buildAppUrl, sendNotificationEmail } from './email'
 import { queueAuditEvent } from './audit'
 import {
   buildReport,
@@ -47,6 +47,7 @@ export type SharedReportLinkSummary = {
 
 type ShareRow = {
   id: string
+  token_hash: string
   society_id: string
   owner_user_id: string
   owner_name: string
@@ -71,6 +72,7 @@ type ShareRow = {
   created_by_name: string | null
   created_at: string
   note: string | null
+  metadata: Record<string, unknown>
 }
 
 export const createShareSchema = z.object({
@@ -128,6 +130,7 @@ const mapShareRow = (row: ShareRow): SharedReportLinkSummary => ({
 
 const shareSelect = `
   srl.id,
+  srl.token_hash,
   srl.society_id,
   srl.owner_user_id,
   owner.full_name as owner_name,
@@ -151,8 +154,45 @@ const shareSelect = `
   srl.created_by_user_id,
   creator.full_name as created_by_name,
   srl.created_at::text,
-  srl.note
+  srl.note,
+  srl.metadata
 `
+
+const getStoredShareToken = (share: ShareRow): string | null => {
+  const token = share.metadata?.token
+  if (typeof token === 'string' && token.trim().length > 0) {
+    return token
+  }
+  return null
+}
+
+const ensureShareToken = async (share: ShareRow) => {
+  const storedToken = getStoredShareToken(share)
+
+  if (storedToken && hashToken(storedToken) === share.token_hash) {
+    return { share, token: storedToken }
+  }
+
+  const token = generateShareToken()
+  const tokenHash = hashToken(token)
+
+  await getDatabasePool().query(
+    `
+      update shared_report_links
+      set token_hash = $1,
+          metadata = coalesce(metadata, '{}'::jsonb) || jsonb_build_object('token', $2)
+      where id = $3
+    `,
+    [tokenHash, token, share.id],
+  )
+
+  const refreshed = await loadShareById(share.society_id, share.id)
+  if (!refreshed) {
+    throw new Error('Shared report link could not be loaded.')
+  }
+
+  return { share: refreshed, token }
+}
 
 const shareJoins = `
   join users owner on owner.id = srl.owner_user_id
@@ -239,11 +279,21 @@ const deliverShare = async (share: ShareRow, token: string, requestedChannels: D
   let deliveredAt: string | null = null
 
   if (requestedChannels.includes('EMAIL')) {
-    const response = await sendEmail({
+    const response = await sendNotificationEmail({
       to: share.owner_email,
       subject: `${sharedReportTypeLabels[share.report_type]} shared with you`,
-      html: `<p>Hello ${share.owner_name},</p><p>A secure finance report is available until ${share.expires_at}.</p><p><a href="${link}">Open shared report</a></p>`,
-      text: `Hello ${share.owner_name},\n\nOpen your secure finance report: ${link}\n\nThis link expires at ${share.expires_at}.`,
+      template: 'report-shared',
+      context: {
+        title: `${sharedReportTypeLabels[share.report_type]} Report`,
+        body: `A secure finance report has been shared with you. The link is valid until ${share.expires_at}.`,
+        actionUrl: link,
+        actionLabel: 'Open shared report',
+        ownerName: share.owner_name,
+        reportType: sharedReportTypeLabels[share.report_type],
+        flatLabel: share.flat_label ?? 'N/A',
+        periodLabel: `${share.start_date} to ${share.end_date}`,
+        expiresAt: share.expires_at,
+      },
       societyId: share.society_id,
     })
     if (response.delivered) {
@@ -351,6 +401,7 @@ export const createSharedReportLink = async (event: H3Event, authMe: AuthMe, inp
           reportTypeLabel: sharedReportTypeLabels[input.reportType],
           flatLabel: ownerFlat.flat_label,
           similarActiveShareId,
+          token,
         }),
       ],
     )
@@ -402,6 +453,97 @@ export const createSharedReportLink = async (event: H3Event, authMe: AuthMe, inp
   }
 }
 
+export const copySharedReportLink = async (event: H3Event, authMe: AuthMe, shareId: string) => {
+  const share = await loadShareById(authMe.user.societyId, shareId)
+  if (!share) {
+    throw new AppError({ code: 'NOT_FOUND', statusCode: 404, message: 'Shared report link not found.' })
+  }
+
+  if (share.revoked_at) {
+    throw new AppError({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message: 'Cannot copy a revoked shared report.',
+    })
+  }
+
+  if (share.consumed_at && share.one_time_access) {
+    return createSharedReportLink(event, authMe, {
+      ownerUserId: share.owner_user_id,
+      flatId: share.flat_id,
+      reportType: share.report_type,
+      startDate: share.start_date,
+      endDate: share.end_date,
+      expiresAt: share.expires_at,
+      oneTimeAccess: share.one_time_access,
+      note: share.note,
+      deliveryChannels: ['COPY_LINK'],
+    })
+  }
+
+  if (resolveStatus(share) !== 'ACTIVE') {
+    throw new AppError({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message: 'Only active shares can be copied.',
+    })
+  }
+
+  const { share: shareWithToken, token: activeToken } = await ensureShareToken(share)
+  return {
+    link: buildAppUrl(`/shared/report/${activeToken}`),
+    share: mapShareRow(shareWithToken),
+    deliveryFailure: null,
+  }
+}
+
+export const emailSharedReportLink = async (event: H3Event, authMe: AuthMe, shareId: string) => {
+  const share = await loadShareById(authMe.user.societyId, shareId)
+  if (!share) {
+    throw new AppError({ code: 'NOT_FOUND', statusCode: 404, message: 'Shared report link not found.' })
+  }
+
+  if (share.revoked_at) {
+    throw new AppError({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message: 'Cannot email a revoked shared report.',
+    })
+  }
+
+  if (share.consumed_at && share.one_time_access) {
+    return createSharedReportLink(event, authMe, {
+      ownerUserId: share.owner_user_id,
+      flatId: share.flat_id,
+      reportType: share.report_type,
+      startDate: share.start_date,
+      endDate: share.end_date,
+      expiresAt: share.expires_at,
+      oneTimeAccess: share.one_time_access,
+      note: share.note,
+      deliveryChannels: ['EMAIL'],
+    })
+  }
+
+  if (resolveStatus(share) !== 'ACTIVE') {
+    throw new AppError({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message: 'Only active shares can be sent by email.',
+    })
+  }
+
+  const { share: shareWithToken, token: activeToken } = await ensureShareToken(share)
+  const delivery = await deliverShare(shareWithToken, activeToken, ['EMAIL'])
+  const refreshed = await loadShareById(authMe.user.societyId, share.id)
+
+  return {
+    share: mapShareRow(refreshed ?? share),
+    link: delivery.link,
+    deliveryFailure: delivery.deliveryFailure,
+  }
+}
+
 export const revokeSharedReportLink = async (event: H3Event, authMe: AuthMe, shareId: string, reason?: string | null) => {
   const share = await loadShareById(authMe.user.societyId, shareId)
   if (!share) {
@@ -445,6 +587,60 @@ export const revokeSharedReportLink = async (event: H3Event, authMe: AuthMe, sha
   }
 
   return mapShareRow((await loadShareById(authMe.user.societyId, shareId)) ?? share)
+}
+
+export const deleteSharedReportLink = async (event: H3Event, authMe: AuthMe, shareId: string, reason?: string | null) => {
+  const share = await loadShareById(authMe.user.societyId, shareId)
+  if (!share) {
+    throw new AppError({ code: 'NOT_FOUND', statusCode: 404, message: 'Shared report link not found.' })
+  }
+
+  const client = await getDatabasePool().connect()
+  try {
+    await client.query('begin')
+
+    const deleteResult = await client.query<{ id: string }>(
+      `
+        delete from shared_report_links
+        where society_id = $1 and id = $2
+        returning id
+      `,
+      [authMe.user.societyId, shareId],
+    )
+
+    if (!deleteResult.rows[0]?.id) {
+      throw new AppError({ code: 'NOT_FOUND', statusCode: 404, message: 'Shared report link not found.' })
+    }
+
+    queueAuditEvent(event, {
+      module: 'REPORT',
+      eventKey: 'shared_report.deleted',
+      action: 'DELETED',
+      severity: 'HIGH',
+      actorUserId: authMe.user.id,
+      actorAuthUserId: authMe.authUser.id,
+      targetUserId: share.owner_user_id,
+      metadata: {
+        reason: reason ?? null,
+        reportType: share.report_type,
+        startDate: share.start_date,
+        endDate: share.end_date,
+      },
+      relatedEntities: [
+        { entityTable: 'society_profile', entityId: authMe.user.societyId },
+        { entityTable: 'shared_report_links', entityId: shareId },
+      ],
+    })
+
+    await client.query('commit')
+  } catch (error) {
+    await client.query('rollback')
+    throw error
+  } finally {
+    client.release()
+  }
+
+  return { deleted: true, id: shareId }
 }
 
 export const regenerateSharedReportLink = async (event: H3Event, authMe: AuthMe, shareId: string) => {

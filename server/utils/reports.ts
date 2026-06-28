@@ -6,6 +6,8 @@ import { createPdfBuffer, getSocietyStampImage } from './pdf'
 
 export const reportTypes = [
   'expense-summary',
+  'income-only',
+  'expense-only',
   'resident-payment-ledger',
   'collection',
   'defaulter',
@@ -83,6 +85,8 @@ const sharedReportTypeSchema = z.enum(sharedReportTypes)
 
 export const reportLabels: Record<ReportType, string> = {
   'expense-summary': 'Expense Summary',
+  'income-only': 'Income Transactions',
+  'expense-only': 'Expense Transactions',
   'resident-payment-ledger': 'Resident Payment Ledger',
   collection: 'Collection Report',
   defaulter: 'Defaulter List',
@@ -216,8 +220,8 @@ export const parseReportFilters = (
 export const parseSharedReportType = (value: unknown): SharedReportType => sharedReportTypeSchema.parse(value)
 
 export const mapSharedTypeToReportType = (reportType: SharedReportType): ReportType => {
-  if (reportType === 'INCOME_SUMMARY') return 'income-expense'
-  if (reportType === 'EXPENSE_SUMMARY') return 'income-expense'
+  if (reportType === 'INCOME_SUMMARY') return 'income-only'
+  if (reportType === 'EXPENSE_SUMMARY') return 'expense-only'
   if (reportType === 'INCOME_VS_EXPENSE') return 'income-expense'
   if (reportType === 'CATEGORY_EXPENSE_SUMMARY') return 'category-expense'
   return 'profit-loss'
@@ -413,9 +417,11 @@ const buildFinanceTransactionReport = async ({ societyId, filters, exportMode }:
   params.push(withLimit(filters, exportMode))
   const reportMode = filters.reportType
   const typeFilter =
-    reportMode === 'category-expense' || reportMode === 'vendor-expense' || reportMode === 'attachment-missing'
-      ? "and t.transaction_type = 'EXPENSE'"
-      : ''
+    reportMode === 'income-only'
+      ? "and t.transaction_type = 'INCOME'"
+      : reportMode === 'expense-only' || reportMode === 'category-expense' || reportMode === 'vendor-expense' || reportMode === 'attachment-missing'
+        ? "and t.transaction_type = 'EXPENSE'"
+        : ''
   const statusFilter =
     reportMode === 'pending-review'
       ? "and t.status in ('PENDING_REVIEW', 'REJECTED', 'RETURNED')"
@@ -534,6 +540,21 @@ const buildFinanceTransactionReport = async ({ societyId, filters, exportMode }:
   }))
   const income = rows.filter((row) => row.transactionType === 'INCOME').reduce((sum, row) => sum + Number(row.amount), 0)
   const expense = rows.filter((row) => row.transactionType === 'EXPENSE').reduce((sum, row) => sum + Number(row.amount), 0)
+  const summary =
+    reportMode === 'income-only'
+      ? { totalIncome: income, entryCount: rows.length }
+      : reportMode === 'expense-only'
+        ? { totalExpense: expense, entryCount: rows.length }
+        : { totalIncome: income, totalExpense: expense, netAmount: income - expense, entryCount: rows.length }
+  const chart =
+    reportMode === 'income-only'
+      ? [{ label: 'Income', value: income, color: chartColor(0) }]
+      : reportMode === 'expense-only'
+        ? [{ label: 'Expense', value: expense, color: chartColor(1) }]
+        : [
+            { label: 'Income', value: income, color: chartColor(0) },
+            { label: 'Expense', value: expense, color: chartColor(1) },
+          ]
 
   return {
     columns: [
@@ -548,16 +569,8 @@ const buildFinanceTransactionReport = async ({ societyId, filters, exportMode }:
       { key: 'attachmentCount', label: 'Files', type: 'number' },
     ] satisfies ReportColumn[],
     rows,
-    summary: {
-      totalIncome: income,
-      totalExpense: expense,
-      netAmount: income - expense,
-      entryCount: rows.length,
-    },
-    chart: [
-      { label: 'Income', value: income, color: chartColor(0) },
-      { label: 'Expense', value: expense, color: chartColor(1) },
-    ],
+    summary,
+    chart,
   }
 }
 
@@ -989,7 +1002,7 @@ const buildPayload = async (context: ReportQueryContext): Promise<ReportPayload>
   if (context.filters.reportType === 'defaulter') return buildDefaulterReport(context)
   if (context.filters.reportType === 'profit-loss') return buildProfitLossReport(context)
   if (
-    ['income-expense', 'category-expense', 'vendor-expense', 'attachment-missing', 'pending-review'].includes(
+    ['income-expense', 'income-only', 'expense-only', 'category-expense', 'vendor-expense', 'attachment-missing', 'pending-review'].includes(
       context.filters.reportType,
     )
   ) {

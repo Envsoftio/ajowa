@@ -1,0 +1,40 @@
+{{> header title=title eyebrow="Shared Report" subtitle="Your finance report is ready to view."}}
+
+<p style="margin: 0 0 18px; color: #52606d; font-size: 15px; line-height: 1.7;">
+  Hello {{ownerName}},
+</p>
+<p style="margin: 0 0 20px; color: #52606d; font-size: 15px; line-height: 1.7;">
+  {{body}}
+</p>
+
+<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin: 24px 0; border: 1px solid #d9e5e2; border-radius: 8px; background: #f8fbfa;">
+  <tr>
+    <td style="padding: 12px 22px; border-top: 1px solid #d9e5e2; color: #607080; font-size: 13px;">Report type</td>
+    <td align="right" style="padding: 12px 22px; border-top: 1px solid #d9e5e2; color: #102033; font-size: 14px; font-weight: 700;">{{reportType}}</td>
+  </tr>
+  <tr>
+    <td style="padding: 12px 22px; border-top: 1px solid #d9e5e2; color: #607080; font-size: 13px;">Flat</td>
+    <td align="right" style="padding: 12px 22px; border-top: 1px solid #d9e5e2; color: #102033; font-size: 14px; font-weight: 700;">{{flatLabel}}</td>
+  </tr>
+  <tr>
+    <td style="padding: 12px 22px; border-top: 1px solid #d9e5e2; color: #607080; font-size: 13px;">Period</td>
+    <td align="right" style="padding: 12px 22px; border-top: 1px solid #d9e5e2; color: #102033; font-size: 14px; font-weight: 700;">{{periodLabel}}</td>
+  </tr>
+  <tr>
+    <td style="padding: 12px 22px; border-top: 1px solid #d9e5e2; color: #607080; font-size: 13px;">Link expiry</td>
+    <td align="right" style="padding: 12px 22px; border-top: 1px solid #d9e5e2; color: #102033; font-size: 14px; font-weight: 700;">{{expiresAt}}</td>
+  </tr>
+</table>
+
+{{#if actionUrl}}
+  <p style="margin: 28px 0 0;">
+    <a
+      href="{{actionUrl}}"
+      style="display: inline-block; padding: 14px 22px; border-radius: 8px; background: #0f766e; color: #ffffff; font-size: 14px; font-weight: 700; text-decoration: none;"
+    >
+      {{#if actionLabel}}{{actionLabel}}{{else}}Open shared report{{/if}}
+    </a>
+  </p>
+{{/if}}
+
+{{> footer}}
