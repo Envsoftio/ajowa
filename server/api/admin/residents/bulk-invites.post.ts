@@ -18,6 +18,7 @@ import {
   type PendingInviteEmail,
 } from '~/server/utils/invite-email'
 import { writeMasterAudit } from '~/server/utils/master-data'
+import { resolveAuthUserForResidentLogin } from '~/server/utils/resident-login'
 
 const schema = z.object({
   search: z.string().trim().max(120).optional().default(''),
@@ -34,9 +35,9 @@ const schema = z.object({
 
 type BulkInviteResidentRow = {
   id: string
-  auth_user_id: string
+  auth_user_id: string | null
   full_name: string
-  email: string
+  email: string | null
   mobile_number: string | null
   role: string
   relationship_type: string | null
@@ -45,6 +46,25 @@ type BulkInviteResidentRow = {
 }
 
 const EMAIL_BATCH_SIZE = 5
+const emailSchema = z.string().trim().email()
+
+const sourceEmailSql = `
+  (
+    select btrim(source_fr.import_metadata #>> '{sourceData,EMAIL ID}')
+    from flat_residents source_fr
+    where source_fr.user_id = u.id
+      and source_fr.import_metadata->>'relationshipSource' in ('OWNER', 'TENANT')
+      and upper(coalesce(btrim(source_fr.import_metadata #>> '{sourceData,EMAIL ID}'), '')) not in ('', 'NA', 'N/A', '--', 'NIL')
+    order by
+      case source_fr.import_metadata->>'relationshipSource'
+        when 'OWNER' then 0
+        when 'TENANT' then 1
+        else 2
+      end,
+      source_fr.created_at
+    limit 1
+  )
+`
 
 const sendInviteEmails = async (
   event: Parameters<typeof sendInviteEmailSafely>[0],
@@ -132,9 +152,12 @@ export default defineEventHandler(async (event) => {
 
   const whereSql = where.join(' and ')
   let committed = false
-  let pendingInviteEmails: PendingInviteEmail[] = []
-  let totalMatching = 0
-  let skippedMissingLoginIdentity = 0
+  const pendingInviteEmails: PendingInviteEmail[] = []
+  let totalMatching: number
+  let skippedMissingLoginIdentity: number
+  let skippedInvalidLoginIdentity = 0
+  let skippedDuplicateLoginIdentity = 0
+  const processedEmails = new Set<string>()
 
   try {
     await client.query('begin')
@@ -146,7 +169,7 @@ export default defineEventHandler(async (event) => {
       `
         select
           count(*)::text as total_matching,
-          count(*) filter (where u.auth_user_id is null or u.email is null)::text as missing_login_identity
+          count(*) filter (where coalesce(u.email::text, ${sourceEmailSql}) is null)::text as missing_login_identity
         from users u
         where ${whereSql}
       `,
@@ -164,7 +187,7 @@ export default defineEventHandler(async (event) => {
           u.id,
           u.auth_user_id::text,
           u.full_name,
-          u.email::text,
+          coalesce(u.email::text, ${sourceEmailSql}) as email,
           u.mobile_number,
           u.role::text,
           (
@@ -186,8 +209,7 @@ export default defineEventHandler(async (event) => {
         left join flats f on f.id = fr.flat_id
         left join blocks b on b.id = f.block_id
         where ${whereSql}
-          and u.auth_user_id is not null
-          and u.email is not null
+          and coalesce(u.email::text, ${sourceEmailSql}) is not null
         group by u.id
         order by u.full_name asc
       `,
@@ -195,6 +217,61 @@ export default defineEventHandler(async (event) => {
     )
 
     for (const resident of residents.rows) {
+      const parsedEmail = emailSchema.safeParse(resident.email)
+
+      if (!parsedEmail.success) {
+        skippedInvalidLoginIdentity += 1
+        continue
+      }
+
+      const email = parsedEmail.data
+      const normalizedEmail = email.toLowerCase()
+
+      if (processedEmails.has(normalizedEmail)) {
+        skippedDuplicateLoginIdentity += 1
+        continue
+      }
+
+      const duplicateEmailResult = await client.query<{
+        id: string
+      }>(
+        `
+          select id
+          from users
+          where society_id = $1
+            and email = $2
+            and id <> $3
+          limit 1
+        `,
+        [authMe.user.societyId, email, resident.id],
+      )
+
+      if (duplicateEmailResult.rows[0]) {
+        skippedDuplicateLoginIdentity += 1
+        continue
+      }
+
+      const authUserId = await resolveAuthUserForResidentLogin(client, {
+        currentUserId: resident.id,
+        currentAuthUserId: resident.auth_user_id,
+        email,
+        fullName: resident.full_name,
+      })
+
+      await client.query(
+        `
+          update users
+          set email = $3,
+              auth_user_id = $4,
+              updated_at = now()
+          where id = $1
+            and society_id = $2
+        `,
+        [resident.id, authMe.user.societyId, email, authUserId],
+      )
+
+      processedEmails.add(normalizedEmail)
+
       const { token, tokenHash } = createInviteToken()
       const expiresAt = createInviteExpiresAt(body.expiresInDays)
       const inviteUrl = buildAppUrl('/accept-invite', { token })
@@ -208,7 +285,7 @@ export default defineEventHandler(async (event) => {
             and accepted_at is null
             and revoked_at is null
         `,
-        [authMe.user.societyId, resident.email, authMe.user.id],
+        [authMe.user.societyId, email, authMe.user.id],
       )
 
       await client.query(
@@ -241,13 +318,13 @@ export default defineEventHandler(async (event) => {
           tokenHash,
           authMe.user.id,
           expiresAt.toISOString(),
-          resident.auth_user_id,
+          authUserId,
         ],
       )
 
       pendingInviteEmails.push({
         societyId: authMe.user.societyId,
-        to: resident.email,
+        to: email,
         subject: 'Your AJOWA invite is ready',
         template: 'invite-onboarding',
         inviteUrl,
@@ -282,6 +359,8 @@ export default defineEventHandler(async (event) => {
         totalMatching,
         created: pendingInviteEmails.length,
         skippedMissingLoginIdentity,
+        skippedInvalidLoginIdentity,
+        skippedDuplicateLoginIdentity,
       },
       relatedEntities: residents.rows.slice(0, 20).map((resident) => ({
         entityTable: 'users',
@@ -307,6 +386,8 @@ export default defineEventHandler(async (event) => {
     totalMatching,
     created: pendingInviteEmails.length,
     skippedMissingLoginIdentity,
+    skippedInvalidLoginIdentity,
+    skippedDuplicateLoginIdentity,
     emailDelivery,
   })
 })

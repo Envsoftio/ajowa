@@ -31,6 +31,8 @@ type BulkInviteResponse = {
   totalMatching: number
   created: number
   skippedMissingLoginIdentity: number
+  skippedInvalidLoginIdentity?: number
+  skippedDuplicateLoginIdentity?: number
   emailDelivery: {
     delivered: number
     failed: number
@@ -55,10 +57,7 @@ const loadResidents = () =>
     },
   )
 
-const [
-  flatsAsyncData,
-  residentsAsyncData,
-] = await Promise.all([
+const [flatsAsyncData, residentsAsyncData] = await Promise.all([
   useAsyncData('admin-flat-options', () =>
     api<{ ok: true; data: { items: FlatSummary[] } }>('/api/admin/flats', {
       query: {
@@ -69,13 +68,9 @@ const [
       },
     }),
   ),
-  useAsyncData(
-    'admin-residents',
-    loadResidents,
-    {
-      watch: [query],
-    },
-  ),
+  useAsyncData('admin-residents', loadResidents, {
+    watch: [query],
+  }),
 ])
 
 const { data: flatsData } = flatsAsyncData
@@ -141,6 +136,8 @@ const sendBulkInvites = async () => {
     const result = response.data
     const failed = result.emailDelivery.failed
     const skipped = result.skippedMissingLoginIdentity
+    const skippedInvalid = result.skippedInvalidLoginIdentity ?? 0
+    const skippedDuplicates = result.skippedDuplicateLoginIdentity ?? 0
     const detailParts = [
       `${result.created} invite${result.created === 1 ? '' : 's'} created`,
       `${result.emailDelivery.delivered} delivered`,
@@ -154,8 +151,19 @@ const sendBulkInvites = async () => {
       detailParts.push(`${skipped} skipped without login identity`)
     }
 
+    if (skippedInvalid > 0) {
+      detailParts.push(`${skippedInvalid} skipped invalid email`)
+    }
+
+    if (skippedDuplicates > 0) {
+      detailParts.push(`${skippedDuplicates} skipped duplicate email`)
+    }
+
     toast.add({
-      severity: failed > 0 || skipped > 0 ? 'warn' : 'success',
+      severity:
+        failed > 0 || skipped > 0 || skippedInvalid > 0 || skippedDuplicates > 0
+          ? 'warn'
+          : 'success',
       summary: 'Bulk invites processed',
       detail: detailParts.join(' · '),
       life: 12000,
