@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import type { PoolClient } from 'pg'
 import {
   createApiSuccess,
   readJsonBody,
@@ -18,6 +19,7 @@ import {
   type PendingInviteEmail,
 } from '~/server/utils/invite-email'
 import { writeMasterAudit } from '~/server/utils/master-data'
+import { recomputeUserAccessForActiveBillingPeriods } from '~/server/utils/qr-access'
 import { resolveAuthUserForResidentLogin } from '~/server/utils/resident-login'
 
 const schema = z.object({
@@ -37,12 +39,26 @@ type BulkInviteResidentRow = {
   id: string
   auth_user_id: string | null
   full_name: string
+  stored_email: string | null
   email: string | null
   mobile_number: string | null
   role: string
   relationship_type: string | null
   flat_ids: string[]
   flat_labels: string[]
+}
+
+type BulkInviteResidentCandidate = BulkInviteResidentRow & {
+  email: string
+  normalizedEmail: string
+}
+
+type DuplicateLoginUserRow = {
+  id: string
+  auth_user_id: string | null
+  role: string
+  can_login: boolean
+  full_name: string
 }
 
 const EMAIL_BATCH_SIZE = 5
@@ -65,6 +81,136 @@ const sourceEmailSql = `
     limit 1
   )
 `
+
+const uniqueValues = <T>(values: T[]) => [...new Set(values)]
+
+const combineResidentCandidates = (
+  residents: BulkInviteResidentCandidate[],
+) => {
+  const canonical =
+    residents.find(
+      (resident) => resident.stored_email && resident.auth_user_id,
+    ) ??
+    residents.find((resident) => resident.stored_email) ??
+    residents[0]
+
+  if (!canonical) {
+    throw new Error('Unable to resolve resident invite candidate.')
+  }
+
+  return {
+    canonical,
+    flatIds: uniqueValues(residents.flatMap((resident) => resident.flat_ids)),
+    flatLabels: uniqueValues(
+      residents.flatMap((resident) => resident.flat_labels),
+    ),
+    relationshipType:
+      residents.find((resident) => resident.relationship_type)
+        ?.relationship_type ?? null,
+  }
+}
+
+const groupResidentCandidates = (residents: BulkInviteResidentCandidate[]) => {
+  const emailGroups = new Map<string, BulkInviteResidentCandidate[]>()
+
+  for (const resident of residents) {
+    emailGroups.set(resident.normalizedEmail, [
+      ...(emailGroups.get(resident.normalizedEmail) ?? []),
+      resident,
+    ])
+  }
+
+  return [...emailGroups.values()]
+}
+
+const syncOwnerFlatsToExistingResident = async ({
+  client,
+  targetUserId,
+  sourceUserIds,
+}: {
+  client: PoolClient
+  targetUserId: string
+  sourceUserIds: string[]
+}) => {
+  const result = await client.query<{ synced_count: string }>(
+    `
+      with source_relationships as (
+        select distinct on (fr.flat_id)
+          fr.flat_id,
+          fr.ownership_start_date,
+          fr.occupancy_status,
+          fr.access_scope,
+          fr.relationship_note
+        from flat_residents fr
+        where fr.user_id = any($2::uuid[])
+          and fr.is_active = true
+          and fr.relationship_type = 'OWNER'
+        order by
+          fr.flat_id,
+          fr.is_billing_contact desc,
+          fr.is_primary_contact desc,
+          fr.created_at asc
+      ),
+      updated as (
+        update flat_residents target
+        set can_login = true,
+            is_active = true,
+            ownership_start_date = coalesce(target.ownership_start_date, source.ownership_start_date),
+            occupancy_status = coalesce(target.occupancy_status, source.occupancy_status),
+            access_scope = coalesce(target.access_scope, source.access_scope, 'OWNERSHIP'::access_scope),
+            relationship_note = coalesce(target.relationship_note, source.relationship_note),
+            ended_at = null,
+            updated_at = now()
+        from source_relationships source
+        where target.user_id = $1
+          and target.flat_id = source.flat_id
+        returning target.flat_id
+      ),
+      inserted as (
+        insert into flat_residents (
+          flat_id,
+          user_id,
+          relationship_type,
+          is_primary_contact,
+          is_billing_contact,
+          can_login,
+          is_active,
+          ownership_start_date,
+          occupancy_status,
+          access_scope,
+          relationship_note
+        )
+        select
+          source.flat_id,
+          $1,
+          'OWNER'::relationship_type,
+          false,
+          false,
+          true,
+          true,
+          source.ownership_start_date,
+          source.occupancy_status,
+          coalesce(source.access_scope, 'OWNERSHIP'::access_scope),
+          source.relationship_note
+        from source_relationships source
+        where not exists (
+          select 1
+          from flat_residents existing
+          where existing.user_id = $1
+            and existing.flat_id = source.flat_id
+        )
+        returning flat_id
+      )
+      select (
+        (select count(*) from updated) +
+        (select count(*) from inserted)
+      )::text as synced_count
+    `,
+    [targetUserId, sourceUserIds],
+  )
+
+  return Number(result.rows[0]?.synced_count ?? 0)
+}
 
 const sendInviteEmails = async (
   event: Parameters<typeof sendInviteEmailSafely>[0],
@@ -157,7 +303,9 @@ export default defineEventHandler(async (event) => {
   let skippedMissingLoginIdentity: number
   let skippedInvalidLoginIdentity = 0
   let skippedDuplicateLoginIdentity = 0
+  let syncedExistingLoginFlats = 0
   const processedEmails = new Set<string>()
+  const syncedExistingLoginUserIds = new Set<string>()
 
   try {
     await client.query('begin')
@@ -187,6 +335,7 @@ export default defineEventHandler(async (event) => {
           u.id,
           u.auth_user_id::text,
           u.full_name,
+          u.email::text as stored_email,
           coalesce(u.email::text, ${sourceEmailSql}) as email,
           u.mobile_number,
           u.role::text,
@@ -216,6 +365,8 @@ export default defineEventHandler(async (event) => {
       values,
     )
 
+    const residentCandidates: BulkInviteResidentCandidate[] = []
+
     for (const resident of residents.rows) {
       const parsedEmail = emailSchema.safeParse(resident.email)
 
@@ -227,35 +378,77 @@ export default defineEventHandler(async (event) => {
       const email = parsedEmail.data
       const normalizedEmail = email.toLowerCase()
 
-      if (processedEmails.has(normalizedEmail)) {
-        skippedDuplicateLoginIdentity += 1
-        continue
-      }
+      residentCandidates.push({
+        ...resident,
+        email,
+        normalizedEmail,
+      })
+    }
 
-      const duplicateEmailResult = await client.query<{
-        id: string
-      }>(
+    const inviteGroups = groupResidentCandidates(residentCandidates)
+
+    for (const residentGroup of inviteGroups) {
+      const { canonical, flatIds, flatLabels, relationshipType } =
+        combineResidentCandidates(residentGroup)
+      const email = canonical.email
+      const normalizedEmail = canonical.normalizedEmail
+
+      const duplicateEmailResult = await client.query<DuplicateLoginUserRow>(
         `
-          select id
+          select
+            id,
+            auth_user_id::text,
+            role::text,
+            can_login,
+            full_name
           from users
           where society_id = $1
             and email = $2
-            and id <> $3
+            and id <> all($3::uuid[])
           limit 1
         `,
-        [authMe.user.societyId, email, resident.id],
+        [
+          authMe.user.societyId,
+          email,
+          residentGroup.map((resident) => resident.id),
+        ],
       )
 
-      if (duplicateEmailResult.rows[0]) {
-        skippedDuplicateLoginIdentity += 1
+      const duplicateLoginUser = duplicateEmailResult.rows[0]
+
+      if (duplicateLoginUser) {
+        if (
+          duplicateLoginUser.role === 'RESIDENT' &&
+          duplicateLoginUser.can_login &&
+          duplicateLoginUser.auth_user_id
+        ) {
+          const syncedCount = await syncOwnerFlatsToExistingResident({
+            client,
+            targetUserId: duplicateLoginUser.id,
+            sourceUserIds: residentGroup.map((resident) => resident.id),
+          })
+
+          if (syncedCount > 0) {
+            syncedExistingLoginFlats += syncedCount
+            syncedExistingLoginUserIds.add(duplicateLoginUser.id)
+            continue
+          }
+        }
+
+        skippedDuplicateLoginIdentity += residentGroup.length
+        continue
+      }
+
+      if (processedEmails.has(normalizedEmail)) {
+        skippedDuplicateLoginIdentity += residentGroup.length
         continue
       }
 
       const authUserId = await resolveAuthUserForResidentLogin(client, {
-        currentUserId: resident.id,
-        currentAuthUserId: resident.auth_user_id,
+        currentUserId: canonical.id,
+        currentAuthUserId: canonical.auth_user_id,
         email,
-        fullName: resident.full_name,
+        fullName: canonical.full_name,
       })
 
       await client.query(
@@ -267,7 +460,7 @@ export default defineEventHandler(async (event) => {
           where id = $1
             and society_id = $2
         `,
-        [resident.id, authMe.user.societyId, email, authUserId],
+        [canonical.id, authMe.user.societyId, email, authUserId],
       )
 
       processedEmails.add(normalizedEmail)
@@ -308,13 +501,13 @@ export default defineEventHandler(async (event) => {
         `,
         [
           authMe.user.societyId,
-          resident.email,
-          resident.role,
-          resident.full_name,
-          resident.mobile_number,
-          resident.relationship_type,
-          resident.flat_ids,
-          resident.flat_labels,
+          email,
+          canonical.role,
+          canonical.full_name,
+          canonical.mobile_number,
+          relationshipType,
+          flatIds,
+          flatLabels,
           tokenHash,
           authMe.user.id,
           expiresAt.toISOString(),
@@ -331,20 +524,28 @@ export default defineEventHandler(async (event) => {
         expiresAt: expiresAt.toISOString(),
         context: {
           title: 'Accept your AJOWA invite',
-          name: resident.full_name,
+          name: canonical.full_name,
           actionUrl: inviteUrl,
           expiresLabel: expiresAt.toLocaleString('en-IN', {
             dateStyle: 'medium',
             timeStyle: 'short',
           }),
           inviterName: authMe.user.fullName,
-          roleLabel: resident.role.replace('_', ' ').toLowerCase(),
+          roleLabel: canonical.role.replace('_', ' ').toLowerCase(),
           details:
-            resident.flat_labels.length > 0
-              ? `Assigned flats: ${resident.flat_labels.join(', ')}.`
+            flatLabels.length > 0
+              ? `Assigned flats: ${flatLabels.join(', ')}.`
               : 'Finish onboarding to activate access.',
         },
       })
+    }
+
+    if (syncedExistingLoginUserIds.size > 0) {
+      await recomputeUserAccessForActiveBillingPeriods(
+        client,
+        authMe.user.societyId,
+        [...syncedExistingLoginUserIds],
+      )
     }
 
     await writeMasterAudit({
@@ -361,6 +562,7 @@ export default defineEventHandler(async (event) => {
         skippedMissingLoginIdentity,
         skippedInvalidLoginIdentity,
         skippedDuplicateLoginIdentity,
+        syncedExistingLoginFlats,
       },
       relatedEntities: residents.rows.slice(0, 20).map((resident) => ({
         entityTable: 'users',
@@ -388,6 +590,7 @@ export default defineEventHandler(async (event) => {
     skippedMissingLoginIdentity,
     skippedInvalidLoginIdentity,
     skippedDuplicateLoginIdentity,
+    syncedExistingLoginFlats,
     emailDelivery,
   })
 })

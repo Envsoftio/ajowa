@@ -1,7 +1,11 @@
 import { z } from 'zod'
 import { hashPassword } from 'better-auth/crypto'
 import type { PoolClient } from 'pg'
-import { createApiSuccess, readJsonBody, validateInput } from '~/server/utils/api'
+import {
+  createApiSuccess,
+  readJsonBody,
+  validateInput,
+} from '~/server/utils/api'
 import {
   assignInviteRelationships,
   hashInviteToken,
@@ -22,10 +26,12 @@ const acceptInviteSchema = z.object({
   fullName: z.string().trim().min(2),
   mobileNumber: z.string().trim().min(8),
   whatsappNumber: z.string().trim().min(8).optional().or(z.literal('')),
-  password: z.string().min(
-    PASSWORD_POLICY.minLength,
-    `Password must be at least ${PASSWORD_POLICY.minLength} characters.`,
-  ),
+  password: z
+    .string()
+    .min(
+      PASSWORD_POLICY.minLength,
+      `Password must be at least ${PASSWORD_POLICY.minLength} characters.`,
+    ),
 })
 
 type InviteAssignmentRow = {
@@ -201,7 +207,11 @@ const acceptExistingCredentialUser = async ({
   password: string
   emailVerified: boolean
 }): Promise<AcceptedInviteUser> => {
-  const existingResult = await client.query<{ id: string; user_id: string | null; email: string }>(
+  const existingResult = await client.query<{
+    id: string
+    user_id: string | null
+    email: string
+  }>(
     `
       select au.id, au.email::text, u.id as user_id
       from auth_users au
@@ -591,7 +601,11 @@ export default defineEventHandler(async (event) => {
       })
     }
 
-    if (invite.accepted_at || invite.revoked_at || new Date(invite.expires_at).getTime() <= Date.now()) {
+    if (
+      invite.accepted_at ||
+      invite.revoked_at ||
+      new Date(invite.expires_at).getTime() <= Date.now()
+    ) {
       throw new AppError({
         code: 'FORBIDDEN',
         statusCode: 403,
@@ -599,7 +613,9 @@ export default defineEventHandler(async (event) => {
       })
     }
 
-    const requiresEmailVerification = isEmailVerificationRequiredForRole(invite.role)
+    const requiresEmailVerification = isEmailVerificationRequiredForRole(
+      invite.role,
+    )
     const acceptedUser = invite.accepted_by_auth_user_id
       ? await acceptExistingCredentialUser({
           client,
@@ -611,7 +627,7 @@ export default defineEventHandler(async (event) => {
           password: body.password,
           emailVerified: !requiresEmailVerification,
         })
-      : (await acceptExistingAppUserByEmail({
+      : ((await acceptExistingAppUserByEmail({
           client,
           societyId: invite.society_id,
           email: invite.email,
@@ -632,19 +648,17 @@ export default defineEventHandler(async (event) => {
           mobileNumber: body.mobileNumber,
           whatsappNumber: body.whatsappNumber || body.mobileNumber,
           emailVerified: !requiresEmailVerification,
-        }))
+        })))
 
-    if (!invite.accepted_by_auth_user_id) {
-      await assignInviteRelationships({
-        client,
-        authUserId: acceptedUser.authUserId,
-        role: invite.role,
-        flatIds: invite.flat_ids ?? [],
-        relationshipType: invite.relationship_type,
-        accessScope: invite.access_scope,
-        departmentIds: invite.department_ids ?? [],
-      })
-    }
+    await assignInviteRelationships({
+      client,
+      authUserId: acceptedUser.authUserId,
+      role: invite.role,
+      flatIds: invite.flat_ids ?? [],
+      relationshipType: invite.relationship_type,
+      accessScope: invite.access_scope,
+      departmentIds: invite.department_ids ?? [],
+    })
 
     const acceptedInviteResult = await client.query<{ id: string }>(
       `
@@ -686,7 +700,8 @@ export default defineEventHandler(async (event) => {
           verificationEmailDelivery = { delivered: true }
         } else {
           const reason =
-            'reason' in verificationEmail && typeof verificationEmail.reason === 'string'
+            'reason' in verificationEmail &&
+            typeof verificationEmail.reason === 'string'
               ? verificationEmail.reason
               : VERIFICATION_EMAIL_FAILED_REASON
 
@@ -696,10 +711,13 @@ export default defineEventHandler(async (event) => {
           }
         }
       } catch (error) {
-        getRequestLogger(event).error('Invite verification email delivery failed.', {
-          email: acceptedUser.email,
-          error: serializeEmailError(error),
-        })
+        getRequestLogger(event).error(
+          'Invite verification email delivery failed.',
+          {
+            email: acceptedUser.email,
+            error: serializeEmailError(error),
+          },
+        )
 
         verificationEmailDelivery = {
           delivered: false,

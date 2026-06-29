@@ -33,6 +33,7 @@ type BulkInviteResponse = {
   skippedMissingLoginIdentity: number
   skippedInvalidLoginIdentity?: number
   skippedDuplicateLoginIdentity?: number
+  syncedExistingLoginFlats?: number
   emailDelivery: {
     delivered: number
     failed: number
@@ -138,6 +139,7 @@ const sendBulkInvites = async () => {
     const skipped = result.skippedMissingLoginIdentity
     const skippedInvalid = result.skippedInvalidLoginIdentity ?? 0
     const skippedDuplicates = result.skippedDuplicateLoginIdentity ?? 0
+    const syncedExistingFlats = result.syncedExistingLoginFlats ?? 0
     const detailParts = [
       `${result.created} invite${result.created === 1 ? '' : 's'} created`,
       `${result.emailDelivery.delivered} delivered`,
@@ -157,6 +159,10 @@ const sendBulkInvites = async () => {
 
     if (skippedDuplicates > 0) {
       detailParts.push(`${skippedDuplicates} skipped duplicate email`)
+    }
+
+    if (syncedExistingFlats > 0) {
+      detailParts.push(`${syncedExistingFlats} existing-login flats synced`)
     }
 
     toast.add({
