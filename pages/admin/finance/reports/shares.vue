@@ -60,10 +60,10 @@ const [
     { watch: [query] },
   ),
   useAsyncData('finance-report-share-flats', () =>
-    api<FlatsResponse>('/api/admin/flats', { query: { pageSize: 300 } }),
+    api<FlatsResponse>('/api/admin/flats', { query: { pageSize: 1000 } }),
   ),
   useAsyncData('finance-report-share-owners', () =>
-    api<ResidentsResponse>('/api/admin/residents', { query: { pageSize: 300 } }),
+    api<ResidentsResponse>('/api/admin/residents', { query: { pageSize: 1000 } }),
   ),
 ])
 
