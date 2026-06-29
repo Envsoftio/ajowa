@@ -27,6 +27,15 @@ const selectedResidentId = ref<string | null>(null)
 const displayDialog = ref(false)
 const sendingBulkInvites = ref(false)
 
+type BulkInvitePreviewResponse = {
+  totalMatching: number
+  expectedInvites: number
+  skippedMissingLoginIdentity: number
+  skippedInvalidLoginIdentity: number
+  skippedDuplicateLoginIdentity: number
+  syncableExistingLoginFlats: number
+}
+
 type BulkInviteResponse = {
   totalMatching: number
   created: number
@@ -104,11 +113,61 @@ const onResidentSaved = async () => {
   await refresh()
 }
 
+const buildBulkInvitePayload = () => ({
+  search: query.value.search ?? '',
+  flatId: flatFilter.value || undefined,
+  isActive: activeFilter.value || 'true',
+  canLogin: 'false',
+})
+
+const formatBulkInvitePreview = (preview: BulkInvitePreviewResponse) => {
+  const parts = [
+    `${preview.totalMatching} matching resident${preview.totalMatching === 1 ? '' : 's'}`,
+    `${preview.expectedInvites} invite${preview.expectedInvites === 1 ? '' : 's'} expected`,
+  ]
+
+  if (preview.syncableExistingLoginFlats > 0) {
+    parts.push(
+      `${preview.syncableExistingLoginFlats} existing-login flat${preview.syncableExistingLoginFlats === 1 ? '' : 's'} can be synced`,
+    )
+  }
+
+  if (preview.skippedMissingLoginIdentity > 0) {
+    parts.push(`${preview.skippedMissingLoginIdentity} without login identity`)
+  }
+
+  if (preview.skippedInvalidLoginIdentity > 0) {
+    parts.push(`${preview.skippedInvalidLoginIdentity} invalid email`)
+  }
+
+  if (preview.skippedDuplicateLoginIdentity > 0) {
+    parts.push(`${preview.skippedDuplicateLoginIdentity} duplicate email`)
+  }
+
+  return parts.join(' · ')
+}
+
 const sendBulkInvites = async () => {
+  sendingBulkInvites.value = true
+
+  let preview: BulkInvitePreviewResponse
+
+  try {
+    const previewResponse = await api<{
+      ok: true
+      data: BulkInvitePreviewResponse
+    }>('/api/admin/residents/bulk-invites/preview', {
+      query: buildBulkInvitePayload(),
+    })
+
+    preview = previewResponse.data
+  } finally {
+    sendingBulkInvites.value = false
+  }
+
   const confirmed = await confirmAction({
     header: 'Invite residents',
-    message:
-      'Create and send invite links to all login-disabled residents matching the search, flat, and active filters? Existing pending invites for those emails will be replaced.',
+    message: `${formatBulkInvitePreview(preview)}. Create and send invite links to eligible login-disabled residents matching the current filters? Existing pending invites for those emails will be replaced.`,
     icon: 'pi pi-send',
     acceptLabel: 'Send invites',
     acceptSeverity: 'info',
@@ -125,12 +184,7 @@ const sendBulkInvites = async () => {
       '/api/admin/residents/bulk-invites',
       {
         method: 'POST',
-        body: {
-          search: query.value.search ?? '',
-          flatId: flatFilter.value || undefined,
-          isActive: activeFilter.value || 'true',
-          canLogin: 'false',
-        },
+        body: buildBulkInvitePayload(),
       },
     )
 

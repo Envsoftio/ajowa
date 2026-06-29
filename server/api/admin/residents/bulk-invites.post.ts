@@ -266,7 +266,7 @@ export default defineEventHandler(async (event) => {
           select 1
           from flat_residents search_fr
           where search_fr.user_id = u.id
-            and search_fr.import_metadata->>'relationshipSource' = 'OWNER'
+            and search_fr.import_metadata->>'relationshipSource' in ('OWNER', 'TENANT')
             and (
               coalesce(search_fr.import_metadata #>> '{sourceData,EMAIL ID}', '') ilike $${values.length}
               or coalesce(search_fr.import_metadata #>> '{sourceData,CONTACT DETAILS}', '') ilike $${values.length}
