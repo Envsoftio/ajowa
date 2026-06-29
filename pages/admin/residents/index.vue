@@ -11,6 +11,8 @@ definePageMeta({
 })
 
 const api = useApi()
+const toast = useToast()
+const confirmAction = useAppConfirm()
 
 const query = ref<ListQueryParams>({
   page: 1,
@@ -23,6 +25,18 @@ const query = ref<ListQueryParams>({
 
 const selectedResidentId = ref<string | null>(null)
 const displayDialog = ref(false)
+const sendingBulkInvites = ref(false)
+
+type BulkInviteResponse = {
+  totalMatching: number
+  created: number
+  skippedMissingLoginIdentity: number
+  emailDelivery: {
+    delivered: number
+    failed: number
+    failures: Array<{ email: string; reason: string }>
+  }
+}
 
 const loadResidents = () =>
   api<{ ok: true; data: { items: ResidentSummary[]; total: number } }>(
@@ -92,6 +106,65 @@ watch(displayDialog, (visible) => {
 
 const onResidentSaved = async () => {
   await refresh()
+}
+
+const sendBulkInvites = async () => {
+  const confirmed = await confirmAction({
+    header: 'Invite residents',
+    message:
+      'Create and send invite links to all login-disabled residents matching the search, flat, and active filters? Existing pending invites for those emails will be replaced.',
+    icon: 'pi pi-send',
+    acceptLabel: 'Send invites',
+    acceptSeverity: 'info',
+  })
+
+  if (!confirmed) {
+    return
+  }
+
+  sendingBulkInvites.value = true
+
+  try {
+    const response = await api<{ ok: true; data: BulkInviteResponse }>(
+      '/api/admin/residents/bulk-invites',
+      {
+        method: 'POST',
+        body: {
+          search: query.value.search ?? '',
+          flatId: flatFilter.value || undefined,
+          isActive: activeFilter.value || 'true',
+          canLogin: 'false',
+        },
+      },
+    )
+
+    const result = response.data
+    const failed = result.emailDelivery.failed
+    const skipped = result.skippedMissingLoginIdentity
+    const detailParts = [
+      `${result.created} invite${result.created === 1 ? '' : 's'} created`,
+      `${result.emailDelivery.delivered} delivered`,
+    ]
+
+    if (failed > 0) {
+      detailParts.push(`${failed} failed`)
+    }
+
+    if (skipped > 0) {
+      detailParts.push(`${skipped} skipped without login identity`)
+    }
+
+    toast.add({
+      severity: failed > 0 || skipped > 0 ? 'warn' : 'success',
+      summary: 'Bulk invites processed',
+      detail: detailParts.join(' · '),
+      life: 12000,
+    })
+
+    await refresh()
+  } finally {
+    sendingBulkInvites.value = false
+  }
 }
 
 const updateQuery = (value: ListQueryParams) => {
@@ -188,6 +261,14 @@ const relationshipSeverity = (type: string) => {
             </p>
           </div>
           <div class="list-page__exports">
+            <Button
+              label="Invite pending logins"
+              icon="pi pi-send"
+              severity="secondary"
+              outlined
+              :loading="sendingBulkInvites"
+              @click="sendBulkInvites"
+            />
             <Button
               label="Create resident"
               icon="pi pi-plus"
