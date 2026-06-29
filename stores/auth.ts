@@ -75,18 +75,16 @@ export const useAuthStore = defineStore('auth', {
       return this.fetchMe(true)
     },
     async logout() {
-      try {
-        await $fetch('/api/auth/sign-out', {
-          method: 'POST',
-          credentials: 'include',
-          body: {},
-        })
-      } finally {
-        fetchMeRequests.delete(this)
-        this.me = null
-        this.loaded = true
-        this.loading = false
-      }
+      await $fetch('/api/auth/sign-out', {
+        method: 'POST',
+        credentials: 'include',
+        body: {},
+      })
+
+      fetchMeRequests.delete(this)
+      this.me = null
+      this.loaded = true
+      this.loading = false
     },
     reset() {
       fetchMeRequests.delete(this)

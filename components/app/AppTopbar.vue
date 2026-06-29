@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { getApiErrorMessage } from '~/composables/useApi'
 import type { MenuItem } from 'primevue/menuitem'
 import type { AppShellType } from '~/shared/shell'
 
@@ -11,8 +12,10 @@ const authStore = useAuthStore()
 const notificationsStore = useNotificationsStore()
 const theme = useTheme()
 const route = useRoute()
+const toast = useToast()
 const loading = useLoadingIndicator()
 const menu = ref()
+const loggingOut = ref(false)
 
 const pageTitle = computed(() => String(route.meta.title ?? 'AJOWA'))
 const isLoading = computed(() => loading.isLoading.value)
@@ -36,6 +39,28 @@ const notificationBadge = computed(() => {
 const openNotifications = async () => {
   if (notificationRoute.value) {
     await navigateTo(notificationRoute.value)
+  }
+}
+
+const logout = async () => {
+  if (loggingOut.value) {
+    return
+  }
+
+  loggingOut.value = true
+
+  try {
+    await authStore.logout()
+    await navigateTo('/login')
+  } catch (error) {
+    toast.add({
+      severity: 'error',
+      summary: 'Logout failed',
+      detail: getApiErrorMessage(error, 'Your session could not be signed out. Please try again.'),
+      life: 10000,
+    })
+  } finally {
+    loggingOut.value = false
   }
 }
 
@@ -67,10 +92,8 @@ const avatarItems = computed<MenuItem[]>(() => {
     {
       label: 'Logout',
       icon: 'pi pi-sign-out',
-      command: async () => {
-        await authStore.logout()
-        await navigateTo('/login')
-      },
+      disabled: loggingOut.value,
+      command: logout,
     },
   )
 
