@@ -25,7 +25,7 @@ export type SharedReportLinkSummary = {
   id: string
   societyId: string
   ownerName: string
-  ownerEmail: string
+  ownerEmail: string | null
   flatLabel: string
   reportType: SharedReportType
   reportTypeLabel: string
@@ -51,7 +51,7 @@ type ShareRow = {
   society_id: string
   owner_user_id: string
   owner_name: string
-  owner_email: string
+  owner_email: string | null
   owner_mobile_number: string
   owner_whatsapp_number: string | null
   flat_id: string | null
@@ -218,7 +218,7 @@ const loadShareById = async (societyId: string, shareId: string) => {
 const assertOwnerFlat = async (societyId: string, ownerUserId: string, flatId?: string | null) => {
   const result = await getDatabasePool().query<{
     owner_name: string
-    owner_email: string
+    owner_email: string | null
     flat_id: string
     flat_label: string
   }>(
@@ -279,28 +279,32 @@ const deliverShare = async (share: ShareRow, token: string, requestedChannels: D
   let deliveredAt: string | null = null
 
   if (requestedChannels.includes('EMAIL')) {
-    const response = await sendNotificationEmail({
-      to: share.owner_email,
-      subject: `${sharedReportTypeLabels[share.report_type]} shared with you`,
-      template: 'report-shared',
-      context: {
-        title: `${sharedReportTypeLabels[share.report_type]} Report`,
-        body: `A secure finance report has been shared with you. The link is valid until ${share.expires_at}.`,
-        actionUrl: link,
-        actionLabel: 'Open shared report',
-        ownerName: share.owner_name,
-        reportType: sharedReportTypeLabels[share.report_type],
-        flatLabel: share.flat_label ?? 'N/A',
-        periodLabel: `${share.start_date} to ${share.end_date}`,
-        expiresAt: share.expires_at,
-      },
-      societyId: share.society_id,
-    })
-    if (response.delivered) {
-      deliveredState = 'EMAILED'
-      deliveredAt = new Date().toISOString()
+    if (!share.owner_email) {
+      failures.push('Owner email is not available; copy the link or send it manually.')
     } else {
-      failures.push(response.reason ?? 'Email delivery is not configured.')
+      const response = await sendNotificationEmail({
+        to: share.owner_email,
+        subject: `${sharedReportTypeLabels[share.report_type]} shared with you`,
+        template: 'report-shared',
+        context: {
+          title: `${sharedReportTypeLabels[share.report_type]} Report`,
+          body: `A secure finance report has been shared with you. The link is valid until ${share.expires_at}.`,
+          actionUrl: link,
+          actionLabel: 'Open shared report',
+          ownerName: share.owner_name,
+          reportType: sharedReportTypeLabels[share.report_type],
+          flatLabel: share.flat_label ?? 'N/A',
+          periodLabel: `${share.start_date} to ${share.end_date}`,
+          expiresAt: share.expires_at,
+        },
+        societyId: share.society_id,
+      })
+      if (response.delivered) {
+        deliveredState = 'EMAILED'
+        deliveredAt = new Date().toISOString()
+      } else {
+        failures.push(response.reason ?? 'Email delivery is not configured.')
+      }
     }
   }
 

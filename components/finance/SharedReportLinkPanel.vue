@@ -225,6 +225,10 @@ const flatOptions = computed(() => {
 })
 
 const resolveFlatTargets = (ownerUserId: string) => {
+  if (form.ownerUserId === ALL_OWNERS_VALUE) {
+    return [{ label: 'Owner linked flat', value: null }]
+  }
+
   if (form.flatId === ALL_FLATS_VALUE) {
     return (ownerFlatOptionsCache.value[ownerUserId] ?? []).map((flat) => ({
       label: flat.label,
@@ -287,6 +291,7 @@ const createShare = async () => {
         try {
           const response = await api<CreateShareResponse>('/api/reports/shares', {
             method: 'POST',
+            showErrorToast: form.ownerUserId !== ALL_OWNERS_VALUE,
             body: createSharePayload(owner.id, flat.value),
           })
 

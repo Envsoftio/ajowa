@@ -10,7 +10,7 @@ definePageMeta({
 type SharedReport = {
   id: string
   ownerName: string
-  ownerEmail: string
+  ownerEmail: string | null
   flatLabel: string
   reportTypeLabel: string
   startDate: string

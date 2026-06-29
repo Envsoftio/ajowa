@@ -46,7 +46,7 @@ const flatNumberSortExpression =
 const sortColumns: Record<string, string> = {
   flatNumber: flatNumberSortExpression,
   blockName: 'c.block_sort_order',
-  dueDate: 'c.due_date',
+  dueDate: 'c.due_date::date',
   totalAmount: 'c.total_amount::numeric',
   balanceAmount: 'c.balance_amount::numeric',
   status: 'c.status',
@@ -227,7 +227,7 @@ export default defineEventHandler(async (event) => {
 
   const overdueFilter = query.filters.overdue?.[0]
   if (overdueFilter === 'true') {
-    where.push(`c.balance_amount::numeric > 0 and c.due_date < $${values.length + 1}::date`)
+    where.push(`c.balance_amount::numeric > 0 and c.due_date::date < $${values.length + 1}::date`)
     values.push(today)
   }
 
