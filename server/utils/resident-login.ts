@@ -38,8 +38,10 @@ export const resolveAuthUserForResidentLogin = async (
     currentAuthUserId: string | null
     email: string
     fullName: string
+    seedTemporaryPassword?: boolean
   },
 ) => {
+  const shouldSeedTemporaryPassword = input.seedTemporaryPassword ?? true
   const existingAuthResult = await client.query<{
     id: string
     linked_user_id: string | null
@@ -75,7 +77,9 @@ export const resolveAuthUserForResidentLogin = async (
       [input.currentAuthUserId, input.fullName, input.email],
     )
 
-    await seedPasswordCredential(client, input.currentAuthUserId, input.email)
+    if (shouldSeedTemporaryPassword) {
+      await seedPasswordCredential(client, input.currentAuthUserId, input.email)
+    }
     return input.currentAuthUserId
   }
 
@@ -96,7 +100,9 @@ export const resolveAuthUserForResidentLogin = async (
       `,
       [existingAuth.id, input.fullName],
     )
-    await seedPasswordCredential(client, existingAuth.id, input.email)
+    if (shouldSeedTemporaryPassword) {
+      await seedPasswordCredential(client, existingAuth.id, input.email)
+    }
     return existingAuth.id
   }
 
@@ -118,6 +124,8 @@ export const resolveAuthUserForResidentLogin = async (
     })
   }
 
-  await seedPasswordCredential(client, authUserId, input.email)
+  if (shouldSeedTemporaryPassword) {
+    await seedPasswordCredential(client, authUserId, input.email)
+  }
   return authUserId
 }

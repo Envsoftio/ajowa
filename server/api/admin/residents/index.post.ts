@@ -349,7 +349,9 @@ export default defineEventHandler(async (event) => {
       [userId],
     )
 
-    await seedPasswordCredential(client, authUserId, body.email)
+    if (!body.sendInvite) {
+      await seedPasswordCredential(client, authUserId, body.email)
+    }
 
     if (body.sendInvite) {
       const flatLabelResult = await client.query<{

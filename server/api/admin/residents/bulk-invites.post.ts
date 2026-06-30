@@ -449,6 +449,7 @@ export default defineEventHandler(async (event) => {
         currentAuthUserId: canonical.auth_user_id,
         email,
         fullName: canonical.full_name,
+        seedTemporaryPassword: false,
       })
 
       await client.query(
