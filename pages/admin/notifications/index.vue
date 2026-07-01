@@ -563,7 +563,21 @@ watch(
           <InputIcon class="pi pi-search" />
           <InputText v-model="query.search" placeholder="Search events" />
         </IconField>
-        <Select v-model="query.status" :options="[{ label: 'All statuses', value: '' }, { label: 'Queued', value: 'QUEUED' }, { label: 'Processed', value: 'PROCESSED' }, { label: 'Failed', value: 'FAILED' }]" option-label="label" option-value="value" />
+        <Select
+          v-model="query.status"
+          :options="[
+            { label: 'All statuses', value: '' },
+            { label: 'Queued', value: 'QUEUED' },
+            { label: 'Processing', value: 'PROCESSING' },
+            { label: 'Processed', value: 'PROCESSED' },
+            { label: 'Failed', value: 'FAILED' },
+            { label: 'Scheduled', value: 'SCHEDULED' },
+            { label: 'Cancelled', value: 'CANCELLED' },
+            { label: 'No delivery', value: 'NO_DELIVERY' },
+          ]"
+          option-label="label"
+          option-value="value"
+        />
       </div>
 
       <div class="notification-process-filters">
@@ -697,8 +711,8 @@ watch(
         <Column field="eventKey" header="Event" />
         <Column field="category" header="Category" />
         <Column field="priority" header="Priority"><template #body="{ data: row }"><Tag :value="row.priority" /></template></Column>
-        <Column field="status" header="Status"><template #body="{ data: row }"><AppStatusBadge :status="row.status" /></template></Column>
-        <Column header="Channels">
+        <Column field="status" header="Overall"><template #body="{ data: row }"><AppStatusBadge :status="row.status" /></template></Column>
+        <Column header="Channel delivery">
           <template #body="{ data: row }">
             <div class="channel-statuses">
               <Tag

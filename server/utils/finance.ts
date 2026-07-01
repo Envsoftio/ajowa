@@ -1099,16 +1099,15 @@ export const postMaintenanceReceiptJournal = async (
       select code, id
       from account_heads
       where (society_id = $1 or society_id is null)
-        and code in ('INC-MAINT', 'INC-LATEFEE')
+        and code in ('INC-MAINT', 'INC-LATE-FEE', 'INC-LATEFEE')
         and is_active = true
     `,
     [input.societyId],
   )
   const maintenanceHeadId = incomeHeads.rows.find((row) => row.code === 'INC-MAINT')?.id
-  const lateFeeHeadId = incomeHeads.rows.find((row) => row.code === 'INC-LATEFEE')?.id
-  if (!maintenanceHeadId || !lateFeeHeadId) {
-    throw new AppError({ code: 'VALIDATION_ERROR', statusCode: 400, message: 'Maintenance and late-fee income heads are required before posting receipts.' })
-  }
+  const lateFeeHeadId =
+    incomeHeads.rows.find((row) => row.code === 'INC-LATE-FEE')?.id ??
+    incomeHeads.rows.find((row) => row.code === 'INC-LATEFEE')?.id
 
   const lateFeeResult = await client.query<{ late_fee: string }>(
     `
@@ -1121,6 +1120,12 @@ export const postMaintenanceReceiptJournal = async (
   const amount = roundMoney(Number(paymentRow.amount))
   const lateFee = roundMoney(Math.min(amount, Number(lateFeeResult.rows[0]?.late_fee ?? 0)))
   const maintenanceIncome = roundMoney(amount - lateFee)
+  if (maintenanceIncome > 0 && !maintenanceHeadId) {
+    throw new AppError({ code: 'VALIDATION_ERROR', statusCode: 400, message: 'Maintenance income head is required before posting receipts.' })
+  }
+  if (lateFee > 0 && !lateFeeHeadId) {
+    throw new AppError({ code: 'VALIDATION_ERROR', statusCode: 400, message: 'Late-fee income head is required before posting receipts.' })
+  }
   const voucherNumber = await nextJournalVoucherNumber(client, paymentRow.payment_date)
   const entry = await client.query<{ id: string; voucher_number: string }>(
     `
@@ -1155,10 +1160,18 @@ export const postMaintenanceReceiptJournal = async (
     [1, bankAccountHeadId, 'DEBIT', amount, 'Maintenance receipt deposited'],
   ]
   if (maintenanceIncome > 0) {
-    lines.push([2, maintenanceHeadId, 'CREDIT', maintenanceIncome, 'Maintenance income'])
+    const headId = maintenanceHeadId
+    if (!headId) {
+      throw new AppError({ code: 'VALIDATION_ERROR', statusCode: 400, message: 'Maintenance income head is required before posting receipts.' })
+    }
+    lines.push([2, headId, 'CREDIT', maintenanceIncome, 'Maintenance income'])
   }
   if (lateFee > 0) {
-    lines.push([lines.length + 1, lateFeeHeadId, 'CREDIT', lateFee, 'Late fee income'])
+    const headId = lateFeeHeadId
+    if (!headId) {
+      throw new AppError({ code: 'VALIDATION_ERROR', statusCode: 400, message: 'Late-fee income head is required before posting receipts.' })
+    }
+    lines.push([lines.length + 1, headId, 'CREDIT', lateFee, 'Late fee income'])
   }
   for (const line of lines) {
     await client.query(

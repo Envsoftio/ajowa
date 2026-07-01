@@ -21,11 +21,26 @@ type EventRow = {
   channel_statuses: string
 }
 
+const effectiveEventStatusSql = `
+  case
+    when ne.status = 'CANCELLED'::notification_event_status then 'CANCELLED'
+    when ne.status = 'DRAFT'::notification_event_status then 'DRAFT'
+    when ne.status = 'SCHEDULED'::notification_event_status and coalesce(ne.scheduled_for, now()) > now() then 'SCHEDULED'
+    when count(nj.id) = 0 then 'NO_DELIVERY'
+    when count(nj.id) filter (where nj.status = 'PROCESSING') > 0 then 'PROCESSING'
+    when count(nj.id) filter (where nj.status in ('QUEUED', 'RETRYING')) > 0 then 'QUEUED'
+    when count(nj.id) filter (where nj.status = 'FAILED') > 0 then 'FAILED'
+    when count(nj.id) filter (where nj.status in ('SENT', 'DELIVERED', 'READ')) > 0 then 'PROCESSED'
+    else ne.status::text
+  end
+`
+
 export default defineEventHandler(async (event) => {
   const authMe = await requireRole(event, ['ADMIN', 'MANAGER'])
   const query = parseListQuery(event)
   const params: unknown[] = [authMe.user.societyId]
   const where = ['ne.society_id = $1']
+  const having: string[] = []
 
   if (query.search) {
     params.push(`%${query.search}%`)
@@ -34,8 +49,9 @@ export default defineEventHandler(async (event) => {
   const statusFilter = query.filters.status?.[0]
   if (statusFilter) {
     params.push(statusFilter)
-    where.push(`ne.status = $${params.length}`)
+    having.push(`${effectiveEventStatusSql} = $${params.length}`)
   }
+  const havingSql = having.length > 0 ? `having ${having.join(' and ')}` : ''
 
   const [items, total] = await Promise.all([
     queryRows<EventRow>(
@@ -45,7 +61,7 @@ export default defineEventHandler(async (event) => {
           ne.event_key,
           ne.category::text,
           ne.priority::text,
-          ne.status::text,
+          ${effectiveEventStatusSql} as status,
           ne.title,
           ne.body,
           ne.triggered_by_user_id,
@@ -80,6 +96,7 @@ export default defineEventHandler(async (event) => {
         left join notification_jobs nj on nj.notification_event_id = ne.id
         where ${where.join(' and ')}
         group by ne.id
+        ${havingSql}
         order by ne.created_at desc
         limit $${params.length + 1} offset $${params.length + 2}
       `,
@@ -88,8 +105,14 @@ export default defineEventHandler(async (event) => {
     queryRows<{ total: string }>(
       `
         select count(*)::text as total
-        from notification_events ne
-        where ${where.join(' and ')}
+        from (
+          select ne.id
+          from notification_events ne
+          left join notification_jobs nj on nj.notification_event_id = ne.id
+          where ${where.join(' and ')}
+          group by ne.id
+          ${havingSql}
+        ) filtered_events
       `,
       params,
     ),

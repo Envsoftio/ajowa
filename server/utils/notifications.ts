@@ -1489,8 +1489,8 @@ export const dispatchNotificationJobs = async (
       `
         update notification_events ne
         set status = case
-              when stats.pending_count = 0 and stats.sent_count > 0 then 'PROCESSED'
               when stats.failed_count > 0 and stats.pending_count = 0 then 'FAILED'
+              when stats.pending_count = 0 and stats.sent_count > 0 then 'PROCESSED'
               when stats.pending_count = 0 then 'PROCESSED'
               else ne.status
             end,
