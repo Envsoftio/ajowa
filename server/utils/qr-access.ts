@@ -266,6 +266,11 @@ const uniqueAccessRows = (rows: RelatedFlatRow[]) => {
   return [...byFlat.values()]
 }
 
+const isDueClearForQrAccess = (due: DueAccessRow, isCamAdvanceCovered: boolean) =>
+  ['PAID', 'WAIVED'].includes(due.status) ||
+  Number(due.balance_amount) <= 0 ||
+  isCamAdvanceCovered
+
 export const recomputeUserAccess = async (
   userId: string,
   billingPeriodId: string,
@@ -342,15 +347,20 @@ export const recomputeUserAccess = async (
     const unpaidLabels = accessRows
       .filter((flat) => {
         const due = dueByFlat.get(flat.flat_id)
+        const isCamAdvanceCovered = coveredFlatIds.has(flat.flat_id)
         return due
-          ? !['PAID', 'WAIVED'].includes(due.status)
-          : !coveredFlatIds.has(flat.flat_id)
+          ? !isDueClearForQrAccess(due, isCamAdvanceCovered)
+          : !isCamAdvanceCovered
       })
       .map((flat) => flat.label)
 
     const totalDue = dues.rows.reduce((sum, due) => sum + Number(due.total_amount), 0)
     const totalPaid = dues.rows.reduce((sum, due) => sum + Number(due.paid_amount), 0)
-    const totalBalance = dues.rows.reduce((sum, due) => sum + Number(due.balance_amount), 0)
+    const totalBalance = dues.rows.reduce(
+      (sum, due) =>
+        sum + (isDueClearForQrAccess(due, coveredFlatIds.has(due.flat_id)) ? 0 : Number(due.balance_amount)),
+      0,
+    )
     const grantedByPolicy = accessRows.length > 0 && unpaidLabels.length === 0
 
     const previous = await client.query<{ is_access_granted: boolean }>(
@@ -614,22 +624,43 @@ export const recomputeUserAccessForPairs = async (
           end as access_basis,
           coalesce(
             array_agg(ar.label order by ar.label) filter (
-              where (ar.due_id is not null and ar.status not in ('PAID', 'WAIVED'))
+              where (ar.due_id is not null and not (
+                ar.status in ('PAID', 'WAIVED')
+                or ar.balance_amount <= 0
+                or ar.is_cam_advance_covered
+              ))
                 or (ar.due_id is null and not ar.is_cam_advance_covered)
             ),
             array[]::text[]
           ) as unpaid_flat_numbers,
           count(*) filter (
-            where (ar.due_id is not null and ar.status in ('PAID', 'WAIVED'))
+            where (ar.due_id is not null and (
+                ar.status in ('PAID', 'WAIVED')
+                or ar.balance_amount <= 0
+                or ar.is_cam_advance_covered
+              ))
               or (ar.due_id is null and ar.is_cam_advance_covered)
           )::integer as total_paid_flats,
           count(*) filter (
-            where (ar.due_id is not null and ar.status not in ('PAID', 'WAIVED'))
+            where (ar.due_id is not null and not (
+                ar.status in ('PAID', 'WAIVED')
+                or ar.balance_amount <= 0
+                or ar.is_cam_advance_covered
+              ))
               or (ar.due_id is null and not ar.is_cam_advance_covered)
           )::integer as total_unpaid_flats,
           coalesce(sum(ar.total_amount), 0) as total_due_all_flats,
           coalesce(sum(ar.paid_amount), 0) as total_paid_all_flats,
-          coalesce(sum(ar.balance_amount), 0) as total_balance_all_flats
+          coalesce(sum(
+            case
+              when ar.due_id is not null and (
+                ar.status in ('PAID', 'WAIVED')
+                or ar.balance_amount <= 0
+                or ar.is_cam_advance_covered
+              ) then 0
+              else ar.balance_amount
+            end
+          ), 0) as total_balance_all_flats
         from access_rows ar
         group by ar.society_id, ar.user_id, ar.billing_period_id
       ),
