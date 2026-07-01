@@ -18,6 +18,7 @@ type ReceiptSummary = {
   receiptNumber: string
   receiptFilePath: string | null
   receiptGeneratedAt: string | null
+  downloadUrl: string
   flatId: string
   flatNumber: string | null
   blockName: string | null
@@ -258,7 +259,7 @@ const resetFilters = () => {
           </Column>
           <Column header="Actions" style="width: 120px">
             <template #body="{ data: row }">
-              <Button as="a" :href="`/api/payments/${row.id}/receipt`" target="_blank" icon="pi pi-download" severity="secondary" text rounded aria-label="Download receipt" title="Download receipt" />
+              <Button as="a" :href="row.downloadUrl" target="_blank" icon="pi pi-download" severity="secondary" text rounded aria-label="Download receipt" title="Download receipt" />
             </template>
           </Column>
         </AppDataTable>
@@ -284,7 +285,7 @@ const resetFilters = () => {
               <span>Reference</span>
               <strong>{{ referenceLabel(receipt) }}</strong>
             </div>
-            <Button as="a" :href="`/api/payments/${receipt.id}/receipt`" target="_blank" label="Download receipt" icon="pi pi-download" size="small" severity="secondary" outlined />
+            <Button as="a" :href="receipt.downloadUrl" target="_blank" label="Download receipt" icon="pi pi-download" size="small" severity="secondary" outlined />
           </article>
         </div>
       </template>

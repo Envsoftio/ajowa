@@ -1,11 +1,59 @@
-import { createPaginatedSuccess, getPaginationParams } from '~/server/utils/api'
+import { z } from 'zod'
+import { createPaginatedSuccess, getPaginationParams, validateInput } from '~/server/utils/api'
 import { requireActiveUser } from '~/server/utils/auth'
 import { queryRows } from '~/server/utils/database'
 import { getQuerySafe } from '~/server/utils/master-data'
 
+const optionalDateSchema = z.preprocess(
+  (value) => (value === '' || value == null ? undefined : value),
+  z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .refine((value) => {
+      const date = new Date(`${value}T00:00:00.000Z`)
+
+      return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value
+    })
+    .optional(),
+)
+
+const optionalAmountSchema = z.preprocess(
+  (value) => (value === '' || value == null ? undefined : value),
+  z.coerce.number().nonnegative().optional(),
+)
+
+const receiptsQuerySchema = z.object({
+  page: z.coerce.number().int().positive().optional(),
+  pageSize: z.coerce.number().int().positive().optional(),
+  search: z.preprocess(
+    (value) => (typeof value === 'string' && value.trim() ? value.trim() : undefined),
+    z.string().max(120).optional(),
+  ),
+  fromDate: optionalDateSchema,
+  toDate: optionalDateSchema,
+  minAmount: optionalAmountSchema,
+  maxAmount: optionalAmountSchema,
+  mode: z.preprocess(
+    (value) => (typeof value === 'string' && value.trim() ? value.trim() : undefined),
+    z.string().max(40).optional(),
+  ),
+  flatId: z.preprocess(
+    (value) => (typeof value === 'string' && value.trim() ? value.trim() : undefined),
+    z.string().uuid().optional(),
+  ),
+  billingPeriodId: z.preprocess(
+    (value) => (typeof value === 'string' && value.trim() ? value.trim() : undefined),
+    z.string().uuid().optional(),
+  ),
+  periodId: z.preprocess(
+    (value) => (typeof value === 'string' && value.trim() ? value.trim() : undefined),
+    z.string().uuid().optional(),
+  ),
+})
+
 export default defineEventHandler(async (event) => {
   const authMe = await requireActiveUser(event)
-  const query = getQuerySafe(event)
+  const query = validateInput(receiptsQuerySchema, getQuerySafe(event))
   const pagination = getPaginationParams(query)
   const offset = (pagination.page - 1) * pagination.pageSize
   const params: unknown[] = [authMe.user.id, authMe.user.societyId]
@@ -45,11 +93,24 @@ export default defineEventHandler(async (event) => {
     conditions.push(`p.mode = $${params.length}`)
   }
   if (query.flatId) {
-    params.push(String(query.flatId))
+    params.push(query.flatId)
     conditions.push(`p.received_for_flat_id = $${params.length}`)
   }
+  const billingPeriodId = query.billingPeriodId ?? query.periodId
+  if (billingPeriodId) {
+    params.push(billingPeriodId)
+    conditions.push(`
+      exists (
+        select 1
+        from payment_allocations pa_filter
+        join maintenance_dues md_filter on md_filter.id = pa_filter.maintenance_due_id
+        where pa_filter.payment_id = p.id
+          and md_filter.billing_period_id = $${params.length}
+      )
+    `)
+  }
   if (query.search) {
-    params.push(`%${String(query.search).toLowerCase()}%`)
+    params.push(`%${query.search.toLowerCase()}%`)
     conditions.push(
       `(lower(coalesce(p.receipt_number, '')) like $${params.length} or lower(coalesce(p.utr_reference, '')) like $${params.length} or lower(coalesce(p.bank_reference, '')) like $${params.length} or lower(coalesce(f.flat_number, '')) like $${params.length} or lower(coalesce(b.name, '')) like $${params.length})`,
     )
@@ -79,7 +140,8 @@ export default defineEventHandler(async (event) => {
         p.bank_reference as "bankReference",
         p.receipt_number as "receiptNumber",
         p.receipt_file_path as "receiptFilePath",
-        p.receipt_generated_at as "receiptGeneratedAt",
+        p.receipt_generated_at::text as "receiptGeneratedAt",
+        concat('/api/payments/', p.id, '/receipt') as "downloadUrl",
         p.received_for_flat_id as "flatId",
         f.flat_number as "flatNumber",
         b.name as "blockName"

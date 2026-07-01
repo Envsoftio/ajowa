@@ -991,6 +991,8 @@ export const ensureQrForAccess = async (userId: string, billingPeriodId: string)
         recordId: tokenId,
       },
       checksum: createHash('sha256').update(qrImageBuffer).digest('hex'),
+    }, {
+      dbClient: client,
     })
 
     const inserted = await client.query(

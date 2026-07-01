@@ -702,12 +702,13 @@ const removeStorageObjectQuietly = async (
 const markFileRecordFailedQuietly = async (
   fileId: string,
   message: string,
+  dbClient?: StorageQueryClient,
 ) => {
   try {
     await updateFileRecord(fileId, {
       upload_status: 'FAILED',
       last_error: message,
-    })
+    }, dbClient)
   } catch (error) {
     const cause = error instanceof Error ? error.message : 'Unknown file metadata update error.'
     console.warn(
@@ -793,7 +794,7 @@ export const uploadPrivateFile = async (
       validInput.storageTargetKey,
       validInput.storageObjectKey,
     )
-    await markFileRecordFailedQuietly(fileId, message)
+    await markFileRecordFailedQuietly(fileId, message, dbClient)
 
     throw error
   }
