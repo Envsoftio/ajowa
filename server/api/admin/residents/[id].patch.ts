@@ -43,8 +43,18 @@ const nullableEmailSchema = z.preprocess((value) => {
   return trimmed ? trimmed : null
 }, z.string().email().nullable())
 
+const nullableMobileNumberSchema = z.preprocess((value) => {
+  if (typeof value !== 'string') {
+    return value ?? null
+  }
+
+  const trimmed = value.trim()
+  return trimmed ? trimmed : null
+}, z.string().min(8).max(20).nullable())
+
 const residentUpdateSchema = residentSchema.extend({
   email: nullableEmailSchema,
+  mobileNumber: nullableMobileNumberSchema,
 })
 
 type PgError = Error & {
@@ -119,7 +129,9 @@ export default defineEventHandler(async (event) => {
           message: `This email is already used by ${duplicateEmail.full_name}.`,
         })
       }
+    }
 
+    if (body.canLogin && body.email) {
       authUserId = await resolveAuthUserForResidentLogin(client, {
         currentUserId: id,
         currentAuthUserId: before.auth_user_id,

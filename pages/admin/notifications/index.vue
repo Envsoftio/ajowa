@@ -69,10 +69,11 @@ type ProcessQueueFilters = {
 const api = useApi()
 const toast = useToast()
 const confirmAction = useAppConfirm()
+const allNotificationStatuses = 'ALL'
 const query = reactive({
   page: 1,
   pageSize: 100,
-  status: '',
+  status: allNotificationStatuses,
   search: '',
 })
 const processQueueFilters = reactive<ProcessQueueFilters>({
@@ -95,7 +96,7 @@ const { data, pending, refresh } = await useAsyncData('admin-notifications', () 
       page: query.page,
       pageSize: query.pageSize,
       search: query.search || undefined,
-      status: query.status || undefined,
+      status: query.status === allNotificationStatuses ? undefined : query.status,
     },
   }),
   { watch: [query] },
@@ -106,6 +107,17 @@ const totalRecords = computed(() => data.value?.data.total ?? 0)
 const first = computed(() => (query.page - 1) * query.pageSize)
 const formatNumber = (value: number) =>
   new Intl.NumberFormat('en-IN').format(value)
+
+const statusOptions = [
+  { label: 'All statuses', value: allNotificationStatuses },
+  { label: 'Queued', value: 'QUEUED' },
+  { label: 'Processing', value: 'PROCESSING' },
+  { label: 'Processed', value: 'PROCESSED' },
+  { label: 'Failed', value: 'FAILED' },
+  { label: 'Scheduled', value: 'SCHEDULED' },
+  { label: 'Cancelled', value: 'CANCELLED' },
+  { label: 'No delivery', value: 'NO_DELIVERY' },
+]
 
 const processChannelOptions = [
   { label: 'All channels', value: '' },
@@ -565,16 +577,7 @@ watch(
         </IconField>
         <Select
           v-model="query.status"
-          :options="[
-            { label: 'All statuses', value: '' },
-            { label: 'Queued', value: 'QUEUED' },
-            { label: 'Processing', value: 'PROCESSING' },
-            { label: 'Processed', value: 'PROCESSED' },
-            { label: 'Failed', value: 'FAILED' },
-            { label: 'Scheduled', value: 'SCHEDULED' },
-            { label: 'Cancelled', value: 'CANCELLED' },
-            { label: 'No delivery', value: 'NO_DELIVERY' },
-          ]"
+          :options="statusOptions"
           option-label="label"
           option-value="value"
         />

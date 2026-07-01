@@ -612,6 +612,7 @@ const submit = async () => {
       whatsappNumber: form.isWhatsappSameAsMobile
         ? null
         : form.whatsappNumber || null,
+      mobileNumber: form.mobileNumber || null,
       profileImagePath: form.profileImagePath || null,
       emergencyContactName: form.emergencyContactName || null,
       emergencyContactNumber: form.emergencyContactNumber || null,
@@ -759,7 +760,7 @@ onBeforeUnmount(clearAllResidentFileSelections)
         <div class="admin-form-grid">
           <label>
             <span>Mobile</span>
-            <InputText v-model="form.mobileNumber" required />
+            <InputText v-model="form.mobileNumber" :required="!isEditing" />
           </label>
           <label>
             <span>WhatsApp</span>
