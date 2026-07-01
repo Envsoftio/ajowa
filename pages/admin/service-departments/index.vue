@@ -33,6 +33,14 @@ const { data, pending, refresh } = await useAsyncData('admin-service-departments
 const departments = computed(() => data.value?.data.departments ?? [])
 const staff = computed(() => data.value?.data.staff ?? [])
 
+const openTicketsRoute = (department: ServiceDepartment) => ({
+  path: '/admin/service-requests',
+  query: {
+    departmentId: department.id,
+    activeOnly: 'true',
+  },
+})
+
 const resetForm = () => {
   selectedDepartment.value = null
   form.code = ''
@@ -138,7 +146,19 @@ const deactivate = async (department: ServiceDepartment) => {
           </template>
         </Column>
         <Column field="staffCount" header="Staff" />
-        <Column field="openTicketCount" header="Open tickets" />
+        <Column field="openTicketCount" header="Open tickets">
+          <template #body="{ data: row }">
+            <NuxtLink
+              v-if="(row.openTicketCount ?? 0) > 0"
+              class="table-link-button open-ticket-count-link"
+              :to="openTicketsRoute(row)"
+              :aria-label="`View open tickets for ${row.name}`"
+            >
+              {{ row.openTicketCount ?? 0 }}
+            </NuxtLink>
+            <span v-else>{{ row.openTicketCount ?? 0 }}</span>
+          </template>
+        </Column>
         <Column header="Queue">
           <template #body="{ data: row }">
             <AppStatusBadge :status="row.allowsQueueVisibility ? 'active' : 'inactive'" />
@@ -219,5 +239,10 @@ const deactivate = async (department: ServiceDepartment) => {
 .ticket-table-stack span {
   color: var(--color-muted);
   font-size: 0.85rem;
+}
+
+.open-ticket-count-link {
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
 }
 </style>

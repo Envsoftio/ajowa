@@ -14,7 +14,42 @@ type StaffOption = { id: string; fullName: string; email: string }
 const api = useApi()
 const toast = useToast()
 const router = useRouter()
+const route = useRoute()
 const serviceRequests = useServiceRequests('admin')
+
+const routeFilterKeys = [
+  'status',
+  'priority',
+  'departmentId',
+  'assigneeUserId',
+  'requesterUserId',
+  'flatId',
+  'locationType',
+  'category',
+  'unassigned',
+  'overdue',
+  'reopened',
+  'commonArea',
+  'activeOnly',
+  'closedOnly',
+]
+
+const getRouteQueryValue = (key: string) => {
+  const value = route.query[key]
+  const firstValue = Array.isArray(value) ? value[0] : value
+
+  return typeof firstValue === 'string' ? firstValue.trim() : ''
+}
+
+const initialFilters = routeFilterKeys.reduce<Record<string, string[]>>((filters, key) => {
+  const value = getRouteQueryValue(key)
+
+  if (value) {
+    filters[key] = [value]
+  }
+
+  return filters
+}, {})
 
 const query = ref<ListQueryParams>({
   page: 1,
@@ -22,7 +57,7 @@ const query = ref<ListQueryParams>({
   search: '',
   sortBy: 'createdAt',
   sortDirection: 'desc',
-  filters: {},
+  filters: initialFilters,
 })
 const globalSearch = ref('')
 const assignDialogVisible = ref(false)
@@ -77,13 +112,19 @@ const summaryCards = computed(() => [
 ])
 
 const updateFilter = (key: string, value: string | boolean | null) => {
+  const filters = {
+    ...query.value.filters,
+    [key]: value == null || value === '' ? [] : [String(value)],
+  }
+
+  if (key === 'status' && value) {
+    delete filters.activeOnly
+  }
+
   query.value = {
     ...query.value,
     page: 1,
-    filters: {
-      ...query.value.filters,
-      [key]: value == null || value === '' ? [] : [String(value)],
-    },
+    filters,
   }
 }
 
