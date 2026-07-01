@@ -63,6 +63,84 @@ source .env
 set +a
 ```
 
+### Production backup and restore
+
+Before risky production changes, take a logical backup of the application
+schema. For `pg_dump`, prefer the Supabase direct database URL on port `5432`
+when your network supports it. If `PROD_BACKUP_DATABASE_URL` is not set, the
+command falls back to `DATABASE_URL`.
+
+```bash
+set -a
+source .env
+set +a
+
+# Optional, recommended for pg_dump:
+# export PROD_BACKUP_DATABASE_URL="postgresql://postgres:<db-password>@db.<project-ref>.supabase.co:5432/postgres?sslmode=require"
+
+BACKUP_STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+BACKUP_DIR="$HOME/ajowa-prod-backups/$BACKUP_STAMP"
+BACKUP_DATABASE_URL="${PROD_BACKUP_DATABASE_URL:-$DATABASE_URL}"
+mkdir -p "$BACKUP_DIR"
+
+pg_dump \
+  --format=custom \
+  --schema=public \
+  --no-owner \
+  --verbose \
+  --file "$BACKUP_DIR/ajowa-prod-public.dump" \
+  "$BACKUP_DATABASE_URL"
+
+pg_restore --list "$BACKUP_DIR/ajowa-prod-public.dump" \
+  > "$BACKUP_DIR/ajowa-prod-public.contents.txt"
+```
+
+This creates:
+
+```text
+~/ajowa-prod-backups/<timestamp>/ajowa-prod-public.dump
+~/ajowa-prod-backups/<timestamp>/ajowa-prod-public.contents.txt
+```
+
+Restore only into a local, scratch, or new Supabase project database first.
+Never point `RESTORE_DATABASE_URL` at the current production database unless
+you intentionally want to replace production data and have planned downtime.
+
+```bash
+BACKUP_FILE="$HOME/ajowa-prod-backups/<timestamp>/ajowa-prod-public.dump"
+
+# Local Supabase restore target:
+RESTORE_DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:54322/postgres?sslmode=disable"
+
+# Or use a new/scratch Supabase project:
+# RESTORE_DATABASE_URL="postgresql://postgres:<db-password>@db.<new-project-ref>.supabase.co:5432/postgres?sslmode=require"
+
+pg_restore --list "$BACKUP_FILE"
+
+psql "$RESTORE_DATABASE_URL" -X -v ON_ERROR_STOP=1 \
+  -c "drop schema if exists public cascade;"
+
+pg_restore \
+  --dbname "$RESTORE_DATABASE_URL" \
+  --no-owner \
+  --verbose \
+  "$BACKUP_FILE"
+
+psql "$RESTORE_DATABASE_URL" -X -v ON_ERROR_STOP=1 \
+  -c "select count(*) as users_count from public.users;"
+
+psql "$RESTORE_DATABASE_URL" -X -v ON_ERROR_STOP=1 \
+  -c "select count(*) as dues_count from public.maintenance_dues;"
+```
+
+For a production incident, prefer Supabase Dashboard backups or Point-in-Time
+Recovery when available. The logical dump above is useful for manual recovery
+and verification, but it does not back up the actual files stored in Supabase
+Storage buckets. Back up Storage objects separately for buckets such as
+`resident-documents`, `payment-proofs`, `receipts`, `qr-images`,
+`finance-attachments`, `ticket-attachments`, `notice-attachments`, and
+`report-exports`.
+
 Preview and apply pending production migrations:
 
 ```bash
