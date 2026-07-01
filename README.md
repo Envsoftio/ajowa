@@ -66,33 +66,17 @@ set +a
 ### Production backup and restore
 
 Before risky production changes, take a logical backup of the application
-schema. For `pg_dump`, prefer the Supabase direct database URL on port `5432`
-when your network supports it. If `PROD_BACKUP_DATABASE_URL` is not set, the
-command falls back to `DATABASE_URL`.
+schema. The backup script loads `.env`, creates a timestamped backup directory,
+and writes a custom-format `pg_dump` archive plus a restore contents listing.
+For `pg_dump`, prefer the Supabase direct database URL on port `5432` when your
+network supports it. If `PROD_BACKUP_DATABASE_URL` is not set, the script falls
+back to `DATABASE_URL`.
 
 ```bash
-set -a
-source .env
-set +a
-
 # Optional, recommended for pg_dump:
 # export PROD_BACKUP_DATABASE_URL="postgresql://postgres:<db-password>@db.<project-ref>.supabase.co:5432/postgres?sslmode=require"
 
-BACKUP_STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-BACKUP_DIR="$HOME/ajowa-prod-backups/$BACKUP_STAMP"
-BACKUP_DATABASE_URL="${PROD_BACKUP_DATABASE_URL:-$DATABASE_URL}"
-mkdir -p "$BACKUP_DIR"
-
-pg_dump \
-  --format=custom \
-  --schema=public \
-  --no-owner \
-  --verbose \
-  --file "$BACKUP_DIR/ajowa-prod-public.dump" \
-  "$BACKUP_DATABASE_URL"
-
-pg_restore --list "$BACKUP_DIR/ajowa-prod-public.dump" \
-  > "$BACKUP_DIR/ajowa-prod-public.contents.txt"
+./scripts/backup-prod-db.sh
 ```
 
 This creates:
