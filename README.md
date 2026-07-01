@@ -125,6 +125,40 @@ Storage buckets. Back up Storage objects separately for buckets such as
 `finance-attachments`, `ticket-attachments`, `notice-attachments`, and
 `report-exports`.
 
+To copy Storage objects into a timestamped local backup directory, run:
+
+```bash
+# Optional, recommended for storage metadata reads:
+# export STORAGE_BACKUP_DATABASE_URL="postgresql://postgres:<db-password>@db.<project-ref>.supabase.co:5432/postgres?sslmode=require"
+
+npm run backup:storage
+```
+
+The script loads `.env`, reads bucket/object metadata from the `storage` schema,
+downloads object bytes through the Supabase Storage API using
+`SUPABASE_SERVICE_ROLE_KEY`, and writes:
+
+```text
+~/ajowa-storage-backups/<timestamp>/storage-buckets.json
+~/ajowa-storage-backups/<timestamp>/storage-policies.json
+~/ajowa-storage-backups/<timestamp>/storage-objects-metadata.jsonl
+~/ajowa-storage-backups/<timestamp>/storage-objects-manifest.jsonl
+~/ajowa-storage-backups/<timestamp>/manifest.json
+~/ajowa-storage-backups/<timestamp>/objects/<bucket>/<object path>
+```
+
+You can limit a test run to one bucket:
+
+```bash
+npm run backup:storage -- --bucket receipts
+```
+
+Example daily cron entry:
+
+```cron
+0 2 * * * cd /path/to/ajowa && npm run backup:storage >> "$HOME/ajowa-storage-backups/backup.log" 2>&1
+```
+
 Preview and apply pending production migrations:
 
 ```bash
