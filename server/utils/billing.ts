@@ -768,7 +768,7 @@ type PreviousDueRow = {
   status: string
 }
 
-const roundBillMoney = (value: number) => Math.round(value * 100) / 100
+export const roundBillMoney = (value: number) => Math.round(value * 100) / 100
 
 const formatBillPlainNumber = (value: number) =>
   new Intl.NumberFormat('en-IN', {
@@ -813,11 +813,13 @@ const formatInvoicePeriodDate = (value: string | null | undefined) => {
 const formatInvoicePeriodLabel = (row: MaintenanceBillDueRow) =>
   `${formatInvoicePeriodDate(row.period_start_date)} to ${formatInvoicePeriodDate(row.period_end_date)}`
 
-const formatInvoiceAmount = (value: number) =>
+export const formatBillPayableAmount = (value: number) =>
   new Intl.NumberFormat('en-IN', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  }).format(value)
+  }).format(roundBillMoney(value))
+
+const formatInvoiceAmount = formatBillPayableAmount
 
 const formatInvoiceCurrency = (value: number) => `₹ ${formatInvoiceAmount(value)}`
 

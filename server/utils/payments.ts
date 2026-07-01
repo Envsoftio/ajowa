@@ -5,13 +5,20 @@ import { AppError } from './errors'
 import { getDatabasePool, queryRows } from './database'
 import { computeDueAmounts, todayDate } from './billing'
 import { getValidatedRuntimeConfig } from './env'
-import { enqueueNotificationForUsers, resolveNotificationAudience } from './notifications'
+import {
+  enqueueNotificationForUsers,
+  resolveNotificationAudience,
+} from './notifications'
 import { createPdfBuffer, getSocietyStampImage } from './pdf'
 import { recomputeUserAccess } from './qr-access'
 import { uploadPrivateFile } from './storage'
 import { setCamAdvanceCoverageForPeriod } from './cam-advance'
 
-export const allocationModeSchema = z.enum(['OLDEST_UNPAID_FIRST', 'SELECTED_PERIODS', 'TENURE_PACK'])
+export const allocationModeSchema = z.enum([
+  'OLDEST_UNPAID_FIRST',
+  'SELECTED_PERIODS',
+  'TENURE_PACK',
+])
 
 export const paymentModeSchema = z.enum([
   'CASH',
@@ -140,12 +147,18 @@ const formatReceiptMoney = (value: number) =>
 
 const formatReceiptDate = (value: string | null | undefined) =>
   value
-    ? new Date(value.length === 10 ? `${value}T00:00:00` : value).toLocaleDateString('en-IN', {
+    ? new Date(
+        value.length === 10 ? `${value}T00:00:00` : value,
+      ).toLocaleDateString('en-IN', {
         dateStyle: 'medium',
       })
     : '-'
 
-const syncFlatCamAdvancePaidUntil = async (client: PoolClient, dueId: string, status: string) => {
+const syncFlatCamAdvancePaidUntil = async (
+  client: PoolClient,
+  dueId: string,
+  status: string,
+) => {
   if (status !== 'PAID') return
 
   const result = await client.query<{
@@ -192,7 +205,9 @@ const getPaymentPolicy = async (client: PoolClient, societyId: string) => {
   const settings = result.rows[0]?.settings ?? {}
 
   return {
-    excessPaymentHandling: String(settings.excessPaymentHandling ?? 'KEEP_AS_ADVANCE'),
+    excessPaymentHandling: String(
+      settings.excessPaymentHandling ?? 'KEEP_AS_ADVANCE',
+    ),
     graceDays: Number(settings.graceDays ?? 0),
     lateFeePerDay: Number(settings.lateFeePerDay ?? 0),
   }
@@ -211,14 +226,18 @@ const selectAllocatableDues = async (
   },
 ) => {
   const params: unknown[] = [input.flatId]
-  const filters = [`md.flat_id = $1`, `md.status not in ('PAID', 'WAIVED', 'CANCELLED')`]
+  const filters = [
+    `md.flat_id = $1`,
+    `md.status not in ('PAID', 'WAIVED', 'CANCELLED')`,
+  ]
 
   if (input.mode === 'SELECTED_PERIODS') {
     if (!input.selectedDueIds?.length) {
       throw new AppError({
         code: 'VALIDATION_ERROR',
         statusCode: 400,
-        message: 'Select at least one billing period for selected-period allocation.',
+        message:
+          'Select at least one billing period for selected-period allocation.',
       })
     }
     params.push(input.selectedDueIds)
@@ -226,7 +245,9 @@ const selectAllocatableDues = async (
   }
 
   const limitClause =
-    input.mode === 'TENURE_PACK' && input.tenureMonths ? `limit ${Number(input.tenureMonths)}` : ''
+    input.mode === 'TENURE_PACK' && input.tenureMonths
+      ? `limit ${Number(input.tenureMonths)}`
+      : ''
 
   const result = await client.query<DueRow>(
     `
@@ -290,7 +311,11 @@ export const previewPaymentAllocation = async (input: PaymentPreviewInput) => {
     )
     const societyId = societyResult.rows[0]?.society_id
     if (!societyId) {
-      throw new AppError({ code: 'NOT_FOUND', statusCode: 404, message: 'Flat not found.' })
+      throw new AppError({
+        code: 'NOT_FOUND',
+        statusCode: 404,
+        message: 'Flat not found.',
+      })
     }
 
     const policy = await getPaymentPolicy(client, societyId)
@@ -309,7 +334,9 @@ export const previewPaymentAllocation = async (input: PaymentPreviewInput) => {
     let remainingPayment = input.amount
     const lines = dues
       .map((due, index) => {
-        const allocatedAmount = roundMoney(Math.min(remainingPayment, due.computedBalance))
+        const allocatedAmount = roundMoney(
+          Math.min(remainingPayment, due.computedBalance),
+        )
         remainingPayment = roundMoney(remainingPayment - allocatedAmount)
         return {
           dueId: due.id,
@@ -326,8 +353,12 @@ export const previewPaymentAllocation = async (input: PaymentPreviewInput) => {
 
     return {
       lines,
-      totalDue: roundMoney(dues.reduce((sum, due) => sum + due.computedBalance, 0)),
-      allocatedAmount: roundMoney(lines.reduce((sum, line) => sum + line.allocatedAmount, 0)),
+      totalDue: roundMoney(
+        dues.reduce((sum, due) => sum + due.computedBalance, 0),
+      ),
+      allocatedAmount: roundMoney(
+        lines.reduce((sum, line) => sum + line.allocatedAmount, 0),
+      ),
       advanceAmount: roundMoney(Math.max(0, remainingPayment)),
       policy: policy.excessPaymentHandling,
     }
@@ -336,7 +367,12 @@ export const previewPaymentAllocation = async (input: PaymentPreviewInput) => {
   }
 }
 
-const refreshDueTotals = async (client: PoolClient, dueId: string, graceDays: number, lateFeePerDay: number) => {
+const refreshDueTotals = async (
+  client: PoolClient,
+  dueId: string,
+  graceDays: number,
+  lateFeePerDay: number,
+) => {
   const dueResult = await client.query<DueRow>(
     `
       select
@@ -396,7 +432,14 @@ const refreshDueTotals = async (client: PoolClient, dueId: string, graceDays: nu
         status = $6
       where id = $1
     `,
-    [dueId, computed.lateFeeAmount, paidAmount, computed.totalAmount, computed.balanceAmount, computed.status],
+    [
+      dueId,
+      computed.lateFeeAmount,
+      paidAmount,
+      computed.totalAmount,
+      computed.balanceAmount,
+      computed.status,
+    ],
   )
 
   await syncFlatCamAdvancePaidUntil(client, dueId, computed.status)
@@ -431,14 +474,12 @@ const recomputeAccessForAffectedDues = async (
   }
 }
 
-export const allocateMaintenancePayment = async (paymentId: string) => {
-  const client = await getDatabasePool().connect()
-
-  try {
-    await client.query('begin')
-
-    const paymentResult = await client.query<PaymentRow>(
-      `
+export const allocateMaintenancePaymentWithClient = async (
+  client: PoolClient,
+  paymentId: string,
+) => {
+  const paymentResult = await client.query<PaymentRow>(
+    `
         select
           id,
           society_id,
@@ -451,56 +492,67 @@ export const allocateMaintenancePayment = async (paymentId: string) => {
         where id = $1
         for update
       `,
-      [paymentId],
-    )
-    const payment = paymentResult.rows[0]
-    if (!payment) {
-      throw new AppError({ code: 'NOT_FOUND', statusCode: 404, message: 'Payment not found.' })
-    }
-
-    const existing = await client.query<{ count: string }>(
-      `select count(*)::text from payment_allocations where payment_id = $1`,
-      [paymentId],
-    )
-    if (Number(existing.rows[0]?.count ?? 0) > 0) {
-      await client.query('commit')
-      return { paymentId, idempotent: true, affectedPeriods: [] }
-    }
-
-    if (payment.status !== 'VERIFIED') {
-      throw new AppError({
-        code: 'CONFLICT',
-        statusCode: 409,
-        message: 'Payment allocation runs only after verification.',
-      })
-    }
-
-    const snapshotResult = await client.query<{ allocation_snapshot: Record<string, unknown> }>(
-      `select allocation_snapshot from payments where id = $1`,
-      [paymentId],
-    )
-    const snapshot = snapshotResult.rows[0]?.allocation_snapshot ?? {}
-    const policy = await getPaymentPolicy(client, payment.society_id)
-    const preview = await previewPaymentAllocation({
-      flatId: payment.received_for_flat_id,
-      amount: Number(payment.amount),
-      allocationMode: allocationModeSchema.parse(payment.allocation_mode),
-      selectedDueIds: Array.isArray(snapshot.selectedDueIds) ? (snapshot.selectedDueIds as string[]) : [],
-      tenureMonths: typeof snapshot.tenureMonths === 'number' ? snapshot.tenureMonths : undefined,
+    [paymentId],
+  )
+  const payment = paymentResult.rows[0]
+  if (!payment) {
+    throw new AppError({
+      code: 'NOT_FOUND',
+      statusCode: 404,
+      message: 'Payment not found.',
     })
+  }
 
-    if (preview.advanceAmount > 0 && policy.excessPaymentHandling !== 'KEEP_AS_ADVANCE') {
-      throw new AppError({
-        code: 'CONFLICT',
-        statusCode: 409,
-        message: 'Payment exceeds the selected dues and the society policy does not allow advance credit.',
-      })
-    }
+  const existing = await client.query<{ count: string }>(
+    `select count(*)::text from payment_allocations where payment_id = $1`,
+    [paymentId],
+  )
+  if (Number(existing.rows[0]?.count ?? 0) > 0) {
+    return { paymentId, idempotent: true, affectedPeriods: [] }
+  }
 
-    const affected = []
-    for (const line of preview.lines) {
-      const insertResult = await client.query<{ id: string }>(
-        `
+  if (payment.status !== 'VERIFIED') {
+    throw new AppError({
+      code: 'CONFLICT',
+      statusCode: 409,
+      message: 'Payment allocation runs only after verification.',
+    })
+  }
+
+  const snapshotResult = await client.query<{
+    allocation_snapshot: Record<string, unknown>
+  }>(`select allocation_snapshot from payments where id = $1`, [paymentId])
+  const snapshot = snapshotResult.rows[0]?.allocation_snapshot ?? {}
+  const policy = await getPaymentPolicy(client, payment.society_id)
+  const preview = await previewPaymentAllocation({
+    flatId: payment.received_for_flat_id,
+    amount: Number(payment.amount),
+    allocationMode: allocationModeSchema.parse(payment.allocation_mode),
+    selectedDueIds: Array.isArray(snapshot.selectedDueIds)
+      ? (snapshot.selectedDueIds as string[])
+      : [],
+    tenureMonths:
+      typeof snapshot.tenureMonths === 'number'
+        ? snapshot.tenureMonths
+        : undefined,
+  })
+
+  if (
+    preview.advanceAmount > 0 &&
+    policy.excessPaymentHandling !== 'KEEP_AS_ADVANCE'
+  ) {
+    throw new AppError({
+      code: 'CONFLICT',
+      statusCode: 409,
+      message:
+        'Payment exceeds the selected dues and the society policy does not allow advance credit.',
+    })
+  }
+
+  const affected = []
+  for (const line of preview.lines) {
+    const insertResult = await client.query<{ id: string }>(
+      `
           insert into payment_allocations (
             payment_id,
             maintenance_due_id,
@@ -514,25 +566,30 @@ export const allocateMaintenancePayment = async (paymentId: string) => {
           on conflict (payment_id, maintenance_due_id) do nothing
           returning id
         `,
-        [
-          paymentId,
-          line.dueId,
-          line.allocatedAmount,
-          line.dueAmount,
-          line.lateFeeComponent,
-          line.remainingBalance,
-          line.allocationOrder,
-        ],
+      [
+        paymentId,
+        line.dueId,
+        line.allocatedAmount,
+        line.dueAmount,
+        line.lateFeeComponent,
+        line.remainingBalance,
+        line.allocationOrder,
+      ],
+    )
+    if (insertResult.rows[0]) {
+      const refreshed = await refreshDueTotals(
+        client,
+        line.dueId,
+        policy.graceDays,
+        policy.lateFeePerDay,
       )
-      if (insertResult.rows[0]) {
-        const refreshed = await refreshDueTotals(client, line.dueId, policy.graceDays, policy.lateFeePerDay)
-        if (refreshed) affected.push(refreshed)
-      }
+      if (refreshed) affected.push(refreshed)
     }
+  }
 
-    if (preview.advanceAmount > 0) {
-      const creditResult = await client.query<{ id: string }>(
-        `
+  if (preview.advanceAmount > 0) {
+    const creditResult = await client.query<{ id: string }>(
+      `
           insert into resident_advance_credits (
             society_id,
             user_id,
@@ -545,28 +602,47 @@ export const allocateMaintenancePayment = async (paymentId: string) => {
           values ($1, $2, $3, $4, $5, $5, $6)
           returning id
         `,
-        [
-          payment.society_id,
-          payment.payer_user_id,
-          payment.received_for_flat_id,
-          paymentId,
-          preview.advanceAmount,
-          'Excess payment retained as advance credit.',
-        ],
-      )
-      await client.query(
-        `
+      [
+        payment.society_id,
+        payment.payer_user_id,
+        payment.received_for_flat_id,
+        paymentId,
+        preview.advanceAmount,
+        'Excess payment retained as advance credit.',
+      ],
+    )
+    await client.query(
+      `
           insert into resident_advance_credit_history (credit_id, action, amount, payment_id, notes)
           values ($1, 'CREATED', $2, $3, $4)
         `,
-        [creditResult.rows[0]?.id, preview.advanceAmount, paymentId, 'Created during payment allocation.'],
-      )
-    }
+      [
+        creditResult.rows[0]?.id,
+        preview.advanceAmount,
+        paymentId,
+        'Created during payment allocation.',
+      ],
+    )
+  }
 
-    await recomputeAccessForAffectedDues(client, affected)
+  await recomputeAccessForAffectedDues(client, affected)
 
+  return {
+    paymentId,
+    idempotent: false,
+    affectedPeriods: affected,
+    advanceAmount: preview.advanceAmount,
+  }
+}
+
+export const allocateMaintenancePayment = async (paymentId: string) => {
+  const client = await getDatabasePool().connect()
+
+  try {
+    await client.query('begin')
+    const result = await allocateMaintenancePaymentWithClient(client, paymentId)
     await client.query('commit')
-    return { paymentId, idempotent: false, affectedPeriods: affected, advanceAmount: preview.advanceAmount }
+    return result
   } catch (error) {
     await client.query('rollback')
     throw error
@@ -575,7 +651,10 @@ export const allocateMaintenancePayment = async (paymentId: string) => {
   }
 }
 
-export const consumeAdvanceCreditsForDueWithClient = async (client: PoolClient, dueId: string) => {
+export const consumeAdvanceCreditsForDueWithClient = async (
+  client: PoolClient,
+  dueId: string,
+) => {
   const dueResult = await client.query<DueRow>(
     `
       select
@@ -601,7 +680,11 @@ export const consumeAdvanceCreditsForDueWithClient = async (client: PoolClient, 
   )
   const due = dueResult.rows[0]
   if (!due) {
-    throw new AppError({ code: 'NOT_FOUND', statusCode: 404, message: 'Due not found.' })
+    throw new AppError({
+      code: 'NOT_FOUND',
+      statusCode: 404,
+      message: 'Due not found.',
+    })
   }
   const policy = await getPaymentPolicy(client, due.society_id)
   const computed = computeDueAmounts(
@@ -619,7 +702,11 @@ export const consumeAdvanceCreditsForDueWithClient = async (client: PoolClient, 
   let remaining = computed.balanceAmount
   let consumedAmount = 0
   let consumedCreditCount = 0
-  const credits = await client.query<{ id: string; current_balance: string; source_payment_id: string | null }>(
+  const credits = await client.query<{
+    id: string
+    current_balance: string
+    source_payment_id: string | null
+  }>(
     `
       select id, current_balance::text, source_payment_id
       from resident_advance_credits
@@ -632,7 +719,9 @@ export const consumeAdvanceCreditsForDueWithClient = async (client: PoolClient, 
 
   for (const credit of credits.rows) {
     if (remaining <= 0) break
-    const amount = roundMoney(Math.min(remaining, Number(credit.current_balance)))
+    const amount = roundMoney(
+      Math.min(remaining, Number(credit.current_balance)),
+    )
     const payment = await client.query<{ id: string }>(
       `
         insert into payments (
@@ -669,7 +758,14 @@ export const consumeAdvanceCreditsForDueWithClient = async (client: PoolClient, 
         values ($1, $2, $3, $4, $5, $6, 1, 'ADVANCE_CREDIT')
         returning id
       `,
-      [payment.rows[0]?.id, dueId, amount, computed.totalAmount, computed.lateFeeAmount, roundMoney(remaining - amount)],
+      [
+        payment.rows[0]?.id,
+        dueId,
+        amount,
+        computed.totalAmount,
+        computed.lateFeeAmount,
+        roundMoney(remaining - amount),
+      ],
     )
     await client.query(
       `
@@ -692,14 +788,25 @@ export const consumeAdvanceCreditsForDueWithClient = async (client: PoolClient, 
         )
         values ($1, 'CONSUMED', $2, $3, $4, $5)
       `,
-      [credit.id, amount, payment.rows[0]?.id, allocation.rows[0]?.id, `Consumed against due ${dueId}.`],
+      [
+        credit.id,
+        amount,
+        payment.rows[0]?.id,
+        allocation.rows[0]?.id,
+        `Consumed against due ${dueId}.`,
+      ],
     )
     remaining = roundMoney(remaining - amount)
     consumedAmount = roundMoney(consumedAmount + amount)
     consumedCreditCount += 1
   }
 
-  const refreshed = await refreshDueTotals(client, dueId, policy.graceDays, policy.lateFeePerDay)
+  const refreshed = await refreshDueTotals(
+    client,
+    dueId,
+    policy.graceDays,
+    policy.lateFeePerDay,
+  )
   if (refreshed) {
     await recomputeAccessForAffectedDues(client, [refreshed])
   }
@@ -782,7 +889,11 @@ export const getPaymentReceiptData = async (
   )
   const payment = paymentResult.rows[0]
   if (!payment) {
-    throw new AppError({ code: 'NOT_FOUND', statusCode: 404, message: 'Payment not found.' })
+    throw new AppError({
+      code: 'NOT_FOUND',
+      statusCode: 404,
+      message: 'Payment not found.',
+    })
   }
 
   const allocationsResult = await queryRows<PaymentReceiptAllocationRow>(
@@ -815,7 +926,10 @@ export const generatePaymentReceiptPdf = async (
   paymentId: string,
   access?: { societyId?: string; userId?: string; isStaff?: boolean },
 ) => {
-  const { payment, allocations } = await getPaymentReceiptData(paymentId, access)
+  const { payment, allocations } = await getPaymentReceiptData(
+    paymentId,
+    access,
+  )
 
   if (!payment.receipt_number) {
     throw new AppError({
@@ -826,7 +940,8 @@ export const generatePaymentReceiptPdf = async (
   }
 
   const reference = payment.utr_reference || payment.bank_reference || '-'
-  const flatLabel = [payment.block_name, payment.flat_number].filter(Boolean).join(' ') || '-'
+  const flatLabel =
+    [payment.block_name, payment.flat_number].filter(Boolean).join(' ') || '-'
   const receiptStampImage = getSocietyStampImage()
   const allocationBody: unknown[][] = [
     [
@@ -840,16 +955,32 @@ export const generatePaymentReceiptPdf = async (
     ...allocations.map((allocation) => [
       { text: allocation.billing_period_label ?? '-', style: 'tableCell' },
       { text: formatReceiptDate(allocation.due_date), style: 'tableCell' },
-      { text: formatReceiptMoney(Number(allocation.due_amount)), style: 'tableCellRight' },
-      { text: formatReceiptMoney(Number(allocation.late_fee_component)), style: 'tableCellRight' },
-      { text: formatReceiptMoney(Number(allocation.allocated_amount)), style: 'tableCellRight' },
-      { text: formatReceiptMoney(Number(allocation.remaining_balance)), style: 'tableCellRight' },
+      {
+        text: formatReceiptMoney(Number(allocation.due_amount)),
+        style: 'tableCellRight',
+      },
+      {
+        text: formatReceiptMoney(Number(allocation.late_fee_component)),
+        style: 'tableCellRight',
+      },
+      {
+        text: formatReceiptMoney(Number(allocation.allocated_amount)),
+        style: 'tableCellRight',
+      },
+      {
+        text: formatReceiptMoney(Number(allocation.remaining_balance)),
+        style: 'tableCellRight',
+      },
     ]),
   ]
 
   if (allocationBody.length === 1) {
     allocationBody.push([
-      { text: 'No allocation lines were recorded for this payment.', colSpan: 6, style: 'tableCell' },
+      {
+        text: 'No allocation lines were recorded for this payment.',
+        colSpan: 6,
+        style: 'tableCell',
+      },
       '',
       '',
       '',
@@ -867,11 +998,20 @@ export const generatePaymentReceiptPdf = async (
         columns: [
           [
             { text: 'Payment Receipt', style: 'title' },
-            { text: `Receipt No: ${payment.receipt_number}`, style: 'receiptNumber' },
+            {
+              text: `Receipt No: ${payment.receipt_number}`,
+              style: 'receiptNumber',
+            },
           ],
           [
-            { text: `Payment Date: ${formatReceiptDate(payment.payment_date)}`, style: 'rightMeta' },
-            { text: `Generated: ${formatReceiptDate(payment.receipt_generated_at)}`, style: 'rightMeta' },
+            {
+              text: `Payment Date: ${formatReceiptDate(payment.payment_date)}`,
+              style: 'rightMeta',
+            },
+            {
+              text: `Generated: ${formatReceiptDate(payment.receipt_generated_at)}`,
+              style: 'rightMeta',
+            },
           ],
         ],
         columnGap: 16,
@@ -883,9 +1023,22 @@ export const generatePaymentReceiptPdf = async (
             table: {
               widths: ['38%', '*'],
               body: [
-                [{ text: 'Received From', style: 'labelCell' }, { text: payment.payer_name ?? '-', style: 'valueCell' }],
-                [{ text: 'Flat', style: 'labelCell' }, { text: flatLabel, style: 'valueCell' }],
-                [{ text: 'Contact', style: 'labelCell' }, { text: payment.payer_mobile_number ?? payment.payer_email ?? '-', style: 'valueCell' }],
+                [
+                  { text: 'Received From', style: 'labelCell' },
+                  { text: payment.payer_name ?? '-', style: 'valueCell' },
+                ],
+                [
+                  { text: 'Flat', style: 'labelCell' },
+                  { text: flatLabel, style: 'valueCell' },
+                ],
+                [
+                  { text: 'Contact', style: 'labelCell' },
+                  {
+                    text:
+                      payment.payer_mobile_number ?? payment.payer_email ?? '-',
+                    style: 'valueCell',
+                  },
+                ],
               ],
             },
             layout: 'noBorders',
@@ -894,9 +1047,24 @@ export const generatePaymentReceiptPdf = async (
             table: {
               widths: ['38%', '*'],
               body: [
-                [{ text: 'Amount', style: 'labelCell' }, { text: formatReceiptMoney(Number(payment.amount)), style: 'valueCell' }],
-                [{ text: 'Mode', style: 'labelCell' }, { text: payment.transfer_kind ?? payment.mode, style: 'valueCell' }],
-                [{ text: 'Reference', style: 'labelCell' }, { text: reference, style: 'valueCell' }],
+                [
+                  { text: 'Amount', style: 'labelCell' },
+                  {
+                    text: formatReceiptMoney(Number(payment.amount)),
+                    style: 'valueCell',
+                  },
+                ],
+                [
+                  { text: 'Mode', style: 'labelCell' },
+                  {
+                    text: payment.transfer_kind ?? payment.mode,
+                    style: 'valueCell',
+                  },
+                ],
+                [
+                  { text: 'Reference', style: 'labelCell' },
+                  { text: reference, style: 'valueCell' },
+                ],
               ],
             },
             layout: 'noBorders',
@@ -927,10 +1095,7 @@ export const generatePaymentReceiptPdf = async (
                   ]
                 : []),
               {
-                text: [
-                  `${payment.society_name}\n`,
-                  'Authorised Signatory',
-                ],
+                text: [`${payment.society_name}\n`, 'Authorised Signatory'],
                 style: 'signature',
               },
             ],
@@ -948,12 +1113,27 @@ export const generatePaymentReceiptPdf = async (
     styles: {
       brand: { fontSize: 14, color: '#0f766e', bold: true },
       title: { fontSize: 20, bold: true, color: '#2f4050' },
-      receiptNumber: { fontSize: 10, bold: true, color: '#2f4050', margin: [0, 4, 0, 0] },
+      receiptNumber: {
+        fontSize: 10,
+        bold: true,
+        color: '#2f4050',
+        margin: [0, 4, 0, 0],
+      },
       subtle: { fontSize: 8, color: '#6b7280', margin: [0, 3, 0, 0] },
       rightMeta: { alignment: 'right', fontSize: 9, color: '#4b5563' },
-      labelCell: { bold: true, fontSize: 9, color: '#4b5563', margin: [0, 2, 0, 2] },
+      labelCell: {
+        bold: true,
+        fontSize: 9,
+        color: '#4b5563',
+        margin: [0, 2, 0, 2],
+      },
       valueCell: { fontSize: 9, color: '#111827', margin: [0, 2, 0, 2] },
-      tableHeader: { bold: true, fontSize: 8, color: '#ffffff', fillColor: '#2a3f54' },
+      tableHeader: {
+        bold: true,
+        fontSize: 8,
+        color: '#ffffff',
+        fillColor: '#2a3f54',
+      },
       tableCell: { fontSize: 8, color: '#2f4050' },
       tableCellRight: { fontSize: 8, color: '#2f4050', alignment: 'right' },
       signature: { fontSize: 8, color: '#111827', bold: true },
@@ -968,54 +1148,57 @@ export const generatePaymentReceiptPdf = async (
     buffer,
     fileName: `${payment.receipt_number}.pdf`.replace(/[^a-z0-9._-]/gi, '-'),
     receiptNumber: payment.receipt_number,
-    storageObjectKey: payment.receipt_file_path ?? `receipts/${payment.receipt_number}.pdf`,
+    storageObjectKey:
+      payment.receipt_file_path ?? `receipts/${payment.receipt_number}.pdf`,
     uploadedBy: payment.payer_user_id,
   }
 }
 
-export const generateReceiptForPayment = async (paymentId: string) => {
-  const client = await getDatabasePool().connect()
-  let receiptNumber: string
-
-  try {
-    await client.query('begin')
-    const result = await client.query<{ receipt_number: string | null; society_id: string }>(
-      `select receipt_number, society_id from payments where id = $1 for update`,
-      [paymentId],
-    )
-    const payment = result.rows[0]
-    if (!payment) {
-      throw new AppError({ code: 'NOT_FOUND', statusCode: 404, message: 'Payment not found.' })
-    }
-    if (payment.receipt_number) {
-      await client.query('commit')
-      return payment.receipt_number
-    }
-    const runtimeConfig = getValidatedRuntimeConfig(useRuntimeConfig())
-    const year = new Date().getFullYear()
-    const seq = await client.query<{ value: string }>(
-      `select next_yearly_sequence('RECEIPT', $1)::text as value`,
-      [year],
-    )
-    receiptNumber = `${runtimeConfig.societyCode}-${year}-${String(seq.rows[0]?.value ?? '1').padStart(6, '0')}`
-    await client.query(
-      `
-        update payments
-        set receipt_number = $2,
-            receipt_file_path = $3,
-            receipt_generated_at = now()
-        where id = $1
-      `,
-      [paymentId, receiptNumber, `receipts/${receiptNumber}.pdf`],
-    )
-    await client.query('commit')
-  } catch (error) {
-    await client.query('rollback')
-    throw error
-  } finally {
-    client.release()
+export const assignReceiptNumberForPayment = async (
+  client: PoolClient,
+  paymentId: string,
+) => {
+  const result = await client.query<{
+    receipt_number: string | null
+    society_id: string
+  }>(
+    `select receipt_number, society_id from payments where id = $1 for update`,
+    [paymentId],
+  )
+  const payment = result.rows[0]
+  if (!payment) {
+    throw new AppError({
+      code: 'NOT_FOUND',
+      statusCode: 404,
+      message: 'Payment not found.',
+    })
+  }
+  if (payment.receipt_number) {
+    return payment.receipt_number
   }
 
+  const runtimeConfig = getValidatedRuntimeConfig(useRuntimeConfig())
+  const year = new Date().getFullYear()
+  const seq = await client.query<{ value: string }>(
+    `select next_yearly_sequence('RECEIPT', $1)::text as value`,
+    [year],
+  )
+  const receiptNumber = `${runtimeConfig.societyCode}-${year}-${String(seq.rows[0]?.value ?? '1').padStart(6, '0')}`
+  await client.query(
+    `
+      update payments
+      set receipt_number = $2,
+          receipt_file_path = $3,
+          receipt_generated_at = now()
+      where id = $1
+    `,
+    [paymentId, receiptNumber, `receipts/${receiptNumber}.pdf`],
+  )
+
+  return receiptNumber
+}
+
+export const uploadReceiptPdfForPayment = async (paymentId: string) => {
   const receipt = await generatePaymentReceiptPdf(paymentId)
   await uploadPrivateFile({
     storageTargetKey: 'receipts',
@@ -1030,6 +1213,24 @@ export const generateReceiptForPayment = async (paymentId: string) => {
       recordId: paymentId,
     },
   })
+}
+
+export const generateReceiptForPayment = async (paymentId: string) => {
+  const client = await getDatabasePool().connect()
+  let receiptNumber: string
+
+  try {
+    await client.query('begin')
+    receiptNumber = await assignReceiptNumberForPayment(client, paymentId)
+    await client.query('commit')
+  } catch (error) {
+    await client.query('rollback')
+    throw error
+  } finally {
+    client.release()
+  }
+
+  await uploadReceiptPdfForPayment(paymentId)
 
   return receiptNumber
 }
@@ -1063,12 +1264,20 @@ export const enqueueReceiptReadyNotification = async (paymentId: string) => {
       return { eventId: null, audienceCount: 0, jobCount: 0 }
     }
 
-    const users = await resolveNotificationAudience(client, payment.society_id, {
-      scope: 'USERS',
-      userIds: [payment.payer_user_id],
-    })
-    const flatLabel = [payment.block_name, payment.flat_number].filter(Boolean).join(' ') || 'your flat'
-    const receiptLabel = payment.receipt_number ? `Receipt ${payment.receipt_number}` : 'Your receipt'
+    const users = await resolveNotificationAudience(
+      client,
+      payment.society_id,
+      {
+        scope: 'USERS',
+        userIds: [payment.payer_user_id],
+      },
+    )
+    const flatLabel =
+      [payment.block_name, payment.flat_number].filter(Boolean).join(' ') ||
+      'your flat'
+    const receiptLabel = payment.receipt_number
+      ? `Receipt ${payment.receipt_number}`
+      : 'Your receipt'
 
     return enqueueNotificationForUsers(client, {
       societyId: payment.society_id,
@@ -1098,9 +1307,14 @@ export const enqueueReceiptReadyNotification = async (paymentId: string) => {
   }
 }
 
-export const verifyRazorpayWebhookSignature = (rawBody: string, signature: string) => {
+export const verifyRazorpayWebhookSignature = (
+  rawBody: string,
+  signature: string,
+) => {
   const runtimeConfig = getValidatedRuntimeConfig(useRuntimeConfig())
-  const expected = createHmac('sha256', runtimeConfig.razorpayWebhookSecret).update(rawBody).digest('hex')
+  const expected = createHmac('sha256', runtimeConfig.razorpayWebhookSecret)
+    .update(rawBody)
+    .digest('hex')
   return expected === signature
 }
 

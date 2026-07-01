@@ -1,25 +1,51 @@
 import { z } from 'zod'
-import { createApiSuccess, readJsonBody, validateInput } from '~/server/utils/api'
+import {
+  createApiSuccess,
+  readJsonBody,
+  validateInput,
+} from '~/server/utils/api'
 import { requireRole } from '~/server/utils/auth'
 import { getDatabasePool, queryRows } from '~/server/utils/database'
 import {
-  allocateMaintenancePayment,
+  allocateMaintenancePaymentWithClient,
+  assignReceiptNumberForPayment,
   enqueueReceiptReadyNotification,
-  generateReceiptForPayment,
   manualPaymentSchema,
   previewPaymentAllocation,
+  uploadReceiptPdfForPayment,
 } from '~/server/utils/payments'
 import { AppError } from '~/server/utils/errors'
 import { postMaintenanceReceiptJournal } from '~/server/utils/finance'
 
 const transferModes = new Set(['BANK_TRANSFER', 'UPI'])
 
+const getErrorMessage = (error: unknown, fallback: string) =>
+  error instanceof Error ? error.message : fallback
+
+const getSubmittedReferenceValues = (input: {
+  utrReference?: string | undefined
+  bankReference?: string | undefined
+}) => [
+  ...new Set(
+    [input.utrReference, input.bankReference]
+      .map((reference) => reference?.trim().toLowerCase())
+      .filter((reference): reference is string => Boolean(reference)),
+  ),
+]
+
 export default defineEventHandler(async (event) => {
   const authMe = await requireRole(event, ['ADMIN', 'MANAGER'])
   const input = validateInput(manualPaymentSchema, await readJsonBody(event))
-  const bankAccountId = input.account && z.string().uuid().safeParse(input.account).success ? input.account : null
+  const bankAccountId =
+    input.account && z.string().uuid().safeParse(input.account).success
+      ? input.account
+      : null
 
-  if (transferModes.has(input.mode) && !input.utrReference && !input.bankReference) {
+  if (
+    transferModes.has(input.mode) &&
+    !input.utrReference &&
+    !input.bankReference
+  ) {
     throw new AppError({
       code: 'VALIDATION_ERROR',
       statusCode: 400,
@@ -31,45 +57,36 @@ export default defineEventHandler(async (event) => {
     throw new AppError({
       code: 'VALIDATION_ERROR',
       statusCode: 400,
-      message: 'Select NEFT, IMPS, RTGS, or bank transfer for bank-transfer payments.',
+      message:
+        'Select NEFT, IMPS, RTGS, or bank transfer for bank-transfer payments.',
     })
   }
 
-  if (input.mode === 'CHEQUE' && (!input.chequeNumber || !input.chequeDate || !input.bankName)) {
+  if (
+    input.mode === 'CHEQUE' &&
+    (!input.chequeNumber || !input.chequeDate || !input.bankName)
+  ) {
     throw new AppError({
       code: 'VALIDATION_ERROR',
       statusCode: 400,
-      message: 'Cheque number, cheque date, and bank name are required for cheque payments.',
+      message:
+        'Cheque number, cheque date, and bank name are required for cheque payments.',
     })
   }
 
-  if ((input.utrReference || input.bankReference) && !input.allowDuplicateUtr) {
-    const duplicate = await queryRows<{ id: string }>(
-      `
-        select id
-        from payments
-        where lower(coalesce(utr_reference, '')) = lower($1)
-           or lower(coalesce(bank_reference, '')) = lower($2)
-        limit 1
-      `,
-      [input.utrReference ?? '', input.bankReference ?? ''],
-    )
-    if (duplicate.rows[0]) {
-      throw new AppError({
-        code: 'CONFLICT',
-        statusCode: 409,
-        message: 'This UTR/reference is already linked to a payment.',
-      })
-    }
-  } else if (input.allowDuplicateUtr && !input.overrideReason) {
+  if (input.allowDuplicateUtr && !input.overrideReason) {
     throw new AppError({
       code: 'VALIDATION_ERROR',
       statusCode: 400,
-      message: 'An audit reason is required to allow duplicate reference usage.',
+      message:
+        'An audit reason is required to allow duplicate reference usage.',
     })
   }
 
-  const flat = await queryRows<{ society_id: string; payer_user_id: string | null }>(
+  const flat = await queryRows<{
+    society_id: string
+    payer_user_id: string | null
+  }>(
     `
       select
         f.society_id,
@@ -88,7 +105,11 @@ export default defineEventHandler(async (event) => {
   )
   const flatRow = flat.rows[0]
   if (!flatRow) {
-    throw new AppError({ code: 'NOT_FOUND', statusCode: 404, message: 'Flat not found.' })
+    throw new AppError({
+      code: 'NOT_FOUND',
+      statusCode: 404,
+      message: 'Flat not found.',
+    })
   }
   const payerUserId = input.payerUserId ?? flatRow.payer_user_id
   if (!payerUserId) {
@@ -99,6 +120,31 @@ export default defineEventHandler(async (event) => {
     })
   }
 
+  const referenceValues = getSubmittedReferenceValues(input)
+  if (referenceValues.length > 0 && !input.allowDuplicateUtr) {
+    const duplicate = await queryRows<{ id: string }>(
+      `
+        select id
+        from payments
+        where society_id = $1
+          and (
+            lower(utr_reference) = any($2::text[])
+            or lower(bank_reference) = any($2::text[])
+            or lower(gateway_payment_id) = any($2::text[])
+          )
+        limit 1
+      `,
+      [flatRow.society_id, referenceValues],
+    )
+    if (duplicate.rows[0]) {
+      throw new AppError({
+        code: 'CONFLICT',
+        statusCode: 409,
+        message: 'This UTR/reference is already linked to a payment.',
+      })
+    }
+  }
+
   const previewInput = {
     flatId: input.flatId,
     amount: input.amount,
@@ -106,104 +152,136 @@ export default defineEventHandler(async (event) => {
     selectedDueIds: input.selectedDueIds ?? [],
   }
   const preview = await previewPaymentAllocation(
-    input.tenureMonths === undefined ? previewInput : { ...previewInput, tenureMonths: input.tenureMonths },
+    input.tenureMonths === undefined
+      ? previewInput
+      : { ...previewInput, tenureMonths: input.tenureMonths },
   )
 
-  const client = await getDatabasePool().connect()
-  try {
-    await client.query('begin')
-    const result = await client.query<{ id: string }>(
-      `
-        insert into payments (
-          society_id,
-          payer_user_id,
-          received_for_flat_id,
-          mode,
-          status,
-          payment_date,
-          amount,
-          allocation_mode,
-          allocation_snapshot,
-          utr_reference,
-          bank_reference,
-          transfer_kind,
-          is_default_utr,
-          proof_file_path,
-          notes,
-          verified_by_user_id,
-          verified_at,
-          idempotency_key
-        )
-        values ($1, $2, $3, $4, 'VERIFIED', $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13, $14, $15, now(), $16)
-        on conflict (idempotency_key) where idempotency_key is not null do update set idempotency_key = excluded.idempotency_key
-        returning id
-      `,
-      [
-        flatRow.society_id,
-        payerUserId,
-        input.flatId,
-        input.mode,
-        input.paymentDate,
-        input.amount,
-        input.allocationMode,
-        JSON.stringify({
-          selectedDueIds: input.selectedDueIds,
-          tenureMonths: input.tenureMonths,
-          preview,
-          cheque: input.mode === 'CHEQUE' ? z.object({}).passthrough().parse({
-            chequeNumber: input.chequeNumber,
-            chequeDate: input.chequeDate,
-            bankName: input.bankName,
-          }) : undefined,
-          account: input.account,
-          overrideReason: input.overrideReason,
-        }),
-        input.utrReference ?? null,
-        input.bankReference ?? null,
-        input.transferKind ?? null,
-        !input.allowDuplicateUtr,
-        input.proofFilePath ?? null,
-        input.notes ?? null,
-        authMe.user.id,
-        input.idempotencyKey ?? null,
-      ],
-    )
-    await client.query('commit')
-    const paymentId = result.rows[0]?.id
-    if (!paymentId) {
-      throw new AppError({ code: 'INTERNAL_ERROR', statusCode: 500, message: 'Payment creation failed.' })
-    }
-    await allocateMaintenancePayment(paymentId)
-    const receiptNumber = await generateReceiptForPayment(paymentId)
-    const journalClient = await getDatabasePool().connect()
+  const recordPaymentResult = await (async () => {
+    const client = await getDatabasePool().connect()
+
     try {
-      await journalClient.query('begin')
-      await postMaintenanceReceiptJournal(journalClient, {
+      await client.query('begin')
+      const result = await client.query<{ id: string }>(
+        `
+          insert into payments (
+            society_id,
+            payer_user_id,
+            received_for_flat_id,
+            mode,
+            status,
+            payment_date,
+            amount,
+            allocation_mode,
+            allocation_snapshot,
+            utr_reference,
+            bank_reference,
+            transfer_kind,
+            is_default_utr,
+            proof_file_path,
+            notes,
+            verified_by_user_id,
+            verified_at,
+            idempotency_key
+          )
+          values ($1, $2, $3, $4, 'VERIFIED', $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13, $14, $15, now(), $16)
+          on conflict (idempotency_key) where idempotency_key is not null do update set idempotency_key = excluded.idempotency_key
+          returning id
+        `,
+        [
+          flatRow.society_id,
+          payerUserId,
+          input.flatId,
+          input.mode,
+          input.paymentDate,
+          input.amount,
+          input.allocationMode,
+          JSON.stringify({
+            selectedDueIds: input.selectedDueIds,
+            tenureMonths: input.tenureMonths,
+            preview,
+            cheque:
+              input.mode === 'CHEQUE'
+                ? z.object({}).passthrough().parse({
+                    chequeNumber: input.chequeNumber,
+                    chequeDate: input.chequeDate,
+                    bankName: input.bankName,
+                  })
+                : undefined,
+            account: input.account,
+            overrideReason: input.overrideReason,
+          }),
+          input.utrReference ?? null,
+          input.bankReference ?? null,
+          input.transferKind ?? null,
+          !input.allowDuplicateUtr,
+          input.proofFilePath ?? null,
+          input.notes ?? null,
+          authMe.user.id,
+          input.idempotencyKey ?? null,
+        ],
+      )
+      const paymentId = result.rows[0]?.id
+      if (!paymentId) {
+        throw new AppError({
+          code: 'INTERNAL_ERROR',
+          statusCode: 500,
+          message: 'Payment creation failed.',
+        })
+      }
+      await allocateMaintenancePaymentWithClient(client, paymentId)
+      const receiptNumber = await assignReceiptNumberForPayment(
+        client,
+        paymentId,
+      )
+      await postMaintenanceReceiptJournal(client, {
         paymentId,
         societyId: flatRow.society_id,
         postedByUserId: authMe.user.id,
         bankAccountId,
       })
-      await journalClient.query('commit')
+
+      await client.query('commit')
+
+      return { paymentId, receiptNumber }
     } catch (error) {
-      await journalClient.query('rollback')
+      await client.query('rollback')
       throw error
     } finally {
-      journalClient.release()
+      client.release()
     }
+  })()
+  const { paymentId, receiptNumber } = recordPaymentResult
 
-    try {
-      await enqueueReceiptReadyNotification(paymentId)
-    } catch (notificationError) {
-      const message = notificationError instanceof Error ? notificationError.message : 'Receipt notification enqueue failed.'
-      console.warn(JSON.stringify({ level: 'warn', message, paymentId }))
-    }
-
-    return createApiSuccess(event, { id: paymentId, receiptNumber })
-  } catch (error) {
-    await client.query('rollback')
-    throw error
-  } finally {
-    client.release()
+  try {
+    await uploadReceiptPdfForPayment(paymentId)
+  } catch (receiptUploadError) {
+    console.warn(
+      JSON.stringify({
+        level: 'warn',
+        message: getErrorMessage(
+          receiptUploadError,
+          'Receipt PDF upload failed.',
+        ),
+        paymentId,
+      }),
+    )
   }
+
+  try {
+    await enqueueReceiptReadyNotification(paymentId)
+  } catch (notificationError) {
+    console.warn(
+      JSON.stringify({
+        level: 'warn',
+        message: getErrorMessage(
+          notificationError,
+          'Receipt notification enqueue failed.',
+        ),
+        paymentId,
+      }),
+    )
+  }
+
+  return createApiSuccess(event, { id: paymentId, receiptNumber })
 })

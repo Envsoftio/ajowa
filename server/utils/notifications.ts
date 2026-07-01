@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { PoolClient } from 'pg'
 import webpush from 'web-push'
-import { generateMaintenanceBillPdf } from './billing'
+import { formatBillPayableAmount, generateMaintenanceBillPdf } from './billing'
 import { buildAppUrl, getResolvedEmailSettings, sendEmail, sendNotificationEmail } from './email'
 import { getPushIntegrationStatus, getValidatedRuntimeConfig, getWhatsAppIntegrationStatus } from './env'
 
@@ -161,6 +161,17 @@ type ProviderSendResult = {
   responseBody?: Record<string, unknown> | undefined
   failureReason?: string | undefined
   permanentFailure?: boolean | undefined
+}
+
+type NotificationEmailAttachment = {
+  filename: string
+  content: Buffer
+  contentType: string
+}
+
+type BillingEmailData = {
+  attachments: NotificationEmailAttachment[]
+  context: Record<string, unknown>
 }
 
 const presetChannels: Record<NotificationPreset, NotificationChannel[]> = {
@@ -516,14 +527,17 @@ const applyUserNotificationPreferences = async (
   })
 }
 
-const getEmailAttachmentsForJob = async (client: PoolClient, job: ClaimedJobRow) => {
+const getBillingEmailDataForJob = async (
+  client: PoolClient,
+  job: ClaimedJobRow,
+): Promise<BillingEmailData | null> => {
   if (!['maintenance_due.bill', 'maintenance_due.reminder', 'maintenance_due.overdue'].includes(job.event_key)) {
-    return undefined
+    return null
   }
 
   const dueId = typeof job.payload.dueId === 'string' ? job.payload.dueId : null
   if (!dueId) {
-    return undefined
+    return null
   }
 
   const bill = await generateMaintenanceBillPdf(dueId, {
@@ -532,13 +546,20 @@ const getEmailAttachmentsForJob = async (client: PoolClient, job: ClaimedJobRow)
     client,
   })
 
-  return [
-    {
-      filename: bill.fileName,
-      content: bill.buffer,
-      contentType: 'application/pdf',
+  return {
+    attachments: [
+      {
+        filename: bill.fileName,
+        content: bill.buffer,
+        contentType: 'application/pdf',
+      },
+    ],
+    context: {
+      billNumber: bill.billNumber,
+      balanceAmount: formatBillPayableAmount(bill.totalPayable),
+      totalPayable: bill.totalPayable,
     },
-  ]
+  }
 }
 
 const getEmailActionUrlForJob = (job: ClaimedJobRow) => {
@@ -1299,10 +1320,10 @@ const dispatchJob = async (
     }
 
     const template = emailTemplateByEventKey.get(job.event_key) ?? 'notice'
-    let attachments: Awaited<ReturnType<typeof getEmailAttachmentsForJob>>
+    let billingEmailData: Awaited<ReturnType<typeof getBillingEmailDataForJob>>
 
     try {
-      attachments = await getEmailAttachmentsForJob(client, job)
+      billingEmailData = await getBillingEmailDataForJob(client, job)
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to generate the bill PDF.'
 
@@ -1325,8 +1346,9 @@ const dispatchJob = async (
           actionUrl: getEmailActionUrlForJob(job),
           actionLabel: 'Open in AJOWA',
           ...job.payload,
+          ...(billingEmailData?.context ?? {}),
         },
-        ...(attachments ? { attachments } : {}),
+        ...(billingEmailData?.attachments.length ? { attachments: billingEmailData.attachments } : {}),
         societyId: job.society_id,
         client,
       })
