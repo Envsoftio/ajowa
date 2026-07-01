@@ -4,6 +4,7 @@ import type { PoolClient } from 'pg'
 import { createApiSuccess, readJsonBody, validateInput } from '~/server/utils/api'
 import { requireRole } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
+import { AppError } from '~/server/utils/errors'
 import { dispatchNotificationJobs, requeueFailedNotificationJobs } from '~/server/utils/notifications'
 
 const schema = z.object({
@@ -35,6 +36,45 @@ const defaultProcessLimit = () =>
     process.env.NOTIFICATION_PROCESS_BATCH_SIZE,
     process.env.NETLIFY === 'true' ? 5 : 25,
   )
+
+const getErrorMessage = (error: unknown) =>
+  error instanceof Error ? error.message : String(error)
+
+const getClaimableNotificationJobCount = async (
+  client: PoolClient,
+  input: {
+    societyId: string
+    eventId?: string
+    lockTimeoutMinutes: number
+  },
+) => {
+  const result = await client.query<{ count: string }>(
+    `
+      select count(*)::text as count
+      from notification_jobs nj
+      inner join notification_events ne on ne.id = nj.notification_event_id
+      where (
+          nj.status in ('QUEUED', 'RETRYING')
+          or (
+            nj.status = 'PROCESSING'
+            and nj.locked_at < now() - ($3::integer * interval '1 minute')
+          )
+        )
+        and ne.society_id = $1
+        and ($2::uuid is null or ne.id = $2::uuid)
+        and coalesce(nj.scheduled_for, ne.scheduled_for, now()) <= now()
+        and coalesce(nj.next_attempt_at, now()) <= now()
+        and (
+          nj.locked_at is null
+          or nj.locked_at < now() - ($3::integer * interval '1 minute')
+        )
+        and ne.status not in ('CANCELLED', 'FAILED')
+    `,
+    [input.societyId, input.eventId ?? null, input.lockTimeoutMinutes],
+  )
+
+  return Number(result.rows[0]?.count ?? 0)
+}
 
 const getEventJobSummary = async (
   client: PoolClient,
@@ -119,10 +159,16 @@ export default defineEventHandler(async (event) => {
           eventId: body.eventId,
         })
       : 0
+    const lockTimeoutMinutes = body.eventId ? 1 : 10
     const result = await dispatchNotificationJobs(client, {
       limit: body.limit ?? defaultProcessLimit(),
       societyId: authMe.user.societyId,
-      lockTimeoutMinutes: body.eventId ? 1 : 10,
+      lockTimeoutMinutes,
+      ...(body.eventId ? { eventId: body.eventId } : {}),
+    })
+    const remaining = await getClaimableNotificationJobCount(client, {
+      societyId: authMe.user.societyId,
+      lockTimeoutMinutes,
       ...(body.eventId ? { eventId: body.eventId } : {}),
     })
     const eventSummary = body.eventId
@@ -132,7 +178,25 @@ export default defineEventHandler(async (event) => {
     return createApiSuccess(event, {
       ...result,
       requeued,
+      remaining,
       ...(eventSummary ? { eventSummary } : {}),
+    })
+  } catch (error) {
+    console.error(JSON.stringify({
+      level: 'error',
+      message: 'Notification queue processing failed.',
+      societyId: authMe.user.societyId,
+      eventId: body.eventId ?? null,
+      cause: getErrorMessage(error),
+    }))
+
+    throw new AppError({
+      code: 'INTERNAL_ERROR',
+      statusCode: 500,
+      message: 'Notification queue could not be processed.',
+      details: {
+        cause: getErrorMessage(error),
+      },
     })
   } finally {
     client.release()

@@ -22,7 +22,12 @@ type PeriodResponse = { ok: true; data: { items: BillingPeriod[] } }
 type BillChannel = 'PUSH' | 'EMAIL' | 'WHATSAPP' | 'IN_APP'
 type NotificationQueueResponse = {
   ok: true
-  data: { eligible: number; jobCount: number }
+  data: {
+    eligible: number
+    eventCount: number
+    audienceCount: number
+    jobCount: number
+  }
 }
 type DueUpdateResponse = {
   ok: true
@@ -582,10 +587,24 @@ const sumNotificationResponses = (responses: NotificationQueueResponse['data'][]
   responses.reduce(
     (total, item) => ({
       eligible: total.eligible + item.eligible,
+      eventCount: total.eventCount + item.eventCount,
+      audienceCount: total.audienceCount + item.audienceCount,
       jobCount: total.jobCount + item.jobCount,
     }),
-    { eligible: 0, jobCount: 0 },
+    { eligible: 0, eventCount: 0, audienceCount: 0, jobCount: 0 },
   )
+
+const notificationQueueDetail = (
+  result: NotificationQueueResponse['data'],
+  label: string,
+) => {
+  const skipped = Math.max(0, result.eligible - result.eventCount)
+  const recipientDetail = skipped > 0
+    ? `${result.eventCount} had eligible notification recipients, ${skipped} skipped for missing/disabled channels`
+    : `${result.eventCount} had eligible notification recipients`
+
+  return `${result.eligible} ${label} matched, ${recipientDetail}, and ${result.jobCount} delivery jobs were queued.`
+}
 
 const sumBulkDueDateResponses = (responses: BulkDueDateUpdateResponse['data'][]) =>
   responses.reduce(
@@ -893,7 +912,7 @@ const sendReminders = async (dueIds: string[]) => {
     toast.add({
       severity: 'success',
       summary: 'Reminders queued',
-      detail: `${queued.eligible} dues matched and ${queued.jobCount} delivery jobs were queued.`,
+      detail: notificationQueueDetail(queued, 'dues'),
       life: 10000,
     })
   } finally {
@@ -958,7 +977,7 @@ const sendBills = async () => {
     toast.add({
       severity: 'success',
       summary: 'Bills queued',
-      detail: `${queued.eligible} bills matched and ${queued.jobCount} delivery jobs were queued.`,
+      detail: notificationQueueDetail(queued, 'bills'),
       life: 10000,
     })
     billSendDialogVisible.value = false

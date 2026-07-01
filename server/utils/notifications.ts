@@ -1648,6 +1648,50 @@ export const enqueueDueBillingContactNotifications = async (
     eventKey: input.eventKey,
   })
   const requestedChannels = getRequestedChannels(input.channels, eventSetting)
+  const recipientsByDueId = new Map<
+    string,
+    Array<{
+      row: DueNotificationRow
+      user: NotificationUser
+      channels: NotificationChannel[]
+    }>
+  >()
+
+  for (const [dueId, rows] of rowsByDueId.entries()) {
+    const recipients: Array<{
+      row: DueNotificationRow
+      user: NotificationUser
+      channels: NotificationChannel[]
+    }> = []
+
+    for (const row of rows) {
+      const user: NotificationUser = {
+        id: row.user_id,
+        email: row.email,
+        mobileNumber: row.mobile_number,
+        whatsappNumber: row.whatsapp_number,
+        preferredNotificationChannels: row.preferred_notification_channels,
+        pushEnabled: row.notification_push_enabled,
+        emailEnabled: row.notification_email_enabled,
+        whatsappEnabled: row.notification_whatsapp_enabled,
+        inAppEnabled: row.notification_in_app_enabled,
+      }
+      const channels = getUserChannels(user, requestedChannels, eventSetting)
+        .filter((channel) => {
+          const address = channelAddress(user, channel)
+
+          return !((channel === 'EMAIL' || channel === 'WHATSAPP') && !address)
+        })
+
+      if (channels.length > 0) {
+        recipients.push({ row, user, channels })
+      }
+    }
+
+    if (recipients.length > 0) {
+      recipientsByDueId.set(dueId, recipients)
+    }
+  }
 
   const eventRows = []
   const eventByDueId = new Map<
@@ -1660,8 +1704,8 @@ export const enqueueDueBillingContactNotifications = async (
     }
   >()
 
-  for (const [dueId, rows] of rowsByDueId.entries()) {
-    const due = rows[0]
+  for (const [dueId, recipients] of recipientsByDueId.entries()) {
+    const due = recipients[0]?.row
     if (!due) continue
     const idempotencyScope =
       input.eventKey === 'maintenance_due.reminder' || input.eventKey === 'maintenance_due.bill'
@@ -1773,29 +1817,14 @@ export const enqueueDueBillingContactNotifications = async (
   const eventIdByKey = new Map(eventResult.rows.map((row) => [row.idempotency_key, row.id]))
   const audienceRows = []
 
-  for (const [dueId, rows] of rowsByDueId.entries()) {
+  for (const [dueId, recipients] of recipientsByDueId.entries()) {
     const eventMeta = eventByDueId.get(dueId)
     const eventId = eventMeta ? eventIdByKey.get(eventMeta.idempotencyKey) : null
     if (!eventMeta || !eventId) continue
 
-    for (const row of rows) {
-      const user: NotificationUser = {
-        id: row.user_id,
-        email: row.email,
-        mobileNumber: row.mobile_number,
-        whatsappNumber: row.whatsapp_number,
-        preferredNotificationChannels: row.preferred_notification_channels,
-        pushEnabled: row.notification_push_enabled,
-        emailEnabled: row.notification_email_enabled,
-        whatsappEnabled: row.notification_whatsapp_enabled,
-        inAppEnabled: row.notification_in_app_enabled,
-      }
-
-      for (const channel of getUserChannels(user, requestedChannels, eventSetting)) {
+    for (const { user, channels } of recipients) {
+      for (const channel of channels) {
         const address = channelAddress(user, channel)
-        if ((channel === 'EMAIL' || channel === 'WHATSAPP') && !address) {
-          continue
-        }
 
         audienceRows.push({
           notification_event_id: eventId,
