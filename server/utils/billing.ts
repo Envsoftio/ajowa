@@ -1503,6 +1503,13 @@ export const generateMaintenanceBillPdf = async (
   const dgAmount = sumBillCharges(dgCharges)
   const invoiceStampImage = await getSocietyStampImageForPdf()
   const societyBankAccounts = getSocietyBankAccountsForPdf(due)
+  let printedTotalPayable = 0
+  let hasPrintedTotalPayable = false
+
+  const addPrintedTotalPayable = (value: number) => {
+    printedTotalPayable = roundBillMoney(printedTotalPayable + value)
+    hasPrintedTotalPayable = true
+  }
 
   const dgOuterLayout = {
     hLineWidth: () => 0.9,
@@ -1571,6 +1578,7 @@ export const generateMaintenanceBillPdf = async (
         : []),
     ]
     const invoiceTotal = roundBillMoney(invoiceLineItems.reduce((sum, item) => sum + item.amount, 0))
+    addPrintedTotalPayable(invoiceTotal)
     const primaryInvoiceCharge = invoiceCharges.find(isCamCharge) ?? invoiceCharges[0]
     const areaSqFt = primaryInvoiceCharge?.areaSqFt
       ?? (Number.isFinite(Number(due.area_sq_ft)) ? Number(due.area_sq_ft) : null)
@@ -1903,6 +1911,7 @@ export const generateMaintenanceBillPdf = async (
       dgCharges.reduce((sum, charge) => sum + Number(charge.interestAmount ?? 0), 0),
     )
     const dgNetPayable = roundBillMoney(dgAmount + previousDgOutstanding + dgInterestAmount)
+    addPrintedTotalPayable(dgNetPayable)
     const tariffRateLabel = primaryCharge.tariffRateLabel
       ?? (ratePerUnit != null ? `Rs.${formatBillPlainNumber(ratePerUnit)}/Unit` : '-')
     const qrPayload = buildUpiPaymentPayload(due, dgNetPayable, `${bill.billNumber}-DG`)
@@ -2251,7 +2260,7 @@ export const generateMaintenanceBillPdf = async (
     buffer,
     billNumber: bill.billNumber,
     fileName: `${fileName}.pdf`,
-    totalPayable: netPayable,
+    totalPayable: hasPrintedTotalPayable ? printedTotalPayable : netPayable,
     dueId: due.id,
     flatLabel,
     billingPeriodLabel: due.billing_period_label,
