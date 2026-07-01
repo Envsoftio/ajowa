@@ -843,7 +843,12 @@ export const consumeAdvanceCreditsForDue = async (dueId: string) => {
 
 export const getPaymentReceiptData = async (
   paymentId: string,
-  access?: { societyId?: string; userId?: string; isStaff?: boolean },
+  access?: {
+    societyId?: string
+    userId?: string
+    isStaff?: boolean
+    allowLinkedFlatAccess?: boolean
+  },
 ) => {
   const params: unknown[] = [paymentId]
   const filters = ['p.id = $1']
@@ -853,7 +858,19 @@ export const getPaymentReceiptData = async (
     filters.push(`p.society_id = $${params.length}`)
   }
 
-  if (access?.userId && !access.isStaff) {
+  if (access?.userId && !access.isStaff && access.allowLinkedFlatAccess) {
+    params.push(access.userId)
+    filters.push(`(
+      p.payer_user_id = $${params.length}
+      or exists (
+        select 1
+        from flat_residents fr
+        where fr.user_id = $${params.length}
+          and fr.flat_id = p.received_for_flat_id
+          and fr.is_active = true
+      )
+    )`)
+  } else if (access?.userId && !access.isStaff) {
     params.push(access.userId)
     filters.push(`p.payer_user_id = $${params.length}`)
   }
@@ -931,7 +948,12 @@ export const getPaymentReceiptData = async (
 
 export const generatePaymentReceiptPdf = async (
   paymentId: string,
-  access?: { societyId?: string; userId?: string; isStaff?: boolean },
+  access?: {
+    societyId?: string
+    userId?: string
+    isStaff?: boolean
+    allowLinkedFlatAccess?: boolean
+  },
 ) => {
   const { payment, allocations } = await getPaymentReceiptData(
     paymentId,

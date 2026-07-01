@@ -8,8 +8,21 @@ export default defineEventHandler(async (event) => {
   const query = getQuerySafe(event)
   const pagination = getPaginationParams(query)
   const offset = (pagination.page - 1) * pagination.pageSize
-  const params: unknown[] = [authMe.user.id]
-  const conditions = [`p.payer_user_id = $1`, `p.receipt_number is not null`]
+  const params: unknown[] = [authMe.user.id, authMe.user.societyId]
+  const conditions = [
+    `p.society_id = $2`,
+    `p.receipt_number is not null`,
+    `(
+      p.payer_user_id = $1
+      or exists (
+        select 1
+        from flat_residents fr
+        where fr.user_id = $1
+          and fr.flat_id = p.received_for_flat_id
+          and fr.is_active = true
+      )
+    )`,
+  ]
 
   if (query.fromDate) {
     params.push(String(query.fromDate))

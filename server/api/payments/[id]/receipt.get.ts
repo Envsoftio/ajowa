@@ -9,6 +9,7 @@ export default defineEventHandler(async (event) => {
     societyId: authMe.user.societyId,
     userId: authMe.user.id,
     isStaff,
+    allowLinkedFlatAccess: true,
   })
 
   setHeader(event, 'content-type', 'application/pdf')
