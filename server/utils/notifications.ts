@@ -25,6 +25,12 @@ export type NotificationCategory =
   | 'ACCOUNT_ONBOARDING'
   | 'EMERGENCY_ALERTS'
 export type NotificationPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'EMERGENCY'
+export type NotificationJobClaimFilters = {
+  channel?: NotificationChannel
+  eventKey?: string
+  category?: NotificationCategory
+  priority?: NotificationPriority
+}
 
 export type NotificationUser = {
   id: string
@@ -869,7 +875,7 @@ export const claimNotificationJobs = async (
     societyId?: string
     eventId?: string
     lockTimeoutMinutes?: number
-  } = {},
+  } & NotificationJobClaimFilters = {},
 ) => {
   const workerId = input.workerId ?? `worker-${randomUUID()}`
   const limit = Math.min(Math.max(input.limit ?? 50, 1), 250)
@@ -890,6 +896,10 @@ export const claimNotificationJobs = async (
           )
           and ($3::uuid is null or ne.society_id = $3::uuid)
           and ($4::uuid is null or ne.id = $4::uuid)
+          and ($6::notification_channel is null or nj.channel = $6::notification_channel)
+          and ($7::text is null or ne.event_key = $7::text)
+          and ($8::notification_event_category is null or ne.category = $8::notification_event_category)
+          and ($9::service_priority is null or nj.priority = $9::service_priority)
           and coalesce(nj.scheduled_for, ne.scheduled_for, now()) <= now()
           and coalesce(nj.next_attempt_at, now()) <= now()
           and (
@@ -939,7 +949,17 @@ export const claimNotificationJobs = async (
       inner join notification_events ne on ne.id = claimed.notification_event_id
       left join notification_audiences na on na.id = claimed.audience_id
     `,
-    [limit, workerId, input.societyId ?? null, input.eventId ?? null, lockTimeoutMinutes],
+    [
+      limit,
+      workerId,
+      input.societyId ?? null,
+      input.eventId ?? null,
+      lockTimeoutMinutes,
+      input.channel ?? null,
+      input.eventKey ?? null,
+      input.category ?? null,
+      input.priority ?? null,
+    ],
   )
 
   return result.rows
@@ -1362,7 +1382,7 @@ export const dispatchNotificationJobs = async (
     societyId?: string
     eventId?: string
     lockTimeoutMinutes?: number
-  } = {},
+  } & NotificationJobClaimFilters = {},
 ) => {
   const jobs = await claimNotificationJobs(client, input)
   let sent = 0

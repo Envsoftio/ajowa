@@ -5,12 +5,35 @@ import { createApiSuccess, readJsonBody, validateInput } from '~/server/utils/ap
 import { requireRole } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
 import { AppError } from '~/server/utils/errors'
-import { dispatchNotificationJobs, requeueFailedNotificationJobs } from '~/server/utils/notifications'
+import {
+  dispatchNotificationJobs,
+  type NotificationCategory,
+  type NotificationChannel,
+  type NotificationJobClaimFilters,
+  type NotificationPriority,
+  requeueFailedNotificationJobs,
+} from '~/server/utils/notifications'
+
+const notificationChannels = ['PUSH', 'EMAIL', 'WHATSAPP', 'IN_APP'] as const
+const notificationCategories = [
+  'BILLING',
+  'PAYMENTS',
+  'ACCESS_QR',
+  'SERVICE_REQUESTS',
+  'NOTICES_ANNOUNCEMENTS',
+  'ACCOUNT_ONBOARDING',
+  'EMERGENCY_ALERTS',
+] as const
+const notificationPriorities = ['LOW', 'MEDIUM', 'HIGH', 'EMERGENCY'] as const
 
 const schema = z.object({
   eventId: z.string().uuid().optional(),
   retryFailed: z.boolean().optional(),
   limit: z.coerce.number().int().min(1).max(25).optional(),
+  channel: z.enum(notificationChannels).optional(),
+  eventKey: z.string().trim().min(1).max(120).regex(/^[a-z0-9_.-]+$/i).optional(),
+  category: z.enum(notificationCategories).optional(),
+  priority: z.enum(notificationPriorities).optional(),
 })
 
 type EventJobSummaryRow = {
@@ -46,7 +69,7 @@ const getClaimableNotificationJobCount = async (
     societyId: string
     eventId?: string
     lockTimeoutMinutes: number
-  },
+  } & NotificationJobClaimFilters,
 ) => {
   const result = await client.query<{ count: string }>(
     `
@@ -62,6 +85,10 @@ const getClaimableNotificationJobCount = async (
         )
         and ne.society_id = $1
         and ($2::uuid is null or ne.id = $2::uuid)
+        and ($4::notification_channel is null or nj.channel = $4::notification_channel)
+        and ($5::text is null or ne.event_key = $5::text)
+        and ($6::notification_event_category is null or ne.category = $6::notification_event_category)
+        and ($7::service_priority is null or nj.priority = $7::service_priority)
         and coalesce(nj.scheduled_for, ne.scheduled_for, now()) <= now()
         and coalesce(nj.next_attempt_at, now()) <= now()
         and (
@@ -70,7 +97,15 @@ const getClaimableNotificationJobCount = async (
         )
         and ne.status not in ('CANCELLED', 'FAILED')
     `,
-    [input.societyId, input.eventId ?? null, input.lockTimeoutMinutes],
+    [
+      input.societyId,
+      input.eventId ?? null,
+      input.lockTimeoutMinutes,
+      input.channel ?? null,
+      input.eventKey ?? null,
+      input.category ?? null,
+      input.priority ?? null,
+    ],
   )
 
   return Number(result.rows[0]?.count ?? 0)
@@ -151,6 +186,12 @@ export default defineEventHandler(async (event) => {
   const authMe = await requireRole(event, ['ADMIN', 'MANAGER'])
   const body = validateInput(schema, await readJsonBody(event))
   const client = await getDatabasePool().connect()
+  const processFilters: NotificationJobClaimFilters = {
+    ...(body.channel ? { channel: body.channel as NotificationChannel } : {}),
+    ...(body.eventKey ? { eventKey: body.eventKey } : {}),
+    ...(body.category ? { category: body.category as NotificationCategory } : {}),
+    ...(body.priority ? { priority: body.priority as NotificationPriority } : {}),
+  }
 
   try {
     const requeued = body.eventId && body.retryFailed
@@ -165,11 +206,13 @@ export default defineEventHandler(async (event) => {
       societyId: authMe.user.societyId,
       lockTimeoutMinutes,
       ...(body.eventId ? { eventId: body.eventId } : {}),
+      ...processFilters,
     })
     const remaining = await getClaimableNotificationJobCount(client, {
       societyId: authMe.user.societyId,
       lockTimeoutMinutes,
       ...(body.eventId ? { eventId: body.eventId } : {}),
+      ...processFilters,
     })
     const eventSummary = body.eventId
       ? await getEventJobSummary(client, authMe.user.societyId, body.eventId)
@@ -187,6 +230,7 @@ export default defineEventHandler(async (event) => {
       message: 'Notification queue processing failed.',
       societyId: authMe.user.societyId,
       eventId: body.eventId ?? null,
+      filters: processFilters,
       cause: getErrorMessage(error),
     }))
 

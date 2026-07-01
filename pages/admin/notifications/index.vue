@@ -59,6 +59,13 @@ type ProcessQueueProgress = ProcessQueueResponse['data'] & {
   hasError: boolean
 }
 
+type ProcessQueueFilters = {
+  channel: '' | 'PUSH' | 'EMAIL' | 'WHATSAPP' | 'IN_APP'
+  eventKey: string
+  category: '' | 'BILLING' | 'PAYMENTS' | 'ACCESS_QR' | 'SERVICE_REQUESTS' | 'NOTICES_ANNOUNCEMENTS' | 'ACCOUNT_ONBOARDING' | 'EMERGENCY_ALERTS'
+  priority: '' | 'LOW' | 'MEDIUM' | 'HIGH' | 'EMERGENCY'
+}
+
 const api = useApi()
 const toast = useToast()
 const confirmAction = useAppConfirm()
@@ -67,6 +74,12 @@ const query = reactive({
   pageSize: 100,
   status: '',
   search: '',
+})
+const processQueueFilters = reactive<ProcessQueueFilters>({
+  channel: '',
+  eventKey: '',
+  category: '',
+  priority: '',
 })
 const processQueueBatchSize = 5
 const maxProcessQueueBatches = 60
@@ -93,6 +106,48 @@ const totalRecords = computed(() => data.value?.data.total ?? 0)
 const first = computed(() => (query.page - 1) * query.pageSize)
 const formatNumber = (value: number) =>
   new Intl.NumberFormat('en-IN').format(value)
+
+const processChannelOptions = [
+  { label: 'All channels', value: '' },
+  { label: 'Email', value: 'EMAIL' },
+  { label: 'WhatsApp', value: 'WHATSAPP' },
+  { label: 'Push', value: 'PUSH' },
+  { label: 'In-app', value: 'IN_APP' },
+]
+
+const processEventOptions = [
+  { label: 'All events', value: '' },
+  { label: 'Bill ready', value: 'maintenance_due.bill' },
+  { label: 'Payment reminder', value: 'maintenance_due.reminder' },
+  { label: 'Due created', value: 'maintenance_due.created' },
+  { label: 'Due overdue', value: 'maintenance_due.overdue' },
+  { label: 'Payment received', value: 'payment.received' },
+  { label: 'Receipt ready', value: 'receipt.ready' },
+  { label: 'Notice published', value: 'notice.published' },
+  { label: 'Ticket update', value: 'service_request.updated' },
+  { label: 'QR generated', value: 'access_qr.generated' },
+  { label: 'QR revoked', value: 'access_qr.revoked' },
+  { label: 'Emergency alert', value: 'emergency.alert' },
+]
+
+const processCategoryOptions = [
+  { label: 'All categories', value: '' },
+  { label: 'Billing', value: 'BILLING' },
+  { label: 'Payments', value: 'PAYMENTS' },
+  { label: 'Access QR', value: 'ACCESS_QR' },
+  { label: 'Service requests', value: 'SERVICE_REQUESTS' },
+  { label: 'Notices', value: 'NOTICES_ANNOUNCEMENTS' },
+  { label: 'Account', value: 'ACCOUNT_ONBOARDING' },
+  { label: 'Emergency', value: 'EMERGENCY_ALERTS' },
+]
+
+const processPriorityOptions = [
+  { label: 'All priorities', value: '' },
+  { label: 'Emergency', value: 'EMERGENCY' },
+  { label: 'High', value: 'HIGH' },
+  { label: 'Medium', value: 'MEDIUM' },
+  { label: 'Low', value: 'LOW' },
+]
 
 const processResultDetail = (result: ProcessQueueResponse['data']) => {
   const requeued = result.requeued ?? 0
@@ -141,6 +196,42 @@ const processQueueDetail = (
     : ''
 
   return `${processResultDetail(result)} Checked ${batchLabel}.${limitMessage}`
+}
+
+const activeProcessQueueFilterLabels = computed(() => {
+  const labels: string[] = []
+  const channel = processChannelOptions.find((option) => option.value === processQueueFilters.channel)?.label
+  const eventKey = processEventOptions.find((option) => option.value === processQueueFilters.eventKey)?.label
+  const category = processCategoryOptions.find((option) => option.value === processQueueFilters.category)?.label
+  const priority = processPriorityOptions.find((option) => option.value === processQueueFilters.priority)?.label
+
+  if (processQueueFilters.channel && channel) labels.push(channel)
+  if (processQueueFilters.eventKey && eventKey) labels.push(eventKey)
+  if (processQueueFilters.category && category) labels.push(category)
+  if (processQueueFilters.priority && priority) labels.push(priority)
+
+  return labels
+})
+
+const processQueueFilterSummary = computed(() =>
+  activeProcessQueueFilterLabels.value.length > 0
+    ? activeProcessQueueFilterLabels.value.join(' · ')
+    : 'All queued jobs',
+)
+
+const processQueueRequestBody = () => ({
+  limit: processQueueBatchSize,
+  ...(processQueueFilters.channel ? { channel: processQueueFilters.channel } : {}),
+  ...(processQueueFilters.eventKey ? { eventKey: processQueueFilters.eventKey } : {}),
+  ...(processQueueFilters.category ? { category: processQueueFilters.category } : {}),
+  ...(processQueueFilters.priority ? { priority: processQueueFilters.priority } : {}),
+})
+
+const clearProcessQueueFilters = () => {
+  processQueueFilters.channel = ''
+  processQueueFilters.eventKey = ''
+  processQueueFilters.category = ''
+  processQueueFilters.priority = ''
 }
 
 const processQueueProgressTotal = computed(() => {
@@ -256,7 +347,7 @@ const onPage = (event: DataTablePageEvent) => {
 const processQueue = async () => {
   const confirmed = await confirmAction({
     header: 'Process notification queue?',
-    message: 'Claim queued notification jobs in small batches and send eligible messages now?',
+    message: `Claim ${processQueueFilterSummary.value.toLowerCase()} in small batches and send eligible messages now?`,
     icon: 'pi pi-play',
     acceptLabel: 'Process queue',
     acceptSeverity: 'warn',
@@ -292,7 +383,7 @@ const processQueue = async () => {
 
       const response = await api<ProcessQueueResponse>('/api/admin/notifications/process', {
         method: 'POST',
-        body: { limit: processQueueBatchSize },
+        body: processQueueRequestBody(),
       })
       batchCount += 1
       aggregate = mergeProcessResults(aggregate, response.data)
@@ -475,6 +566,57 @@ watch(
         <Select v-model="query.status" :options="[{ label: 'All statuses', value: '' }, { label: 'Queued', value: 'QUEUED' }, { label: 'Processed', value: 'PROCESSED' }, { label: 'Failed', value: 'FAILED' }]" option-label="label" option-value="value" />
       </div>
 
+      <div class="notification-process-filters">
+        <div class="notification-process-filters__header">
+          <div>
+            <span>Process scope</span>
+            <strong>{{ processQueueFilterSummary }}</strong>
+          </div>
+          <Button
+            label="Clear"
+            icon="pi pi-filter-slash"
+            severity="secondary"
+            text
+            :disabled="activeProcessQueueFilterLabels.length === 0 || processingQueue"
+            @click="clearProcessQueueFilters"
+          />
+        </div>
+        <div class="notification-process-filters__controls">
+          <Select
+            v-model="processQueueFilters.channel"
+            :options="processChannelOptions"
+            option-label="label"
+            option-value="value"
+            placeholder="Channel"
+            :disabled="processingQueue"
+          />
+          <Select
+            v-model="processQueueFilters.eventKey"
+            :options="processEventOptions"
+            option-label="label"
+            option-value="value"
+            placeholder="Event"
+            :disabled="processingQueue"
+          />
+          <Select
+            v-model="processQueueFilters.category"
+            :options="processCategoryOptions"
+            option-label="label"
+            option-value="value"
+            placeholder="Category"
+            :disabled="processingQueue"
+          />
+          <Select
+            v-model="processQueueFilters.priority"
+            :options="processPriorityOptions"
+            option-label="label"
+            option-value="value"
+            placeholder="Priority"
+            :disabled="processingQueue"
+          />
+        </div>
+      </div>
+
       <div
         v-if="processQueueProgress"
         :class="[
@@ -490,6 +632,7 @@ watch(
             </span>
             <div>
               <span>{{ processQueueProgressTitle }}</span>
+              <em>{{ processQueueFilterSummary }}</em>
               <strong>{{ processQueueProgressLabel }}</strong>
             </div>
           </div>
@@ -619,6 +762,49 @@ watch(
   min-width: 12rem;
 }
 
+.notification-process-filters {
+  display: grid;
+  gap: 0.85rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid color-mix(in srgb, var(--primary-color) 20%, var(--surface-border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--primary-color) 4%, var(--surface-card));
+}
+
+.notification-process-filters__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.notification-process-filters__header > div {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.notification-process-filters__header span {
+  color: var(--text-color-secondary);
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.notification-process-filters__header strong {
+  overflow: hidden;
+  color: var(--text-color);
+  font-size: 0.98rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notification-process-filters__controls {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(10rem, 1fr));
+  gap: 0.75rem;
+}
+
 .notification-queue-progress {
   --queue-accent: var(--primary-color);
   --queue-accent-strong: var(--primary-color);
@@ -704,6 +890,13 @@ watch(
   line-height: 1.45;
 }
 
+.notification-queue-progress__status em {
+  color: color-mix(in srgb, var(--queue-accent-strong) 70%, var(--text-color));
+  font-size: 0.82rem;
+  font-style: normal;
+  font-weight: 700;
+}
+
 .notification-queue-progress__primary-count {
   display: grid;
   justify-items: end;
@@ -778,6 +971,19 @@ watch(
 }
 
 @media (max-width: 720px) {
+  .notification-process-filters__header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .notification-process-filters__header strong {
+    white-space: normal;
+  }
+
+  .notification-process-filters__controls {
+    grid-template-columns: 1fr;
+  }
+
   .notification-queue-progress__header {
     align-items: stretch;
     flex-direction: column;
