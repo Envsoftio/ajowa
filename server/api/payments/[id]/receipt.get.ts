@@ -3,7 +3,7 @@ import { AppError } from '~/server/utils/errors'
 import { readUuidParam } from '~/server/utils/master-data'
 import { generatePaymentReceiptPdf, getPaymentReceiptData } from '~/server/utils/payments'
 import { createPdfBuffer } from '~/server/utils/pdf'
-import { downloadPrivateFile } from '~/server/utils/storage'
+import { createPrivateSignedUrl } from '~/server/utils/storage'
 
 type ReceiptPayment = Awaited<ReturnType<typeof getPaymentReceiptData>>['payment']
 
@@ -147,16 +147,16 @@ export default defineEventHandler(async (event) => {
 
   if (payment.receipt_file_path) {
     try {
-      const blob = await downloadPrivateFile({
+      const signedUrl = await createPrivateSignedUrl({
         storageTargetKey: 'receipts',
         storageObjectKey: payment.receipt_file_path,
+        expiresInSeconds: 60 * 5,
+        download: fileName,
       })
 
-      setHeader(event, 'content-type', 'application/pdf')
       setHeader(event, 'cache-control', 'private, no-store')
-      setHeader(event, 'content-disposition', `attachment; filename="${fileName}"`)
 
-      return Buffer.from(await blob.arrayBuffer())
+      return sendRedirect(event, signedUrl, 302)
     } catch (error) {
       console.warn(
         JSON.stringify({

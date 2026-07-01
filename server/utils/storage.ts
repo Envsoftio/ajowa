@@ -155,6 +155,7 @@ type DownloadStoredFileInput = {
 
 type SignedUrlInput = DownloadStoredFileInput & {
   expiresInSeconds?: number
+  download?: string | boolean
 }
 
 type DeleteStoredFileInput = DownloadStoredFileInput & {
@@ -921,10 +922,12 @@ export const createPrivateSignedUrl = async (input: SignedUrlInput) => {
   const storageObjectKey = normalizeStorageObjectKey(input.storageObjectKey)
   const storageTarget = getStorageTarget(storageTargetKey)
   const expiresInSeconds = input.expiresInSeconds ?? 60 * 15
+  const signedUrlOptions =
+    input.download === undefined ? undefined : { download: input.download }
   const supabaseAdmin = getSupabaseAdminClient()
   const { data, error } = await supabaseAdmin.storage
     .from(storageTarget.providerContainer)
-    .createSignedUrl(storageObjectKey, expiresInSeconds)
+    .createSignedUrl(storageObjectKey, expiresInSeconds, signedUrlOptions)
 
   if (error || !data?.signedUrl) {
     throw toStorageError('Unable to create a signed download URL.', {
