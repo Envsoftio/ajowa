@@ -695,6 +695,38 @@ const assertAssigneeInDepartment = async (
   departmentId: string,
   assigneeUserId?: string | null,
 ) => {
+  if (!departmentId) {
+    if (!assigneeUserId) {
+      return
+    }
+
+    throw new AppError({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message: 'Choose a service department before assigning staff.',
+    })
+  }
+
+  const departmentResult = await client.query<{ id: string }>(
+    `
+      select id
+      from service_departments
+      where id = $1
+        and society_id = $2
+        and is_active = true
+      limit 1
+    `,
+    [departmentId, societyId],
+  )
+
+  if (!departmentResult.rows[0]) {
+    throw new AppError({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message: 'Choose an active service department.',
+    })
+  }
+
   if (!assigneeUserId) {
     return
   }
@@ -1570,13 +1602,24 @@ export const assignServiceRequest = async (
   try {
     await client.query('begin')
     const ticket = await loadTicketForAction(client, authMe, id, 'admin')
+    const nextAssigneeUserId = input.assigneeUserId ?? null
+    const departmentChanged = ticket.department_id !== input.departmentId
+    const assigneeChanged = (ticket.assignee_user_id ?? null) !== nextAssigneeUserId
+    const requiresReason =
+      (departmentChanged && Boolean(ticket.department_id)) ||
+      (assigneeChanged && Boolean(ticket.assignee_user_id))
 
-    if ((ticket.department_id || ticket.assignee_user_id) && !input.reason) {
+    if (requiresReason && !input.reason) {
       throw new AppError({
         code: 'VALIDATION_ERROR',
         statusCode: 400,
         message: 'A reason is required for reassignment or department changes.',
       })
+    }
+
+    if (!departmentChanged && !assigneeChanged) {
+      await client.query('commit')
+      return
     }
 
     await assertAssigneeInDepartment(client, authMe.user.societyId, input.departmentId, input.assigneeUserId)
@@ -1601,7 +1644,7 @@ export const assignServiceRequest = async (
         )
         values ($1, $2, $3, $4, $5)
       `,
-      [id, input.departmentId, input.assigneeUserId ?? null, authMe.user.id, input.reason ?? 'Assignment updated'],
+      [id, input.departmentId, nextAssigneeUserId, authMe.user.id, input.reason ?? 'Assignment updated'],
     )
 
     const nextStatus: ServiceRequestStatus =
@@ -1618,7 +1661,7 @@ export const assignServiceRequest = async (
             updated_at = now()
         where id = $1
       `,
-      [id, input.departmentId, input.assigneeUserId ?? null, nextStatus],
+      [id, input.departmentId, nextAssigneeUserId, nextStatus],
     )
 
     await client.query(
@@ -1644,7 +1687,7 @@ export const assignServiceRequest = async (
           fromDepartmentId: ticket.department_id,
           toDepartmentId: input.departmentId,
           fromAssigneeUserId: ticket.assignee_user_id,
-          toAssigneeUserId: input.assigneeUserId ?? null,
+          toAssigneeUserId: nextAssigneeUserId,
           reason: input.reason ?? null,
         },
       ],
@@ -1957,12 +2000,10 @@ export const createServiceRequestAttachment = async (
 ) => {
   const pool = getDatabasePool()
   const client = await pool.connect()
-  let ticket: TicketRow | null = null
-  let attachmentId: string | null = null
 
   try {
     await client.query('begin')
-    ticket = await loadTicketForAction(client, authMe, id, scope)
+    const ticket = await loadTicketForAction(client, authMe, id, scope)
 
     const attachment = await client.query<{ id: string }>(
       `
@@ -1980,7 +2021,7 @@ export const createServiceRequestAttachment = async (
       `,
       [id, authMe.user.id, input.fileName, input.filePath, input.mimeType, input.sizeBytes, input.checksum ?? null],
     )
-    attachmentId = attachment.rows[0]?.id ?? null
+    const attachmentId = attachment.rows[0]?.id ?? null
 
     await client.query(
       `
@@ -2059,11 +2100,10 @@ export const uploadServiceRequestAttachment = async (
     fileName: input.fileName,
   })
   const checksum = createHash('sha256').update(input.body).digest('hex')
-  let ticket: TicketRow | null = null
 
   try {
     await client.query('begin')
-    ticket = await loadTicketForAction(client, authMe, id, scope)
+    const ticket = await loadTicketForAction(client, authMe, id, scope)
 
     await uploadPrivateFile({
       storageTargetKey: 'ticket_attachments',

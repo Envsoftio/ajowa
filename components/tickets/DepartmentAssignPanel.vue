@@ -22,10 +22,34 @@ watch(() => props.ticket, (ticket) => {
   reason.value = ''
 }, { immediate: true })
 
+const selectedDepartment = computed(() =>
+  props.departments.find((item) => item.id === departmentId.value),
+)
+
 const filteredStaff = computed(() => {
-  const department = props.departments.find((item) => item.id === departmentId.value)
-  const activeIds = new Set(department?.staffAssignments?.filter((item) => item.isActive).map((item) => item.userId) ?? [])
-  return activeIds.size > 0 ? props.staffOptions.filter((staff) => activeIds.has(staff.id)) : props.staffOptions
+  const activeIds = new Set(
+    selectedDepartment.value?.staffAssignments
+      ?.filter((item) => item.isActive)
+      .map((item) => item.userId) ?? [],
+  )
+
+  return props.staffOptions.filter((staff) => activeIds.has(staff.id))
+})
+
+const assigneePlaceholder = computed(() => {
+  if (!departmentId.value) {
+    return 'Choose a department first'
+  }
+
+  return filteredStaff.value.length > 0
+    ? 'Select staff'
+    : 'No active staff mapped'
+})
+
+watch(filteredStaff, (staff) => {
+  if (assigneeUserId.value && !staff.some((item) => item.id === assigneeUserId.value)) {
+    assigneeUserId.value = null
+  }
 })
 
 const submit = () => {
@@ -55,11 +79,20 @@ const submit = () => {
     </label>
     <label>
       <span>Assignee</span>
-      <Select v-model="assigneeUserId" :options="filteredStaff" option-label="fullName" option-value="id" show-clear fluid />
+      <Select
+        v-model="assigneeUserId"
+        :options="filteredStaff"
+        option-label="fullName"
+        option-value="id"
+        :placeholder="assigneePlaceholder"
+        :disabled="!departmentId || filteredStaff.length === 0"
+        show-clear
+        fluid
+      />
     </label>
     <label>
       <span>Reason</span>
-      <Textarea v-model="reason" rows="3" auto-resize placeholder="Required when changing department or assignee" fluid />
+      <Textarea v-model="reason" rows="3" auto-resize placeholder="Required when changing an existing assignment" fluid />
     </label>
     <div class="admin-inline-actions" style="justify-content: flex-end;">
       <Button type="submit" label="Save assignment" icon="pi pi-user-plus" :loading="saving" />
