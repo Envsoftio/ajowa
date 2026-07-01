@@ -301,67 +301,74 @@ const selectAllocatableDues = async (
   })
 }
 
+const previewPaymentAllocationWithClient = async (
+  client: PoolClient,
+  input: PaymentPreviewInput,
+) => {
+  const societyResult = await client.query<{ society_id: string }>(
+    `select society_id from flats where id = $1 limit 1`,
+    [input.flatId],
+  )
+  const societyId = societyResult.rows[0]?.society_id
+  if (!societyId) {
+    throw new AppError({
+      code: 'NOT_FOUND',
+      statusCode: 404,
+      message: 'Flat not found.',
+    })
+  }
+
+  const policy = await getPaymentPolicy(client, societyId)
+  const dueInput: Parameters<typeof selectAllocatableDues>[1] = {
+    flatId: input.flatId,
+    mode: input.allocationMode,
+    selectedDueIds: input.selectedDueIds,
+    graceDays: policy.graceDays,
+    lateFeePerDay: policy.lateFeePerDay,
+  }
+  if (input.tenureMonths !== undefined) {
+    dueInput.tenureMonths = input.tenureMonths
+  }
+  const dues = await selectAllocatableDues(client, dueInput)
+
+  let remainingPayment = input.amount
+  const lines = dues
+    .map((due, index) => {
+      const allocatedAmount = roundMoney(
+        Math.min(remainingPayment, due.computedBalance),
+      )
+      remainingPayment = roundMoney(remainingPayment - allocatedAmount)
+      return {
+        dueId: due.id,
+        billingPeriodId: due.billing_period_id,
+        billingPeriodLabel: due.billing_period_label,
+        dueAmount: due.computedTotal,
+        lateFeeComponent: due.computedLateFee,
+        allocatedAmount,
+        remainingBalance: roundMoney(due.computedBalance - allocatedAmount),
+        allocationOrder: index + 1,
+      }
+    })
+    .filter((line) => line.allocatedAmount > 0)
+
+  return {
+    lines,
+    totalDue: roundMoney(
+      dues.reduce((sum, due) => sum + due.computedBalance, 0),
+    ),
+    allocatedAmount: roundMoney(
+      lines.reduce((sum, line) => sum + line.allocatedAmount, 0),
+    ),
+    advanceAmount: roundMoney(Math.max(0, remainingPayment)),
+    policy: policy.excessPaymentHandling,
+  }
+}
+
 export const previewPaymentAllocation = async (input: PaymentPreviewInput) => {
   const client = await getDatabasePool().connect()
 
   try {
-    const societyResult = await client.query<{ society_id: string }>(
-      `select society_id from flats where id = $1 limit 1`,
-      [input.flatId],
-    )
-    const societyId = societyResult.rows[0]?.society_id
-    if (!societyId) {
-      throw new AppError({
-        code: 'NOT_FOUND',
-        statusCode: 404,
-        message: 'Flat not found.',
-      })
-    }
-
-    const policy = await getPaymentPolicy(client, societyId)
-    const dueInput: Parameters<typeof selectAllocatableDues>[1] = {
-      flatId: input.flatId,
-      mode: input.allocationMode,
-      selectedDueIds: input.selectedDueIds,
-      graceDays: policy.graceDays,
-      lateFeePerDay: policy.lateFeePerDay,
-    }
-    if (input.tenureMonths !== undefined) {
-      dueInput.tenureMonths = input.tenureMonths
-    }
-    const dues = await selectAllocatableDues(client, dueInput)
-
-    let remainingPayment = input.amount
-    const lines = dues
-      .map((due, index) => {
-        const allocatedAmount = roundMoney(
-          Math.min(remainingPayment, due.computedBalance),
-        )
-        remainingPayment = roundMoney(remainingPayment - allocatedAmount)
-        return {
-          dueId: due.id,
-          billingPeriodId: due.billing_period_id,
-          billingPeriodLabel: due.billing_period_label,
-          dueAmount: due.computedTotal,
-          lateFeeComponent: due.computedLateFee,
-          allocatedAmount,
-          remainingBalance: roundMoney(due.computedBalance - allocatedAmount),
-          allocationOrder: index + 1,
-        }
-      })
-      .filter((line) => line.allocatedAmount > 0)
-
-    return {
-      lines,
-      totalDue: roundMoney(
-        dues.reduce((sum, due) => sum + due.computedBalance, 0),
-      ),
-      allocatedAmount: roundMoney(
-        lines.reduce((sum, line) => sum + line.allocatedAmount, 0),
-      ),
-      advanceAmount: roundMoney(Math.max(0, remainingPayment)),
-      policy: policy.excessPaymentHandling,
-    }
+    return await previewPaymentAllocationWithClient(client, input)
   } finally {
     client.release()
   }
@@ -524,7 +531,7 @@ export const allocateMaintenancePaymentWithClient = async (
   }>(`select allocation_snapshot from payments where id = $1`, [paymentId])
   const snapshot = snapshotResult.rows[0]?.allocation_snapshot ?? {}
   const policy = await getPaymentPolicy(client, payment.society_id)
-  const preview = await previewPaymentAllocation({
+  const preview = await previewPaymentAllocationWithClient(client, {
     flatId: payment.received_for_flat_id,
     amount: Number(payment.amount),
     allocationMode: allocationModeSchema.parse(payment.allocation_mode),
