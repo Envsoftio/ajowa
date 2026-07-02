@@ -4,11 +4,14 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 Usage:
+  npm run backup:db
   ./scripts/backup-prod-db.sh
 
 Environment overrides:
   ENV_FILE=...                 Path to env file. Defaults to ./.env.
-  PROD_BACKUP_DATABASE_URL=... Direct Supabase DB URL for pg_dump. Falls back to DATABASE_URL.
+  PROD_BACKUP_DATABASE_URL=... Direct Supabase DB URL for pg_dump.
+  DATABASE_URL=...             Fallback DB URL.
+  SUPABASE_DB_URL=...          Fallback DB URL.
   BACKUP_ROOT=...              Backup parent directory. Defaults to ~/ajowa-prod-backups.
 
 The script creates:
@@ -25,6 +28,85 @@ require_command() {
     echo "Install PostgreSQL client tools, then run this script again." >&2
     exit 127
   fi
+}
+
+trim_whitespace() {
+  local value="$1"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s' "$value"
+}
+
+parse_env_value() {
+  local value
+  value="$(trim_whitespace "$1")"
+
+  if [[ "${#value}" -ge 2 ]]; then
+    local first="${value:0:1}"
+    local last="${value: -1}"
+
+    if [[ "$first" == "'" && "$last" == "'" ]]; then
+      printf '%s' "${value:1:${#value}-2}"
+      return
+    fi
+
+    if [[ "$first" == '"' && "$last" == '"' ]]; then
+      value="${value:1:${#value}-2}"
+      value="${value//\\n/$'\n'}"
+      value="${value//\\r/$'\r'}"
+      value="${value//\\t/$'\t'}"
+      value="${value//\\\"/\"}"
+      value="${value//\\\\/\\}"
+      printf '%s' "$value"
+      return
+    fi
+  fi
+
+  value="${value%%[[:space:]]#*}"
+  trim_whitespace "$value"
+}
+
+load_env_file() {
+  local env_file="$1"
+  local raw_line line normalized_line key value
+
+  while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
+    line="$(trim_whitespace "$raw_line")"
+
+    if [[ -z "$line" || "$line" == \#* ]]; then
+      continue
+    fi
+
+    if [[ "$line" == export[[:space:]]* ]]; then
+      normalized_line="$(trim_whitespace "${line#export}")"
+    else
+      normalized_line="$line"
+    fi
+
+    if [[ "$normalized_line" != *=* ]]; then
+      continue
+    fi
+
+    key="$(trim_whitespace "${normalized_line%%=*}")"
+    value="${normalized_line#*=}"
+
+    if [[ ! "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+      continue
+    fi
+
+    if [[ -n "${!key+x}" ]]; then
+      continue
+    fi
+
+    case "$key" in
+      BACKUP_ROOT | DATABASE_URL | PROD_BACKUP_DATABASE_URL | SUPABASE_DB_URL) ;;
+      *) continue ;;
+    esac
+
+    value="$(parse_env_value "$value")"
+    printf -v "$key" '%s' "$value"
+    export "$key"
+  done < "$env_file"
 }
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
@@ -44,7 +126,6 @@ require_command pg_restore
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 ENV_FILE="${ENV_FILE:-$PROJECT_ROOT/.env}"
-BACKUP_ROOT="${BACKUP_ROOT:-$HOME/ajowa-prod-backups}"
 
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "Missing env file: $ENV_FILE" >&2
@@ -52,15 +133,19 @@ if [[ ! -f "$ENV_FILE" ]]; then
   exit 1
 fi
 
-set -a
-# shellcheck source=/dev/null
-source "$ENV_FILE"
-set +a
+load_env_file "$ENV_FILE"
 
-BACKUP_DATABASE_URL="${PROD_BACKUP_DATABASE_URL:-${DATABASE_URL:-}}"
+BACKUP_ROOT="${BACKUP_ROOT:-$HOME/ajowa-prod-backups}"
+BACKUP_DATABASE_URL="${PROD_BACKUP_DATABASE_URL:-${DATABASE_URL:-${SUPABASE_DB_URL:-}}}"
 
 if [[ -z "$BACKUP_DATABASE_URL" ]]; then
-  echo "DATABASE_URL or PROD_BACKUP_DATABASE_URL is required." >&2
+  echo "DATABASE_URL, SUPABASE_DB_URL, or PROD_BACKUP_DATABASE_URL is required." >&2
+  exit 1
+fi
+
+if [[ "$BACKUP_DATABASE_URL" == *"<"* || "$BACKUP_DATABASE_URL" == *">"* ]]; then
+  echo "Backup database URL still contains placeholder text like <project-ref>." >&2
+  echo "Set PROD_BACKUP_DATABASE_URL or DATABASE_URL to a real database URL." >&2
   exit 1
 fi
 

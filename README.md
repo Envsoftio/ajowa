@@ -70,13 +70,13 @@ schema. The backup script loads `.env`, creates a timestamped backup directory,
 and writes a custom-format `pg_dump` archive plus a restore contents listing.
 For `pg_dump`, prefer the Supabase direct database URL on port `5432` when your
 network supports it. If `PROD_BACKUP_DATABASE_URL` is not set, the script falls
-back to `DATABASE_URL`.
+back to `DATABASE_URL` or `SUPABASE_DB_URL`.
 
 ```bash
 # Optional, recommended for pg_dump:
 # export PROD_BACKUP_DATABASE_URL="postgresql://postgres:<db-password>@db.<project-ref>.supabase.co:5432/postgres?sslmode=require"
 
-./scripts/backup-prod-db.sh
+npm run backup:db
 ```
 
 This creates:

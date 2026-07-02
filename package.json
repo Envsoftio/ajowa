@@ -19,6 +19,7 @@
     "typecheck": "nuxt typecheck",
     "format": "prettier . --write",
     "format:check": "prettier . --check",
+    "backup:db": "./scripts/backup-prod-db.sh",
     "backup:storage": "node scripts/backup-supabase-storage.mjs",
     "db:reset": "supabase db reset",
     "seed:admin": "node scripts/seed-admin.mjs",
