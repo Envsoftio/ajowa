@@ -27,6 +27,34 @@ AJOWA is a Nuxt 3 + Nitro SSR application for society management, built with Pri
 - `npm run typecheck` runs Nuxt type checking.
 - `npm run db:reset` resets the local Supabase database.
 
+## Local Supabase Studio
+
+Start the local Supabase stack from the project root:
+
+```bash
+npx supabase start
+```
+
+Open Supabase Studio at:
+
+```text
+http://127.0.0.1:54323
+```
+
+If Supabase is already running and you want to see the local service URLs again:
+
+```bash
+npx supabase status
+```
+
+On macOS, open Studio directly with:
+
+```bash
+open http://127.0.0.1:54323
+```
+
+If `npx supabase start` fails, make sure Docker Desktop is running first.
+
 ## Local Database Migrations
 
 To apply new migration files to the local Supabase database without resetting
