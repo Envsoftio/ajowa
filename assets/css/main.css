@@ -420,7 +420,7 @@ a {
       rgba(18, 24, 33, 0.28) 68%,
       rgba(18, 24, 33, 0.1) 100%
     ),
-    url('/images/landing-hero.jpg');
+    var(--public-hero-image, none);
   background-position: center;
   background-size: cover;
   color: #ffffff;
@@ -1719,6 +1719,13 @@ a {
 .admin-detail-list {
   display: grid;
   gap: 1rem;
+}
+
+.admin-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.75rem;
 }
 
 .admin-form-section__header,

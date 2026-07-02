@@ -54,11 +54,17 @@ const roleCards = [
     body: 'Scan resident passes, manage entry context, pick up assigned tickets, and keep service queues moving.',
   },
 ]
+
+const landingHeroImage = 'url("/images/landing-hero.jpg")'
 </script>
 
 <template>
   <div class="landing-page public-landing">
-    <section class="public-hero" aria-labelledby="public-hero-title">
+    <section
+      class="public-hero"
+      aria-labelledby="public-hero-title"
+      :style="{ '--public-hero-image': landingHeroImage }"
+    >
       <div class="public-hero__content">
         <AppBrandLogo class="public-hero__logo" />
         <span class="public-hero__eyebrow">

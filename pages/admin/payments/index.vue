@@ -64,12 +64,24 @@ type PaymentDetail = {
 
 type PaymentsResponse = { ok: true; data: Paginated<PaymentSummary> }
 type DetailResponse = { ok: true; data: PaymentDetail }
+type AmountUpdateResponse = {
+  ok: true
+  data: {
+    previousAmount: number
+    amount: number
+    allocatedAmount: number | null
+    advanceAmount: number | null
+    receiptInvalidated: boolean
+    changed: boolean
+  }
+}
 type FlatsResponse = { ok: true; data: Paginated<FlatSummary> }
 type ResidentsResponse = { ok: true; data: Paginated<ResidentSummary> }
 type PeriodsResponse = { ok: true; data: Paginated<BillingPeriod> }
 
 const api = useApi()
 const toast = useToast()
+const authStore = useAuthStore()
 
 const query = reactive({
   page: 1,
@@ -220,6 +232,7 @@ const kpis = computed(() => ({
 const hasActiveFilters = computed(() =>
   Object.entries(query).some(([key, value]) => !['page', 'pageSize'].includes(key) && Boolean(value)),
 )
+const canEditPaymentAmount = computed(() => authStore.me?.user.role === 'ADMIN')
 
 watch(
   () => [
@@ -247,6 +260,10 @@ const detailPending = ref(false)
 const proofInput = ref<HTMLInputElement | null>(null)
 const proofTargetPaymentId = ref<string | null>(null)
 const proofUploadingId = ref<string | null>(null)
+const amountEditVisible = ref(false)
+const amountEditPayment = ref<PaymentSummary | null>(null)
+const amountEditValue = ref<number | null>(null)
+const amountEditSaving = ref(false)
 const proofAccept = 'application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,image/jpeg,image/png,image/webp'
 const proofAllowedMimeTypes = proofAccept.split(',')
 const proofMaxSizeBytes = 10 * 1024 * 1024
@@ -282,6 +299,51 @@ const copyReceipt = async (payment: PaymentSummary) => {
   if (!payment.receiptNumber) return
   await navigator.clipboard.writeText(payment.receiptNumber)
   toast.add({ severity: 'success', summary: 'Receipt copied', life: 10000 })
+}
+
+const openAmountEdit = (payment: PaymentSummary) => {
+  amountEditPayment.value = payment
+  amountEditValue.value = Number(payment.amount)
+  amountEditVisible.value = true
+}
+
+const amountEditChanged = computed(() => {
+  const payment = amountEditPayment.value
+  if (!payment || amountEditValue.value == null) return false
+
+  return Math.round(amountEditValue.value * 100) !== Math.round(Number(payment.amount) * 100)
+})
+
+const saveAmountEdit = async () => {
+  const payment = amountEditPayment.value
+  const amount = amountEditValue.value
+
+  if (!payment || amount == null || amount <= 0 || !amountEditChanged.value) {
+    return
+  }
+
+  amountEditSaving.value = true
+  try {
+    const response = await api<AmountUpdateResponse>(`/api/payments/${payment.id}`, {
+      method: 'PATCH',
+      body: { amount },
+    })
+    toast.add({
+      severity: 'success',
+      summary: 'Amount updated',
+      detail: response.data.advanceAmount && response.data.advanceAmount > 0
+        ? `${formatMoney(response.data.advanceAmount)} kept as advance.`
+        : undefined,
+      life: 10000,
+    })
+    amountEditVisible.value = false
+    await refresh()
+    if (detailVisible.value && selectedPayment.value?.id === payment.id) {
+      await openDetail({ id: payment.id })
+    }
+  } finally {
+    amountEditSaving.value = false
+  }
 }
 
 const pickProofFile = (payment: PaymentSummary) => {
@@ -524,6 +586,16 @@ const onProofFileChange = async (event: Event) => {
             <div class="admin-inline-actions">
               <Button icon="pi pi-eye" severity="secondary" text rounded aria-label="View payment" title="View payment" @click="openDetail(row)" />
               <Button
+                v-if="canEditPaymentAmount"
+                icon="pi pi-pencil"
+                severity="secondary"
+                text
+                rounded
+                aria-label="Edit amount"
+                title="Edit amount"
+                @click="openAmountEdit(row)"
+              />
+              <Button
                 as="a"
                 :href="`/api/payments/${row.id}/receipt`"
                 target="_blank"
@@ -563,6 +635,15 @@ const onProofFileChange = async (event: Event) => {
           </div>
           <div class="admin-inline-actions">
             <Button label="View" icon="pi pi-eye" size="small" severity="secondary" outlined @click="openDetail(payment)" />
+            <Button
+              v-if="canEditPaymentAmount"
+              label="Edit amount"
+              icon="pi pi-pencil"
+              size="small"
+              severity="secondary"
+              outlined
+              @click="openAmountEdit(payment)"
+            />
             <Button
               v-if="payment.proofFilePath"
               as="a"
@@ -641,6 +722,33 @@ const onProofFileChange = async (event: Event) => {
           </Column>
         </AppDataTable>
       </div>
+    </Dialog>
+
+    <Dialog v-model:visible="amountEditVisible" header="Edit amount" modal :style="{ width: '420px' }">
+      <form v-if="amountEditPayment" class="admin-form-layout" @submit.prevent="saveAmountEdit">
+        <div class="surface-card">
+          <p class="eyebrow">{{ flatLabel(amountEditPayment) }}</p>
+          <h3>{{ formatMoney(amountEditPayment.amount) }}</h3>
+          <p>{{ amountEditPayment.payerName || '-' }}</p>
+        </div>
+        <label>
+          <span class="field-label">Amount</span>
+          <InputNumber
+            v-model="amountEditValue"
+            mode="currency"
+            currency="INR"
+            locale="en-IN"
+            :min="1"
+            :max-fraction-digits="2"
+            fluid
+            autofocus
+          />
+        </label>
+        <div class="admin-form-actions">
+          <Button type="button" label="Cancel" severity="secondary" outlined @click="amountEditVisible = false" />
+          <Button type="submit" label="Save" icon="pi pi-check" :loading="amountEditSaving" :disabled="!amountEditChanged" />
+        </div>
+      </form>
     </Dialog>
   </div>
 </template>

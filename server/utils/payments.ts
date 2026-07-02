@@ -60,6 +60,10 @@ export const paymentPreviewSchema = z.object({
   tenureMonths: z.coerce.number().int().positive().max(24).optional(),
 })
 
+export const paymentAmountUpdateSchema = z.object({
+  amount: z.coerce.number().positive(),
+})
+
 export type PaymentPreviewInput = z.output<typeof paymentPreviewSchema>
 
 type DueRow = {
@@ -136,6 +140,17 @@ type PaymentReceiptAllocationRow = {
   allocation_order: number
 }
 
+type PaymentAmountEditAllocationLine = {
+  dueId: string
+  billingPeriodId: string
+  billingPeriodLabel: string
+  dueAmount: number
+  lateFeeComponent: number
+  allocatedAmount: number
+  remainingBalance: number
+  allocationOrder: number
+}
+
 const roundMoney = (value: number) => Math.round(value * 100) / 100
 
 const formatReceiptMoney = (value: number) =>
@@ -159,8 +174,6 @@ const syncFlatCamAdvancePaidUntil = async (
   dueId: string,
   status: string,
 ) => {
-  if (status !== 'PAID') return
-
   const result = await client.query<{
     society_id: string
     flat_id: string
@@ -189,10 +202,13 @@ const syncFlatCamAdvancePaidUntil = async (
     societyId: row.society_id,
     flatId: row.flat_id,
     coveredFrom: row.start_date,
-    coveredUntil: row.end_date,
+    coveredUntil: status === 'PAID' ? row.end_date : null,
     source: 'PAYMENT',
     reference: `maintenance_due:${dueId}`,
-    notes: `Auto-marked from paid CAM bill through ${formatReceiptDate(row.end_date)}.`,
+    notes:
+      status === 'PAID'
+        ? `Auto-marked from paid CAM bill through ${formatReceiptDate(row.end_date)}.`
+        : null,
     actorUserId: null,
   })
 }
@@ -639,6 +655,447 @@ export const allocateMaintenancePaymentWithClient = async (
     idempotent: false,
     affectedPeriods: affected,
     advanceAmount: preview.advanceAmount,
+  }
+}
+
+const staffEditablePaymentModes = new Set(['CASH', 'BANK_TRANSFER', 'UPI', 'CHEQUE'])
+
+const getSnapshotSelectedDueIds = (
+  snapshot: Record<string, unknown>,
+  fallbackDueIds: string[],
+) =>
+  Array.isArray(snapshot.selectedDueIds) &&
+  snapshot.selectedDueIds.every((dueId) => typeof dueId === 'string')
+    ? (snapshot.selectedDueIds as string[])
+    : fallbackDueIds
+
+export const updatePaymentAmountWithClient = async (
+  client: PoolClient,
+  input: {
+    paymentId: string
+    societyId: string
+    actorUserId: string
+    amount: number
+  },
+) => {
+  const nextAmount = roundMoney(input.amount)
+  if (!Number.isFinite(nextAmount) || nextAmount <= 0) {
+    throw new AppError({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message: 'Payment amount must be greater than zero.',
+    })
+  }
+
+  const paymentResult = await client.query<PaymentRow & {
+    mode: string
+    receipt_number: string | null
+    receipt_file_path: string | null
+    allocation_snapshot: Record<string, unknown> | null
+  }>(
+    `
+      select
+        id,
+        society_id,
+        payer_user_id,
+        received_for_flat_id,
+        amount::text,
+        status,
+        allocation_mode,
+        mode::text,
+        receipt_number,
+        receipt_file_path,
+        allocation_snapshot
+      from payments
+      where id = $1 and society_id = $2
+      for update
+    `,
+    [input.paymentId, input.societyId],
+  )
+  const payment = paymentResult.rows[0]
+  if (!payment) {
+    throw new AppError({
+      code: 'NOT_FOUND',
+      statusCode: 404,
+      message: 'Payment not found.',
+    })
+  }
+
+  if (!staffEditablePaymentModes.has(payment.mode)) {
+    throw new AppError({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message: 'Only manually recorded payments can have their amount edited.',
+    })
+  }
+
+  if (!['PENDING', 'VERIFIED'].includes(payment.status)) {
+    throw new AppError({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message: 'Only pending or verified payments can have their amount edited.',
+    })
+  }
+
+  const previousAmount = roundMoney(Number(payment.amount))
+  if (previousAmount === nextAmount) {
+    return {
+      paymentId: payment.id,
+      previousAmount,
+      amount: nextAmount,
+      allocatedAmount: null,
+      advanceAmount: null,
+      receiptInvalidated: false,
+      changed: false,
+    }
+  }
+
+  const snapshot = payment.allocation_snapshot ?? {}
+
+  if (payment.status === 'PENDING') {
+    const nextSnapshot = {
+      ...snapshot,
+      amountEdit: {
+        previousAmount,
+        amount: nextAmount,
+        editedByUserId: input.actorUserId,
+        editedAt: new Date().toISOString(),
+      },
+    }
+
+    await client.query(
+      `
+        update payments
+        set
+          amount = $2,
+          allocation_snapshot = $3::jsonb,
+          updated_at = now()
+        where id = $1
+      `,
+      [payment.id, nextAmount, JSON.stringify(nextSnapshot)],
+    )
+
+    return {
+      paymentId: payment.id,
+      previousAmount,
+      amount: nextAmount,
+      allocatedAmount: null,
+      advanceAmount: null,
+      receiptInvalidated: false,
+      changed: true,
+    }
+  }
+
+  const policy = await getPaymentPolicy(client, payment.society_id)
+  const existingAllocations = await client.query<{
+    id: string
+    maintenance_due_id: string
+    allocation_order: number
+  }>(
+    `
+      select id, maintenance_due_id, allocation_order
+      from payment_allocations
+      where payment_id = $1
+      order by allocation_order asc, created_at asc
+      for update
+    `,
+    [payment.id],
+  )
+  const allocationIds = existingAllocations.rows.map((allocation) => allocation.id)
+  const existingDueIds = [
+    ...new Set(
+      existingAllocations.rows.map((allocation) => allocation.maintenance_due_id),
+    ),
+  ]
+  const targetDueIds = getSnapshotSelectedDueIds(snapshot, existingDueIds)
+
+  if (allocationIds.length > 0) {
+    const referencedAllocations = await client.query<{ count: string }>(
+      `
+        select count(*)::text as count
+        from resident_advance_credit_history
+        where payment_allocation_id = any($1::uuid[])
+      `,
+      [allocationIds],
+    )
+    if (Number(referencedAllocations.rows[0]?.count ?? 0) > 0) {
+      throw new AppError({
+        code: 'CONFLICT',
+        statusCode: 409,
+        message:
+          'This payment allocation is already referenced by advance-credit history and cannot be edited automatically.',
+      })
+    }
+  }
+
+  const sourceCredits = await client.query<{
+    id: string
+    original_amount: string
+    current_balance: string
+    status: string
+  }>(
+    `
+      select id, original_amount::text, current_balance::text, status::text
+      from resident_advance_credits
+      where source_payment_id = $1
+      for update
+    `,
+    [payment.id],
+  )
+  const sourceCreditIds = sourceCredits.rows.map((credit) => credit.id)
+  const consumedCredit = sourceCredits.rows.find(
+    (credit) =>
+      credit.status !== 'ACTIVE' ||
+      roundMoney(Number(credit.current_balance)) !==
+        roundMoney(Number(credit.original_amount)),
+  )
+  if (consumedCredit) {
+    throw new AppError({
+      code: 'CONFLICT',
+      statusCode: 409,
+      message:
+        'The advance credit created from this payment has already been used. Reverse the dependent credit before editing this amount.',
+    })
+  }
+
+  if (sourceCreditIds.length > 0) {
+    await client.query(
+      `
+        delete from resident_advance_credit_history
+        where credit_id = any($1::uuid[])
+      `,
+      [sourceCreditIds],
+    )
+    await client.query(
+      `
+        delete from resident_advance_credits
+        where id = any($1::uuid[])
+      `,
+      [sourceCreditIds],
+    )
+  }
+
+  await client.query(`delete from payment_allocations where payment_id = $1`, [
+    payment.id,
+  ])
+
+  const affected: Array<{ billingPeriodId: string; flatId?: string }> = []
+  for (const dueId of existingDueIds) {
+    const refreshed = await refreshDueTotals(
+      client,
+      dueId,
+      policy.graceDays,
+      policy.lateFeePerDay,
+    )
+    if (refreshed) affected.push(refreshed)
+  }
+
+  const dueResult = targetDueIds.length
+    ? await client.query<DueRow>(
+        `
+          select
+            md.id,
+            md.society_id,
+            md.billing_period_id,
+            bp.label as billing_period_label,
+            md.flat_id,
+            md.due_date::text,
+            md.base_amount::text,
+            md.late_fee_amount::text,
+            md.waived_amount::text,
+            md.paid_amount::text,
+            md.total_amount::text,
+            md.balance_amount::text,
+            md.status
+          from maintenance_dues md
+          inner join billing_periods bp on bp.id = md.billing_period_id
+          where md.id = any($1::uuid[])
+            and md.flat_id = $2
+            and md.society_id = $3
+          order by array_position($1::uuid[], md.id)
+          for update of md
+        `,
+        [targetDueIds, payment.received_for_flat_id, payment.society_id],
+      )
+    : { rows: [] as DueRow[] }
+
+  const today = todayDate()
+  const lines: PaymentAmountEditAllocationLine[] = []
+  let remainingPayment = nextAmount
+  let totalDue = 0
+
+  for (const due of dueResult.rows) {
+    const computed = computeDueAmounts(
+      {
+        dueDate: due.due_date,
+        baseAmount: Number(due.base_amount),
+        paidAmount: Number(due.paid_amount),
+        waivedAmount: Number(due.waived_amount),
+        storedStatus: due.status,
+      },
+      today,
+      policy.graceDays,
+      policy.lateFeePerDay,
+    )
+    totalDue = roundMoney(totalDue + computed.balanceAmount)
+    const allocatedAmount = roundMoney(
+      Math.min(remainingPayment, computed.balanceAmount),
+    )
+    if (allocatedAmount <= 0) {
+      continue
+    }
+
+    remainingPayment = roundMoney(remainingPayment - allocatedAmount)
+    const remainingBalance = roundMoney(computed.balanceAmount - allocatedAmount)
+    const allocationOrder = lines.length + 1
+    await client.query(
+      `
+        insert into payment_allocations (
+          payment_id,
+          maintenance_due_id,
+          allocated_amount,
+          due_amount,
+          late_fee_component,
+          remaining_balance,
+          allocation_order
+        )
+        values ($1, $2, $3, $4, $5, $6, $7)
+      `,
+      [
+        payment.id,
+        due.id,
+        allocatedAmount,
+        computed.totalAmount,
+        computed.lateFeeAmount,
+        remainingBalance,
+        allocationOrder,
+      ],
+    )
+
+    lines.push({
+      dueId: due.id,
+      billingPeriodId: due.billing_period_id,
+      billingPeriodLabel: due.billing_period_label,
+      dueAmount: computed.totalAmount,
+      lateFeeComponent: computed.lateFeeAmount,
+      allocatedAmount,
+      remainingBalance,
+      allocationOrder,
+    })
+
+    const refreshed = await refreshDueTotals(
+      client,
+      due.id,
+      policy.graceDays,
+      policy.lateFeePerDay,
+    )
+    if (refreshed) affected.push(refreshed)
+  }
+
+  const advanceAmount = roundMoney(Math.max(0, remainingPayment))
+  if (
+    advanceAmount > 0 &&
+    policy.excessPaymentHandling !== 'KEEP_AS_ADVANCE'
+  ) {
+    throw new AppError({
+      code: 'CONFLICT',
+      statusCode: 409,
+      message:
+        'The edited amount exceeds the selected dues and the society policy does not allow advance credit.',
+    })
+  }
+
+  if (advanceAmount > 0) {
+    const creditResult = await client.query<{ id: string }>(
+      `
+        insert into resident_advance_credits (
+          society_id,
+          user_id,
+          flat_id,
+          source_payment_id,
+          original_amount,
+          current_balance,
+          notes
+        )
+        values ($1, $2, $3, $4, $5, $5, $6)
+        returning id
+      `,
+      [
+        payment.society_id,
+        payment.payer_user_id,
+        payment.received_for_flat_id,
+        payment.id,
+        advanceAmount,
+        'Excess payment retained as advance credit after amount edit.',
+      ],
+    )
+    await client.query(
+      `
+        insert into resident_advance_credit_history (
+          credit_id,
+          action,
+          amount,
+          payment_id,
+          actor_user_id,
+          notes
+        )
+        values ($1, 'CREATED', $2, $3, $4, $5)
+      `,
+      [
+        creditResult.rows[0]?.id,
+        advanceAmount,
+        payment.id,
+        input.actorUserId,
+        'Created during payment amount edit.',
+      ],
+    )
+  }
+
+  const preview = {
+    lines,
+    totalDue,
+    allocatedAmount: roundMoney(
+      lines.reduce((sum, line) => sum + line.allocatedAmount, 0),
+    ),
+    advanceAmount,
+    policy: policy.excessPaymentHandling,
+  }
+  const nextSnapshot = {
+    ...snapshot,
+    selectedDueIds: targetDueIds,
+    preview,
+    amountEdit: {
+      previousAmount,
+      amount: nextAmount,
+      editedByUserId: input.actorUserId,
+      editedAt: new Date().toISOString(),
+    },
+  }
+
+  await client.query(
+    `
+      update payments
+      set
+        amount = $2,
+        allocation_snapshot = $3::jsonb,
+        receipt_file_path = case when receipt_number is null then receipt_file_path else null end,
+        receipt_generated_at = case when receipt_number is null then receipt_generated_at else now() end,
+        updated_at = now()
+      where id = $1
+    `,
+    [payment.id, nextAmount, JSON.stringify(nextSnapshot)],
+  )
+
+  await recomputeAccessForAffectedDues(client, affected)
+
+  return {
+    paymentId: payment.id,
+    previousAmount,
+    amount: nextAmount,
+    allocatedAmount: preview.allocatedAmount,
+    advanceAmount,
+    receiptInvalidated: Boolean(payment.receipt_file_path),
+    changed: true,
   }
 }
 

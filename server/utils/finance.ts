@@ -1187,6 +1187,135 @@ export const postMaintenanceReceiptJournal = async (
   return entryRow
 }
 
+export const refreshMaintenanceReceiptJournalForPayment = async (
+  client: PoolClient,
+  input: { paymentId: string; societyId: string },
+) => {
+  const journalResult = await client.query<{
+    id: string
+    voucher_number: string
+    status: string
+  }>(
+    `
+      select id, voucher_number, status::text
+      from journal_entries
+      where payment_id = $1 and society_id = $2
+      for update
+    `,
+    [input.paymentId, input.societyId],
+  )
+  const journal = journalResult.rows[0]
+  if (!journal) {
+    return null
+  }
+  if (!['DRAFT', 'POSTED'].includes(journal.status)) {
+    throw new AppError({
+      code: 'CONFLICT',
+      statusCode: 409,
+      message: 'Only draft or posted receipt journals can be refreshed.',
+    })
+  }
+
+  const payment = await client.query<{
+    amount: string
+    status: string
+  }>(
+    `
+      select amount::text, status::text
+      from payments
+      where id = $1 and society_id = $2
+      for update
+    `,
+    [input.paymentId, input.societyId],
+  )
+  const paymentRow = payment.rows[0]
+  if (!paymentRow) {
+    throw new AppError({ code: 'NOT_FOUND', statusCode: 404, message: 'Payment not found.' })
+  }
+  if (paymentRow.status !== 'VERIFIED') {
+    throw new AppError({ code: 'CONFLICT', statusCode: 409, message: 'Only verified payments can have receipt journals.' })
+  }
+
+  const debitLine = await client.query<{ account_head_id: string }>(
+    `
+      select account_head_id
+      from journal_lines
+      where journal_entry_id = $1 and line_type = 'DEBIT'
+      order by line_no asc
+      limit 1
+    `,
+    [journal.id],
+  )
+  const bankAccountHeadId = debitLine.rows[0]?.account_head_id
+  if (!bankAccountHeadId) {
+    throw new AppError({
+      code: 'CONFLICT',
+      statusCode: 409,
+      message: 'Receipt journal is missing its bank debit line.',
+    })
+  }
+
+  const incomeHeads = await client.query<{ code: string; id: string }>(
+    `
+      select code, id
+      from account_heads
+      where (society_id = $1 or society_id is null)
+        and code in ('INC-MAINT', 'INC-LATE-FEE', 'INC-LATEFEE')
+        and is_active = true
+    `,
+    [input.societyId],
+  )
+  const maintenanceHeadId = incomeHeads.rows.find((row) => row.code === 'INC-MAINT')?.id
+  const lateFeeHeadId =
+    incomeHeads.rows.find((row) => row.code === 'INC-LATE-FEE')?.id ??
+    incomeHeads.rows.find((row) => row.code === 'INC-LATEFEE')?.id
+  const lateFeeResult = await client.query<{ late_fee: string }>(
+    `
+      select coalesce(sum(late_fee_component), 0)::text as late_fee
+      from payment_allocations
+      where payment_id = $1
+    `,
+    [input.paymentId],
+  )
+  const amount = roundMoney(Number(paymentRow.amount))
+  const lateFee = roundMoney(Math.min(amount, Number(lateFeeResult.rows[0]?.late_fee ?? 0)))
+  const maintenanceIncome = roundMoney(amount - lateFee)
+  if (maintenanceIncome > 0 && !maintenanceHeadId) {
+    throw new AppError({ code: 'VALIDATION_ERROR', statusCode: 400, message: 'Maintenance income head is required before refreshing receipts.' })
+  }
+  if (lateFee > 0 && !lateFeeHeadId) {
+    throw new AppError({ code: 'VALIDATION_ERROR', statusCode: 400, message: 'Late-fee income head is required before refreshing receipts.' })
+  }
+
+  const lines: Array<[number, string, 'DEBIT' | 'CREDIT', number, string]> = [
+    [1, bankAccountHeadId, 'DEBIT', amount, 'Maintenance receipt deposited'],
+  ]
+  if (maintenanceIncome > 0) {
+    lines.push([2, maintenanceHeadId!, 'CREDIT', maintenanceIncome, 'Maintenance income'])
+  }
+  if (lateFee > 0) {
+    lines.push([lines.length + 1, lateFeeHeadId!, 'CREDIT', lateFee, 'Late fee income'])
+  }
+
+  await client.query(`delete from journal_lines where journal_entry_id = $1`, [journal.id])
+  for (const line of lines) {
+    await client.query(
+      `
+        insert into journal_lines (journal_entry_id, line_no, account_head_id, line_type, amount, description)
+        values ($1, $2, $3, $4::journal_line_type, $5, $6)
+      `,
+      [journal.id, ...line],
+    )
+  }
+  await client.query(`update journal_entries set updated_at = now() where id = $1`, [journal.id])
+
+  return {
+    id: journal.id,
+    voucherNumber: journal.voucher_number,
+    amount,
+  }
+}
+
 export const computePeriodCloseSummary = async (
   client: PoolClient,
   input: { societyId: string; startDate: string; endDate: string },
