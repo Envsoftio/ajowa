@@ -1,6 +1,7 @@
 import { requireActiveUser } from '~/server/utils/auth'
 import { queryRows } from '~/server/utils/database'
 import { AppError } from '~/server/utils/errors'
+import { setEventHeader } from '~/server/utils/http-event'
 import { readUuidParam } from '~/server/utils/master-data'
 import { downloadPrivateFile } from '~/server/utils/storage'
 
@@ -39,9 +40,9 @@ export default defineEventHandler(async (event) => {
   })
   const fileName = (proof.original_file_name ?? 'payment-proof').replace(/"/g, '')
 
-  setHeader(event, 'content-type', proof.mime_type ?? 'application/octet-stream')
-  setHeader(event, 'cache-control', 'private, no-store')
-  setHeader(event, 'content-disposition', `inline; filename="${fileName}"`)
+  setEventHeader(event, 'content-type', proof.mime_type ?? 'application/octet-stream')
+  setEventHeader(event, 'cache-control', 'private, no-store')
+  setEventHeader(event, 'content-disposition', `inline; filename="${fileName}"`)
 
   return Buffer.from(await blob.arrayBuffer())
 })

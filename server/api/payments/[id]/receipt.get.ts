@@ -1,5 +1,6 @@
 import { requireActiveUser } from '~/server/utils/auth'
 import { AppError } from '~/server/utils/errors'
+import { setEventHeader } from '~/server/utils/http-event'
 import { readUuidParam } from '~/server/utils/master-data'
 import { generatePaymentReceiptPdf, getPaymentReceiptData } from '~/server/utils/payments'
 import { createPdfBuffer } from '~/server/utils/pdf'
@@ -136,9 +137,9 @@ export default defineEventHandler(async (event) => {
       throwReceiptUnavailable(error, paymentId),
     )
 
-    setHeader(event, 'content-type', 'application/pdf')
-    setHeader(event, 'cache-control', 'private, no-store')
-    setHeader(event, 'content-disposition', 'attachment; filename="receipt-pending.pdf"')
+    setEventHeader(event, 'content-type', 'application/pdf')
+    setEventHeader(event, 'cache-control', 'private, no-store')
+    setEventHeader(event, 'content-disposition', 'attachment; filename="receipt-pending.pdf"')
 
     return buffer
   }
@@ -154,7 +155,7 @@ export default defineEventHandler(async (event) => {
         download: fileName,
       })
 
-      setHeader(event, 'cache-control', 'private, no-store')
+      setEventHeader(event, 'cache-control', 'private, no-store')
 
       return sendRedirect(event, signedUrl, 302)
     } catch (error) {
@@ -194,9 +195,9 @@ export default defineEventHandler(async (event) => {
     }
   })
 
-  setHeader(event, 'content-type', 'application/pdf')
-  setHeader(event, 'cache-control', 'private, no-store')
-  setHeader(event, 'content-disposition', `attachment; filename="${receipt.fileName}"`)
+  setEventHeader(event, 'content-type', 'application/pdf')
+  setEventHeader(event, 'cache-control', 'private, no-store')
+  setEventHeader(event, 'content-disposition', `attachment; filename="${receipt.fileName}"`)
 
   return receipt.buffer
 })
