@@ -48,6 +48,10 @@ const priorityOptions = servicePriorities.map((priority) => ({
 }))
 
 const submitForm = () => {
+  if (props.saving) {
+    return
+  }
+
   emit('submit', {
     category: form.category,
     title: form.title,
@@ -136,7 +140,13 @@ const submitForm = () => {
     </section>
 
     <div class="admin-inline-actions" style="justify-content: flex-end;">
-      <Button type="submit" :label="saving ? 'Submitting...' : 'Submit ticket'" icon="pi pi-send" :loading="saving" />
+      <Button
+        type="submit"
+        :label="saving ? 'Submitting...' : 'Submit ticket'"
+        icon="pi pi-send"
+        :loading="saving"
+        :disabled="saving"
+      />
     </div>
   </form>
 </template>

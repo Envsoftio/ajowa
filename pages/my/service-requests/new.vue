@@ -14,6 +14,11 @@ const router = useRouter()
 const serviceRequests = useServiceRequests('resident')
 const saving = ref(false)
 const createdTicket = ref<{ id: string; requestNumber: string } | null>(null)
+const createIdempotencyKey = () =>
+  typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random()}`
+const pendingIdempotencyKey = ref(createIdempotencyKey())
 
 const { data } = await useAsyncData('service-request-options-resident', () =>
   api<{
@@ -27,11 +32,19 @@ const { data } = await useAsyncData('service-request-options-resident', () =>
 )
 
 const submit = async (payload: ServiceRequestCreatePayload) => {
+  if (saving.value) {
+    return
+  }
+
   saving.value = true
 
   try {
-    const response = await serviceRequests.createTicket(payload)
+    const response = await serviceRequests.createTicket({
+      ...payload,
+      idempotencyKey: pendingIdempotencyKey.value,
+    })
     createdTicket.value = response.data
+    pendingIdempotencyKey.value = createIdempotencyKey()
     toast.add({ severity: 'success', summary: 'Ticket created', detail: response.data.requestNumber, life: 10000 })
   } finally {
     saving.value = false

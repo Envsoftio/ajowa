@@ -9,6 +9,7 @@ import {
   dispatchNotificationJobs,
   enqueueNotificationForUsers,
   resolveNotificationAudience,
+  type NotificationChannel,
   type NotificationUser,
 } from './notifications'
 import { createStorageObjectKey, downloadPrivateFile, uploadPrivateFile } from './storage'
@@ -36,6 +37,8 @@ import {
 const serviceLocationTypes = ['FLAT', 'COMMON_AREA', 'SOCIETY_ASSET'] as const
 const serviceSources = ['RESIDENT_REQUEST', 'ADMIN_CREATED', 'COMMON_AREA_REPORT', 'STAFF_REPORTED'] as const
 const commentVisibilities = ['INTERNAL_NOTE', 'RESIDENT_VISIBLE'] as const
+const immediateServiceRequestNotificationChannel: NotificationChannel = 'IN_APP'
+const immediateServiceRequestNotificationLimit = 25
 
 type TicketScope = 'admin' | 'resident' | 'service'
 
@@ -175,6 +178,7 @@ export const serviceDepartmentSchema = z.object({
 })
 
 export const serviceRequestCreateSchema = z.object({
+  idempotencyKey: z.string().trim().min(8).max(160).nullable().optional(),
   requesterUserId: z.string().uuid().nullable().optional(),
   flatId: z.string().uuid().nullable().optional(),
   departmentId: z.string().uuid().nullable().optional(),
@@ -836,7 +840,8 @@ const processImmediateServiceRequestNotifications = async (
     try {
       const dispatchResult = await dispatchNotificationJobs(client, {
         eventId,
-        limit: 50,
+        limit: immediateServiceRequestNotificationLimit,
+        channel: immediateServiceRequestNotificationChannel,
         lockTimeoutMinutes: 1,
       })
 
@@ -1244,7 +1249,7 @@ export const createServiceRequest = async (
           : input.sourceType
     const visibility = sourceType === 'ADMIN_CREATED' ? 'INTERNAL_ONLY' : 'RESIDENT_VISIBLE'
 
-    const ticket = await client.query<{ id: string }>(
+    const ticket = await client.query<{ id: string; request_number: string; was_inserted: boolean }>(
       `
         insert into service_requests (
           society_id,
@@ -1264,15 +1269,19 @@ export const createServiceRequest = async (
           status,
           visibility,
           first_response_due_at,
-          due_by_at
+          due_by_at,
+          idempotency_key
         )
         values (
           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
           $16,
           case when $17::integer is null then null else now() + make_interval(mins => $17::integer) end,
-          case when $18::integer is null then null else now() + make_interval(mins => $18::integer) end
+          case when $18::integer is null then null else now() + make_interval(mins => $18::integer) end,
+          $19
         )
-        returning id
+        on conflict (idempotency_key) where idempotency_key is not null
+        do update set idempotency_key = excluded.idempotency_key
+        returning id, request_number, (xmax = 0) as was_inserted
       `,
       [
         authMe.user.societyId,
@@ -1293,16 +1302,24 @@ export const createServiceRequest = async (
         visibility,
         sla?.acknowledge_within_minutes ?? null,
         sla?.resolve_within_minutes ?? null,
+        input.idempotencyKey ?? null,
       ],
     )
 
-    const id = ticket.rows[0]?.id
-    if (!id) {
+    const ticketRow = ticket.rows[0]
+    const id = ticketRow?.id
+    const persistedRequestNumber = ticketRow?.request_number ?? requestNumber
+    if (!id || !ticketRow) {
       throw new AppError({
         code: 'INTERNAL_ERROR',
         statusCode: 500,
         message: 'Ticket creation failed.',
       })
+    }
+
+    if (!ticketRow.was_inserted) {
+      await client.query('commit')
+      return { id, requestNumber: persistedRequestNumber }
     }
 
     await client.query(
@@ -1322,7 +1339,7 @@ export const createServiceRequest = async (
         authMe.user.id,
         status,
         {
-          requestNumber,
+          requestNumber: persistedRequestNumber,
           preferredVisitTime: input.preferredVisitTime ?? null,
           sourceType,
         },
@@ -1352,7 +1369,7 @@ export const createServiceRequest = async (
           id,
           {
             title: 'Service request created',
-            body: `${requestNumber} has been created and is currently ${status.replaceAll('_', ' ').toLowerCase()}.`,
+            body: `${persistedRequestNumber} has been created and is currently ${status.replaceAll('_', ' ').toLowerCase()}.`,
             idempotencyKey: `service_request.created:${id}`,
           },
           { dbClient: client },
@@ -1366,7 +1383,7 @@ export const createServiceRequest = async (
     } catch (notificationError) {
       warnNotificationFailure(id, notificationError)
     }
-    return { id, requestNumber }
+    return { id, requestNumber: persistedRequestNumber }
   } catch (error) {
     await client.query('rollback')
     throw error

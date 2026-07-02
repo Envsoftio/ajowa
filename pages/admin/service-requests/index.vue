@@ -64,6 +64,11 @@ const assignDialogVisible = ref(false)
 const createDialogVisible = ref(false)
 const selectedTicket = ref<ServiceRequestSummary | null>(null)
 const saving = ref(false)
+const createIdempotencyKey = () =>
+  typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random()}`
+const createTicketIdempotencyKey = ref(createIdempotencyKey())
 
 const loadTickets = () =>
   api<{ ok: true; data: { items: ServiceRequestSummary[]; total: number; summary: ServiceRequestQueueSummary } }>('/api/admin/service-requests', {
@@ -168,9 +173,17 @@ const assignTicket = async (payload: { departmentId: string; assigneeUserId?: st
 }
 
 const createTicket = async (payload: ServiceRequestCreatePayload) => {
+  if (saving.value) {
+    return
+  }
+
   saving.value = true
   try {
-    const response = await serviceRequests.createTicket(payload)
+    const response = await serviceRequests.createTicket({
+      ...payload,
+      idempotencyKey: createTicketIdempotencyKey.value,
+    })
+    createTicketIdempotencyKey.value = createIdempotencyKey()
     toast.add({ severity: 'success', summary: 'Ticket created', detail: response.data.requestNumber, life: 10000 })
     createDialogVisible.value = false
     await refresh()

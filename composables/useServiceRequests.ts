@@ -8,6 +8,7 @@ import type {
 } from '~/types/domain'
 
 export type ServiceRequestCreatePayload = {
+  idempotencyKey?: string | null
   requesterUserId?: string | null
   flatId?: string | null
   departmentId?: string | null
