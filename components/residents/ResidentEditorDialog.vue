@@ -904,6 +904,13 @@ onBeforeUnmount(clearAllResidentFileSelections)
               />
             </label>
             <label>
+              <span>Ownership start</span>
+              <InputText
+                v-model="relationship.ownershipStartDate"
+                placeholder="YYYY-MM-DD"
+              />
+            </label>
+            <label>
               <span>Lease start</span>
               <InputText
                 v-model="relationship.leaseStartDate"
