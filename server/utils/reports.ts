@@ -6,6 +6,7 @@ import { createPdfBuffer, getSocietyStampImage } from './pdf'
 
 export const reportTypes = [
   'expense-summary',
+  'income-summary',
   'income-only',
   'expense-only',
   'resident-payment-ledger',
@@ -85,6 +86,7 @@ const sharedReportTypeSchema = z.enum(sharedReportTypes)
 
 export const reportLabels: Record<ReportType, string> = {
   'expense-summary': 'Expense Summary',
+  'income-summary': 'Income Summary',
   'income-only': 'Income Transactions',
   'expense-only': 'Expense Transactions',
   'resident-payment-ledger': 'Resident Payment Ledger',
@@ -148,6 +150,9 @@ const buildMonthBuckets = (startDate: string, endDate: string) => {
 
 const expenseSummaryTitle = (startDate: string, endDate: string) =>
   `SUMMARY OF EXPENSES : ${formatMonthLabel(parseDateUtc(startDate), 'long')} TO ${formatMonthLabel(parseDateUtc(endDate), 'long')}`
+
+const incomeSummaryTitle = (startDate: string, endDate: string) =>
+  `SUMMARY OF INCOME : ${formatMonthLabel(parseDateUtc(startDate), 'long')} TO ${formatMonthLabel(parseDateUtc(endDate), 'long')}`
 
 const normalizeDateRange = (query: Record<string, unknown>) => {
   const mode = String(query.periodMode ?? 'MONTHLY') as ReportFilters['periodMode']
@@ -220,8 +225,8 @@ export const parseReportFilters = (
 export const parseSharedReportType = (value: unknown): SharedReportType => sharedReportTypeSchema.parse(value)
 
 export const mapSharedTypeToReportType = (reportType: SharedReportType): ReportType => {
-  if (reportType === 'INCOME_SUMMARY') return 'income-only'
-  if (reportType === 'EXPENSE_SUMMARY') return 'expense-only'
+  if (reportType === 'INCOME_SUMMARY') return 'income-summary'
+  if (reportType === 'EXPENSE_SUMMARY') return 'expense-summary'
   if (reportType === 'INCOME_VS_EXPENSE') return 'income-expense'
   if (reportType === 'CATEGORY_EXPENSE_SUMMARY') return 'category-expense'
   return 'profit-loss'
@@ -314,12 +319,15 @@ const getBillingReconciliation = async (societyId: string, startDate: string, en
   ]
 }
 
-const buildExpenseSummaryReport = async ({ societyId, filters }: ReportQueryContext) => {
+const buildMonthlyTransactionSummaryReport = async (
+  { societyId, filters }: ReportQueryContext,
+  transactionType: 'INCOME' | 'EXPENSE',
+) => {
   const buckets = buildMonthBuckets(filters.startDate, filters.endDate)
-  const params: unknown[] = [societyId, filters.startDate, filters.endDate]
+  const params: unknown[] = [societyId, filters.startDate, filters.endDate, transactionType]
   const where = [
     't.society_id = $1',
-    "t.transaction_type = 'EXPENSE'",
+    't.transaction_type = $4::transaction_type',
     "t.status = 'POSTED'",
     't.transaction_date between $2 and $3',
   ]
@@ -377,6 +385,7 @@ const buildExpenseSummaryReport = async ({ societyId, filters }: ReportQueryCont
 
   const rows = Array.from(rowsByDescription.values())
   const grandTotal = buckets.reduce((sum, bucket) => sum + (totals[bucket.key] ?? 0), 0)
+  const summaryKey = transactionType === 'INCOME' ? 'totalIncome' : 'totalExpense'
   rows.push({
     description: 'TOTAL AMOUNT',
     categoryId: null,
@@ -392,7 +401,7 @@ const buildExpenseSummaryReport = async ({ societyId, filters }: ReportQueryCont
     ] satisfies ReportColumn[],
     rows,
     summary: {
-      totalExpense: grandTotal,
+      [summaryKey]: grandTotal,
       categoryCount: Math.max(rows.length - 1, 0),
       monthCount: buckets.length,
     },
@@ -403,6 +412,12 @@ const buildExpenseSummaryReport = async ({ societyId, filters }: ReportQueryCont
     })),
   }
 }
+
+const buildExpenseSummaryReport = async (context: ReportQueryContext) =>
+  buildMonthlyTransactionSummaryReport(context, 'EXPENSE')
+
+const buildIncomeSummaryReport = async (context: ReportQueryContext) =>
+  buildMonthlyTransactionSummaryReport(context, 'INCOME')
 
 const buildFinanceTransactionReport = async ({ societyId, filters, exportMode }: ReportQueryContext) => {
   const params: unknown[] = [societyId, filters.startDate, filters.endDate]
@@ -997,6 +1012,7 @@ type ReportPayload = Pick<ReportData, 'columns' | 'rows' | 'summary' | 'chart'>
 
 const buildPayload = async (context: ReportQueryContext): Promise<ReportPayload> => {
   if (context.filters.reportType === 'expense-summary') return buildExpenseSummaryReport(context)
+  if (context.filters.reportType === 'income-summary') return buildIncomeSummaryReport(context)
   if (context.filters.reportType === 'resident-payment-ledger') return buildPaymentLedgerReport(context)
   if (context.filters.reportType === 'collection') return buildCollectionReport(context)
   if (context.filters.reportType === 'defaulter') return buildDefaulterReport(context)
@@ -1026,7 +1042,9 @@ export const buildReport = async (context: ReportQueryContext): Promise<ReportDa
     reportType: context.filters.reportType,
     title: context.filters.reportType === 'expense-summary'
       ? expenseSummaryTitle(context.filters.startDate, context.filters.endDate)
-      : reportLabels[context.filters.reportType],
+      : context.filters.reportType === 'income-summary'
+        ? incomeSummaryTitle(context.filters.startDate, context.filters.endDate)
+        : reportLabels[context.filters.reportType],
     generatedAt: new Date().toISOString(),
     filters: context.filters,
     ...payload,
@@ -1049,7 +1067,7 @@ const summaryRows = (summary: ReportData['summary']) =>
     Value: value,
   }))
 
-const generateExpenseSummaryWorkbook = (report: ReportData) => {
+const generateMonthlySummaryWorkbook = (report: ReportData) => {
   const workbook = XLSX.utils.book_new()
   const table = [
     [report.title],
@@ -1061,13 +1079,13 @@ const generateExpenseSummaryWorkbook = (report: ReportData) => {
   sheet['!cols'] = report.columns.map((column, index) => ({
     wch: index === 0 ? 42 : column.key === 'total' ? 16 : 14,
   }))
-  XLSX.utils.book_append_sheet(workbook, sheet, 'Expense Summary')
+  XLSX.utils.book_append_sheet(workbook, sheet, report.reportType === 'income-summary' ? 'Income Summary' : 'Expense Summary')
   return Buffer.from(XLSX.write(workbook, { bookType: 'xlsx', type: 'buffer' }))
 }
 
 export const generateReportWorkbook = (report: ReportData) => {
-  if (report.reportType === 'expense-summary') {
-    return generateExpenseSummaryWorkbook(report)
+  if (report.reportType === 'expense-summary' || report.reportType === 'income-summary') {
+    return generateMonthlySummaryWorkbook(report)
   }
 
   const workbook = XLSX.utils.book_new()

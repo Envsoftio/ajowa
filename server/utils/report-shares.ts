@@ -678,30 +678,6 @@ const publicStateFor = (share: ShareRow | null): PublicShareState => {
 }
 
 const adjustSharedReport = (report: ReportData, sharedType: SharedReportType) => {
-  if (sharedType === 'INCOME_SUMMARY') {
-    const rows = report.rows.filter((row) => row.transactionType === 'INCOME')
-    const totalIncome = rows.reduce((sum, row) => sum + Number(row.amount ?? 0), 0)
-    return sanitizeSharedReport({
-      ...report,
-      title: sharedReportTypeLabels[sharedType],
-      rows,
-      summary: { totalIncome, entryCount: rows.length },
-      chart: [{ label: 'Income', value: totalIncome, color: '#0f766e' }],
-    })
-  }
-
-  if (sharedType === 'EXPENSE_SUMMARY') {
-    const rows = report.rows.filter((row) => row.transactionType === 'EXPENSE')
-    const totalExpense = rows.reduce((sum, row) => sum + Number(row.amount ?? 0), 0)
-    return sanitizeSharedReport({
-      ...report,
-      title: sharedReportTypeLabels[sharedType],
-      rows,
-      summary: { totalExpense, entryCount: rows.length },
-      chart: [{ label: 'Expense', value: totalExpense, color: '#f59e0b' }],
-    })
-  }
-
   return sanitizeSharedReport({ ...report, title: sharedReportTypeLabels[sharedType] })
 }
 

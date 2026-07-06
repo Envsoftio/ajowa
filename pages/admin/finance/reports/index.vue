@@ -32,6 +32,7 @@ const { formatMoney, formatDate, formatDateTime } = useFinanceFormatters()
 
 const reportOptions = [
   { label: 'Expense summary', value: 'expense-summary', excel: true },
+  { label: 'Income summary', value: 'income-summary', excel: true },
   { label: 'Income transactions', value: 'income-only', excel: true },
   { label: 'Expense transactions', value: 'expense-only', excel: true },
   { label: 'Category expenses', value: 'category-expense', excel: true },
@@ -147,7 +148,8 @@ const owners = computed(() => ownersData.value?.data.items ?? [])
 const flatOptions = computed(() => flats.value.map((flat) => ({ label: `${flat.blockName} ${flat.flatNumber}`, value: flat.id })))
 const ownerOptions = computed(() => owners.value.map((owner) => ({ label: owner.fullName, value: owner.id })))
 const activeReport = computed(() => reportOptions.find((item) => item.value === filters.reportType))
-const isExpenseSummary = computed(() => report.value?.reportType === 'expense-summary')
+const isMonthlyTransactionSummary = computed(() => ['expense-summary', 'income-summary'].includes(String(report.value?.reportType ?? '')))
+const summaryTransactionType = computed(() => report.value?.reportType === 'income-summary' ? 'INCOME' : 'EXPENSE')
 
 const summaryLabel = (key: string) =>
   key.replace(/([A-Z])/g, ' $1').replace(/^./, (letter) => letter.toUpperCase())
@@ -185,19 +187,20 @@ const monthRangeFromColumn = (column: ReportColumn) => {
   })
 }
 
-const isTotalExpenseRow = (row: Record<string, unknown>) =>
+const isTotalSummaryRow = (row: Record<string, unknown>) =>
   String(row.description ?? '') === 'TOTAL AMOUNT'
 
-const expenseDrilldownLabel = (row: Record<string, unknown>, column: ReportColumn, rangeLabel: string) => {
-  const rowLabel = isTotalExpenseRow(row)
-    ? 'All expenses'
-    : String(row.description ?? 'Expenses')
+const summaryDrilldownLabel = (row: Record<string, unknown>, column: ReportColumn, rangeLabel: string) => {
+  const transactionLabel = summaryTransactionType.value === 'INCOME' ? 'income' : 'expenses'
+  const rowLabel = isTotalSummaryRow(row)
+    ? `All ${transactionLabel}`
+    : String(row.description ?? transactionLabel)
 
   return `${rowLabel} - ${column.key === 'total' ? 'selected range' : rangeLabel}`
 }
 
-const expenseEntryLink = (row: Record<string, unknown>, column: ReportColumn) => {
-  if (!isExpenseSummary.value || column.type !== 'money') return null
+const summaryEntryLink = (row: Record<string, unknown>, column: ReportColumn) => {
+  if (!isMonthlyTransactionSummary.value || column.type !== 'money') return null
 
   const valueForLink = row[column.key]
   const amount = Number(valueForLink ?? 0)
@@ -210,13 +213,13 @@ const expenseEntryLink = (row: Record<string, unknown>, column: ReportColumn) =>
   if (!range) return null
 
   const queryParams: Record<string, string> = {
-    transactionType: 'EXPENSE',
+    transactionType: summaryTransactionType.value,
     status: 'POSTED',
     dateFrom: range.dateFrom,
     dateTo: range.dateTo,
     pageSize: '2000',
     source: 'report',
-    reportDrilldown: expenseDrilldownLabel(row, column, range.label),
+    reportDrilldown: summaryDrilldownLabel(row, column, range.label),
     reportAmount: String(amount),
   }
   if (typeof row.categoryId === 'string') {
@@ -232,8 +235,8 @@ const expenseEntryLink = (row: Record<string, unknown>, column: ReportColumn) =>
   }
 }
 
-const expenseEntryTarget = (row: Record<string, unknown>, column: ReportColumn) =>
-  expenseEntryLink(row, column) ?? '/admin/finance/transactions'
+const summaryEntryTarget = (row: Record<string, unknown>, column: ReportColumn) =>
+  summaryEntryLink(row, column) ?? '/admin/finance/transactions'
 
 const formatSummaryValue = (value: number | string) =>
   typeof value === 'number' ? formatMoney(value) : value
@@ -350,7 +353,7 @@ const exportUrl = (format: 'pdf' | 'xlsx') => {
         </div>
       </div>
 
-      <div v-if="isExpenseSummary" class="expense-summary-table">
+      <div v-if="isMonthlyTransactionSummary" class="expense-summary-table">
         <table>
           <thead>
             <tr class="expense-summary-table__letters">
@@ -392,8 +395,8 @@ const exportUrl = (format: 'pdf' | 'xlsx') => {
                 }"
               >
                 <NuxtLink
-                  v-if="expenseEntryLink(row, column)"
-                  :to="expenseEntryTarget(row, column)"
+                  v-if="summaryEntryLink(row, column)"
+                  :to="summaryEntryTarget(row, column)"
                   class="expense-summary-table__link"
                 >
                   {{ formatCell(column, row[column.key]) }}
