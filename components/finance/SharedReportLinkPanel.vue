@@ -136,6 +136,20 @@ const selectedOwner = computed(() => {
   return ownersForSharing.value.find((owner) => owner.id === form.ownerUserId) ?? null
 })
 
+const canCreateShare = computed(() =>
+  Boolean(form.ownerUserId)
+  && selectedOwners.value.length > 0
+  && form.deliveryChannels.length > 0,
+)
+
+const createDisabledTitle = computed(() => {
+  if (ownersForSharing.value.length === 0) return 'No owners are available for sharing'
+  if (!form.ownerUserId) return 'Select an owner'
+  if (selectedOwners.value.length === 0) return 'Selected owner is not available'
+  if (form.deliveryChannels.length === 0) return 'Select a delivery option'
+  return undefined
+})
+
 const loadOwnerFlats = async (ownerUserId: string) => {
   const cached = ownerFlatOptionsCache.value[ownerUserId]
   if (cached) return cached
@@ -259,7 +273,7 @@ const createSharePayload = (ownerUserId: string, flatId: string | null) => ({
 })
 
 const createShare = async () => {
-  if (!form.ownerUserId) return
+  if (!canCreateShare.value) return
   creating.value = true
   createdShares.value = []
 
@@ -403,7 +417,14 @@ const copyLink = async (link: string) => {
     </div>
 
     <div class="list-page__exports">
-      <Button label="Create link" icon="pi pi-link" :loading="creating" :disabled="!form.ownerUserId" @click="createShare" />
+      <Button
+        label="Create link"
+        icon="pi pi-link"
+        :loading="creating"
+        :disabled="!canCreateShare"
+        :title="createDisabledTitle"
+        @click="createShare"
+      />
       <Button
         label="Copy"
         icon="pi pi-copy"

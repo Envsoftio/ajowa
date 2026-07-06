@@ -225,8 +225,8 @@ export const parseReportFilters = (
 export const parseSharedReportType = (value: unknown): SharedReportType => sharedReportTypeSchema.parse(value)
 
 export const mapSharedTypeToReportType = (reportType: SharedReportType): ReportType => {
-  if (reportType === 'INCOME_SUMMARY') return 'income-summary'
-  if (reportType === 'EXPENSE_SUMMARY') return 'expense-summary'
+  if (reportType === 'INCOME_SUMMARY') return 'income-only'
+  if (reportType === 'EXPENSE_SUMMARY') return 'expense-only'
   if (reportType === 'INCOME_VS_EXPENSE') return 'income-expense'
   if (reportType === 'CATEGORY_EXPENSE_SUMMARY') return 'category-expense'
   return 'profit-loss'
