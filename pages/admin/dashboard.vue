@@ -43,6 +43,9 @@ const urgencyBadge = (days: number) => {
   return 'info'
 }
 
+const overdueLabel = (days: number) =>
+  days > 0 ? `${days} day${days === 1 ? '' : 's'} overdue` : 'Not overdue'
+
 const statusBadge = (value: boolean) => (value ? 'success' : 'secondary')
 
 const loadDashboard = async () => {
@@ -140,7 +143,7 @@ const kpiCards = computed(() => [
     note: `${summary.value.overdueDues > 0 ? 'Needs immediate follow-up' : 'No overdue rows'}`,
   },
   {
-    title: 'High risk defaulters',
+    title: 'Unpaid owners',
     value: formatNumber(summary.value.defaulterCount),
     note: formatMoney(summary.value.outstandingBalance),
     isAmount: true,
@@ -169,7 +172,7 @@ const hasWelcomeName = computed(() => authStore.me?.user?.fullName || authStore.
         <Button label="Refresh" icon="pi pi-refresh" severity="secondary" outlined :loading="pending" @click="refresh()" />
         <Button label="Manage dues" icon="pi pi-wallet" as="a" href="/admin/billing/dues" />
         <Button label="Record payment" icon="pi pi-credit-card" as="a" href="/admin/payments/new" severity="secondary" outlined />
-        <Button label="View defaulters" icon="pi pi-exclamation-triangle" severity="secondary" as="a" href="/admin/billing/defaulters" outlined />
+        <Button label="View unpaid owners" icon="pi pi-exclamation-triangle" severity="secondary" as="a" href="/admin/billing/defaulters" outlined />
       </div>
     </section>
 
@@ -193,8 +196,8 @@ const hasWelcomeName = computed(() => authStore.me?.user?.fullName || authStore.
         <div class="dashboard-panel__header">
           <div>
             <p class="eyebrow">Priority queue</p>
-            <h2>Top defaulters</h2>
-            <p>Residents with highest current exposure.</p>
+            <h2>Top unpaid owners</h2>
+            <p>Flat owners with highest current unpaid exposure.</p>
           </div>
           <Button label="Open list" as="a" href="/admin/billing/defaulters" severity="secondary" outlined size="small" />
         </div>
@@ -202,7 +205,7 @@ const hasWelcomeName = computed(() => authStore.me?.user?.fullName || authStore.
         <AppState
           v-if="!pending && topDefaulters.length === 0"
           variant="empty"
-          title="No defaulters currently"
+          title="No unpaid owners currently"
           message="Outstanding dues are clean for now. Keep monitoring once new periods are generated."
         />
 
@@ -220,7 +223,7 @@ const hasWelcomeName = computed(() => authStore.me?.user?.fullName || authStore.
               <p>{{ formatContact(person.residentEmail) }} · {{ person.residentMobileNumber || 'No phone' }}</p>
               <div class="dashboard-priority-item__meta">
                 <Tag severity="info" :value="`${person.flatCount} flat${person.flatCount === 1 ? '' : 's'}`" rounded />
-                <Tag :severity="urgencyBadge(person.maxDaysOverdue)" :value="`${person.maxDaysOverdue} day(s) overdue`" rounded />
+                <Tag :severity="urgencyBadge(person.maxDaysOverdue)" :value="overdueLabel(person.maxDaysOverdue)" rounded />
                 <AppStatusBadge :status="person.totalBalance > 0 ? 'open' : 'paid'" />
               </div>
             </div>

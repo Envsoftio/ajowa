@@ -155,6 +155,8 @@ export const dueBulkDueDateUpdateSchema = z.object({
 
 export const dueReminderSchema = z.object({
   dueIds: z.array(z.string().uuid()).min(1).max(500),
+  recipientUserIds: z.array(z.string().uuid()).min(1).max(500).optional(),
+  recipientRelationshipTypes: z.array(z.enum(['OWNER', 'TENANT', 'FAMILY_MEMBER'])).min(1).max(3).optional(),
 })
 
 export const dueBillSendSchema = z.object({

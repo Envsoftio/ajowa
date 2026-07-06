@@ -32,6 +32,8 @@
   --radius-lg: 8px;
   --radius-md: 6px;
   --radius-sm: 6px;
+  --app-sidebar-width: 230px;
+  --app-footer-fixed-space: 5.25rem;
   --space-1: 0.25rem;
   --space-2: 0.5rem;
   --space-3: 0.75rem;
@@ -94,7 +96,7 @@ a {
 .app-shell__layout {
   min-height: 100vh;
   display: grid;
-  grid-template-columns: 230px minmax(0, 1fr);
+  grid-template-columns: var(--app-sidebar-width) minmax(0, 1fr);
   align-items: stretch;
 }
 
@@ -119,7 +121,7 @@ a {
 .app-content {
   flex: 1;
   min-width: 0;
-  padding: 0.9rem 1.2rem 3rem;
+  padding: 0.9rem 1.2rem var(--app-footer-fixed-space);
 }
 
 .app-shell--public-compact,
@@ -155,7 +157,7 @@ a {
     flex: 1 1 auto;
     min-height: 0;
     overflow-y: auto;
-    padding-bottom: 1rem;
+    padding-bottom: var(--app-footer-fixed-space);
   }
 
   .app-shell--resident .app-footer {
@@ -164,6 +166,12 @@ a {
 }
 
 .app-footer {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  left: var(--app-sidebar-width);
+  z-index: 30;
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -175,6 +183,10 @@ a {
   font-size: 0.82rem;
   line-height: 1.4;
   text-align: center;
+}
+
+.app-shell--sidebar-collapsed .app-footer {
+  left: 0;
 }
 
 .app-footer__link {
@@ -4066,7 +4078,11 @@ button *,
   }
 
   .app-content {
-    padding: 0.75rem 0.75rem 2rem;
+    padding: 0.75rem 0.75rem var(--app-footer-fixed-space);
+  }
+
+  .app-footer {
+    left: 0;
   }
 
   .landing-page {

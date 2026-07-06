@@ -1632,6 +1632,7 @@ export const enqueueDueBillingContactNotifications = async (
     title: string
     bodyPrefix: string
     channels?: NotificationChannel[]
+    recipientUserIds?: string[]
     recipientRelationshipTypes?: Array<'OWNER' | 'TENANT' | 'FAMILY_MEMBER'>
     triggeredByUserId?: string
   },
@@ -1644,6 +1645,12 @@ export const enqueueDueBillingContactNotifications = async (
   const relationshipFilter = input.recipientRelationshipTypes?.length
     ? `and fr.relationship_type = any($${params.push(input.recipientRelationshipTypes)}::relationship_type[])`
     : ''
+  const userFilter = input.recipientUserIds?.length
+    ? `and u.id = any($${params.push(input.recipientUserIds)}::uuid[])`
+    : ''
+  const contactFilter = input.recipientUserIds?.length
+    ? ''
+    : 'and (fr.is_billing_contact = true or fr.is_primary_contact = true)'
 
   const result = await client.query<DueNotificationRow>(
     `
@@ -1675,7 +1682,8 @@ export const enqueueDueBillingContactNotifications = async (
       where md.society_id = $1
         and md.id = any($2::uuid[])
         ${relationshipFilter}
-        and (fr.is_billing_contact = true or fr.is_primary_contact = true)
+        ${userFilter}
+        ${contactFilter}
       order by md.id, u.id, fr.is_billing_contact desc, fr.is_primary_contact desc
     `,
     params,

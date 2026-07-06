@@ -229,6 +229,23 @@ const kpis = computed(() => ({
     ?? transactions.value.filter((item) => !item.hasAttachments).length,
 }))
 
+const exportUrl = (format: 'pdf' | 'xlsx') => {
+  const params = new URLSearchParams()
+
+  for (const [key, value] of Object.entries(query.value)) {
+    if (value !== undefined && value !== null && value !== '') {
+      params.set(key, String(value))
+    }
+  }
+
+  params.set('format', format)
+  params.set('sortBy', sortBy.value)
+  params.set('sortDirection', sortDirection.value)
+  params.set('highValueThreshold', String(highValueThreshold.value))
+
+  return `/api/admin/finance/transactions/export?${params.toString()}`
+}
+
 watch(query, () => {
   page.value = 1
 })
@@ -300,6 +317,24 @@ const onSort = (event: { sortField?: string; sortOrder?: number }) => {
             icon="pi pi-plus-circle"
             severity="secondary"
             outlined
+          />
+          <Button
+            as="a"
+            :href="exportUrl('pdf')"
+            label="PDF"
+            icon="pi pi-file-pdf"
+            severity="secondary"
+            outlined
+            target="_blank"
+          />
+          <Button
+            as="a"
+            :href="exportUrl('xlsx')"
+            label="Excel"
+            icon="pi pi-file-excel"
+            severity="secondary"
+            outlined
+            target="_blank"
           />
         </div>
       </header>

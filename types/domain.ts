@@ -614,11 +614,14 @@ export type DefaulterSummary = {
   flats: {
     flatId: string
     flatNumber: string
+    blockId?: string
     blockName: string
     relationshipType: string
     dueId: string
     dueStatus: string
+    billingPeriodId?: string
     billingPeriodLabel: string
+    billingPeriodChargeType?: BillingPeriodChargeType
     dueDate: string
     totalAmount: number
     paidAmount: number
