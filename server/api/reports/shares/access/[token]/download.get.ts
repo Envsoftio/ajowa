@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { createApiSuccess } from '~/server/utils/api'
+import { setEventHeader } from '~/server/utils/http-event'
 import { accessSharedReport } from '~/server/utils/report-shares'
 import { buildReportFilename, generateReportPdf } from '~/server/utils/reports'
 import { createStorageObjectKey, uploadPrivateFile } from '~/server/utils/storage'
@@ -35,9 +36,9 @@ export default defineEventHandler(async (event) => {
     checksum: createHash('sha256').update(buffer).digest('hex'),
   })
 
-  setHeader(event, 'content-type', 'application/pdf')
-  setHeader(event, 'content-disposition', `attachment; filename="${fileName}"`)
-  setHeader(event, 'x-storage-object-key', storageObjectKey)
+  setEventHeader(event, 'content-type', 'application/pdf')
+  setEventHeader(event, 'content-disposition', `attachment; filename="${fileName}"`)
+  setEventHeader(event, 'x-storage-object-key', storageObjectKey)
 
   return buffer
 })

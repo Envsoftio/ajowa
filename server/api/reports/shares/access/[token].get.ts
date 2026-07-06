@@ -1,7 +1,8 @@
 import { createApiSuccess } from '~/server/utils/api'
+import { setEventHeader } from '~/server/utils/http-event'
 import { accessSharedReport } from '~/server/utils/report-shares'
 import type { H3Event } from 'h3'
-import { setHeader, setResponseStatus } from 'h3'
+import { setResponseStatus } from 'h3'
 
 const readRequestHeader = (event: H3Event, name: string) => {
   const lowerName = name.toLowerCase()
@@ -32,7 +33,7 @@ export default defineEventHandler(async (event) => {
 
   if (isBrowserNavigation) {
     setResponseStatus(event, 302, 'Found')
-    setHeader(event, 'location', `/shared/report/${token}`)
+    setEventHeader(event, 'location', `/shared/report/${token}`)
     return
   }
 
