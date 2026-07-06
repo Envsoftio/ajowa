@@ -64,9 +64,7 @@ const exportUrl = (format: 'csv' | 'excel' | 'pdf') =>
           <a :href="exportUrl('excel')" target="_blank" rel="noopener">
             <Button label="Excel" icon="pi pi-file-excel" severity="secondary" outlined />
           </a>
-          <a :href="exportUrl('pdf')" target="_blank" rel="noopener">
-            <Button label="PDF" icon="pi pi-file-pdf" severity="secondary" outlined />
-          </a>
+          <AppDocumentLink :href="exportUrl('pdf')" viewer-title="Gate log PDF" label="PDF" icon="pi pi-file-pdf" severity="secondary" outlined />
           <a :href="exportUrl('csv')" target="_blank" rel="noopener">
             <Button label="CSV" icon="pi pi-download" severity="secondary" outlined />
           </a>

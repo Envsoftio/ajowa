@@ -318,14 +318,13 @@ const onSort = (event: { sortField?: string; sortOrder?: number }) => {
             severity="secondary"
             outlined
           />
-          <Button
-            as="a"
+          <AppDocumentLink
             :href="exportUrl('pdf')"
+            viewer-title="Finance transactions PDF"
             label="PDF"
             icon="pi pi-file-pdf"
             severity="secondary"
             outlined
-            target="_blank"
           />
           <Button
             as="a"

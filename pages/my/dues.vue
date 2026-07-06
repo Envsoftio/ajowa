@@ -234,11 +234,10 @@ const openBreakdown = (due: MaintenanceDue) => {
             <Column header="Actions" style="width: 150px">
               <template #body="{ data: row }">
                 <div class="admin-inline-actions">
-                  <Button
+                  <AppDocumentLink
                     v-if="!row.isAdvanceCoverageRow"
-                    as="a"
                     :href="`/api/my/dues/${row.id}/bill`"
-                    target="_blank"
+                    viewer-title="Bill PDF"
                     icon="pi pi-file-pdf"
                     severity="secondary"
                     text
@@ -315,11 +314,10 @@ const openBreakdown = (due: MaintenanceDue) => {
               </div>
 
               <div class="resident-mobile-actions">
-                <Button
+                <AppDocumentLink
                   v-if="!row.isAdvanceCoverageRow"
-                  as="a"
                   :href="`/api/my/dues/${row.id}/bill`"
-                  target="_blank"
+                  viewer-title="Bill PDF"
                   label="Bill"
                   icon="pi pi-file-pdf"
                   severity="secondary"

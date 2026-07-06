@@ -388,6 +388,71 @@ a {
   color: var(--color-text);
 }
 
+.document-viewer-page {
+  min-height: 100dvh;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  background: var(--color-bg);
+}
+
+.document-viewer-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid var(--color-border);
+  background: color-mix(in srgb, var(--color-surface) 94%, var(--color-bg));
+}
+
+.document-viewer-toolbar__title {
+  min-width: 0;
+}
+
+.document-viewer-toolbar__title .eyebrow,
+.document-viewer-toolbar__title h1 {
+  margin: 0;
+}
+
+.document-viewer-toolbar__title h1 {
+  overflow: hidden;
+  font-size: 1rem;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.document-viewer-toolbar__actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.document-viewer-stage {
+  min-height: 0;
+  padding: 0.75rem;
+}
+
+.document-viewer-frame {
+  width: 100%;
+  height: calc(100dvh - 5rem);
+  min-height: 28rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.document-viewer-fallback {
+  display: grid;
+  min-height: 24rem;
+  place-items: center;
+}
+
 .landing-page > .surface-grid:first-child > .surface-card {
   position: relative;
   display: grid;
@@ -4144,6 +4209,31 @@ button *,
 
   .landing-page > .surface-grid:first-child > .surface-card {
     min-height: auto;
+  }
+
+  .document-viewer-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+    padding: 0.75rem;
+  }
+
+  .document-viewer-toolbar__actions {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .document-viewer-toolbar__actions .p-button {
+    justify-content: center;
+  }
+
+  .document-viewer-stage {
+    padding: 0.5rem;
+  }
+
+  .document-viewer-frame {
+    height: calc(100dvh - 8.25rem);
+    min-height: 22rem;
   }
 
   .admin-page-guide {

@@ -480,15 +480,13 @@ watch(filteredDefaulters, (rows) => {
           </p>
         </div>
         <div class="list-page__exports">
-          <Button
-            as="a"
+          <AppDocumentLink
             :href="exportUrl('pdf')"
+            viewer-title="Defaulters PDF"
             label="PDF"
             icon="pi pi-file-pdf"
             severity="secondary"
             outlined
-            target="_blank"
-            rel="noopener"
           />
           <Button
             as="a"

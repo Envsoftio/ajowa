@@ -283,7 +283,7 @@ const exportUrl = (format: 'pdf' | 'xlsx') => {
             severity="secondary"
             outlined
           />
-          <Button as="a" :href="exportUrl('pdf')" label="PDF" icon="pi pi-file-pdf" target="_blank" />
+          <AppDocumentLink :href="exportUrl('pdf')" viewer-title="Finance report PDF" label="PDF" icon="pi pi-file-pdf" />
           <Button
             as="a"
             :href="exportUrl('xlsx')"

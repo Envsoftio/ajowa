@@ -259,7 +259,7 @@ const resetFilters = () => {
           </Column>
           <Column header="Actions" style="width: 120px">
             <template #body="{ data: row }">
-              <Button as="a" :href="row.downloadUrl" target="_blank" icon="pi pi-download" severity="secondary" text rounded aria-label="Download receipt" title="Download receipt" />
+              <AppDocumentLink :href="row.downloadUrl" viewer-title="Receipt PDF" icon="pi pi-download" severity="secondary" text rounded aria-label="Download receipt" title="Download receipt" />
             </template>
           </Column>
         </AppDataTable>
@@ -285,7 +285,7 @@ const resetFilters = () => {
               <span>Reference</span>
               <strong>{{ referenceLabel(receipt) }}</strong>
             </div>
-            <Button as="a" :href="receipt.downloadUrl" target="_blank" label="Download receipt" icon="pi pi-download" size="small" severity="secondary" outlined />
+            <AppDocumentLink :href="receipt.downloadUrl" viewer-title="Receipt PDF" label="Download receipt" icon="pi pi-download" size="small" severity="secondary" outlined />
           </article>
         </div>
       </template>

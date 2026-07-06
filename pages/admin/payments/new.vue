@@ -532,7 +532,7 @@ const resetForm = () => {
       </dl>
       <div class="admin-inline-actions">
         <Button as="router-link" to="/admin/payments" label="View payments" icon="pi pi-list" />
-        <Button as="a" :href="`/api/payments/${success.id}/receipt`" target="_blank" label="Download receipt" icon="pi pi-download" severity="secondary" outlined />
+        <AppDocumentLink :href="`/api/payments/${success.id}/receipt`" viewer-title="Receipt PDF" label="Download receipt" icon="pi pi-download" severity="secondary" outlined />
         <Button label="Add another" icon="pi pi-plus" severity="secondary" outlined @click="resetForm" />
       </div>
     </section>

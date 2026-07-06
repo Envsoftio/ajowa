@@ -1466,11 +1466,10 @@ watch(
                 :title="getRecordPaymentTitle(row)"
                 :disabled="!canRecordPayment(row)"
               />
-              <Button
+              <AppDocumentLink
                 v-if="!row.isAdvanceCoverageRow"
-                as="a"
                 :href="`/api/admin/billing/dues/${row.id}/bill`"
-                target="_blank"
+                viewer-title="Bill PDF"
                 icon="pi pi-file-pdf"
                 severity="secondary"
                 text
@@ -1606,11 +1605,10 @@ watch(
               :title="getRecordPaymentTitle(due)"
               :disabled="!canRecordPayment(due)"
             />
-            <Button
+            <AppDocumentLink
               v-if="!due.isAdvanceCoverageRow"
-              as="a"
               :href="`/api/admin/billing/dues/${due.id}/bill`"
-              target="_blank"
+              viewer-title="Bill PDF"
               label="PDF"
               icon="pi pi-file-pdf"
               size="small"

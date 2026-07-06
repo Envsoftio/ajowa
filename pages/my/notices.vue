@@ -76,11 +76,10 @@ const readNotice = async (notice: Notice) => {
           <h2>{{ selectedNotice.title }}</h2>
           <p v-if="selectedNotice.summary" class="table-muted">{{ selectedNotice.summary }}</p>
           <p class="notice-body">{{ selectedNotice.body }}</p>
-          <Button
+          <AppDocumentLink
             v-if="selectedNotice.attachmentUrl"
-            as="a"
             :href="selectedNotice.attachmentUrl"
-            target="_blank"
+            :viewer-title="selectedNotice.attachmentLabel || 'Notice attachment'"
             icon="pi pi-paperclip"
             :label="selectedNotice.attachmentLabel || 'Open attachment'"
             severity="secondary"

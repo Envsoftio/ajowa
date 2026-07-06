@@ -595,10 +595,9 @@ const onProofFileChange = async (event: Event) => {
                 title="Edit amount"
                 @click="openAmountEdit(row)"
               />
-              <Button
-                as="a"
+              <AppDocumentLink
                 :href="`/api/payments/${row.id}/receipt`"
-                target="_blank"
+                viewer-title="Receipt PDF"
                 icon="pi pi-download"
                 severity="secondary"
                 text
@@ -665,10 +664,9 @@ const onProofFileChange = async (event: Event) => {
               :loading="proofUploadingId === payment.id"
               @click="pickProofFile(payment)"
             />
-            <Button
-              as="a"
+            <AppDocumentLink
               :href="`/api/payments/${payment.id}/receipt`"
-              target="_blank"
+              viewer-title="Receipt PDF"
               label="Receipt"
               icon="pi pi-download"
               size="small"

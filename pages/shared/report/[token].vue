@@ -80,7 +80,7 @@ const formatCell = (column: ReportColumn, value: unknown) => {
           {{ formatDate(share.startDate) }} - {{ formatDate(share.endDate) }} · Expires
           {{ formatDateTime(share.expiresAt) }}
         </p>
-        <Button as="a" :href="downloadUrl" label="Download PDF" icon="pi pi-file-pdf" target="_blank" />
+        <AppDocumentLink :href="downloadUrl" viewer-title="Shared report PDF" label="Download PDF" icon="pi pi-file-pdf" />
       </section>
 
       <div class="surface-grid">

@@ -59,7 +59,14 @@ const createdAt = computed(() => {
       <div class="finance-attachment-preview__frame">
         <img v-if="isImage" :src="previewUrl" :alt="fileName">
         <object v-else-if="isPdf" :data="previewUrl" type="application/pdf">
-          <a :href="previewUrl" target="_blank" rel="noopener">Open PDF</a>
+          <AppDocumentLink
+            :href="previewUrl"
+            viewer-title="PDF attachment"
+            label="Open PDF"
+            icon="pi pi-file-pdf"
+            severity="secondary"
+            outlined
+          />
         </object>
         <div v-else class="finance-attachment-preview__empty">
           <i class="pi pi-file" aria-hidden="true" />
@@ -74,11 +81,9 @@ const createdAt = computed(() => {
       </div>
 
       <div class="admin-inline-actions">
-        <Button
-          as="a"
+        <AppDocumentLink
           :href="previewUrl"
-          target="_blank"
-          rel="noopener"
+          viewer-title="Attachment"
           icon="pi pi-search-plus"
           label="Open"
           severity="secondary"

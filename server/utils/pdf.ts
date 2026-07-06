@@ -84,7 +84,18 @@ const getSocietyStampUrlCandidates = () =>
   ]
     .map((baseUrl) => baseUrl?.trim())
     .filter((baseUrl): baseUrl is string => Boolean(baseUrl))
-    .map((baseUrl) => new URL(societyStampPublicPath, baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`).toString())
+    .flatMap((baseUrl) => {
+      try {
+        return [
+          new URL(
+            societyStampPublicPath,
+            baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`,
+          ).toString(),
+        ]
+      } catch {
+        return []
+      }
+    })
 
 export const getSocietyStampImageForPdf = async () => {
   const localImage = getSocietyStampImage()
