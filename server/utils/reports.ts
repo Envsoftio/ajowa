@@ -245,6 +245,159 @@ const addSearch = (params: unknown[], filters: string[], columns: string[], sear
   filters.push(`(${columns.map((column) => `lower(coalesce(${column}, '')) like $${params.length}`).join(' or ')})`)
 }
 
+type MonthlySummaryRow = {
+  category_id: string
+  description: string
+  category_group: string
+  month_start: string
+  amount: string
+}
+
+type FinanceTransactionReportRow = {
+  transactionDate: string
+  transactionType: string
+  category: string
+  title: string
+  counterparty: string
+  voucherNumber: string
+  status: string
+  amount: string
+  attachmentCount: string
+  sortCreatedAt: string
+}
+
+const camCollectionCategoryCte = `
+  cam_category as (
+    select id, name, category_group
+    from transaction_categories
+    where code = 'INC-MNT-001'
+      and transaction_type = 'INCOME'
+    limit 1
+  )
+`
+
+const addCamCollectionSearch = (params: unknown[], where: string[], search: string) =>
+  addSearch(
+    params,
+    where,
+    [
+      'cc.name',
+      'cc.category_group',
+      'u.full_name',
+      'f.flat_number',
+      'b.name',
+      'p.receipt_number',
+      'p.utr_reference',
+      'p.bank_reference',
+      'bp.label',
+      'p.notes',
+    ],
+    search,
+  )
+
+const buildCamCollectionWhere = (params: unknown[], filters: ReportFilters) => {
+  const where = [
+    'p.society_id = $1',
+    "p.status = 'VERIFIED'",
+    "bp.charge_type = 'CAM'",
+    'p.payment_date between $2 and $3',
+    `not exists (
+      select 1
+      from transactions source_t
+      where source_t.source_payment_id = p.id
+        and source_t.society_id = p.society_id
+        and source_t.transaction_type = 'INCOME'
+        and source_t.status = 'POSTED'
+    )`,
+  ]
+
+  if (filters.categoryId) {
+    params.push(filters.categoryId)
+    where.push(`cc.id = $${params.length}`)
+  }
+  addCamCollectionSearch(params, where, filters.search)
+
+  return where
+}
+
+const getCamCollectionMonthlySummaryRows = async (
+  societyId: string,
+  filters: ReportFilters,
+): Promise<MonthlySummaryRow[]> => {
+  const params: unknown[] = [societyId, filters.startDate, filters.endDate]
+  const where = buildCamCollectionWhere(params, filters)
+  const result = await getDatabasePool().query<MonthlySummaryRow>(
+    `
+      with ${camCollectionCategoryCte}
+      select
+        cc.id as category_id,
+        cc.name as description,
+        cc.category_group,
+        date_trunc('month', p.payment_date)::date::text as month_start,
+        sum(pa.allocated_amount)::text as amount
+      from payment_allocations pa
+      join payments p on p.id = pa.payment_id
+      join maintenance_dues md on md.id = pa.maintenance_due_id
+      join billing_periods bp on bp.id = md.billing_period_id
+      join flats f on f.id = md.flat_id
+      join blocks b on b.id = f.block_id
+      left join users u on u.id = p.payer_user_id
+      cross join cam_category cc
+      where ${where.join(' and ')}
+      group by cc.id, cc.name, cc.category_group, date_trunc('month', p.payment_date)::date
+      order by cc.category_group asc, cc.name asc
+    `,
+    params,
+  )
+
+  return result.rows
+}
+
+const getCamCollectionTransactionRows = async (
+  societyId: string,
+  filters: ReportFilters,
+  limit: number,
+): Promise<FinanceTransactionReportRow[]> => {
+  const params: unknown[] = [societyId, filters.startDate, filters.endDate]
+  const where = buildCamCollectionWhere(params, filters)
+  params.push(limit)
+
+  const result = await getDatabasePool().query<FinanceTransactionReportRow>(
+    `
+      with ${camCollectionCategoryCte}
+      select
+        p.payment_date::text as "transactionDate",
+        'INCOME' as "transactionType",
+        cc.name as category,
+        case
+          when count(distinct bp.label) = 1 then concat('CAM collection - ', min(bp.label))
+          else 'CAM collection - multiple periods'
+        end as title,
+        coalesce(u.full_name, '-') as counterparty,
+        coalesce(p.receipt_number, p.utr_reference, p.bank_reference, '-') as "voucherNumber",
+        'POSTED' as status,
+        sum(pa.allocated_amount)::text as amount,
+        '0' as "attachmentCount",
+        p.created_at::text as "sortCreatedAt"
+      from payment_allocations pa
+      join payments p on p.id = pa.payment_id
+      join maintenance_dues md on md.id = pa.maintenance_due_id
+      join billing_periods bp on bp.id = md.billing_period_id
+      join flats f on f.id = md.flat_id
+      join blocks b on b.id = f.block_id
+      left join users u on u.id = p.payer_user_id
+      cross join cam_category cc
+      where ${where.join(' and ')}
+      group by p.id, p.payment_date, p.created_at, cc.name, u.full_name, p.receipt_number, p.utr_reference, p.bank_reference
+      order by p.payment_date desc, p.created_at desc
+      limit $${params.length}
+    `,
+    params,
+  )
+
+  return result.rows
+}
+
 export const getSocietyInfo = async (societyId: string): Promise<SocietyInfo> => {
   const result = await getDatabasePool().query<{ name: string; code: string; address: string }>(
     `
@@ -336,15 +489,12 @@ const buildMonthlyTransactionSummaryReport = async (
     params.push(filters.categoryId)
     where.push(`t.category_id = $${params.length}`)
   }
+  if (transactionType === 'INCOME') {
+    where.push("tc.code <> 'INC-MNT-001'")
+  }
   addSearch(params, where, ['tc.name', 'tc.category_group', 't.title', 't.counterparty_name', 't.voucher_number'], filters.search)
 
-  const result = await getDatabasePool().query<{
-    category_id: string
-    description: string
-    category_group: string
-    month_start: string
-    amount: string
-  }>(
+  const result = await getDatabasePool().query<MonthlySummaryRow>(
     `
       select
         tc.id as category_id,
@@ -360,11 +510,20 @@ const buildMonthlyTransactionSummaryReport = async (
     `,
     params,
   )
+  const sourceRows =
+    transactionType === 'INCOME'
+      ? [...result.rows, ...(await getCamCollectionMonthlySummaryRows(societyId, filters))]
+      : result.rows
+  const sortedSourceRows = [...sourceRows].sort((left, right) =>
+    left.category_group.localeCompare(right.category_group) ||
+    left.description.localeCompare(right.description) ||
+    left.month_start.localeCompare(right.month_start),
+  )
 
   const rowsByDescription = new Map<string, Record<string, unknown>>()
   const totals = Object.fromEntries(buckets.map((bucket) => [bucket.key, 0])) as Record<string, number>
 
-  for (const row of result.rows) {
+  for (const row of sortedSourceRows) {
     const key = row.category_id
     const bucketKey = monthKey(parseDateUtc(row.month_start))
     const amount = money(row.amount)
@@ -422,15 +581,19 @@ const buildIncomeSummaryReport = async (context: ReportQueryContext) =>
 const buildFinanceTransactionReport = async ({ societyId, filters, exportMode }: ReportQueryContext) => {
   const params: unknown[] = [societyId, filters.startDate, filters.endDate]
   const where = ['t.society_id = $1', 't.transaction_date between $2 and $3']
+  const reportMode = filters.reportType
 
   if (filters.categoryId) {
     params.push(filters.categoryId)
     where.push(`t.category_id = $${params.length}`)
   }
+  if (reportMode === 'income-only' || reportMode === 'income-expense') {
+    where.push("not (t.transaction_type = 'INCOME' and tc.code = 'INC-MNT-001')")
+  }
   addSearch(params, where, ['t.title', 't.counterparty_name', 't.voucher_number', 'tc.name'], filters.search)
 
-  params.push(withLimit(filters, exportMode))
-  const reportMode = filters.reportType
+  const limit = withLimit(filters, exportMode)
+  params.push(limit)
   const typeFilter =
     reportMode === 'income-only'
       ? "and t.transaction_type = 'INCOME'"
@@ -524,7 +687,7 @@ const buildFinanceTransactionReport = async ({ societyId, filters, exportMode }:
     }
   }
 
-  const result = await getDatabasePool().query<Record<string, string>>(
+  const result = await getDatabasePool().query<FinanceTransactionReportRow>(
     `
       select
         t.transaction_date::text as "transactionDate",
@@ -535,7 +698,8 @@ const buildFinanceTransactionReport = async ({ societyId, filters, exportMode }:
         coalesce(t.voucher_number, '-') as "voucherNumber",
         t.status::text as status,
         t.amount::text as amount,
-        coalesce(ta.attachment_count, 0)::text as "attachmentCount"
+        coalesce(ta.attachment_count, 0)::text as "attachmentCount",
+        t.created_at::text as "sortCreatedAt"
       from transactions t
       join transaction_categories tc on tc.id = t.category_id
       ${attachmentJoin}
@@ -548,7 +712,18 @@ const buildFinanceTransactionReport = async ({ societyId, filters, exportMode }:
     `,
     params,
   )
-  const rows: Array<Record<string, unknown>> = result.rows.map((row) => ({
+  const sourceRows =
+    reportMode === 'income-only' || reportMode === 'income-expense'
+      ? [...result.rows, ...(await getCamCollectionTransactionRows(societyId, filters, limit))]
+      : result.rows
+  const sortedRows = sourceRows
+    .sort((left, right) =>
+      right.transactionDate.localeCompare(left.transactionDate)
+      || right.sortCreatedAt.localeCompare(left.sortCreatedAt),
+    )
+    .slice(0, limit)
+
+  const rows: Array<Record<string, unknown>> = sortedRows.map(({ sortCreatedAt: _sortCreatedAt, ...row }) => ({
     ...row,
     amount: money(row.amount),
     attachmentCount: Number(row.attachmentCount),
