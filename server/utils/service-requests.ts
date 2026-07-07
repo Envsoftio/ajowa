@@ -41,6 +41,7 @@ const immediateServiceRequestNotificationChannel: NotificationChannel = 'IN_APP'
 const immediateServiceRequestNotificationLimit = 25
 
 type TicketScope = 'admin' | 'resident' | 'service'
+type BackgroundWaitUntil = (promise: Promise<unknown>) => void
 
 type ServiceAttachmentUploadInput = {
   fileName: string
@@ -793,6 +794,7 @@ type ServiceRequestNotificationQueueResult = {
 
 type ServiceRequestNotificationDispatchOptions = {
   channel?: NotificationChannel | null
+  waitUntil?: BackgroundWaitUntil
 }
 
 const processImmediateServiceRequestNotifications = async (
@@ -885,8 +887,15 @@ const processServiceRequestNotificationsInBackground = (
   results: PromiseSettledResult<ServiceRequestNotificationQueueResult>[],
   options: ServiceRequestNotificationDispatchOptions = {},
 ) => {
-  void processServiceRequestNotificationsWithFreshClient(serviceRequestId, results, options)
+  const promise = processServiceRequestNotificationsWithFreshClient(serviceRequestId, results, options)
     .catch((error) => warnNotificationFailure(serviceRequestId, error))
+
+  if (options.waitUntil) {
+    options.waitUntil(promise)
+    return
+  }
+
+  void promise
 }
 
 const mergeNotificationUsers = (groups: NotificationUser[][]) => {
@@ -985,6 +994,7 @@ const enqueueServiceRequestNotification = async (
     body: string
     idempotencyKey: string
     triggeredByUserId?: string
+    maxAttempts?: number
   },
   options?: {
     dbClient?: PoolClient
@@ -1062,6 +1072,7 @@ const enqueueServiceRequestNotification = async (
       idempotencyKey: input.idempotencyKey,
       idempotencyWindowSeconds: 31536000,
       ...(input.triggeredByUserId ? { triggeredByUserId: input.triggeredByUserId } : {}),
+      ...(input.maxAttempts ? { maxAttempts: input.maxAttempts } : {}),
       users,
       channels: ['PUSH', 'EMAIL', 'IN_APP'],
       audienceLabel: 'Service request flat owners and requester',
@@ -1084,10 +1095,11 @@ const enqueueServiceRequestNotification = async (
 const enqueueServiceRequestManagerNotification = async (
   serviceRequestId: string,
   input?: {
-    title: string
-    body: string
-    idempotencyKey: string
+    title?: string
+    body?: string
+    idempotencyKey?: string
     triggeredByUserId?: string
+    maxAttempts?: number
   },
   options?: {
     dbClient?: PoolClient
@@ -1198,6 +1210,7 @@ const enqueueServiceRequestManagerNotification = async (
       idempotencyKey: input?.idempotencyKey ?? `service_request.manager.created:${ticket.id}`,
       idempotencyWindowSeconds: 31536000,
       ...(input?.triggeredByUserId ? { triggeredByUserId: input.triggeredByUserId } : {}),
+      ...(input?.maxAttempts ? { maxAttempts: input.maxAttempts } : {}),
       users,
       channels: ['PUSH', 'EMAIL', 'IN_APP'],
       audienceLabel: 'Service request managers',
@@ -1217,10 +1230,66 @@ const enqueueServiceRequestManagerNotification = async (
   }
 }
 
+const enqueueCreatedServiceRequestNotificationsWithFreshClient = async (
+  serviceRequestId: string,
+  input: {
+    requestNumber: string
+    status: ServiceRequestStatus
+  },
+) => {
+  const client = await getDatabasePool().connect()
+
+  try {
+    const notifications = await Promise.allSettled([
+      enqueueServiceRequestNotification(
+        serviceRequestId,
+        {
+          title: 'Service request created',
+          body: `${input.requestNumber} has been created and is currently ${input.status.replaceAll('_', ' ').toLowerCase()}.`,
+          idempotencyKey: `service_request.created:${serviceRequestId}`,
+          maxAttempts: 1,
+        },
+        { dbClient: client },
+      ),
+      enqueueServiceRequestManagerNotification(
+        serviceRequestId,
+        { maxAttempts: 1 },
+        { dbClient: client },
+      ),
+    ])
+
+    await processImmediateServiceRequestNotifications(client, serviceRequestId, notifications, {
+      channel: null,
+    })
+  } finally {
+    client.release()
+  }
+}
+
+const enqueueCreatedServiceRequestNotificationsInBackground = (
+  serviceRequestId: string,
+  input: {
+    requestNumber: string
+    status: ServiceRequestStatus
+    waitUntil?: BackgroundWaitUntil
+  },
+) => {
+  const promise = enqueueCreatedServiceRequestNotificationsWithFreshClient(serviceRequestId, input)
+    .catch((error) => warnNotificationFailure(serviceRequestId, error))
+
+  if (input.waitUntil) {
+    input.waitUntil(promise)
+    return
+  }
+
+  void promise
+}
+
 export const createServiceRequest = async (
   authMe: AuthMe,
   input: z.infer<typeof serviceRequestCreateSchema>,
   mode: 'resident' | 'admin' | 'service',
+  options: { waitUntil?: BackgroundWaitUntil } = {},
 ) => {
   if (input.priority === 'EMERGENCY' && !input.emergencyConfirmed) {
     throw new AppError({
@@ -1392,8 +1461,18 @@ export const createServiceRequest = async (
     }
 
     await client.query('commit')
+    if (mode === 'resident') {
+      enqueueCreatedServiceRequestNotificationsInBackground(id, {
+        requestNumber: persistedRequestNumber,
+        status,
+        ...(options.waitUntil ? { waitUntil: options.waitUntil } : {}),
+      })
+
+      return { id, requestNumber: persistedRequestNumber }
+    }
+
     try {
-      const [residentNotification, managerNotification] = await Promise.allSettled([
+      await Promise.allSettled([
         enqueueServiceRequestNotification(
           id,
           {
@@ -1407,12 +1486,6 @@ export const createServiceRequest = async (
           ? enqueueServiceRequestManagerNotification(id, undefined, { dbClient: client })
           : Promise.resolve({ eventId: null, audienceCount: 0, jobCount: 0 }),
       ])
-
-      if (mode === 'resident') {
-        await processImmediateServiceRequestNotifications(client, id, [residentNotification])
-        await processImmediateServiceRequestNotifications(client, id, [managerNotification])
-        processServiceRequestNotificationsInBackground(id, [managerNotification], { channel: null })
-      }
     } catch (notificationError) {
       warnNotificationFailure(id, notificationError)
     }

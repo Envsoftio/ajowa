@@ -28,6 +28,7 @@ import type {
 import type { AuthMe } from '~/types/auth'
 
 type BookingScope = 'admin' | 'resident'
+type BackgroundWaitUntil = (promise: Promise<unknown>) => void
 
 const immediateAmenityBookingNotificationLimit = 50
 const residentInitiatedManagerNotificationChannels: NotificationChannel[] = ['PUSH', 'EMAIL', 'IN_APP']
@@ -764,13 +765,15 @@ const dispatchImmediateBookingNotifications = async (
   client: PoolClient,
   bookingId: string,
   eventId: string | null | undefined,
+  options: { channel?: NotificationChannel; limit?: number } = {},
 ) => {
   if (!eventId) return
 
   try {
     const dispatchResult = await dispatchNotificationJobs(client, {
       eventId,
-      limit: immediateAmenityBookingNotificationLimit,
+      limit: options.limit ?? immediateAmenityBookingNotificationLimit,
+      ...(options.channel ? { channel: options.channel } : {}),
       lockTimeoutMinutes: 1,
     })
 
@@ -829,7 +832,12 @@ const enqueueAndDispatchManagerNotification = async (
       }))
     }
 
-    await dispatchImmediateBookingNotifications(client, bookingId, managerNotification?.eventId)
+    await dispatchImmediateBookingNotifications(client, bookingId, managerNotification?.eventId, {
+      channel: 'IN_APP',
+      limit: 25,
+    })
+
+    return managerNotification
   } catch (error) {
     warnBookingNotificationFailure(
       bookingId,
@@ -837,6 +845,42 @@ const enqueueAndDispatchManagerNotification = async (
       error,
     )
   }
+}
+
+const enqueueAndDispatchManagerNotificationWithFreshClient = async (
+  bookingId: string,
+  input: Parameters<typeof enqueueBookingManagerNotification>[2] = {},
+) => {
+  const client = await getDatabasePool().connect()
+
+  try {
+    const managerNotification = await enqueueAndDispatchManagerNotification(client, bookingId, input)
+    await dispatchImmediateBookingNotifications(client, bookingId, managerNotification?.eventId)
+  } finally {
+    client.release()
+  }
+}
+
+const enqueueAndDispatchManagerNotificationInBackground = (
+  bookingId: string,
+  input: Parameters<typeof enqueueBookingManagerNotification>[2] = {},
+  waitUntil?: BackgroundWaitUntil,
+) => {
+  const promise = enqueueAndDispatchManagerNotificationWithFreshClient(bookingId, input)
+    .catch((error) => {
+      warnBookingNotificationFailure(
+        bookingId,
+        'Amenity booking background notification processing failed.',
+        error,
+      )
+    })
+
+  if (waitUntil) {
+    waitUntil(promise)
+    return
+  }
+
+  void promise
 }
 
 const getBookingNotificationRow = async (client: PoolClient, bookingId: string) => {
@@ -927,6 +971,7 @@ const enqueueBookingManagerNotification = async (
     triggeredByUserId?: string
     dispatchInApp?: boolean
     channels?: NotificationChannel[]
+    maxAttempts?: number
   } = {},
 ) => {
   const booking = await getBookingNotificationRow(client, bookingId)
@@ -982,6 +1027,7 @@ const enqueueBookingManagerNotification = async (
     idempotencyKey: input.idempotencyKey ?? `amenity_booking.manager:${booking.id}:${booking.status}`,
     idempotencyWindowSeconds: 31536000,
     ...(input.triggeredByUserId ? { triggeredByUserId: input.triggeredByUserId } : {}),
+    ...(input.maxAttempts ? { maxAttempts: input.maxAttempts } : {}),
     users,
     channels: input.channels ?? ['PUSH', 'EMAIL', 'IN_APP'],
     audienceLabel: 'Amenity booking managers',
@@ -1458,11 +1504,12 @@ export const createAmenityBooking = async (
 
     const booking = await getAmenityBookingDetail(authMe, bookingId, 'resident', { dbClient: client })
     queueBookingAudit(event, authMe, booking, 'CREATED', 'amenity_booking.created')
-    await enqueueAndDispatchManagerNotification(client, bookingId, {
+    enqueueAndDispatchManagerNotificationInBackground(bookingId, {
       triggeredByUserId: authMe.user.id,
       idempotencyKey: `amenity_booking.manager.created:${bookingId}`,
       channels: residentInitiatedManagerNotificationChannels,
-    })
+      maxAttempts: 1,
+    }, event.waitUntil?.bind(event))
 
     return booking
   } catch (error) {
@@ -1776,15 +1823,16 @@ export const cancelAmenityBooking = async (
       message: reason,
     })
 
-    const managerNotification = scope === 'resident'
-      ? await enqueueBookingManagerNotification(client, booking.id, {
+    const managerNotificationInput = scope === 'resident'
+      ? {
           title: 'Amenity booking cancelled',
           body: `${booking.booking_number} for ${booking.amenity_name} was cancelled by ${authMe.user.fullName}.`,
           idempotencyKey: `amenity_booking.manager.cancelled:${booking.id}`,
           triggeredByUserId: authMe.user.id,
           dispatchInApp: false,
           channels: residentInitiatedManagerNotificationChannels,
-        })
+          maxAttempts: 1,
+        } satisfies Parameters<typeof enqueueBookingManagerNotification>[2]
       : null
 
     if (scope !== 'resident') {
@@ -1798,8 +1846,12 @@ export const cancelAmenityBooking = async (
     }
 
     await client.query('commit')
-    if (scope === 'resident') {
-      await dispatchImmediateBookingNotifications(client, booking.id, managerNotification?.eventId)
+    if (managerNotificationInput) {
+      enqueueAndDispatchManagerNotificationInBackground(
+        booking.id,
+        managerNotificationInput,
+        event.waitUntil?.bind(event),
+      )
     }
 
     const updated = await getAmenityBookingDetail(authMe, booking.id, scope, { dbClient: client })

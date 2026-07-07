@@ -5,7 +5,9 @@ import { createServiceRequest, serviceRequestCreateSchema } from '~/server/utils
 export default defineEventHandler(async (event) => {
   const authMe = await requireRole(event, ['RESIDENT'])
   const body = validateInput(serviceRequestCreateSchema, await readJsonBody(event))
-  const ticket = await createServiceRequest(authMe, body, 'resident')
+  const ticket = await createServiceRequest(authMe, body, 'resident', {
+    waitUntil: event.waitUntil.bind(event),
+  })
 
   return createApiSuccess(event, ticket)
 })

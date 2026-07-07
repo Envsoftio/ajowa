@@ -61,6 +61,7 @@ export type NotificationPayload = {
   triggeredByUserId?: string
   users: NotificationUser[]
   channels?: NotificationChannel[]
+  maxAttempts?: number
   audienceLabel?: string
   audienceSnapshot?: Record<string, unknown>
   templateSnapshot?: Record<string, unknown>
@@ -210,6 +211,14 @@ const priorityRank: Record<NotificationPriority, number> = {
 
 const defaultMaxAttempts = 3
 const notificationChannels: NotificationChannel[] = ['PUSH', 'EMAIL', 'WHATSAPP', 'IN_APP']
+
+const normalizeNotificationMaxAttempts = (value: number | undefined, fallback: number) => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return fallback
+  }
+
+  return Math.min(Math.max(Math.floor(value), 1), 10)
+}
 
 const importedOwnerEmailExpression = (relationshipAlias: string) => `
   case
@@ -864,7 +873,7 @@ export const enqueueNotificationForUsers = async (
           channel,
           createDedupeKey(input, user.id, channel),
           input.priority ?? 'MEDIUM',
-          eventSetting?.retry_max_attempts ?? defaultMaxAttempts,
+          normalizeNotificationMaxAttempts(input.maxAttempts, eventSetting?.retry_max_attempts ?? defaultMaxAttempts),
           JSON.stringify(input.payload ?? {}),
           scheduledFor,
         ],
