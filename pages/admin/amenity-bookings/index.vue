@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { DataTablePageEvent } from 'primevue/datatable'
 import type { AmenityBlackoutSummary, AmenityBookingSummary, AmenitySummary } from '~/types/domain'
+import { getApiErrorMessage } from '~/composables/useApi'
 import {
   amenityBookingStatuses,
   amenityBookingStatusLabels,
@@ -51,14 +52,17 @@ const loadBookings = () =>
     query,
   })
 
+const loadBlackouts = (showErrorToast = true) =>
+  api<{ ok: true; data: AmenityBlackoutSummary[] }>('/api/admin/amenity-blackouts', {
+    showErrorToast,
+  })
+
 const [bookingsAsyncData, amenitiesAsyncData, blackoutsAsyncData] = await Promise.all([
   useAsyncData('admin-amenity-bookings', loadBookings, { watch: [query] }),
   useAsyncData('admin-amenity-booking-amenities', () =>
     api<{ ok: true; data: AmenitySummary[] }>('/api/admin/amenities'),
   ),
-  useAsyncData('admin-amenity-blackouts', () =>
-    api<{ ok: true; data: AmenityBlackoutSummary[] }>('/api/admin/amenity-blackouts'),
-  ),
+  useAsyncData('admin-amenity-blackouts', () => loadBlackouts()),
 ])
 
 const { data, pending, refresh } = bookingsAsyncData
@@ -198,6 +202,25 @@ const createBlackout = async () => {
   }
 }
 
+const removeBlackoutFromList = (blackoutId: string) => {
+  const current = blackoutsData.value
+
+  if (!current) return
+
+  blackoutsData.value = {
+    ...current,
+    data: current.data.filter((blackout) => blackout.id !== blackoutId),
+  }
+}
+
+const refreshBlackoutsSilently = async () => {
+  try {
+    blackoutsData.value = await loadBlackouts(false)
+  } catch (error) {
+    console.error('Unable to refresh amenity blackouts after clearing one.', error)
+  }
+}
+
 const clearBlackout = async (blackout: AmenityBlackoutSummary) => {
   if (clearingBlackoutId.value) return
 
@@ -214,9 +237,18 @@ const clearBlackout = async (blackout: AmenityBlackoutSummary) => {
   try {
     await api(`/api/admin/amenity-blackouts/${blackout.id}`, {
       method: 'DELETE',
+      showErrorToast: false,
     })
     toast.add({ severity: 'success', summary: 'Blackout cleared', detail: blackout.title, life: 10000 })
-    await Promise.all([refresh(), refreshBlackouts()])
+    removeBlackoutFromList(blackout.id)
+    void refreshBlackoutsSilently()
+  } catch (error) {
+    toast.add({
+      severity: 'error',
+      summary: 'Blackout not cleared',
+      detail: getApiErrorMessage(error, 'This blocked window could not be cleared. Refresh and try again.'),
+      life: 10000,
+    })
   } finally {
     clearingBlackoutId.value = null
   }
