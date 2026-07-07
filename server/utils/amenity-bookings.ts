@@ -792,6 +792,39 @@ const dispatchImmediateBookingNotifications = async (
   }
 }
 
+const warnBookingNotificationFailure = (
+  bookingId: string,
+  message: string,
+  error: unknown,
+) => {
+  console.warn(JSON.stringify({
+    level: 'warn',
+    message,
+    bookingId,
+    error: error instanceof Error ? error.message : String(error),
+  }))
+}
+
+const enqueueAndDispatchManagerNotification = async (
+  client: PoolClient,
+  bookingId: string,
+  input: Parameters<typeof enqueueBookingManagerNotification>[2] = {},
+) => {
+  try {
+    const managerNotification = await enqueueBookingManagerNotification(client, bookingId, {
+      ...input,
+      dispatchInApp: false,
+    })
+    await dispatchImmediateBookingNotifications(client, bookingId, managerNotification?.eventId)
+  } catch (error) {
+    warnBookingNotificationFailure(
+      bookingId,
+      'Amenity booking manager notification failed after booking update.',
+      error,
+    )
+  }
+}
+
 const getBookingNotificationRow = async (client: PoolClient, bookingId: string) => {
   const result = await client.query<BookingRow>(
     `
@@ -1333,6 +1366,7 @@ export const createAmenityBooking = async (
   input: z.infer<typeof amenityBookingCreateSchema>,
 ) => {
   const client = await getDatabasePool().connect()
+  let committed = false
 
   try {
     await client.query('begin')
@@ -1404,20 +1438,21 @@ export const createAmenityBooking = async (
       toStatus: 'REQUESTED',
       message: 'Booking request submitted.',
     })
-    const managerNotification = await enqueueBookingManagerNotification(client, bookingId, {
-      triggeredByUserId: authMe.user.id,
-      idempotencyKey: `amenity_booking.manager.created:${bookingId}`,
-      dispatchInApp: false,
-    })
     await client.query('commit')
-    await dispatchImmediateBookingNotifications(client, bookingId, managerNotification?.eventId)
+    committed = true
 
     const booking = await getAmenityBookingDetail(authMe, bookingId, 'resident', { dbClient: client })
     queueBookingAudit(event, authMe, booking, 'CREATED', 'amenity_booking.created')
+    await enqueueAndDispatchManagerNotification(client, bookingId, {
+      triggeredByUserId: authMe.user.id,
+      idempotencyKey: `amenity_booking.manager.created:${bookingId}`,
+    })
 
     return booking
   } catch (error) {
-    await client.query('rollback')
+    if (!committed) {
+      await client.query('rollback')
+    }
     throw error
   } finally {
     client.release()
