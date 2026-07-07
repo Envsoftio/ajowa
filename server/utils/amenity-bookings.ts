@@ -9,6 +9,7 @@ import {
   dispatchNotificationJobs,
   enqueueNotificationForUsers,
   resolveNotificationAudience,
+  type NotificationChannel,
   type NotificationUser,
 } from './notifications'
 import type { AmenityBookingStatus } from '~/shared/amenity-bookings'
@@ -29,6 +30,7 @@ import type { AuthMe } from '~/types/auth'
 type BookingScope = 'admin' | 'resident'
 
 const immediateAmenityBookingNotificationLimit = 50
+const residentInitiatedManagerNotificationChannels: NotificationChannel[] = ['PUSH', 'EMAIL', 'IN_APP']
 
 type AmenityRow = {
   id: string
@@ -815,11 +817,23 @@ const enqueueAndDispatchManagerNotification = async (
       ...input,
       dispatchInApp: false,
     })
+
+    if (managerNotification?.eventId && managerNotification.jobCount === 0) {
+      console.warn(JSON.stringify({
+        level: 'warn',
+        message: 'Amenity booking manager notification queued zero jobs.',
+        bookingId,
+        eventId: managerNotification.eventId,
+        audienceCount: managerNotification.audienceCount,
+        jobCount: managerNotification.jobCount,
+      }))
+    }
+
     await dispatchImmediateBookingNotifications(client, bookingId, managerNotification?.eventId)
   } catch (error) {
     warnBookingNotificationFailure(
       bookingId,
-      'Amenity booking manager notification failed after booking update.',
+      'Amenity booking manager notification processing failed after booking update.',
       error,
     )
   }
@@ -912,6 +926,7 @@ const enqueueBookingManagerNotification = async (
     idempotencyKey?: string
     triggeredByUserId?: string
     dispatchInApp?: boolean
+    channels?: NotificationChannel[]
   } = {},
 ) => {
   const booking = await getBookingNotificationRow(client, bookingId)
@@ -968,7 +983,7 @@ const enqueueBookingManagerNotification = async (
     idempotencyWindowSeconds: 31536000,
     ...(input.triggeredByUserId ? { triggeredByUserId: input.triggeredByUserId } : {}),
     users,
-    channels: ['PUSH', 'EMAIL', 'IN_APP'],
+    channels: input.channels ?? ['PUSH', 'EMAIL', 'IN_APP'],
     audienceLabel: 'Amenity booking managers',
     audienceSnapshot: {
       eventKey: 'amenity_booking.created',
@@ -1446,12 +1461,14 @@ export const createAmenityBooking = async (
     await enqueueAndDispatchManagerNotification(client, bookingId, {
       triggeredByUserId: authMe.user.id,
       idempotencyKey: `amenity_booking.manager.created:${bookingId}`,
+      channels: residentInitiatedManagerNotificationChannels,
     })
 
     return booking
   } catch (error) {
     if (!committed) {
       await client.query('rollback')
+      translateAmenityBookingWriteError(error)
     }
     throw error
   } finally {
@@ -1481,8 +1498,11 @@ const getBookingForUpdate = async (client: PoolClient, authMe: AuthMe, bookingId
   return booking
 }
 
+const isPgError = (error: unknown): error is { code?: string; constraint?: string; message?: string } =>
+  Boolean(error && typeof error === 'object')
+
 const translateConflictError = (error: unknown) => {
-  const pgError = error as { code?: string; constraint?: string; message?: string }
+  const pgError = isPgError(error) ? error : {}
   if (
     pgError.code === '23P01' ||
     pgError.constraint === 'amenity_bookings_no_approved_overlap' ||
@@ -1493,6 +1513,57 @@ const translateConflictError = (error: unknown) => {
       code: 'CONFLICT',
       statusCode: 409,
       message: 'This time overlaps an approved booking or blackout.',
+    })
+  }
+
+  throw error
+}
+
+const translateAmenityBookingWriteError = (error: unknown) => {
+  if (error instanceof AppError) {
+    throw error
+  }
+
+  const pgError = isPgError(error) ? error : {}
+  if (
+    pgError.code === '23P01' ||
+    pgError.constraint === 'amenity_bookings_no_approved_overlap' ||
+    pgError.message?.includes('overlaps approved booking') ||
+    pgError.message?.includes('overlaps blackout')
+  ) {
+    throw new AppError({
+      code: 'CONFLICT',
+      statusCode: 409,
+      message: 'This time overlaps an approved booking or blackout.',
+    })
+  }
+
+  if (
+    pgError.message?.includes('amenity must belong to booking society') ||
+    pgError.message?.includes('flat must belong to booking society') ||
+    pgError.message?.includes('requester must belong to booking society') ||
+    pgError.code === '23503'
+  ) {
+    throw new AppError({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message: 'Selected amenity or flat is no longer available. Refresh and try again.',
+    })
+  }
+
+  if (pgError.code === '23514') {
+    throw new AppError({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message: 'Booking details failed validation. Check the time and guest count, then try again.',
+    })
+  }
+
+  if (pgError.code === '23505' && pgError.constraint?.includes('booking_number')) {
+    throw new AppError({
+      code: 'CONFLICT',
+      statusCode: 409,
+      message: 'Booking number was already used. Please submit again.',
     })
   }
 
@@ -1712,6 +1783,7 @@ export const cancelAmenityBooking = async (
           idempotencyKey: `amenity_booking.manager.cancelled:${booking.id}`,
           triggeredByUserId: authMe.user.id,
           dispatchInApp: false,
+          channels: residentInitiatedManagerNotificationChannels,
         })
       : null
 
