@@ -1,0 +1,665 @@
+{
+  "info": {
+    "_postman_id": "bc3635c4-ads-ajowa-local",
+    "name": "AJOWA Resident Ads Platform",
+    "description": "API-only collection for AJOWA resident ads management. Create a token with `npm run ads:key`, then set `adsToken`. Resident test endpoints require a logged-in resident cookie.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{adsToken}}",
+        "type": "string"
+      }
+    ]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "const singularToken = pm.collectionVariables.get('adToken');",
+          "const pluralToken = pm.collectionVariables.get('adsToken');",
+          "if (!pluralToken && singularToken) {",
+          "  pm.collectionVariables.set('adsToken', singularToken);",
+          "}"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://127.0.0.1:3020"
+    },
+    {
+      "key": "adsToken",
+      "value": ""
+    },
+    {
+      "key": "adToken",
+      "value": ""
+    },
+    {
+      "key": "campaignId",
+      "value": ""
+    },
+    {
+      "key": "creativeId",
+      "value": ""
+    },
+    {
+      "key": "slotKey",
+      "value": "resident-dues-top"
+    },
+    {
+      "key": "fromDate",
+      "value": "2026-07-01"
+    },
+    {
+      "key": "toDate",
+      "value": "2026-07-31"
+    },
+    {
+      "key": "residentEmail",
+      "value": ""
+    },
+    {
+      "key": "residentPassword",
+      "value": ""
+    },
+    {
+      "key": "residentCookie",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Ads Admin - Campaigns",
+      "item": [
+        {
+          "name": "List Campaigns",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/ads-admin/campaigns",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "ads-admin", "campaigns"]
+            },
+            "description": "Lists all campaigns for the API token's society."
+          }
+        },
+        {
+          "name": "Create Campaign",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.data && json.data.id) {",
+                  "  pm.collectionVariables.set('campaignId', json.data.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Sunoo App Promo\",\n  \"description\": \"Promote Sunoo to residents\",\n  \"status\": \"DRAFT\",\n  \"startsAt\": null,\n  \"endsAt\": null,\n  \"priority\": 10,\n  \"targeting\": {\n    \"scope\": \"ALL_ACTIVE_RESIDENTS\"\n  },\n  \"frequencyCap\": {}\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/ads-admin/campaigns",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "ads-admin", "campaigns"]
+            },
+            "description": "Creates a campaign. The response test stores `campaignId`."
+          }
+        },
+        {
+          "name": "Get Campaign",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/ads-admin/campaigns/{{campaignId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "ads-admin", "campaigns", "{{campaignId}}"]
+            }
+          }
+        },
+        {
+          "name": "Update Campaign",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Sunoo App Promo - July\",\n  \"priority\": 20,\n  \"targeting\": {\n    \"scope\": \"ALL_ACTIVE_RESIDENTS\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/ads-admin/campaigns/{{campaignId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "ads-admin", "campaigns", "{{campaignId}}"]
+            }
+          }
+        },
+        {
+          "name": "Activate Campaign",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"ACTIVE\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/ads-admin/campaigns/{{campaignId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "ads-admin", "campaigns", "{{campaignId}}"]
+            },
+            "description": "Sets the campaign to ACTIVE. Delivery still requires at least one active creative."
+          }
+        },
+        {
+          "name": "Pause Campaign",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"PAUSED\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/ads-admin/campaigns/{{campaignId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "ads-admin", "campaigns", "{{campaignId}}"]
+            }
+          }
+        },
+        {
+          "name": "Archive Campaign",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/ads-admin/campaigns/{{campaignId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "ads-admin", "campaigns", "{{campaignId}}"]
+            },
+            "description": "Soft-deletes a campaign by setting status to ARCHIVED."
+          }
+        },
+        {
+          "name": "Campaign Stats",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/ads-admin/campaigns/{{campaignId}}/stats?from={{fromDate}}&to={{toDate}}",
+              "host": ["{{baseUrl}}"],
+              "path": [
+                "api",
+                "ads-admin",
+                "campaigns",
+                "{{campaignId}}",
+                "stats"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "{{fromDate}}"
+                },
+                {
+                  "key": "to",
+                  "value": "{{toDate}}"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Ads Admin - Creatives",
+      "item": [
+        {
+          "name": "List Campaign Creatives",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/ads-admin/campaigns/{{campaignId}}/creatives",
+              "host": ["{{baseUrl}}"],
+              "path": [
+                "api",
+                "ads-admin",
+                "campaigns",
+                "{{campaignId}}",
+                "creatives"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Creative",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.data && json.data.id) {",
+                  "  pm.collectionVariables.set('creativeId', json.data.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"slotKey\": \"{{slotKey}}\",\n  \"title\": \"Try Sunoo\",\n  \"body\": \"Smart tools for everyday business workflows.\",\n  \"ctaLabel\": \"Explore\",\n  \"imageUrl\": \"https://placehold.co/1200x480/png?text=AJOWA+Sponsored\",\n  \"destinationUrl\": \"https://sunoo.app\",\n  \"displayOrder\": 1,\n  \"isActive\": true,\n  \"allowDismiss\": false,\n  \"metadata\": {\n    \"sponsorLabel\": \"Promoted\",\n    \"imageAlt\": \"Sunoo app promotional banner\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/ads-admin/campaigns/{{campaignId}}/creatives",
+              "host": ["{{baseUrl}}"],
+              "path": [
+                "api",
+                "ads-admin",
+                "campaigns",
+                "{{campaignId}}",
+                "creatives"
+              ]
+            },
+            "description": "Creates an active creative for the current campaign. The response test stores `creativeId`."
+          }
+        },
+        {
+          "name": "Get Creative",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/ads-admin/creatives/{{creativeId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "ads-admin", "creatives", "{{creativeId}}"]
+            }
+          }
+        },
+        {
+          "name": "Update Creative",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Try Sunoo Today\",\n  \"body\": \"Simple tools for growing teams.\",\n  \"ctaLabel\": \"Visit site\",\n  \"displayOrder\": 1,\n  \"isActive\": true,\n  \"allowDismiss\": false,\n  \"metadata\": {\n    \"sponsorLabel\": \"Sponsored\",\n    \"imageAlt\": \"Sponsored Sunoo app banner\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/ads-admin/creatives/{{creativeId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "ads-admin", "creatives", "{{creativeId}}"]
+            }
+          }
+        },
+        {
+          "name": "Deactivate Creative",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/ads-admin/creatives/{{creativeId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "ads-admin", "creatives", "{{creativeId}}"]
+            },
+            "description": "Soft-deletes a creative by setting isActive to false."
+          }
+        },
+        {
+          "name": "Creative Stats",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/ads-admin/creatives/{{creativeId}}/stats?from={{fromDate}}&to={{toDate}}",
+              "host": ["{{baseUrl}}"],
+              "path": [
+                "api",
+                "ads-admin",
+                "creatives",
+                "{{creativeId}}",
+                "stats"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "{{fromDate}}"
+                },
+                {
+                  "key": "to",
+                  "value": "{{toDate}}"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Ads Admin - Events",
+      "item": [
+        {
+          "name": "List Events",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/ads-admin/events?page=1&pageSize=50&campaignId={{campaignId}}&creativeId={{creativeId}}&slotKey={{slotKey}}&from={{fromDate}}&to={{toDate}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "ads-admin", "events"],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "pageSize",
+                  "value": "50"
+                },
+                {
+                  "key": "campaignId",
+                  "value": "{{campaignId}}"
+                },
+                {
+                  "key": "creativeId",
+                  "value": "{{creativeId}}"
+                },
+                {
+                  "key": "eventType",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "userId",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "flatId",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "slotKey",
+                  "value": "{{slotKey}}"
+                },
+                {
+                  "key": "from",
+                  "value": "{{fromDate}}"
+                },
+                {
+                  "key": "to",
+                  "value": "{{toDate}}"
+                }
+              ]
+            },
+            "description": "Lists events. Enable optional query params as needed."
+          }
+        },
+        {
+          "name": "Who Clicked This Creative",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/ads-admin/events?creativeId={{creativeId}}&eventType=CLICK&page=1&pageSize=100",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "ads-admin", "events"],
+              "query": [
+                {
+                  "key": "creativeId",
+                  "value": "{{creativeId}}"
+                },
+                {
+                  "key": "eventType",
+                  "value": "CLICK"
+                },
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "pageSize",
+                  "value": "100"
+                }
+              ]
+            },
+            "description": "Returns click events with residentName and flatLabel when available."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Resident Testing",
+      "auth": {
+        "type": "noauth"
+      },
+      "item": [
+        {
+          "name": "Resident Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const setCookie = pm.response.headers.get('Set-Cookie');",
+                  "if (setCookie) {",
+                  "  const cookies = setCookie",
+                  "    .split(/,(?=\\s*[^;,\\s]+=)/)",
+                  "    .map((item) => item.split(';')[0].trim())",
+                  "    .filter(Boolean);",
+                  "  if (cookies.length > 0) {",
+                  "    pm.collectionVariables.set('residentCookie', cookies.join('; '));",
+                  "  }",
+                  "}",
+                  "pm.test('resident login succeeded', () => {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 204]);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Origin",
+                "value": "{{baseUrl}}"
+              },
+              {
+                "key": "Referer",
+                "value": "{{baseUrl}}/login"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{residentEmail}}\",\n  \"password\": \"{{residentPassword}}\",\n  \"callbackURL\": \"/\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/sign-in/email",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "sign-in", "email"]
+            },
+            "description": "Run this before resident API tests. It stores the session cookie in `residentCookie`. Resident endpoints do not use `adsToken`."
+          }
+        },
+        {
+          "name": "Fetch Eligible Resident Ad",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "const item = json.data && json.data.items && json.data.items[0];",
+                  "if (item && item.creativeId) {",
+                  "  pm.collectionVariables.set('creativeId', item.creativeId);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "{{residentCookie}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/my/ads?slot={{slotKey}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "my", "ads"],
+              "query": [
+                {
+                  "key": "slot",
+                  "value": "{{slotKey}}"
+                }
+              ]
+            },
+            "description": "Requires a logged-in resident session cookie. Returns `{ data: { items: [] } }` when no ad is eligible."
+          }
+        },
+        {
+          "name": "Log Resident Impression",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "{{residentCookie}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"creativeId\": \"{{creativeId}}\",\n  \"eventType\": \"IMPRESSION\",\n  \"slotKey\": \"{{slotKey}}\",\n  \"pagePath\": \"/my/dues\",\n  \"metadata\": {\n    \"source\": \"postman\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/my/ads/events",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "my", "ads", "events"]
+            },
+            "description": "Requires a logged-in resident session cookie. Impressions are deduped within a short session window."
+          }
+        },
+        {
+          "name": "Log Resident Click",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "{{residentCookie}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"creativeId\": \"{{creativeId}}\",\n  \"eventType\": \"CLICK\",\n  \"slotKey\": \"{{slotKey}}\",\n  \"pagePath\": \"/my/dues\",\n  \"metadata\": {\n    \"source\": \"postman\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/my/ads/events",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "my", "ads", "events"]
+            },
+            "description": "Requires a logged-in resident session cookie. Clicks are not deduped."
+          }
+        },
+        {
+          "name": "Resident Click Redirect Fallback",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "{{residentCookie}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/my/ads/{{creativeId}}/click?slot={{slotKey}}&pagePath=/my/dues",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "my", "ads", "{{creativeId}}", "click"],
+              "query": [
+                {
+                  "key": "slot",
+                  "value": "{{slotKey}}"
+                },
+                {
+                  "key": "pagePath",
+                  "value": "/my/dues"
+                }
+              ]
+            },
+            "description": "Optional non-PWA fallback. The Vue banner uses direct external open instead."
+          }
+        }
+      ]
+    }
+  ]
+}
