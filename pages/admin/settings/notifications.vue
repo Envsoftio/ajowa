@@ -152,7 +152,7 @@ const verify = async () => {
 
       <AppDataTable :value="settings" responsive-layout="scroll" class="list-page__table">
         <Column field="eventKey" header="Event"><template #body="{ data: row }"><InputText v-model="row.eventKey" /></template></Column>
-        <Column field="category" header="Category"><template #body="{ data: row }"><Select v-model="row.category" :options="['BILLING', 'PAYMENTS', 'ACCESS_QR', 'SERVICE_REQUESTS', 'NOTICES_ANNOUNCEMENTS', 'ACCOUNT_ONBOARDING', 'EMERGENCY_ALERTS']" /></template></Column>
+        <Column field="category" header="Category"><template #body="{ data: row }"><Select v-model="row.category" :options="['BILLING', 'PAYMENTS', 'ACCESS_QR', 'SERVICE_REQUESTS', 'AMENITY_BOOKINGS', 'NOTICES_ANNOUNCEMENTS', 'ACCOUNT_ONBOARDING', 'EMERGENCY_ALERTS']" /></template></Column>
         <Column header="Push"><template #body="{ data: row }"><ToggleSwitch v-model="row.pushEnabled" /></template></Column>
         <Column header="Email"><template #body="{ data: row }"><ToggleSwitch v-model="row.emailEnabled" /></template></Column>
         <Column header="WhatsApp"><template #body="{ data: row }"><ToggleSwitch v-model="row.whatsappEnabled" /></template></Column>

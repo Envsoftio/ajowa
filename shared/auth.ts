@@ -80,6 +80,12 @@ export const getAdminRoutePermission = (path: string) => {
   if (pathname.startsWith('/admin/service-requests')) {
     return 'service-requests.manage'
   }
+  if (pathname.startsWith('/admin/amenity-bookings')) {
+    return 'amenity-bookings.manage'
+  }
+  if (pathname.startsWith('/admin/amenities')) {
+    return 'amenities.manage'
+  }
   if (pathname.startsWith('/admin/settings/notifications')) {
     return 'notifications.manage'
   }

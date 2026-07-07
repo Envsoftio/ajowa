@@ -62,7 +62,7 @@ type ProcessQueueProgress = ProcessQueueResponse['data'] & {
 type ProcessQueueFilters = {
   channel: '' | 'PUSH' | 'EMAIL' | 'WHATSAPP' | 'IN_APP'
   eventKey: string
-  category: '' | 'BILLING' | 'PAYMENTS' | 'ACCESS_QR' | 'SERVICE_REQUESTS' | 'NOTICES_ANNOUNCEMENTS' | 'ACCOUNT_ONBOARDING' | 'EMERGENCY_ALERTS'
+  category: '' | 'BILLING' | 'PAYMENTS' | 'ACCESS_QR' | 'SERVICE_REQUESTS' | 'AMENITY_BOOKINGS' | 'NOTICES_ANNOUNCEMENTS' | 'ACCOUNT_ONBOARDING' | 'EMERGENCY_ALERTS'
   priority: '' | 'LOW' | 'MEDIUM' | 'HIGH' | 'EMERGENCY'
 }
 
@@ -137,6 +137,8 @@ const processEventOptions = [
   { label: 'Receipt ready', value: 'receipt.ready' },
   { label: 'Notice published', value: 'notice.published' },
   { label: 'Ticket update', value: 'service_request.updated' },
+  { label: 'Booking request', value: 'amenity_booking.created' },
+  { label: 'Booking update', value: 'amenity_booking.updated' },
   { label: 'QR generated', value: 'access_qr.generated' },
   { label: 'QR revoked', value: 'access_qr.revoked' },
   { label: 'Emergency alert', value: 'emergency.alert' },
@@ -148,6 +150,7 @@ const processCategoryOptions = [
   { label: 'Payments', value: 'PAYMENTS' },
   { label: 'Access QR', value: 'ACCESS_QR' },
   { label: 'Service requests', value: 'SERVICE_REQUESTS' },
+  { label: 'Amenity bookings', value: 'AMENITY_BOOKINGS' },
   { label: 'Notices', value: 'NOTICES_ANNOUNCEMENTS' },
   { label: 'Account', value: 'ACCOUNT_ONBOARDING' },
   { label: 'Emergency', value: 'EMERGENCY_ALERTS' },

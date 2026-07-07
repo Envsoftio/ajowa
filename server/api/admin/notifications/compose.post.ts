@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { createApiSuccess, readJsonBody, validateInput } from '~/server/utils/api'
 import { requireRole } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
-import { dispatchNotificationJobs, enqueueNotificationForAudience } from '~/server/utils/notifications'
+import { enqueueNotificationForAudience } from '~/server/utils/notifications'
 
 const audienceSchema = z.object({
   scope: z.enum([
@@ -38,6 +38,7 @@ const schema = z.object({
     'PAYMENTS',
     'ACCESS_QR',
     'SERVICE_REQUESTS',
+    'AMENITY_BOOKINGS',
     'NOTICES_ANNOUNCEMENTS',
     'ACCOUNT_ONBOARDING',
     'EMERGENCY_ALERTS',
@@ -79,16 +80,7 @@ export default defineEventHandler(async (event) => {
         })
     await client.query('commit')
 
-    const dispatch = !body.draft && !body.scheduleFor && queued.eventId
-      ? await dispatchNotificationJobs(client, {
-          societyId: authMe.user.societyId,
-          eventId: queued.eventId,
-          limit: 50,
-          lockTimeoutMinutes: 1,
-        })
-      : null
-
-    return createApiSuccess(event, { draft: body.draft, ...queued, dispatch })
+    return createApiSuccess(event, { draft: body.draft, ...queued, dispatch: null })
   } catch (error) {
     await client.query('rollback')
     throw error

@@ -61,6 +61,7 @@ export const shellNavigation: Record<AppShellType, AppNavGroup[]> = {
       label: 'Access & Support',
       icon: 'pi pi-qrcode',
       items: [
+        { label: 'My Bookings', to: '/my/amenity-bookings', icon: 'pi pi-calendar' },
         { label: 'Service Requests', to: '/my/service-requests', icon: 'pi pi-ticket' },
         { label: 'QR Access', to: '/my/qr', icon: 'pi pi-qrcode' },
       ],
@@ -98,6 +99,8 @@ export const shellNavigation: Record<AppShellType, AppNavGroup[]> = {
         { label: 'Staff', to: '/admin/staff', icon: 'pi pi-id-card' },
         { label: 'Service Departments', to: '/admin/service-departments', icon: 'pi pi-sitemap' },
         { label: 'Service Requests', to: '/admin/service-requests', icon: 'pi pi-ticket' },
+        { label: 'Amenity Bookings', to: '/admin/amenity-bookings', icon: 'pi pi-calendar' },
+        { label: 'Amenities', to: '/admin/amenities', icon: 'pi pi-building' },
       ],
     },
     {

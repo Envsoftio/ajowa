@@ -26,6 +26,15 @@ const getAdminApiPermission = (path: string, method: string): StaffPermission | 
   if (path.startsWith('/api/admin/service-requests')) {
     return 'service-requests.manage'
   }
+  if (path.startsWith('/api/admin/amenity-bookings')) {
+    return 'amenity-bookings.manage'
+  }
+  if (path.startsWith('/api/admin/amenity-blackouts')) {
+    return 'amenity-bookings.manage'
+  }
+  if (path.startsWith('/api/admin/amenities')) {
+    return method === 'GET' ? null : 'amenities.manage'
+  }
   if (path.startsWith('/api/admin/society')) {
     return 'society.manage'
   }

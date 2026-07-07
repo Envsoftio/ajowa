@@ -255,6 +255,149 @@ export type StaffSummary = AuditFields & {
   permissions: string[]
 }
 
+export type AmenityBookingStatus =
+  | 'REQUESTED'
+  | 'APPROVED'
+  | 'REJECTED'
+  | 'CANCELLED'
+  | 'COMPLETED'
+  | 'NO_SHOW'
+
+export type AmenityBookingEventType =
+  | 'CREATED'
+  | 'UPDATED'
+  | 'APPROVED'
+  | 'REJECTED'
+  | 'CANCELLED'
+  | 'COMPLETED'
+  | 'NO_SHOW'
+  | 'INTERNAL_NOTE'
+
+export type AmenityOperatingHourWindow = {
+  start: string
+  end: string
+}
+
+export type AmenityBookingRules = {
+  minDurationMinutes?: number
+  maxDurationMinutes?: number
+  slotIntervalMinutes?: number
+  minimumLeadHours?: number
+  maximumAdvanceDays?: number
+  cancellationCutoffHours?: number
+}
+
+export type AmenitySummary = AuditFields & {
+  id: string
+  societyId: string
+  code: string
+  name: string
+  description: string | null
+  location: string | null
+  capacity: number | null
+  isActive: boolean
+  isBookable: boolean
+  requiresApproval: boolean
+  operatingHours: Record<string, AmenityOperatingHourWindow[]>
+  bookingRules: AmenityBookingRules
+  rulesText: string | null
+}
+
+export type AmenityBookingSummary = AuditFields & {
+  id: string
+  societyId: string
+  bookingNumber: string
+  amenityId: string
+  amenityName: string
+  amenityLocation: string | null
+  requesterUserId: string
+  requesterName: string
+  requesterEmail: string | null
+  requesterMobileNumber: string | null
+  flatId: string
+  flatLabel: string
+  blockName: string | null
+  status: AmenityBookingStatus
+  startsAt: string
+  endsAt: string
+  guestCount: number | null
+  purpose: string
+  residentNotes: string | null
+  adminNotes: string | null
+  decisionReason: string | null
+  approvedByUserId: string | null
+  approvedByName: string | null
+  approvedAt: string | null
+  rejectedByUserId: string | null
+  rejectedByName: string | null
+  rejectedAt: string | null
+  cancelledByUserId: string | null
+  cancelledByName: string | null
+  cancelledAt: string | null
+  completedByUserId: string | null
+  completedByName: string | null
+  completedAt: string | null
+}
+
+export type AmenityBookingEvent = {
+  id: string
+  bookingId: string
+  eventType: AmenityBookingEventType
+  actorUserId: string | null
+  actorName: string | null
+  fromStatus: AmenityBookingStatus | null
+  toStatus: AmenityBookingStatus | null
+  visibility: string
+  message: string | null
+  metadata: Record<string, unknown>
+  createdAt: string
+}
+
+export type AmenityBookingDetail = AmenityBookingSummary & {
+  amenity: AmenitySummary
+  events: AmenityBookingEvent[]
+}
+
+export type AmenityBlackoutSummary = AuditFields & {
+  id: string
+  societyId: string
+  amenityId: string
+  amenityName: string
+  title: string
+  startsAt: string
+  endsAt: string
+  reason: string | null
+  createdByUserId: string | null
+  createdByName: string | null
+}
+
+export type AmenityAvailabilityWindow = {
+  id: string
+  type: 'BOOKING' | 'BLACKOUT'
+  title: string
+  startsAt: string
+  endsAt: string
+  status?: AmenityBookingStatus
+}
+
+export type AmenityAvailability = {
+  amenity: AmenitySummary
+  date: string
+  operatingHours: Record<string, AmenityOperatingHourWindow[]>
+  unavailableWindows: AmenityAvailabilityWindow[]
+  availableSlotSuggestions: Array<{
+    startsAt: string
+    endsAt: string
+  }>
+}
+
+export type AmenityBlockedDates = {
+  amenity: AmenitySummary
+  startDate: string
+  endDate: string
+  blockedDates: string[]
+}
+
 export type ServicePriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'EMERGENCY'
 
 export type ServiceRequestStatus =

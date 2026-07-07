@@ -791,12 +791,18 @@ type ServiceRequestNotificationQueueResult = {
   jobCount: number
 }
 
+type ServiceRequestNotificationDispatchOptions = {
+  channel?: NotificationChannel | null
+}
+
 const processImmediateServiceRequestNotifications = async (
   client: PoolClient,
   serviceRequestId: string,
   results: PromiseSettledResult<ServiceRequestNotificationQueueResult>[],
+  options: ServiceRequestNotificationDispatchOptions = {},
 ) => {
   const eventIds = new Set<string>()
+  const channel = options.channel === undefined ? immediateServiceRequestNotificationChannel : options.channel
 
   for (const result of results) {
     if (result.status === 'rejected') {
@@ -841,7 +847,7 @@ const processImmediateServiceRequestNotifications = async (
       const dispatchResult = await dispatchNotificationJobs(client, {
         eventId,
         limit: immediateServiceRequestNotificationLimit,
-        channel: immediateServiceRequestNotificationChannel,
+        ...(channel ? { channel } : {}),
         lockTimeoutMinutes: 1,
       })
 
@@ -858,6 +864,29 @@ const processImmediateServiceRequestNotifications = async (
       warnNotificationFailure(serviceRequestId, error)
     }
   }
+}
+
+const processServiceRequestNotificationsWithFreshClient = async (
+  serviceRequestId: string,
+  results: PromiseSettledResult<ServiceRequestNotificationQueueResult>[],
+  options: ServiceRequestNotificationDispatchOptions = {},
+) => {
+  const client = await getDatabasePool().connect()
+
+  try {
+    await processImmediateServiceRequestNotifications(client, serviceRequestId, results, options)
+  } finally {
+    client.release()
+  }
+}
+
+const processServiceRequestNotificationsInBackground = (
+  serviceRequestId: string,
+  results: PromiseSettledResult<ServiceRequestNotificationQueueResult>[],
+  options: ServiceRequestNotificationDispatchOptions = {},
+) => {
+  void processServiceRequestNotificationsWithFreshClient(serviceRequestId, results, options)
+    .catch((error) => warnNotificationFailure(serviceRequestId, error))
 }
 
 const mergeNotificationUsers = (groups: NotificationUser[][]) => {
@@ -1364,7 +1393,7 @@ export const createServiceRequest = async (
 
     await client.query('commit')
     try {
-      const notifications = await Promise.allSettled([
+      const [residentNotification, managerNotification] = await Promise.allSettled([
         enqueueServiceRequestNotification(
           id,
           {
@@ -1379,7 +1408,11 @@ export const createServiceRequest = async (
           : Promise.resolve({ eventId: null, audienceCount: 0, jobCount: 0 }),
       ])
 
-      await processImmediateServiceRequestNotifications(client, id, notifications)
+      if (mode === 'resident') {
+        await processImmediateServiceRequestNotifications(client, id, [residentNotification])
+        await processImmediateServiceRequestNotifications(client, id, [managerNotification])
+        processServiceRequestNotificationsInBackground(id, [managerNotification], { channel: null })
+      }
     } catch (notificationError) {
       warnNotificationFailure(id, notificationError)
     }
@@ -1712,7 +1745,7 @@ export const assignServiceRequest = async (
 
     await client.query('commit')
     try {
-      const notifications = await Promise.allSettled([
+      await Promise.allSettled([
         enqueueServiceRequestNotification(
           id,
           {
@@ -1724,7 +1757,6 @@ export const assignServiceRequest = async (
           { dbClient: client },
         ),
       ])
-      await processImmediateServiceRequestNotifications(client, id, notifications)
     } catch (notificationError) {
       warnNotificationFailure(id, notificationError)
     }
@@ -1864,8 +1896,8 @@ export const updateServiceRequestStatus = async (
     await client.query('commit')
     try {
       const statusBody = `${ticket.request_number} moved from ${fromStatus.replaceAll('_', ' ').toLowerCase()} to ${input.status.replaceAll('_', ' ').toLowerCase()}.`
-      const notifications = await Promise.allSettled([
-        scope === 'service'
+      const [managerNotification, _residentNotification] = await Promise.allSettled([
+        scope === 'resident' || scope === 'service'
           ? enqueueServiceRequestManagerNotification(
               id,
               {
@@ -1888,19 +1920,13 @@ export const updateServiceRequestStatus = async (
               },
               { dbClient: client },
             )
-          : enqueueServiceRequestManagerNotification(
-              id,
-              {
-                title: 'Service request status updated',
-                body: `${authMe.user.fullName} updated ${statusBody}`,
-                idempotencyKey: `service_request.manager.status:${id}:${input.status}:${Date.now()}`,
-                triggeredByUserId: authMe.user.id,
-              },
-              { dbClient: client },
-            ),
+          : Promise.resolve({ eventId: null, audienceCount: 0, jobCount: 0 }),
       ])
 
-      await processImmediateServiceRequestNotifications(client, id, notifications)
+      if (scope === 'resident') {
+        await processImmediateServiceRequestNotifications(client, id, [managerNotification])
+        processServiceRequestNotificationsInBackground(id, [managerNotification], { channel: null })
+      }
     } catch (notificationError) {
       warnNotificationFailure(id, notificationError)
     }
@@ -1995,7 +2021,10 @@ export const addServiceRequestComment = async (
           : Promise.resolve({ eventId: null, audienceCount: 0, jobCount: 0 }),
       ])
 
-      await processImmediateServiceRequestNotifications(client, id, notifications)
+      if (scope === 'resident') {
+        await processImmediateServiceRequestNotifications(client, id, notifications)
+        processServiceRequestNotificationsInBackground(id, notifications, { channel: null })
+      }
     } catch (notificationError) {
       warnNotificationFailure(id, notificationError)
     }
@@ -2090,7 +2119,10 @@ export const createServiceRequestAttachment = async (
           : Promise.resolve({ eventId: null, audienceCount: 0, jobCount: 0 }),
       ])
 
-      await processImmediateServiceRequestNotifications(client, id, notifications)
+      if (scope === 'resident') {
+        await processImmediateServiceRequestNotifications(client, id, notifications)
+        processServiceRequestNotificationsInBackground(id, notifications, { channel: null })
+      }
     } catch (notificationError) {
       warnNotificationFailure(id, notificationError)
     }
@@ -2223,7 +2255,10 @@ export const uploadServiceRequestAttachment = async (
           : Promise.resolve({ eventId: null, audienceCount: 0, jobCount: 0 }),
       ])
 
-      await processImmediateServiceRequestNotifications(client, id, notifications)
+      if (scope === 'resident') {
+        await processImmediateServiceRequestNotifications(client, id, notifications)
+        processServiceRequestNotificationsInBackground(id, notifications, { channel: null })
+      }
     } catch (notificationError) {
       warnNotificationFailure(id, notificationError)
     }

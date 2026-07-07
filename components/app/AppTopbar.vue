@@ -17,10 +17,19 @@ const loading = useLoadingIndicator()
 const menu = ref()
 const loggingOut = ref(false)
 
+const firstCharacter = (value: string | null | undefined) => value?.trim().charAt(0).toUpperCase() || ''
+
 const pageTitle = computed(() => String(route.meta.title ?? 'AJOWA'))
 const isLoading = computed(() => loading.isLoading.value)
-const userInitial = computed(() => authStore.me?.user.fullName?.charAt(0).toUpperCase() || 'A')
-const userEmail = computed(() => authStore.me?.user.email || '')
+const userDisplayName = computed(() =>
+  authStore.me?.user.fullName?.trim()
+  || authStore.me?.authUser.name?.trim()
+  || authStore.me?.user.email?.trim()
+  || 'User',
+)
+const userInitial = computed(() => firstCharacter(userDisplayName.value) || 'U')
+const userEmail = computed(() => authStore.me?.user.email?.trim() || '')
+const avatarLabel = computed(() => `Open account menu for ${userDisplayName.value}`)
 const notificationRoute = computed(() => {
   const role = authStore.me?.user.role
 
@@ -67,14 +76,23 @@ const logout = async () => {
 const avatarItems = computed<MenuItem[]>(() => {
   const items: MenuItem[] = [
     {
-      label: userEmail.value ? `Signed in as ${userEmail.value}` : 'Signed in',
-      icon: userEmail.value ? 'pi pi-envelope' : 'pi pi-user',
-      disabled: !userEmail.value,
-    },
-    {
-      separator: true,
+      label: userDisplayName.value,
+      icon: 'pi pi-user',
+      disabled: true,
     },
   ]
+
+  if (userEmail.value && userEmail.value !== userDisplayName.value) {
+    items.push({
+      label: userEmail.value,
+      icon: 'pi pi-envelope',
+      disabled: true,
+    })
+  }
+
+  items.push({
+    separator: true,
+  })
 
   if (notificationRoute.value) {
     items.push({
@@ -85,10 +103,6 @@ const avatarItems = computed<MenuItem[]>(() => {
   }
 
   items.push(
-    {
-      label: 'Profile',
-      icon: 'pi pi-user',
-    },
     {
       label: 'Logout',
       icon: 'pi pi-sign-out',
@@ -176,7 +190,7 @@ onMounted(() => {
         outlined
         @click="theme.toggle()"
       />
-      <Button class="avatar-trigger" text rounded aria-label="Open profile menu" @click="toggleMenu">
+      <Button class="avatar-trigger" text rounded :aria-label="avatarLabel" :title="userDisplayName" @click="toggleMenu">
         <Avatar :label="userInitial" shape="circle" />
       </Button>
       <Menu ref="menu" :model="avatarItems" popup />

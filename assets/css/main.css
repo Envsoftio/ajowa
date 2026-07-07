@@ -289,8 +289,8 @@ a {
 
 .topbar-notification-button .p-badge {
   position: absolute;
-  top: 10px;
-  right: 5px;
+  top: 12px;
+  right: 9px;
   transform: translate(42%, -42%);
   z-index: 3;
   min-width: 1.15rem;

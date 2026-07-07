@@ -11,6 +11,8 @@ export const staffPermissions = [
   'finance.manage',
   'staff.manage',
   'service-requests.manage',
+  'amenity-bookings.manage',
+  'amenities.manage',
   'notifications.view',
   'notifications.manage',
 ] as const
@@ -30,6 +32,8 @@ export const staffPermissionLabels: Record<StaffPermission, string> = {
   'finance.manage': 'Finance accounts',
   'staff.manage': 'Staff and departments',
   'service-requests.manage': 'Service requests',
+  'amenity-bookings.manage': 'Amenity bookings',
+  'amenities.manage': 'Amenities',
   'notifications.view': 'Notification history',
   'notifications.manage': 'Notification settings and broadcasts',
 }
@@ -48,6 +52,8 @@ export const managerDefaultPermissions: StaffPermission[] = [
   'finance.view',
   'finance.manage',
   'service-requests.manage',
+  'amenity-bookings.manage',
+  'amenities.manage',
   'notifications.view',
   'notifications.manage',
 ]

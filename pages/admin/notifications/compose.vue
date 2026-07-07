@@ -155,7 +155,7 @@ const submit = async () => {
         <InputText v-model="form.title" placeholder="Title" />
         <Textarea v-model="form.body" rows="8" placeholder="Message" />
         <div class="surface-grid">
-          <Select v-model="form.category" :options="['BILLING', 'PAYMENTS', 'ACCESS_QR', 'SERVICE_REQUESTS', 'NOTICES_ANNOUNCEMENTS', 'ACCOUNT_ONBOARDING', 'EMERGENCY_ALERTS']" />
+          <Select v-model="form.category" :options="['BILLING', 'PAYMENTS', 'ACCESS_QR', 'SERVICE_REQUESTS', 'AMENITY_BOOKINGS', 'NOTICES_ANNOUNCEMENTS', 'ACCOUNT_ONBOARDING', 'EMERGENCY_ALERTS']" />
           <Select v-model="form.priority" :options="['LOW', 'MEDIUM', 'HIGH', 'EMERGENCY']" />
           <Select v-model="form.audienceScope" :options="audienceOptions" option-label="label" option-value="value" />
           <Select

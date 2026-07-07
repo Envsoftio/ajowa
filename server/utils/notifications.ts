@@ -21,6 +21,7 @@ export type NotificationCategory =
   | 'PAYMENTS'
   | 'ACCESS_QR'
   | 'SERVICE_REQUESTS'
+  | 'AMENITY_BOOKINGS'
   | 'NOTICES_ANNOUNCEMENTS'
   | 'ACCOUNT_ONBOARDING'
   | 'EMERGENCY_ALERTS'
