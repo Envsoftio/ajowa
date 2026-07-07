@@ -19,3 +19,4 @@ supabase/.temp
 society-management-prd.md
 .gitignore
 docs/notifications-web-push-guide.md
+.idea/

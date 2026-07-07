@@ -4349,38 +4349,53 @@ button *,
     position: sticky;
     top: 0;
     z-index: 20;
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 0.75rem;
+    align-items: center;
+    flex-direction: row;
+    gap: 0.5rem;
+    justify-content: space-between;
     padding: 0.75rem;
   }
 
   .topbar-heading {
-    width: 100%;
+    flex: 1 1 auto;
+    width: auto;
     min-width: 0;
+    overflow: hidden;
   }
 
   .topbar-heading h2 {
     min-width: 0;
     font-size: 1.08rem;
-    overflow-wrap: anywhere;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .topbar-actions {
-    display: grid;
-    grid-template-columns: repeat(3, auto);
-    justify-content: end;
-    justify-items: end;
-    width: 100%;
+    display: flex;
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
+    justify-content: flex-end;
+    width: auto;
     gap: 0.5rem;
-    align-items: stretch;
+    align-items: center;
   }
 
   .topbar-loading {
-    grid-column: 1 / -1;
+    flex: 0 0 auto;
     width: auto;
-    justify-content: center;
+    min-height: 2rem;
+    padding: 0 0.5rem;
+    gap: 0.35rem;
+    justify-content: flex-start;
     min-width: 0;
+    font-size: 0.75rem;
+    line-height: 1;
+  }
+
+  .topbar-loading-dot {
+    width: 0.45rem;
+    height: 0.45rem;
   }
 
   .topbar-actions .p-button:not(.avatar-trigger):not(.topbar-icon-button) {
@@ -4390,7 +4405,6 @@ button *,
   }
 
   .topbar-icon-button {
-    justify-self: end;
     width: 2rem;
     min-width: 2rem;
     min-height: 2rem;
@@ -4406,7 +4420,6 @@ button *,
   }
 
   .avatar-trigger {
-    justify-self: end;
     min-width: 2.25rem;
     min-height: 2.25rem;
     padding: 0.2rem;
