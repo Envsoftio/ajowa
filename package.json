@@ -23,6 +23,7 @@
     "backup:storage": "node scripts/backup-supabase-storage.mjs",
     "db:reset": "supabase db reset",
     "seed:admin": "node scripts/seed-admin.mjs",
+    "ads:key": "node scripts/create-ads-api-key.mjs",
     "postinstall": "nuxt prepare"
   },
   "dependencies": {
