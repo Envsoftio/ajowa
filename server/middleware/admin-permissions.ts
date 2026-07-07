@@ -1,4 +1,6 @@
 import { requirePermission } from '~/server/utils/auth'
+import { logAmenityApiError } from '~/server/utils/amenity-api'
+import { toApiError } from '~/server/utils/errors'
 import type { StaffPermission } from '~/shared/permissions'
 
 export default defineEventHandler(async (event) => {
@@ -11,9 +13,23 @@ export default defineEventHandler(async (event) => {
   const permission = getAdminApiPermission(path, event.method)
 
   if (permission) {
-    await requirePermission(event, permission)
+    try {
+      await requirePermission(event, permission)
+    } catch (error) {
+      if (isAmenityAdminApiPath(path)) {
+        logAmenityApiError(event, error, { phase: 'permission' })
+        throw toApiError(error)
+      }
+
+      throw error
+    }
   }
 })
+
+const isAmenityAdminApiPath = (path: string) =>
+  path.startsWith('/api/admin/amenity-bookings') ||
+  path.startsWith('/api/admin/amenity-blackouts') ||
+  path.startsWith('/api/admin/amenities')
 
 const getAdminApiPermission = (path: string, method: string): StaffPermission | null => {
   if (
