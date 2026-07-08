@@ -41,6 +41,25 @@ export type FinanceTransactionSummary = {
   missingAttachments: number
 }
 
+type IncomeReportDrilldownCamRow = {
+  payment_id: string
+  society_id: string
+  category_id: string
+  category_name: string
+  category_group: string
+  billing_period_id: string | null
+  billing_period_label: string | null
+  title: string
+  description: string | null
+  counterparty_name: string | null
+  voucher_number: string | null
+  transaction_date: string
+  amount: string
+  status: FinanceTransaction['status']
+  created_at: string
+  updated_at: string
+}
+
 export type FinanceTransactionFilterSql = {
   filters: string[]
   params: unknown[]
@@ -174,6 +193,7 @@ export const buildFinanceTransactionFilterSql = (
 export const financeTransactionFromRow = (row: FinanceTransactionRow): FinanceTransaction => ({
   id: row.id,
   societyId: row.society_id,
+  detailPath: `/admin/finance/transactions/${row.id}`,
   transactionType: row.transaction_type,
   categoryId: row.category_id,
   categoryName: row.category_name,
@@ -204,6 +224,97 @@ export const financeTransactionFromRow = (row: FinanceTransactionRow): FinanceTr
   createdAt: row.created_at,
   updatedAt: row.updated_at,
 })
+
+const incomeReportDrilldownTransactionFromCamRow = (
+  row: IncomeReportDrilldownCamRow,
+): FinanceTransaction => ({
+  id: `report-cam-${row.payment_id}`,
+  societyId: row.society_id,
+  detailPath: null,
+  transactionType: 'INCOME',
+  categoryId: row.category_id,
+  categoryName: row.category_name,
+  categoryGroup: row.category_group,
+  bankAccountId: null,
+  bankAccountName: null,
+  billingPeriodId: row.billing_period_id,
+  billingPeriodLabel: row.billing_period_label,
+  title: row.title,
+  description: row.description,
+  counterpartyName: row.counterparty_name,
+  voucherNumber: row.voucher_number,
+  transactionDate: row.transaction_date,
+  amount: Number(row.amount),
+  status: row.status,
+  journalVoucherNumber: null,
+  expensePaymentCount: 0,
+  expensePaymentTotal: 0,
+  latestExpensePaymentDate: null,
+  attachmentCount: 0,
+  hasAttachments: false,
+  attachmentRequired: false,
+  createdByName: null,
+  approvedByName: null,
+  approvedAt: null,
+  postedAt: row.transaction_date,
+  reversedAt: null,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+})
+
+const compareValues = (left: string | number | null | undefined, right: string | number | null | undefined) => {
+  if (left == null && right == null) return 0
+  if (left == null) return -1
+  if (right == null) return 1
+  if (typeof left === 'number' && typeof right === 'number') return left - right
+  return String(left).localeCompare(String(right), undefined, { sensitivity: 'base' })
+}
+
+const sortFinanceTransactions = (
+  items: FinanceTransaction[],
+  orderBy: string,
+  sortDirection: 'asc' | 'desc',
+) => {
+  const direction = sortDirection === 'asc' ? 1 : -1
+
+  return [...items].sort((left, right) => {
+    let result = 0
+
+    switch (orderBy) {
+      case 't.title':
+        result = compareValues(left.title, right.title)
+        break
+      case 't.transaction_type':
+        result = compareValues(left.transactionType, right.transactionType)
+        break
+      case 'tc.name':
+        result = compareValues(left.categoryName, right.categoryName)
+        break
+      case 't.amount':
+        result = compareValues(left.amount, right.amount)
+        break
+      case 't.status':
+        result = compareValues(left.status, right.status)
+        break
+      case 't.created_at':
+        result = compareValues(left.createdAt, right.createdAt)
+        break
+      case 't.transaction_date':
+      default:
+        result = compareValues(left.transactionDate, right.transactionDate)
+        if (result === 0) {
+          result = compareValues(left.createdAt, right.createdAt)
+        }
+        break
+    }
+
+    if (result === 0) {
+      result = compareValues(left.createdAt, right.createdAt)
+    }
+
+    return result * direction
+  })
+}
 
 export const getFinanceTransactionSummary = async (
   pool: Pool,
@@ -330,4 +441,310 @@ export const getFinanceTransactionRows = async (
     `,
     params,
   )
+}
+
+export const getIncomeReportDrilldownTransactions = async (
+  pool: Pool,
+  societyId: string,
+  query: Record<string, unknown>,
+  options: {
+    page: number
+    pageSize: number
+    orderBy: string
+    sortDirection: 'asc' | 'desc'
+  },
+): Promise<{
+  items: FinanceTransaction[]
+  total: number
+  summary: FinanceTransactionSummary
+}> => {
+  const search = queryText(query.search).trim().toLowerCase()
+  const categoryId = queryText(query.categoryId)
+  const bankAccountId = queryText(query.bankAccountId)
+  const billingPeriodId = queryText(query.billingPeriodId)
+  const dateFrom = queryText(query.dateFrom)
+  const dateTo = queryText(query.dateTo)
+  const counterparty = queryText(query.counterparty).trim().toLowerCase()
+  const voucherNumber = queryText(query.voucherNumber).trim().toLowerCase()
+  const attachment = queryText(query.attachment)
+  const mode = queryText(query.mode).trim().toLowerCase()
+  const minAmount = queryNumber(query.minAmount)
+  const maxAmount = queryNumber(query.maxAmount)
+  const highValueOnly = queryText(query.highValueOnly) === 'true'
+  const highValueThreshold = queryNumber(query.highValueThreshold) ?? 0
+
+  const regularParams: unknown[] = [societyId]
+  const regularWhere = [
+    't.society_id = $1',
+    "t.transaction_type = 'INCOME'",
+    "t.status = 'POSTED'",
+    "tc.code <> 'INC-MNT-001'",
+  ]
+
+  if (search) {
+    regularParams.push(`%${search}%`)
+    regularWhere.push(`(
+      lower(t.title) like $${regularParams.length}
+      or lower(coalesce(t.counterparty_name, '')) like $${regularParams.length}
+      or lower(coalesce(t.voucher_number, '')) like $${regularParams.length}
+      or lower(tc.name) like $${regularParams.length}
+    )`)
+  }
+  if (categoryId) {
+    regularParams.push(categoryId)
+    regularWhere.push(`t.category_id = $${regularParams.length}`)
+  }
+  if (bankAccountId) {
+    regularParams.push(bankAccountId)
+    regularWhere.push(`t.bank_account_id = $${regularParams.length}`)
+  }
+  if (billingPeriodId) {
+    regularParams.push(billingPeriodId)
+    regularWhere.push(`t.billing_period_id = $${regularParams.length}`)
+  }
+  if (dateFrom) {
+    regularParams.push(dateFrom)
+    regularWhere.push(`t.transaction_date >= $${regularParams.length}`)
+  }
+  if (dateTo) {
+    regularParams.push(dateTo)
+    regularWhere.push(`t.transaction_date <= $${regularParams.length}`)
+  }
+  if (counterparty) {
+    regularParams.push(`%${counterparty}%`)
+    regularWhere.push(`lower(coalesce(t.counterparty_name, '')) like $${regularParams.length}`)
+  }
+  if (voucherNumber) {
+    regularParams.push(`%${voucherNumber}%`)
+    regularWhere.push(`lower(coalesce(t.voucher_number, '')) like $${regularParams.length}`)
+  }
+  if (mode) {
+    regularParams.push(`%mode: ${mode}%`)
+    regularWhere.push(`lower(coalesce(t.description, '')) like $${regularParams.length}`)
+  }
+  if (minAmount !== null) {
+    regularParams.push(minAmount)
+    regularWhere.push(`t.amount >= $${regularParams.length}`)
+  }
+  if (maxAmount !== null) {
+    regularParams.push(maxAmount)
+    regularWhere.push(`t.amount <= $${regularParams.length}`)
+  }
+  if (highValueOnly && highValueThreshold > 0) {
+    regularParams.push(highValueThreshold)
+    regularWhere.push(`t.amount >= $${regularParams.length}`)
+  }
+  if (attachment === 'present') {
+    regularWhere.push('coalesce(ta_counts.attachment_count, 0) > 0')
+  } else if (attachment === 'missing') {
+    regularWhere.push('coalesce(ta_counts.attachment_count, 0) = 0')
+  }
+
+  const regularRows = await pool.query<FinanceTransactionRow>(
+    `
+      select
+        t.id,
+        t.society_id,
+        t.transaction_type::text,
+        t.category_id,
+        tc.name as category_name,
+        tc.category_group,
+        t.bank_account_id,
+        ba.account_name as bank_account_name,
+        t.billing_period_id,
+        bp.label as billing_period_label,
+        t.title,
+        t.description,
+        t.counterparty_name,
+        t.voucher_number,
+        t.transaction_date::text,
+        t.amount::text,
+        t.status::text,
+        je.voucher_number as journal_voucher_number,
+        coalesce(ep_counts.payment_count, 0)::text as expense_payment_count,
+        coalesce(ep_counts.payment_total, 0)::text as expense_payment_total,
+        ep_counts.latest_payment_date::text as latest_expense_payment_date,
+        coalesce(ta_counts.attachment_count, 0)::text as attachment_count,
+        tc.requires_attachment as attachment_required,
+        creator.full_name as created_by_name,
+        approver.full_name as approved_by_name,
+        t.approved_at::text,
+        t.posted_at::text,
+        t.reversed_at::text,
+        t.created_at::text,
+        t.updated_at::text
+      from transactions t
+      join transaction_categories tc on tc.id = t.category_id
+      left join society_bank_accounts ba on ba.id = t.bank_account_id
+      left join billing_periods bp on bp.id = t.billing_period_id
+      left join journal_entries je on je.transaction_id = t.id and je.status = 'POSTED'
+      left join (
+        select
+          transaction_id,
+          count(*)::int as payment_count,
+          coalesce(sum(amount), 0) as payment_total,
+          max(payment_date) as latest_payment_date
+        from expense_payments
+        group by transaction_id
+      ) ep_counts on ep_counts.transaction_id = t.id
+      left join (
+        select transaction_id, count(*)::int as attachment_count
+        from transaction_attachments
+        where replaced_at is null
+        group by transaction_id
+      ) ta_counts on ta_counts.transaction_id = t.id
+      left join users creator on creator.id = t.created_by_user_id
+      left join users approver on approver.id = t.approved_by_user_id
+      where ${regularWhere.join(' and ')}
+    `,
+    regularParams,
+  )
+
+  let camItems: FinanceTransaction[] = []
+
+  if (
+    attachment !== 'present' &&
+    !bankAccountId &&
+    !mode
+  ) {
+    const camParams: unknown[] = [societyId]
+    const camWhere = [
+      'p.society_id = $1',
+      "p.status = 'VERIFIED'",
+      "bp.charge_type = 'CAM'",
+      `not exists (
+        select 1
+        from transactions source_t
+        join transaction_categories source_tc on source_tc.id = source_t.category_id
+        where source_t.source_payment_id = p.id
+          and source_t.society_id = p.society_id
+          and source_t.transaction_type = 'INCOME'
+          and source_t.status = 'POSTED'
+          and source_tc.code = 'INC-MNT-001'
+      )`,
+    ]
+
+    if (categoryId) {
+      camParams.push(categoryId)
+      camWhere.push(`cc.id = $${camParams.length}`)
+    }
+    if (billingPeriodId) {
+      camParams.push(billingPeriodId)
+      camWhere.push(`bp.id = $${camParams.length}`)
+    }
+    if (dateFrom) {
+      camParams.push(dateFrom)
+      camWhere.push(`p.payment_date >= $${camParams.length}`)
+    }
+    if (dateTo) {
+      camParams.push(dateTo)
+      camWhere.push(`p.payment_date <= $${camParams.length}`)
+    }
+    if (search) {
+      camParams.push(`%${search}%`)
+      camWhere.push(`(
+        lower(cc.name) like $${camParams.length}
+        or lower(coalesce(u.full_name, '')) like $${camParams.length}
+        or lower(coalesce(f.flat_number, '')) like $${camParams.length}
+        or lower(coalesce(b.name, '')) like $${camParams.length}
+        or lower(coalesce(p.receipt_number, '')) like $${camParams.length}
+        or lower(coalesce(p.utr_reference, '')) like $${camParams.length}
+        or lower(coalesce(p.bank_reference, '')) like $${camParams.length}
+        or lower(coalesce(bp.label, '')) like $${camParams.length}
+        or lower(coalesce(p.notes, '')) like $${camParams.length}
+      )`)
+    }
+    if (counterparty) {
+      camParams.push(`%${counterparty}%`)
+      camWhere.push(`lower(coalesce(u.full_name, '')) like $${camParams.length}`)
+    }
+    if (voucherNumber) {
+      camParams.push(`%${voucherNumber}%`)
+      camWhere.push(`(
+        lower(coalesce(p.receipt_number, '')) like $${camParams.length}
+        or lower(coalesce(p.utr_reference, '')) like $${camParams.length}
+        or lower(coalesce(p.bank_reference, '')) like $${camParams.length}
+      )`)
+    }
+
+    const amountFilters: string[] = []
+
+    if (minAmount !== null) {
+      camParams.push(minAmount)
+      amountFilters.push(`sum(pa.allocated_amount) >= $${camParams.length}`)
+    }
+    if (maxAmount !== null) {
+      camParams.push(maxAmount)
+      amountFilters.push(`sum(pa.allocated_amount) <= $${camParams.length}`)
+    }
+    if (highValueOnly && highValueThreshold > 0) {
+      camParams.push(highValueThreshold)
+      amountFilters.push(`sum(pa.allocated_amount) >= $${camParams.length}`)
+    }
+
+    const camRows = await pool.query<IncomeReportDrilldownCamRow>(
+      `
+        with cam_category as (
+          select id, name, category_group
+          from transaction_categories
+          where code = 'INC-MNT-001'
+            and transaction_type = 'INCOME'
+          limit 1
+        )
+        select
+          p.id as payment_id,
+          p.society_id,
+          cc.id as category_id,
+          cc.name as category_name,
+          cc.category_group,
+          case when count(distinct bp.id) = 1 then min(bp.id::text)::uuid else null end as billing_period_id,
+          case when count(distinct bp.label) = 1 then min(bp.label) else null end as billing_period_label,
+          case
+            when count(distinct bp.label) = 1 then concat('CAM collection - ', min(bp.label))
+            else 'CAM collection - multiple periods'
+          end as title,
+          coalesce(p.notes, null) as description,
+          coalesce(u.full_name, '-') as counterparty_name,
+          coalesce(p.receipt_number, p.utr_reference, p.bank_reference, '-') as voucher_number,
+          p.payment_date::text as transaction_date,
+          sum(pa.allocated_amount)::text as amount,
+          'POSTED'::text as status,
+          p.created_at::text as created_at,
+          p.updated_at::text as updated_at
+        from payment_allocations pa
+        join payments p on p.id = pa.payment_id
+        join maintenance_dues md on md.id = pa.maintenance_due_id
+        join billing_periods bp on bp.id = md.billing_period_id
+        join flats f on f.id = md.flat_id
+        join blocks b on b.id = f.block_id
+        left join users u on u.id = p.payer_user_id
+        cross join cam_category cc
+        where ${camWhere.join(' and ')}
+        group by p.id, p.society_id, p.payment_date, p.created_at, p.updated_at, cc.id, cc.name, cc.category_group, u.full_name, p.receipt_number, p.utr_reference, p.bank_reference, p.notes
+        ${amountFilters.length > 0 ? `having ${amountFilters.join(' and ')}` : ''}
+      `,
+      camParams,
+    )
+
+    camItems = camRows.rows.map(incomeReportDrilldownTransactionFromCamRow)
+  }
+
+  const items = sortFinanceTransactions(
+    [...regularRows.rows.map(financeTransactionFromRow), ...camItems],
+    options.orderBy,
+    options.sortDirection,
+  )
+  const total = items.length
+  const pagedItems = items.slice((options.page - 1) * options.pageSize, options.page * options.pageSize)
+
+  return {
+    items: pagedItems,
+    total,
+    summary: {
+      total,
+      income: items.reduce((sum, item) => sum + item.amount, 0),
+      expense: 0,
+      missingAttachments: items.filter((item) => !item.hasAttachments).length,
+    },
+  }
 }

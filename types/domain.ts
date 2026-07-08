@@ -845,6 +845,7 @@ export type FinanceCategory = AuditFields & {
 export type FinanceTransaction = AuditFields & {
   id: string
   societyId: string
+  detailPath?: string | null
   transactionType: FinanceTransactionType
   categoryId: string
   categoryName: string

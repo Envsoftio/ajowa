@@ -5,6 +5,7 @@ import {
   buildFinanceTransactionFilterSql,
   financeTransactionFromRow,
   getFinanceTransactionRows,
+  getIncomeReportDrilldownTransactions,
   getFinanceTransactionSort,
   getFinanceTransactionSummary,
 } from '~/server/utils/finance-transactions'
@@ -16,6 +17,36 @@ export default defineEventHandler(async (event) => {
   const pagination = getPaginationParams(query)
   const offset = (pagination.page - 1) * pagination.pageSize
   const pool = getDatabasePool()
+  const isIncomeReportDrilldown = query.source === 'report' &&
+    query.transactionType === 'INCOME' &&
+    query.status === 'POSTED'
+
+  if (isIncomeReportDrilldown) {
+    const sort = getFinanceTransactionSort(query)
+    const result = await getIncomeReportDrilldownTransactions(
+      pool,
+      authMe.user.societyId,
+      query,
+      {
+        page: pagination.page,
+        pageSize: pagination.pageSize,
+        ...sort,
+      },
+    )
+
+    return createApiSuccess(event, {
+      items: result.items,
+      total: result.total,
+      summary: {
+        income: result.summary.income,
+        expense: result.summary.expense,
+        missingAttachments: result.summary.missingAttachments,
+      },
+      page: pagination.page,
+      pageSize: pagination.pageSize,
+    })
+  }
+
   const filterSql = buildFinanceTransactionFilterSql(authMe.user.societyId, query)
   const summary = await getFinanceTransactionSummary(pool, filterSql)
   const sort = getFinanceTransactionSort(query)

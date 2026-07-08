@@ -74,6 +74,7 @@ const applyRouteFilters = (routeQuery: Record<string, unknown>) => {
   const status = queryText(routeQuery.status).toUpperCase()
   const attachment = queryText(routeQuery.attachment)
 
+  filters.source = queryText(routeQuery.source)
   filters.search = queryText(routeQuery.search)
   filters.transactionType = transactionTypeValues.includes(transactionType as FinanceTransactionType)
     ? (transactionType as FinanceTransactionType)

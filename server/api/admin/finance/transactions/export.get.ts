@@ -5,6 +5,7 @@ import {
   buildFinanceTransactionFilterSql,
   financeTransactionExportLimit,
   financeTransactionFromRow,
+  getIncomeReportDrilldownTransactions,
   getFinanceTransactionRows,
   getFinanceTransactionSort,
   getFinanceTransactionSummary,
@@ -270,14 +271,37 @@ export default defineEventHandler(async (event) => {
   const query = getQuerySafe(event)
   const format = getExportFormat(query)
   const pool = getDatabasePool()
-  const filterSql = buildFinanceTransactionFilterSql(authMe.user.societyId, query)
-  const summary = await getFinanceTransactionSummary(pool, filterSql)
   const sort = getFinanceTransactionSort(query)
-  const result = await getFinanceTransactionRows(pool, filterSql, {
-    limit: financeTransactionExportLimit,
-    ...sort,
-  })
-  const rows = result.rows.map(financeTransactionFromRow)
+  const isIncomeReportDrilldown = query.source === 'report' &&
+    query.transactionType === 'INCOME' &&
+    query.status === 'POSTED'
+
+  let summary: FinanceTransactionSummary
+  let rows: FinanceTransaction[]
+
+  if (isIncomeReportDrilldown) {
+    const result = await getIncomeReportDrilldownTransactions(
+      pool,
+      authMe.user.societyId,
+      query,
+      {
+        page: 1,
+        pageSize: financeTransactionExportLimit,
+        ...sort,
+      },
+    )
+    summary = result.summary
+    rows = result.items
+  } else {
+    const filterSql = buildFinanceTransactionFilterSql(authMe.user.societyId, query)
+    summary = await getFinanceTransactionSummary(pool, filterSql)
+    const result = await getFinanceTransactionRows(pool, filterSql, {
+      limit: financeTransactionExportLimit,
+      ...sort,
+    })
+    rows = result.rows.map(financeTransactionFromRow)
+  }
+
   const fileName = getExportFileName(query, format)
 
   if (format === 'pdf') {

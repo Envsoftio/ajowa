@@ -14,6 +14,11 @@ const emit = defineEmits([
 ])
 
 const { formatMoney, formatDate } = useFinanceFormatters()
+
+const transactionDetailPath = (row: FinanceTransaction) =>
+  row.detailPath === undefined
+    ? `/admin/finance/transactions/${row.id}`
+    : row.detailPath
 </script>
 
 <template>
@@ -40,9 +45,10 @@ const { formatMoney, formatDate } = useFinanceFormatters()
     </Column>
     <Column field="title" header="Transaction" sortable>
       <template #body="{ data: row }">
-        <NuxtLink :to="`/admin/finance/transactions/${row.id}`" class="auth-inline-link">
+        <NuxtLink v-if="transactionDetailPath(row)" :to="transactionDetailPath(row)!" class="auth-inline-link">
           {{ row.title }}
         </NuxtLink>
+        <span v-else>{{ row.title }}</span>
         <div class="muted-line">{{ row.voucherNumber || '-' }}</div>
       </template>
     </Column>
@@ -85,10 +91,10 @@ const { formatMoney, formatDate } = useFinanceFormatters()
     </Column>
     <Column header="Actions" style="width: 80px">
       <template #body="{ data: row }">
-        <div class="admin-inline-actions" style="gap: 0.15rem">
+        <div v-if="transactionDetailPath(row)" class="admin-inline-actions" style="gap: 0.15rem">
           <Button
             as="router-link"
-            :to="`/admin/finance/transactions/${row.id}`"
+            :to="transactionDetailPath(row)!"
             icon="pi pi-eye"
             text
             rounded
@@ -105,9 +111,10 @@ const { formatMoney, formatDate } = useFinanceFormatters()
     <article v-for="row in transactions" :key="row.id" class="list-card">
       <div class="list-card__row">
         <span>Transaction</span>
-        <NuxtLink :to="`/admin/finance/transactions/${row.id}`" class="auth-inline-link">
+        <NuxtLink v-if="transactionDetailPath(row)" :to="transactionDetailPath(row)!" class="auth-inline-link">
           {{ row.title }}
         </NuxtLink>
+        <strong v-else>{{ row.title }}</strong>
       </div>
       <div class="list-card__row">
         <span>Date</span>

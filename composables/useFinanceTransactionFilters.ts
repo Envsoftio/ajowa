@@ -1,6 +1,7 @@
 import type { FinanceLifecycleStatus, FinanceTransactionType } from '~/types/domain'
 
 export type FinanceTransactionFilters = {
+  source: string
   search: string
   transactionType: '' | FinanceTransactionType
   status: '' | FinanceLifecycleStatus
@@ -20,6 +21,7 @@ export type FinanceTransactionFilters = {
 
 export const useFinanceTransactionFilters = () => {
   const filters = reactive<FinanceTransactionFilters>({
+    source: '',
     search: '',
     transactionType: '',
     status: '',
@@ -39,6 +41,7 @@ export const useFinanceTransactionFilters = () => {
 
   const resetFilters = () => {
     filters.search = ''
+    filters.source = ''
     filters.transactionType = ''
     filters.status = ''
     filters.categoryId = ''
@@ -81,6 +84,7 @@ export const useFinanceTransactionFilters = () => {
   }
 
   const query = computed(() => ({
+    source: filters.source || undefined,
     search: filters.search || undefined,
     transactionType: filters.transactionType || undefined,
     status: filters.status || undefined,
