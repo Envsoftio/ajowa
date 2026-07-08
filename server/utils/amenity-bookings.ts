@@ -191,13 +191,19 @@ export const amenityUpsertSchema = z.object({
   rulesText: z.string().trim().max(2000).nullable().optional(),
 })
 
+const requiredUuidSchema = (requiredMessage: string, invalidMessage: string) =>
+  z.string().trim().min(1, requiredMessage).pipe(z.string().uuid(invalidMessage))
+
+const requiredDateTimeSchema = (requiredMessage: string, invalidMessage: string) =>
+  z.string().trim().min(1, requiredMessage).pipe(z.string().datetime({ offset: true, message: invalidMessage }))
+
 export const amenityBookingCreateSchema = z.object({
-  amenityId: z.string().uuid(),
-  flatId: z.string().uuid(),
-  startsAt: z.string().datetime({ offset: true }),
-  endsAt: z.string().datetime({ offset: true }),
+  amenityId: requiredUuidSchema('Select an amenity.', 'Select a valid amenity.'),
+  flatId: requiredUuidSchema('Select a flat.', 'Select a valid flat.'),
+  startsAt: requiredDateTimeSchema('Select a booking date and start time.', 'Select a valid booking start time.'),
+  endsAt: requiredDateTimeSchema('Select a booking date and end time.', 'Select a valid booking end time.'),
   guestCount: z.coerce.number().int().positive().nullable().optional(),
-  purpose: z.string().trim().min(3).max(500),
+  purpose: z.string().trim().min(1, 'Enter a purpose.').min(3, 'Purpose must be at least 3 characters.').max(500),
   residentNotes: z.string().trim().max(2000).nullable().optional(),
   rulesAccepted: z.literal(true, {
     errorMap: () => ({ message: 'Accept the society rules before submitting.' }),

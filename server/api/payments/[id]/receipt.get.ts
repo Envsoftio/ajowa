@@ -1,10 +1,11 @@
 import { requireActiveUser } from '~/server/utils/auth'
 import { AppError } from '~/server/utils/errors'
+import { getEventQuery } from '~/server/utils/http-event'
 import { setEventHeader } from '~/server/utils/http-event'
 import { readUuidParam } from '~/server/utils/master-data'
 import { generatePaymentReceiptPdf, getPaymentReceiptData } from '~/server/utils/payments'
 import { createPdfBuffer } from '~/server/utils/pdf'
-import { createPrivateSignedUrl } from '~/server/utils/storage'
+import { downloadPrivateFile } from '~/server/utils/storage'
 
 type ReceiptPayment = Awaited<ReturnType<typeof getPaymentReceiptData>>['payment']
 
@@ -116,6 +117,7 @@ const createPendingReceiptPdf = async (paymentId: string) =>
 export default defineEventHandler(async (event) => {
   const authMe = await requireActiveUser(event)
   const paymentId = readUuidParam(event)
+  const disposition = getEventQuery(event).download === '1' ? 'attachment' : 'inline'
   const isStaff = ['ADMIN', 'MANAGER'].includes(authMe.user.role)
   const access = {
     societyId: authMe.user.societyId,
@@ -139,7 +141,7 @@ export default defineEventHandler(async (event) => {
 
     setEventHeader(event, 'content-type', 'application/pdf')
     setEventHeader(event, 'cache-control', 'private, no-store')
-    setEventHeader(event, 'content-disposition', 'attachment; filename="receipt-pending.pdf"')
+    setEventHeader(event, 'content-disposition', `${disposition}; filename="receipt-pending.pdf"`)
 
     return buffer
   }
@@ -148,16 +150,16 @@ export default defineEventHandler(async (event) => {
 
   if (payment.receipt_file_path) {
     try {
-      const signedUrl = await createPrivateSignedUrl({
+      const blob = await downloadPrivateFile({
         storageTargetKey: 'receipts',
         storageObjectKey: payment.receipt_file_path,
-        expiresInSeconds: 60 * 5,
-        download: fileName,
       })
 
+      setEventHeader(event, 'content-type', 'application/pdf')
       setEventHeader(event, 'cache-control', 'private, no-store')
+      setEventHeader(event, 'content-disposition', `${disposition}; filename="${fileName}"`)
 
-      return sendRedirect(event, signedUrl, 302)
+      return Buffer.from(await blob.arrayBuffer())
     } catch (error) {
       console.warn(
         JSON.stringify({
@@ -197,7 +199,7 @@ export default defineEventHandler(async (event) => {
 
   setEventHeader(event, 'content-type', 'application/pdf')
   setEventHeader(event, 'cache-control', 'private, no-store')
-  setEventHeader(event, 'content-disposition', `attachment; filename="${receipt.fileName}"`)
+  setEventHeader(event, 'content-disposition', `${disposition}; filename="${receipt.fileName}"`)
 
   return receipt.buffer
 })

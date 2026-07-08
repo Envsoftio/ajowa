@@ -18,6 +18,17 @@ type TimeOption = {
   value: string
 }
 
+type BookingField = 'flatId' | 'amenityId' | 'date' | 'startTime' | 'endTime' | 'purpose' | 'rulesAccepted'
+
+type ApiErrorPayloadShape = {
+  message?: string
+  fieldErrors?: Record<string, string[]>
+  details?: {
+    fieldErrors?: Record<string, string[]>
+  }
+  data?: ApiErrorPayloadShape
+}
+
 const weekdayKeys = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'] as const
 
 const api = useApi()
@@ -26,6 +37,7 @@ const router = useRouter()
 const saving = ref(false)
 const createdBooking = ref<{ id: string; bookingNumber: string } | null>(null)
 const dateValue = ref<Date | null>(null)
+const fieldErrors = ref<Partial<Record<BookingField, string>>>({})
 
 const form = reactive({
   amenityId: '',
@@ -240,11 +252,6 @@ const endTimePlaceholder = computed(() => {
   return 'Select end time'
 })
 
-const hasValidTimeRange = computed(() =>
-  startTimeOptions.value.some((option) => option.value === form.startTime) &&
-  endTimeOptions.value.some((option) => option.value === form.endTime),
-)
-
 const selectedDateUnavailable = computed(() =>
   Boolean(form.date && !availabilityPending.value && availability.value && startTimeOptions.value.length === 0),
 )
@@ -256,17 +263,104 @@ const formatDateTime = (value: string) =>
   }).format(new Date(value))
 
 const localDateTimeToIso = (date: string, time: string) => {
+  if (!date || !time) {
+    return ''
+  }
+
   const value = new Date(`${date}T${time}:00`)
-  return value.toISOString()
+  return Number.isNaN(value.getTime()) ? '' : value.toISOString()
+}
+
+const fieldError = (field: BookingField) => fieldErrors.value[field]
+
+const clearFieldError = (field: BookingField) => {
+  if (!fieldErrors.value[field]) return
+  delete fieldErrors.value[field]
+}
+
+const getApiPayload = (error: unknown) => {
+  const apiError = error as {
+    data?: ApiErrorPayloadShape
+  }
+  return apiError.data?.data ?? apiError.data
+}
+
+const getFirstFieldErrorMessage = (payload?: ApiErrorPayloadShape | null) => {
+  const errors = payload?.fieldErrors ?? payload?.details?.fieldErrors
+  const firstFieldError = Object.entries(errors ?? {})[0]
+
+  if (!firstFieldError) return null
+
+  const [field, messages] = firstFieldError
+  const message = messages[0]
+
+  return message ? `${field}: ${message}` : null
+}
+
+const getApiErrorMessage = (error: unknown, fallback = 'Booking submission failed. Please review the form and try again.') => {
+  const apiError = error as {
+    message?: string
+    statusMessage?: string
+  }
+  const payload = getApiPayload(error)
+  const detail =
+    getFirstFieldErrorMessage(payload) ??
+    payload?.message ??
+    apiError.message ??
+    apiError.statusMessage
+
+  if (
+    !detail ||
+    /^(\[.*\]\s*)?fetch failed$/i.test(detail) ||
+    /^something went wrong\.?( please try again\.)?$/i.test(detail)
+  ) {
+    return fallback
+  }
+
+  return detail
+}
+
+const applyApiFieldErrors = (error: unknown) => {
+  fieldErrors.value = {}
+
+  const payload = getApiPayload(error)
+  const errors = payload?.fieldErrors ?? payload?.details?.fieldErrors
+  if (!errors) return
+
+  if (errors.flatId?.[0]) fieldErrors.value.flatId = errors.flatId[0]
+  if (errors.amenityId?.[0]) fieldErrors.value.amenityId = errors.amenityId[0]
+  if (errors.purpose?.[0]) fieldErrors.value.purpose = errors.purpose[0]
+  if (errors.rulesAccepted?.[0]) fieldErrors.value.rulesAccepted = errors.rulesAccepted[0]
+
+  if (errors.startsAt?.[0]) {
+    if (!form.date) {
+      fieldErrors.value.date = errors.startsAt[0]
+    } else {
+      fieldErrors.value.startTime = errors.startsAt[0]
+    }
+  }
+
+  if (errors.endsAt?.[0]) {
+    if (!form.date) {
+      fieldErrors.value.date ??= errors.endsAt[0]
+    } else {
+      fieldErrors.value.endTime = errors.endsAt[0]
+    }
+  }
 }
 
 watch(dateValue, (value) => {
   form.date = value ? dateToKey(value) : ''
+  clearFieldError('date')
 })
 
 watch(() => form.amenityId, () => {
   dateValue.value = null
   form.date = ''
+  clearFieldError('amenityId')
+  clearFieldError('date')
+  clearFieldError('startTime')
+  clearFieldError('endTime')
 })
 
 watch(blockedDateKeys, (dates) => {
@@ -305,15 +399,18 @@ watch(endTimeOptions, (options) => {
   }
 })
 
-const canSubmit = computed(() =>
-  Boolean(form.amenityId && form.flatId && form.date && hasValidTimeRange.value && form.purpose.trim() && form.rulesAccepted),
-)
+watch(() => form.flatId, () => clearFieldError('flatId'))
+watch(() => form.startTime, () => clearFieldError('startTime'))
+watch(() => form.endTime, () => clearFieldError('endTime'))
+watch(() => form.purpose, () => clearFieldError('purpose'))
+watch(() => form.rulesAccepted, () => clearFieldError('rulesAccepted'))
 
 const submit = async () => {
-  if (!canSubmit.value || saving.value) {
+  if (saving.value) {
     return
   }
 
+  fieldErrors.value = {}
   saving.value = true
   try {
     const response = await api<{ ok: true; data: { id: string; bookingNumber: string } }>('/api/my/amenity-bookings', {
@@ -331,6 +428,14 @@ const submit = async () => {
     })
     createdBooking.value = response.data
     toast.add({ severity: 'success', summary: 'Booking submitted', detail: response.data.bookingNumber, life: 10000 })
+  } catch (error) {
+    applyApiFieldErrors(error)
+    toast.add({
+      severity: 'error',
+      summary: 'Booking not submitted',
+      detail: getApiErrorMessage(error),
+      life: 7000,
+    })
   } finally {
     saving.value = false
   }
@@ -358,23 +463,33 @@ const submit = async () => {
     <section v-else class="surface-card">
       <div class="admin-form-grid">
         <label>
-          <span>Flat</span>
-          <Select v-model="form.flatId" :options="flats" option-label="label" option-value="id" placeholder="Select flat" />
+          <span>Flat <span class="required-marker">*</span></span>
+          <Select
+            v-model="form.flatId"
+            :options="flats"
+            option-label="label"
+            option-value="id"
+            placeholder="Select flat"
+            :invalid="Boolean(fieldError('flatId'))"
+          />
+          <small v-if="fieldError('flatId')" class="field-error">{{ fieldError('flatId') }}</small>
         </label>
 
         <label>
-          <span>Amenity</span>
+          <span>Amenity <span class="required-marker">*</span></span>
           <Select
             v-model="form.amenityId"
             :options="amenities"
             option-label="name"
             option-value="id"
             placeholder="Select amenity"
+            :invalid="Boolean(fieldError('amenityId'))"
           />
+          <small v-if="fieldError('amenityId')" class="field-error">{{ fieldError('amenityId') }}</small>
         </label>
 
         <label>
-          <span>Date</span>
+          <span>Date <span class="required-marker">*</span></span>
           <DatePicker
             v-model="dateValue"
             :min-date="minBookingDate"
@@ -385,11 +500,13 @@ const submit = async () => {
             show-icon
             fluid
             :manual-input="false"
+            :invalid="Boolean(fieldError('date'))"
           />
+          <small v-if="fieldError('date')" class="field-error">{{ fieldError('date') }}</small>
         </label>
 
         <label>
-          <span>Start time</span>
+          <span>Start time <span class="required-marker">*</span></span>
           <Select
             v-model="form.startTime"
             :options="startTimeOptions"
@@ -398,11 +515,13 @@ const submit = async () => {
             :placeholder="startTimePlaceholder"
             :disabled="!startTimeOptions.length"
             fluid
+            :invalid="Boolean(fieldError('startTime'))"
           />
+          <small v-if="fieldError('startTime')" class="field-error">{{ fieldError('startTime') }}</small>
         </label>
 
         <label>
-          <span>End time</span>
+          <span>End time <span class="required-marker">*</span></span>
           <Select
             v-model="form.endTime"
             :options="endTimeOptions"
@@ -411,7 +530,9 @@ const submit = async () => {
             :placeholder="endTimePlaceholder"
             :disabled="!form.startTime || !endTimeOptions.length"
             fluid
+            :invalid="Boolean(fieldError('endTime'))"
           />
+          <small v-if="fieldError('endTime')" class="field-error">{{ fieldError('endTime') }}</small>
         </label>
 
         <label>
@@ -420,8 +541,15 @@ const submit = async () => {
         </label>
 
         <label class="admin-form-grid__full">
-          <span>Purpose</span>
-          <Textarea v-model="form.purpose" rows="3" auto-resize placeholder="Family function, meeting, celebration..." />
+          <span>Purpose <span class="required-marker">*</span></span>
+          <Textarea
+            v-model="form.purpose"
+            rows="3"
+            auto-resize
+            placeholder="Family function, meeting, celebration..."
+            :invalid="Boolean(fieldError('purpose'))"
+          />
+          <small v-if="fieldError('purpose')" class="field-error">{{ fieldError('purpose') }}</small>
         </label>
 
         <label class="admin-form-grid__full">
@@ -474,12 +602,13 @@ const submit = async () => {
       </section>
 
       <label class="booking-agreement">
-        <Checkbox v-model="form.rulesAccepted" binary />
+        <Checkbox v-model="form.rulesAccepted" binary :invalid="Boolean(fieldError('rulesAccepted'))" />
         <span>I agree to follow the society amenity rules and approved booking time.</span>
       </label>
+      <small v-if="fieldError('rulesAccepted')" class="field-error">{{ fieldError('rulesAccepted') }}</small>
 
       <div class="admin-inline-actions booking-actions">
-        <Button label="Submit request" icon="pi pi-send" :disabled="!canSubmit" :loading="saving" @click="submit" />
+        <Button label="Submit request" icon="pi pi-send" :loading="saving" @click="submit" />
         <Button label="Cancel" icon="pi pi-times" severity="secondary" outlined @click="router.push('/my/amenity-bookings')" />
       </div>
     </section>
@@ -541,6 +670,16 @@ const submit = async () => {
 .booking-agreement {
   justify-content: flex-start;
   margin-top: 1.25rem;
+}
+
+.required-marker,
+.field-error {
+  color: var(--red-500);
+}
+
+.field-error {
+  display: block;
+  margin-top: 0.35rem;
 }
 
 .booking-actions {
