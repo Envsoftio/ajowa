@@ -46,7 +46,7 @@ watch(
           <slot />
         </main>
         <footer v-if="!isCompactPublicShell" class="app-footer">
-          <span>
+          <span class="app-footer__content">
             Developed by
             <a
               class="app-footer__link"
@@ -56,6 +56,29 @@ watch(
             >
               Envsoft Solutions LLP
             </a>
+              and 
+            <a
+              class="app-footer__link"
+              href="https://proctorplus.io"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+             Proctor+
+            </a>
+            <!-- <template v-if="shell === 'public'">
+              <span class="app-footer__separator">|</span>
+              <NuxtLink class="app-footer__link" to="/policy">
+                Policy
+              </NuxtLink>
+              <span class="app-footer__separator">|</span>
+              <NuxtLink class="app-footer__link" to="/refund-policy">
+                Refund Policy
+              </NuxtLink>
+              <span class="app-footer__separator">|</span>
+              <NuxtLink class="app-footer__link" to="/terms-and-conditions">
+                Terms &amp; Conditions
+              </NuxtLink>
+            </template> -->
           </span>
         </footer>
       </div>

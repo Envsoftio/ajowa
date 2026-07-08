@@ -56,6 +56,30 @@ const roleCards = [
 ]
 
 const landingHeroImage = 'url("/images/landing-hero.jpg")'
+
+const trustLinks = [
+  {
+    icon: 'pi pi-shield',
+    title: 'Society policy',
+    body: 'Read the AJOWA conduct, access, maintenance, amenity, and tenancy rules in a web-friendly format.',
+    href: '/policy',
+    label: 'Open policy',
+  },
+  {
+    icon: 'pi pi-wallet',
+    title: 'Refund policy',
+    body: 'See how duplicate payments, deposits, amenity cancellations, and ledger adjustments are handled.',
+    href: '/refund-policy',
+    label: 'Open refund policy',
+  },
+  {
+    icon: 'pi pi-file-edit',
+    title: 'Terms and conditions',
+    body: 'Review the main usage terms for the portal, payments, approvals, and community workflows.',
+    href: '/terms-and-conditions',
+    label: 'Open terms',
+  },
+]
 </script>
 
 <template>
@@ -130,6 +154,40 @@ const landingHeroImage = 'url("/images/landing-hero.jpg")'
         <h2>{{ card.title }}</h2>
         <p>{{ card.body }}</p>
       </article>
+    </section>
+
+    <section class="landing-legal-block" aria-label="Policies and terms">
+      <div class="surface-card landing-legal-intro">
+        <span class="public-role-card__icon">
+          <i class="pi pi-file-edit" aria-hidden="true" />
+        </span>
+        <h2>Policies, Refunds, and Terms</h2>
+        <p>
+          Review the society policy, refund rules, and portal terms before you sign in.
+        </p>
+      </div>
+
+      <div class="surface-grid public-role-grid">
+        <article
+          v-for="item in trustLinks"
+          :key="item.title"
+          class="surface-card public-role-card"
+        >
+          <span class="public-role-card__icon">
+            <i :class="item.icon" aria-hidden="true" />
+          </span>
+          <h2>{{ item.title }}</h2>
+          <p>{{ item.body }}</p>
+          <Button
+            as="a"
+            :href="item.href"
+            :label="item.label"
+            icon="pi pi-arrow-right"
+            severity="secondary"
+            outlined
+          />
+        </article>
+      </div>
     </section>
   </div>
 </template>

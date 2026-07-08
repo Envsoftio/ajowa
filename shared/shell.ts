@@ -39,6 +39,15 @@ export const shellNavigation: Record<AppShellType, AppNavGroup[]> = {
         { label: 'Login', to: '/login', icon: 'pi pi-sign-in' },
       ],
     },
+    {
+      label: 'Legal',
+      icon: 'pi pi-file-edit',
+      items: [
+        { label: 'Policy', to: '/policy', icon: 'pi pi-shield' },
+        { label: 'Refund Policy', to: '/refund-policy', icon: 'pi pi-wallet' },
+        { label: 'Terms & Conditions', to: '/terms-and-conditions', icon: 'pi pi-file-edit' },
+      ],
+    },
   ],
   resident: [
     {
@@ -73,6 +82,15 @@ export const shellNavigation: Record<AppShellType, AppNavGroup[]> = {
         { label: 'Notification Settings', to: '/my/settings/notifications', icon: 'pi pi-sliders-h' },
         { label: 'Verify Email', to: '/verify-email', icon: 'pi pi-envelope' },
         { label: 'Password Change', to: '/change-password', icon: 'pi pi-key' },
+      ],
+    },
+    {
+      label: 'Legal',
+      icon: 'pi pi-file-edit',
+      items: [
+        { label: 'Policy', to: '/policy', icon: 'pi pi-shield' },
+        { label: 'Refund Policy', to: '/refund-policy', icon: 'pi pi-wallet' },
+        { label: 'Terms & Conditions', to: '/terms-and-conditions', icon: 'pi pi-file-edit' },
       ],
     },
   ],
@@ -151,6 +169,15 @@ export const shellNavigation: Record<AppShellType, AppNavGroup[]> = {
         { label: 'Gate Log', to: '/admin/gate-log', icon: 'pi pi-qrcode' },
         { label: 'Audit Log', to: '/admin/audit', icon: 'pi pi-history' },
         { label: 'Password Change', to: '/change-password', icon: 'pi pi-key' },
+      ],
+    },
+    {
+      label: 'Legal',
+      icon: 'pi pi-file-edit',
+      items: [
+        { label: 'Policy', to: '/policy', icon: 'pi pi-shield' },
+        { label: 'Refund Policy', to: '/refund-policy', icon: 'pi pi-wallet' },
+        { label: 'Terms & Conditions', to: '/terms-and-conditions', icon: 'pi pi-file-edit' },
       ],
     },
   ],
