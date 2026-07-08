@@ -171,6 +171,87 @@ export const refundPolicyDocument: LegalDocument = {
   ],
 }
 
+export const privacyPolicyDocument: LegalDocument = {
+  eyebrow: 'AJOWA Privacy Policy',
+  title: 'Privacy Policy',
+  intro:
+    'This Privacy Policy explains how AJOWA collects, uses, stores, and protects personal information while operating the society portal, resident services, billing workflows, access controls, notifications, and related administrative tools.',
+  sections: [
+    {
+      title: '1. Information We Collect',
+      bullets: [
+        'Account and identity information such as full name, email address, mobile number, WhatsApp number, login identity, role, and email verification status.',
+        'Resident and occupancy information such as society, block, flat mapping, relationship type, billing contact status, lease or occupancy details, and department assignments where applicable.',
+        'Compliance and resident-record information such as KYC records, police verification status, rent-agreement related details, visitor or worker registration details, and other records required by AJOWA policies.',
+        'Payment and billing information such as dues, receipts, payer details, payment references, payment proofs, bank or transfer references, allocation records, and billing history.',
+        'Support and community records such as notices, notifications, service requests, comments, amenity bookings, resident notes, and uploaded attachments.',
+        'Access and security information such as QR access status, QR scans, gate verification activity, device or gate identifiers supplied during verification, and access overrides.',
+        'Document and file uploads such as resident documents, payment proofs, receipts, QR images, finance attachments, ticket attachments, notice attachments, and report exports.',
+      ],
+    },
+    {
+      title: '2. How We Use Information',
+      bullets: [
+        'To create and manage user accounts, authenticate users, verify email addresses, and control role-based access to resident, admin, service, and guard workflows.',
+        'To operate society billing, dues, receipts, payment allocation, reconciliation, advance handling, and proof or receipt generation.',
+        'To manage resident services such as amenity bookings, service requests, notices, notifications, and resident communication.',
+        'To support visitor and access-control workflows, including QR generation, gate verification, billing-linked access checks, and security monitoring.',
+        'To store and retrieve documents and attachments required for society administration, compliance, finance, and resident support.',
+        'To send in-app, email, push, and WhatsApp notifications based on user preferences, event settings, and society operations.',
+        'To maintain auditability, troubleshoot issues, enforce policies, and protect the safety, integrity, and proper functioning of the AJOWA platform and society processes.',
+      ],
+    },
+    {
+      title: '3. Notifications and Communications',
+      bullets: [
+        'AJOWA may send operational messages related to billing, payments, receipts, QR access, service requests, notices, emergency alerts, onboarding, and amenity activity.',
+        'Notification delivery may use one or more channels such as in-app alerts, email, browser push notifications, or WhatsApp, depending on system settings and user preferences.',
+        'Push notifications require browser permission and device subscription details. WhatsApp and email notifications use the contact details stored for the user.',
+      ],
+    },
+    {
+      title: '4. Payments and Financial Records',
+      bullets: [
+        'Payment-related records may include payer identity, flat reference, amount, mode, receipt number, payment date, transfer or cheque references, notes, allocations, and uploaded proof documents.',
+        'Online and recorded payment workflows may also involve third-party payment processing or settlement infrastructure configured by AJOWA, such as payment gateway and banking integrations.',
+        'AJOWA uses payment information to confirm, reconcile, allocate, audit, and evidence society collections and related actions.',
+      ],
+    },
+    {
+      title: '5. File Storage and Documents',
+      bullets: [
+        'The platform stores certain uploaded files in protected storage areas used for resident documents, payment proofs, receipts, QR images, finance attachments, ticket attachments, notice attachments, and report exports.',
+        'Files may be associated with the user or record that uploaded them and may include metadata such as file name, mime type, size, checksum, upload status, upload time, and related record reference.',
+        'Access to stored files is intended to follow role-based permissions and record-level workflows within the AJOWA system.',
+      ],
+    },
+    {
+      title: '6. Data Sharing',
+      bullets: [
+        'AJOWA may share information internally with authorized admins, managers, service staff, guards, or resident-linked users where needed to operate society workflows and permissions.',
+        'Information may also be processed through service providers or infrastructure used for email, push messaging, WhatsApp delivery, storage, authentication, database hosting, PDF generation, or payment processing.',
+        'AJOWA may disclose information where required for legal compliance, safety, fraud prevention, dispute handling, society administration, or policy enforcement.',
+      ],
+    },
+    {
+      title: '7. Data Retention and Security',
+      bullets: [
+        'AJOWA retains information for as long as reasonably necessary for society administration, resident services, auditability, accounting, dispute handling, policy enforcement, and legal or operational requirements.',
+        'The platform uses authenticated access controls, role-based authorization, signed or controlled document access flows, and managed storage and database systems to reduce unauthorized access risk.',
+        'No system can guarantee absolute security, and users remain responsible for safeguarding their credentials, devices, and approved account access.',
+      ],
+    },
+    {
+      title: '8. User Responsibilities and Updates',
+      bullets: [
+        'Users should provide accurate and current contact, occupancy, and compliance information and should promptly update AJOWA when details change.',
+        'Users should not upload false, unlawful, or unauthorized content and should only submit documents relevant to valid society workflows.',
+        'AJOWA may update this Privacy Policy from time to time to reflect operational, legal, or platform changes. Continued use of the portal after updates constitutes acceptance of the revised policy.',
+      ],
+    },
+  ],
+}
+
 export const termsDocument: LegalDocument = {
   eyebrow: 'AJOWA Terms and Conditions',
   title: 'Terms and Conditions',

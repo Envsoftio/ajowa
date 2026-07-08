@@ -66,6 +66,13 @@ const trustLinks = [
     label: 'Open policy',
   },
   {
+    icon: 'pi pi-lock',
+    title: 'Privacy policy',
+    body: 'See what resident, access, payment, document, and notification data the AJOWA portal handles.',
+    href: '/privacy-policy',
+    label: 'Open privacy policy',
+  },
+  {
     icon: 'pi pi-wallet',
     title: 'Refund policy',
     body: 'See how duplicate payments, deposits, amenity cancellations, and ledger adjustments are handled.',

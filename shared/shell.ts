@@ -44,6 +44,7 @@ export const shellNavigation: Record<AppShellType, AppNavGroup[]> = {
       icon: 'pi pi-file-edit',
       items: [
         { label: 'Policy', to: '/policy', icon: 'pi pi-shield' },
+        { label: 'Privacy Policy', to: '/privacy-policy', icon: 'pi pi-lock' },
         { label: 'Refund Policy', to: '/refund-policy', icon: 'pi pi-wallet' },
         { label: 'Terms & Conditions', to: '/terms-and-conditions', icon: 'pi pi-file-edit' },
       ],
@@ -89,6 +90,7 @@ export const shellNavigation: Record<AppShellType, AppNavGroup[]> = {
       icon: 'pi pi-file-edit',
       items: [
         { label: 'Policy', to: '/policy', icon: 'pi pi-shield' },
+        { label: 'Privacy Policy', to: '/privacy-policy', icon: 'pi pi-lock' },
         { label: 'Refund Policy', to: '/refund-policy', icon: 'pi pi-wallet' },
         { label: 'Terms & Conditions', to: '/terms-and-conditions', icon: 'pi pi-file-edit' },
       ],
@@ -176,6 +178,7 @@ export const shellNavigation: Record<AppShellType, AppNavGroup[]> = {
       icon: 'pi pi-file-edit',
       items: [
         { label: 'Policy', to: '/policy', icon: 'pi pi-shield' },
+        { label: 'Privacy Policy', to: '/privacy-policy', icon: 'pi pi-lock' },
         { label: 'Refund Policy', to: '/refund-policy', icon: 'pi pi-wallet' },
         { label: 'Terms & Conditions', to: '/terms-and-conditions', icon: 'pi pi-file-edit' },
       ],
