@@ -1,10 +1,17 @@
+import * as XLSX from 'xlsx/xlsx.mjs'
 import { createPaginatedSuccess } from '~/server/utils/api'
 import { requireRole } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
-import { normalizeSocietySettings, parseListQuery } from '~/server/utils/master-data'
+import {
+  getQuerySafe,
+  normalizeSocietySettings,
+  parseListQuery,
+} from '~/server/utils/master-data'
 import { computeDueAmounts, todayDate } from '~/server/utils/billing'
 import { camAdvanceCoverageLateralSql } from '~/server/utils/cam-advance'
-import type { MaintenanceDue } from '~/types/domain'
+import { setEventHeader } from '~/server/utils/http-event'
+import type { ListQueryParams } from '~/types/api'
+import type { MaintenanceDue, SocietyPolicySettings } from '~/types/domain'
 
 type DueRow = {
   row_kind: 'DUE' | 'CAM_ADVANCE_COVERAGE'
@@ -51,6 +58,8 @@ const sortColumns: Record<string, string> = {
   balanceAmount: 'c.balance_amount::numeric',
   status: 'c.status',
 }
+
+const dueExcelExportLimit = 10000
 
 const combinedDuesSql = `
   with combined as (
@@ -181,13 +190,30 @@ const combinedDuesSql = `
   )
 `
 
-export default defineEventHandler(async (event) => {
-  const authMe = await requireRole(event, ['ADMIN', 'MANAGER'])
-  const query = parseListQuery(event)
-  const pool = getDatabasePool()
-  const today = todayDate()
+const firstQueryValue = (value: unknown) => {
+  const first = Array.isArray(value) ? value[0] : value
+  return typeof first === 'string' ? first.trim() : ''
+}
+
+const isExcelExportRequest = (rawQuery: Record<string, unknown>) => {
+  const format = (
+    firstQueryValue(rawQuery.export) ||
+    firstQueryValue(rawQuery.format)
+  ).toLowerCase()
+
+  return format === 'xlsx' || format === 'excel'
+}
+
+const buildDueExportFileName = () =>
+  `maintenance-dues-${new Date().toISOString().slice(0, 10)}.xlsx`
+
+const buildDueWhere = (
+  societyId: string,
+  query: ListQueryParams,
+  today: string,
+) => {
   const where: string[] = []
-  const values: unknown[] = [authMe.user.societyId]
+  const values: unknown[] = [societyId]
 
   if (query.search) {
     values.push(`%${query.search}%`)
@@ -245,45 +271,26 @@ export default defineEventHandler(async (event) => {
   }
 
   const whereSql = where.length ? `where ${where.join(' and ')}` : ''
+
+  return { whereSql, values }
+}
+
+const buildDueOrderSql = (query: ListQueryParams) => {
   const sortBy = query.sortBy ?? 'flatNumber'
   const orderBy = sortColumns[sortBy] ?? flatNumberSortExpression
   const direction = query.sortDirection === 'desc' ? 'desc' : 'asc'
-  const orderSql = sortBy === 'flatNumber'
+
+  return sortBy === 'flatNumber'
     ? `c.block_sort_order ${direction}, ${flatNumberSortExpression} ${direction}, c.flat_number ${direction}`
     : `${orderBy} ${direction}, c.block_sort_order asc, ${flatNumberSortExpression} asc, c.flat_number asc`
+}
 
-  const settingsResult = await pool.query<{ settings: Record<string, unknown> }>(
-    `select settings from society_profile where id = $1 limit 1`,
-    [authMe.user.societyId],
-  )
-  const settings = normalizeSocietySettings(settingsResult.rows[0]?.settings)
-
-  const dataValues = [...values, query.pageSize, (query.page - 1) * query.pageSize]
-  const [dataResult, countResult] = await Promise.all([
-    pool.query<DueRow>(
-      `
-        ${combinedDuesSql}
-        select *
-        from combined c
-        ${whereSql}
-        order by ${orderSql}
-        limit $${dataValues.length - 1}
-        offset $${dataValues.length}
-      `,
-      dataValues,
-    ),
-    pool.query<{ count: string }>(
-      `
-        ${combinedDuesSql}
-        select count(*)::text as count
-        from combined c
-        ${whereSql}
-      `,
-      values,
-    ),
-  ])
-
-  const items: MaintenanceDue[] = dataResult.rows.map((row) => {
+const mapDueRows = (
+  rows: DueRow[],
+  settings: SocietyPolicySettings,
+  today: string,
+): MaintenanceDue[] =>
+  rows.map((row) => {
     const isCoverageRow = row.is_cam_advance_covered
     const baseAmount = Number(row.base_amount)
     const waivedAmount = Number(row.waived_amount)
@@ -329,7 +336,9 @@ export default defineEventHandler(async (event) => {
       totalAmount: computed.totalAmount,
       balanceAmount: computed.balanceAmount,
       status: computed.status,
-      chargeBreakdown: Array.isArray(row.charge_breakdown) ? row.charge_breakdown : [],
+      chargeBreakdown: Array.isArray(row.charge_breakdown)
+        ? row.charge_breakdown as MaintenanceDue['chargeBreakdown']
+        : [],
       generatedAt: row.generated_at,
       primaryResidentName: row.primary_resident_name,
       isCamAdvanceCovered: isCoverageRow,
@@ -341,6 +350,244 @@ export default defineEventHandler(async (event) => {
       updatedAt: row.updated_at,
     }
   })
+
+const billTypeLabel = (value: MaintenanceDue['billingPeriodChargeType']) => {
+  if (value === 'CAM') return 'CAM'
+  if (value === 'DG_SET') return 'DG Set'
+  return 'General'
+}
+
+const filterValue = (query: ListQueryParams, key: string) =>
+  query.filters[key]?.[0] ?? ''
+
+const filterDescription = (query: ListQueryParams) => {
+  const parts = [
+    query.search && `Search: ${query.search}`,
+    filterValue(query, 'billingPeriodId') &&
+      `Billing period ID: ${filterValue(query, 'billingPeriodId')}`,
+    filterValue(query, 'chargeType') &&
+      `Bill type: ${billTypeLabel(filterValue(query, 'chargeType') as MaintenanceDue['billingPeriodChargeType'])}`,
+    filterValue(query, 'status') && `Status: ${filterValue(query, 'status')}`,
+    filterValue(query, 'balance') === 'outstanding' && 'Balance: Outstanding',
+    filterValue(query, 'balance') === 'paid' && 'Balance: Paid off',
+    filterValue(query, 'overdue') === 'true' && 'Overdue only',
+    filterValue(query, 'advance') === 'covered' && 'Advance: Covered',
+    filterValue(query, 'advance') === 'billable' && 'Advance: Billable',
+  ].filter(Boolean)
+
+  return parts.length ? parts.join(' | ') : 'All dues'
+}
+
+const camAdvanceAdjustmentAmount = (due: MaintenanceDue) =>
+  due.chargeBreakdown.reduce((sum, item) => {
+    const adjustment = Number(item.camAdvanceAdjustmentAmount ?? 0)
+    return Number.isFinite(adjustment) && adjustment > 0
+      ? sum + adjustment
+      : sum
+  }, 0)
+
+const advanceStatusLabel = (due: MaintenanceDue) => {
+  if (due.isAdvanceCoverageRow) return 'Coverage marker'
+  if (due.isCamAdvanceCovered) return 'Covered'
+  if (camAdvanceAdjustmentAmount(due) > 0) return 'Advance deducted'
+  if (due.billingPeriodChargeType === 'CAM') return 'Billable'
+  return 'Not CAM'
+}
+
+const chargeBreakdownText = (due: MaintenanceDue) =>
+  due.chargeBreakdown
+    .map((item) => {
+      const amount = Number(item.amount)
+      const adjustment = Number(item.camAdvanceAdjustmentAmount ?? 0)
+      const parts = [
+        item.label,
+        Number.isFinite(amount) ? amount : null,
+        Number.isFinite(adjustment) && adjustment > 0
+          ? `advance deducted ${adjustment}`
+          : null,
+      ].filter((part) => part !== null && part !== '')
+
+      return parts.join(' - ')
+    })
+    .join('; ')
+
+const mapDueWorkbookRow = (due: MaintenanceDue) => ({
+  'Due ID': due.isAdvanceCoverageRow ? '' : due.id,
+  'Row type': due.isAdvanceCoverageRow ? 'CAM advance coverage marker' : 'Due',
+  Block: due.blockName,
+  Flat: due.flatNumber,
+  'Unit type': due.unitType,
+  'Billing contact': due.primaryResidentName ?? '',
+  Period: due.billingPeriodLabel,
+  'Bill type': billTypeLabel(due.billingPeriodChargeType),
+  'Period start': due.billingPeriodStartDate ?? '',
+  'Period end': due.billingPeriodEndDate ?? '',
+  'Due date': due.dueDate,
+  'Base amount': due.baseAmount,
+  'Late fee': due.lateFeeAmount,
+  'Waived amount': due.waivedAmount,
+  'Paid amount': due.paidAmount,
+  'Total amount': due.totalAmount,
+  'Balance amount': due.balanceAmount,
+  Status: due.status,
+  'Advance status': advanceStatusLabel(due),
+  'CAM advance adjustment': camAdvanceAdjustmentAmount(due),
+  'Covered from': due.camAdvanceCoveredFrom ?? '',
+  'Covered until': due.camAdvancePaidUntil ?? '',
+  'Generated at': due.generatedAt,
+  'Charge breakdown': chargeBreakdownText(due),
+})
+
+const buildDueWorkbook = (
+  items: MaintenanceDue[],
+  total: number,
+  query: ListQueryParams,
+) => {
+  const workbook = XLSX.utils.book_new()
+  const worksheet = XLSX.utils.json_to_sheet(
+    items.length
+      ? items.map(mapDueWorkbookRow)
+      : [{ Note: 'No dues found for the selected filters.' }],
+  )
+  worksheet['!cols'] = [
+    { wch: 38 },
+    { wch: 28 },
+    { wch: 14 },
+    { wch: 12 },
+    { wch: 14 },
+    { wch: 26 },
+    { wch: 24 },
+    { wch: 12 },
+    { wch: 12 },
+    { wch: 12 },
+    { wch: 12 },
+    { wch: 14 },
+    { wch: 12 },
+    { wch: 14 },
+    { wch: 12 },
+    { wch: 14 },
+    { wch: 16 },
+    { wch: 16 },
+    { wch: 20 },
+    { wch: 22 },
+    { wch: 12 },
+    { wch: 12 },
+    { wch: 22 },
+    { wch: 60 },
+  ]
+
+  const billRows = items.filter((item) => !item.isAdvanceCoverageRow)
+  const totalDue = billRows.reduce((sum, item) => sum + item.totalAmount, 0)
+  const totalPaid = billRows.reduce((sum, item) => sum + item.paidAmount, 0)
+  const totalBalance = billRows.reduce((sum, item) => sum + item.balanceAmount, 0)
+  const summarySheet = XLSX.utils.json_to_sheet([
+    { Metric: 'Report', Value: 'Maintenance bills' },
+    { Metric: 'Filters', Value: filterDescription(query) },
+    { Metric: 'Generated at', Value: new Date().toISOString() },
+    { Metric: 'Matching rows', Value: total },
+    { Metric: 'Exported rows', Value: items.length },
+    { Metric: 'Export limit', Value: dueExcelExportLimit },
+    {
+      Metric: 'Export note',
+      Value: total > items.length
+        ? `Exported first ${items.length} of ${total} matching rows. Narrow filters to export a smaller set.`
+        : 'All matching rows exported.',
+    },
+    { Metric: 'Exported total due', Value: totalDue },
+    { Metric: 'Exported total paid', Value: totalPaid },
+    { Metric: 'Exported total balance', Value: totalBalance },
+    {
+      Metric: 'Exported overdue rows',
+      Value: billRows.filter((item) => item.status === 'OVERDUE').length,
+    },
+    {
+      Metric: 'Exported CAM advance rows',
+      Value: items.filter((item) => item.isCamAdvanceCovered).length,
+    },
+  ])
+
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Dues')
+  XLSX.utils.book_append_sheet(workbook, summarySheet, 'Summary')
+
+  return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer
+}
+
+export default defineEventHandler(async (event) => {
+  const authMe = await requireRole(event, ['ADMIN', 'MANAGER'])
+  const rawQuery = getQuerySafe(event)
+  const query = parseListQuery(event)
+  const pool = getDatabasePool()
+  const today = todayDate()
+  const { whereSql, values } = buildDueWhere(authMe.user.societyId, query, today)
+  const orderSql = buildDueOrderSql(query)
+  const settingsPromise = pool.query<{ settings: Record<string, unknown> }>(
+    `select settings from society_profile where id = $1 limit 1`,
+    [authMe.user.societyId],
+  )
+  const countPromise = pool.query<{ count: string }>(
+    `
+      ${combinedDuesSql}
+      select count(*)::text as count
+      from combined c
+      ${whereSql}
+    `,
+    values,
+  )
+
+  if (isExcelExportRequest(rawQuery)) {
+    const exportValues = [...values, dueExcelExportLimit]
+    const [dataResult, countResult, settingsResult] = await Promise.all([
+      pool.query<DueRow>(
+        `
+          ${combinedDuesSql}
+          select *
+          from combined c
+          ${whereSql}
+          order by ${orderSql}
+          limit $${exportValues.length}
+        `,
+        exportValues,
+      ),
+      countPromise,
+      settingsPromise,
+    ])
+    const settings = normalizeSocietySettings(settingsResult.rows[0]?.settings)
+    const items = mapDueRows(dataResult.rows, settings, today)
+    const total = Number(countResult.rows[0]?.count ?? 0)
+
+    setEventHeader(
+      event,
+      'content-type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
+    setEventHeader(
+      event,
+      'content-disposition',
+      `attachment; filename="${buildDueExportFileName()}"`,
+    )
+
+    return buildDueWorkbook(items, total, query)
+  }
+
+  const dataValues = [...values, query.pageSize, (query.page - 1) * query.pageSize]
+  const [dataResult, countResult, settingsResult] = await Promise.all([
+    pool.query<DueRow>(
+      `
+        ${combinedDuesSql}
+        select *
+        from combined c
+        ${whereSql}
+        order by ${orderSql}
+        limit $${dataValues.length - 1}
+        offset $${dataValues.length}
+      `,
+      dataValues,
+    ),
+    countPromise,
+    settingsPromise,
+  ])
+  const settings = normalizeSocietySettings(settingsResult.rows[0]?.settings)
+  const items = mapDueRows(dataResult.rows, settings, today)
 
   return createPaginatedSuccess(event, items, Number(countResult.rows[0]?.count ?? 0), query)
 })

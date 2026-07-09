@@ -132,6 +132,31 @@ const buildDueQuery = (overrides: Partial<typeof query> = {}) => ({
   sortDirection: overrides.sortDirection ?? query.sortDirection,
 })
 
+const buildDueExportQuery = (): Record<string, string | undefined> => ({
+  search: query.search || undefined,
+  billingPeriodId: query.billingPeriodId || undefined,
+  chargeType: query.chargeType || undefined,
+  status: query.status || undefined,
+  balance: query.balance || undefined,
+  overdue: query.overdue || undefined,
+  advance: query.advance || undefined,
+  sortBy: query.sortBy,
+  sortDirection: query.sortDirection,
+  export: 'xlsx',
+})
+
+const duesExcelExportUrl = computed(() => {
+  const params = new URLSearchParams()
+
+  Object.entries(buildDueExportQuery()).forEach(([key, value]) => {
+    if (value) {
+      params.set(key, value)
+    }
+  })
+
+  return `/api/admin/billing/dues?${params.toString()}`
+})
+
 const buildDueFilters = (): DueFilterPayload => {
   const filters: DueFilterPayload = {}
 
@@ -1096,6 +1121,17 @@ watch(
             severity="secondary"
             outlined
             @click="() => refresh()"
+          />
+          <Button
+            as="a"
+            :href="duesExcelExportUrl"
+            label="Excel"
+            icon="pi pi-file-excel"
+            severity="secondary"
+            outlined
+            target="_blank"
+            rel="noopener"
+            title="Export dues matching the current filters."
           />
           <Button
             :label="
