@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { withDownloadQuery } from '~/shared/document-links'
 import type { ServiceRequestAttachment } from '~/types/domain'
 
 const FIVE_MEGABYTES = 5 * 1024 * 1024
@@ -25,6 +26,15 @@ const emit = defineEmits<{
 
 const toast = useToast()
 const fileInput = ref<HTMLInputElement | null>(null)
+const previewAttachment = ref<ServiceRequestAttachment | null>(null)
+const previewVisible = computed({
+  get: () => Boolean(previewAttachment.value),
+  set: (visible: boolean) => {
+    if (!visible) {
+      previewAttachment.value = null
+    }
+  },
+})
 const accept = '.pdf,.zip,.xls,.xlsx,.jpg,.jpeg,.png,.webp'
 const uploadHelpText = 'Allowed: PDF, ZIP, XLS, XLSX, JPG, PNG, WebP. Max 5 MB each.'
 
@@ -35,6 +45,22 @@ const pickFile = () => {
 const isAllowedFile = (file: File) => {
   const extension = file.name.includes('.') ? file.name.split('.').pop()?.trim().toLowerCase() ?? '' : ''
   return allowedMimeTypes.has(file.type) || allowedExtensions.has(extension)
+}
+
+const fileExtension = (fileName: string) =>
+  fileName.includes('.') ? fileName.split('.').pop()?.trim().toLowerCase() ?? '' : ''
+
+const isImageAttachment = (attachment: ServiceRequestAttachment) =>
+  attachment.mimeType.startsWith('image/') ||
+  ['jpg', 'jpeg', 'png', 'webp'].includes(fileExtension(attachment.fileName))
+
+const downloadHref = (attachment: ServiceRequestAttachment) =>
+  attachment.downloadUrl ? withDownloadQuery(attachment.downloadUrl) : ''
+
+const openPreview = (attachment: ServiceRequestAttachment) => {
+  if (isImageAttachment(attachment) && attachment.downloadUrl) {
+    previewAttachment.value = attachment
+  }
 }
 
 const onFileChange = (event: Event) => {
@@ -115,23 +141,46 @@ const onFileChange = (event: Event) => {
     </p>
 
     <article v-for="attachment in attachments" :key="attachment.id" class="ticket-attachment-gallery__item">
-      <i class="pi pi-paperclip" />
+      <button
+        v-if="isImageAttachment(attachment) && attachment.downloadUrl"
+        type="button"
+        class="ticket-attachment-gallery__thumb"
+        :aria-label="`View ${attachment.fileName}`"
+        :title="`View ${attachment.fileName}`"
+        @click="openPreview(attachment)"
+      >
+        <img :src="attachment.downloadUrl" :alt="attachment.fileName" loading="lazy">
+      </button>
+      <i v-else class="pi pi-paperclip ticket-attachment-gallery__icon" />
       <div>
         <strong>{{ attachment.fileName }}</strong>
         <p>{{ attachment.mimeType }} · {{ Math.ceil(attachment.sizeBytes / 1024) }} KB</p>
       </div>
-      <Button
-        v-if="attachment.downloadUrl"
-        as="a"
-        :href="attachment.downloadUrl"
-        target="_blank"
-        icon="pi pi-download"
-        severity="secondary"
-        text
-        rounded
-        aria-label="Download attachment"
-        title="Download attachment"
-      />
+      <div class="ticket-attachment-gallery__actions">
+        <Button
+          v-if="isImageAttachment(attachment) && attachment.downloadUrl"
+          type="button"
+          icon="pi pi-eye"
+          severity="secondary"
+          text
+          rounded
+          aria-label="View attachment"
+          title="View attachment"
+          @click="openPreview(attachment)"
+        />
+        <Button
+          v-if="attachment.downloadUrl"
+          as="a"
+          :href="downloadHref(attachment)"
+          :download="attachment.fileName"
+          icon="pi pi-download"
+          severity="secondary"
+          text
+          rounded
+          aria-label="Download attachment"
+          title="Download attachment"
+        />
+      </div>
     </article>
     <AppState
       v-if="attachments.length === 0"
@@ -139,6 +188,42 @@ const onFileChange = (event: Event) => {
       title="No attachments"
       message="Evidence and completion proof metadata will appear here."
     />
+    <Dialog
+      v-model:visible="previewVisible"
+      modal
+      :header="previewAttachment?.fileName || 'Attachment'"
+      :style="{ width: 'min(920px, 96vw)' }"
+      content-class="ticket-attachment-gallery__preview-content"
+    >
+      <div v-if="previewAttachment" class="ticket-attachment-gallery__preview">
+        <img
+          v-if="previewAttachment.downloadUrl"
+          :src="previewAttachment.downloadUrl"
+          :alt="previewAttachment.fileName"
+        >
+        <div class="ticket-attachment-gallery__preview-actions">
+          <Button
+            v-if="previewAttachment.downloadUrl"
+            as="a"
+            :href="downloadHref(previewAttachment)"
+            :download="previewAttachment.fileName"
+            label="Download"
+            icon="pi pi-download"
+            severity="secondary"
+            outlined
+          />
+          <Button
+            v-if="previewAttachment.downloadUrl"
+            as="a"
+            :href="previewAttachment.downloadUrl"
+            target="_blank"
+            rel="noopener noreferrer"
+            label="Open"
+            icon="pi pi-external-link"
+          />
+        </div>
+      </div>
+    </Dialog>
   </section>
 </template>
 
@@ -168,13 +253,35 @@ const onFileChange = (event: Event) => {
 
 .ticket-attachment-gallery__item {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: 3rem minmax(0, 1fr) auto;
   gap: 0.6rem;
   align-items: center;
   padding: 0.65rem 0.75rem;
   border: 1px solid var(--color-border);
   background: var(--color-bg);
   border-radius: 0.8rem;
+}
+
+.ticket-attachment-gallery__icon {
+  justify-self: center;
+}
+
+.ticket-attachment-gallery__thumb {
+  width: 3rem;
+  height: 3rem;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+  cursor: pointer;
+}
+
+.ticket-attachment-gallery__thumb img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
 }
 
 .ticket-attachment-gallery__item strong {
@@ -187,5 +294,38 @@ const onFileChange = (event: Event) => {
   margin: 0.1rem 0 0;
   color: var(--color-muted);
   font-size: 0.78rem;
+}
+
+.ticket-attachment-gallery__actions,
+.ticket-attachment-gallery__preview-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.35rem;
+}
+
+.ticket-attachment-gallery__preview {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.ticket-attachment-gallery__preview img {
+  width: 100%;
+  max-height: min(70vh, 720px);
+  display: block;
+  object-fit: contain;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg);
+}
+
+@media (max-width: 560px) {
+  .ticket-attachment-gallery__item {
+    grid-template-columns: 3rem minmax(0, 1fr);
+  }
+
+  .ticket-attachment-gallery__actions {
+    grid-column: 1 / -1;
+  }
 }
 </style>

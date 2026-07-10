@@ -1,4 +1,6 @@
 import { requireRole } from '~/server/utils/auth'
+import { createFileResponse } from '~/server/utils/file-response'
+import { getEventQuery } from '~/server/utils/http-event'
 import { readUuidParam } from '~/server/utils/master-data'
 import { downloadServiceRequestAttachment } from '~/server/utils/service-requests'
 
@@ -7,10 +9,12 @@ export default defineEventHandler(async (event) => {
   const id = readUuidParam(event)
   const attachmentId = readUuidParam(event, 'attachmentId')
   const attachment = await downloadServiceRequestAttachment(authMe, id, attachmentId, 'admin')
+  const disposition = getEventQuery(event).download === '1' ? 'attachment' : 'inline'
 
-  setHeader(event, 'content-type', attachment.mimeType)
-  setHeader(event, 'cache-control', 'private, no-store')
-  setHeader(event, 'content-disposition', `inline; filename="${attachment.fileName.replace(/"/g, '')}"`)
-
-  return attachment.buffer
+  return createFileResponse({
+    buffer: attachment.buffer,
+    fileName: attachment.fileName,
+    mimeType: attachment.mimeType,
+    disposition,
+  })
 })
