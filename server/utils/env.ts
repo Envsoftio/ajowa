@@ -8,6 +8,11 @@ const whatsappIntegrationSchema = z.object({
   senderId: z.string().min(1, 'WHATSAPP_SENDER_ID is required'),
 })
 
+const whatsappWebhookSchema = z.object({
+  verifyToken: z.string().min(1, 'WHATSAPP_WEBHOOK_VERIFY_TOKEN is required'),
+  appSecret: z.string().min(1, 'WHATSAPP_APP_SECRET or META_APP_SECRET is required'),
+})
+
 const vapidKeySchema = (name: string) =>
   z
     .string()
@@ -38,6 +43,8 @@ const runtimeConfigSchema = z.object({
   whatsappApiUrl: z.string(),
   whatsappApiKey: z.string(),
   whatsappSenderId: z.string(),
+  whatsappWebhookVerifyToken: z.string(),
+  whatsappAppSecret: z.string(),
   whatsappNotificationsEnabled: z.boolean(),
   vapidPublicKey: z.string(),
   vapidPrivateKey: z.string(),
@@ -68,6 +75,10 @@ const OPTIONAL_INTEGRATION_REQUIREMENTS = {
     'WHATSAPP_API_KEY',
     'WHATSAPP_SENDER_ID',
   ],
+  whatsappWebhook: [
+    'WHATSAPP_WEBHOOK_VERIFY_TOKEN',
+    'WHATSAPP_APP_SECRET or META_APP_SECRET',
+  ],
   push: [
     'PUSH_NOTIFICATIONS_ENABLED=true',
     'VAPID_PUBLIC_KEY',
@@ -78,6 +89,7 @@ const OPTIONAL_INTEGRATION_REQUIREMENTS = {
 
 export type ValidatedRuntimeConfig = z.infer<typeof runtimeConfigSchema>
 export type WhatsAppIntegrationConfig = z.infer<typeof whatsappIntegrationSchema>
+export type WhatsAppWebhookConfig = z.infer<typeof whatsappWebhookSchema>
 export type PushIntegrationConfig = z.infer<typeof pushIntegrationSchema>
 
 export type OptionalIntegrationStatus<T> =
@@ -116,6 +128,8 @@ const readRuntimeConfig = () => {
     whatsappApiUrl: process.env.WHATSAPP_API_URL ?? '',
     whatsappApiKey: process.env.WHATSAPP_API_KEY ?? '',
     whatsappSenderId: process.env.WHATSAPP_SENDER_ID ?? '',
+    whatsappWebhookVerifyToken: process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN ?? '',
+    whatsappAppSecret: process.env.WHATSAPP_APP_SECRET ?? process.env.META_APP_SECRET ?? '',
     whatsappNotificationsEnabled: process.env.WHATSAPP_NOTIFICATIONS_ENABLED === 'true',
     vapidPublicKey: process.env.VAPID_PUBLIC_KEY ?? '',
     vapidPrivateKey: process.env.VAPID_PRIVATE_KEY ?? '',
@@ -198,6 +212,23 @@ export const getWhatsAppIntegrationStatus = (
       apiUrl: runtimeConfig.whatsappApiUrl,
       apiKey: runtimeConfig.whatsappApiKey,
       senderId: runtimeConfig.whatsappSenderId,
+    },
+  )
+}
+
+export const getWhatsAppWebhookStatus = (
+  config?: Record<string, unknown>,
+): OptionalIntegrationStatus<WhatsAppWebhookConfig> => {
+  const runtimeConfig = getValidatedRuntimeConfig(config)
+
+  return validateOptionalIntegration(
+    Boolean(runtimeConfig.whatsappWebhookVerifyToken && runtimeConfig.whatsappAppSecret),
+    'WhatsApp webhook',
+    OPTIONAL_INTEGRATION_REQUIREMENTS.whatsappWebhook,
+    whatsappWebhookSchema,
+    {
+      verifyToken: runtimeConfig.whatsappWebhookVerifyToken,
+      appSecret: runtimeConfig.whatsappAppSecret,
     },
   )
 }

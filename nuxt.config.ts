@@ -66,6 +66,8 @@ export default defineNuxtConfig({
     whatsappApiUrl: process.env.WHATSAPP_API_URL ?? '',
     whatsappApiKey: process.env.WHATSAPP_API_KEY ?? '',
     whatsappSenderId: process.env.WHATSAPP_SENDER_ID ?? '',
+    whatsappWebhookVerifyToken: process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN ?? '',
+    whatsappAppSecret: process.env.WHATSAPP_APP_SECRET ?? process.env.META_APP_SECRET ?? '',
     whatsappNotificationsEnabled: process.env.WHATSAPP_NOTIFICATIONS_ENABLED === 'true',
     vapidPublicKey: process.env.VAPID_PUBLIC_KEY ?? '',
     vapidPrivateKey: process.env.VAPID_PRIVATE_KEY ?? '',

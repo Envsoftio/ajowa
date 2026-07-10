@@ -3,5 +3,5 @@ export const architectureDecisions = {
   excelExport: 'xlsx',
   qrScanning: 'html5-qrcode',
   webPush: 'web-push',
-  whatsappProvider: 'adapter interface pending concrete provider selection',
+  whatsappProvider: 'adapter interface with Meta Cloud API support',
 } as const

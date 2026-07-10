@@ -1,6 +1,10 @@
 import { createApiSuccess } from '~/server/utils/api'
 import { requireRole } from '~/server/utils/auth'
-import { getPushIntegrationStatus, getWhatsAppIntegrationStatus } from '~/server/utils/env'
+import {
+  getPushIntegrationStatus,
+  getWhatsAppIntegrationStatus,
+  getWhatsAppWebhookStatus,
+} from '~/server/utils/env'
 import { getResolvedEmailIntegrationStatus, getResolvedEmailSettings } from '~/server/utils/email'
 import { queryRows } from '~/server/utils/database'
 
@@ -169,6 +173,7 @@ export default defineEventHandler(async (event) => {
     getResolvedEmailSettings(authMe.user.societyId),
   ])
   const whatsapp = getWhatsAppIntegrationStatus()
+  const whatsappWebhook = getWhatsAppWebhookStatus()
   const push = getPushIntegrationStatus()
 
   return createApiSuccess(event, {
@@ -176,6 +181,10 @@ export default defineEventHandler(async (event) => {
     providers: {
       email: { enabled: email.enabled, reason: email.enabled ? null : email.reason },
       whatsapp: { enabled: whatsapp.enabled, reason: whatsapp.enabled ? null : whatsapp.reason },
+      whatsappWebhook: {
+        enabled: whatsappWebhook.enabled,
+        reason: whatsappWebhook.enabled ? null : whatsappWebhook.reason,
+      },
       push: { enabled: push.enabled, reason: push.enabled ? null : push.reason },
     },
     metrics: {

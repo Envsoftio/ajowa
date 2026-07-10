@@ -4,6 +4,7 @@ import webpush from 'web-push'
 import { formatBillPayableAmount, generateMaintenanceBillPdf } from './billing'
 import { buildAppUrl, getResolvedEmailSettings, sendEmail, sendNotificationEmail } from './email'
 import { getPushIntegrationStatus, getValidatedRuntimeConfig, getWhatsAppIntegrationStatus } from './env'
+import { isMetaWhatsAppProvider, sendMetaCloudWhatsAppMessage } from './whatsapp'
 
 export type NotificationChannel = 'PUSH' | 'EMAIL' | 'WHATSAPP' | 'IN_APP'
 export type NotificationPreset =
@@ -422,6 +423,12 @@ const enabledChannelsForSetting = (setting: NotificationEventSettingRow | null) 
   })
 }
 
+const filterConfiguredChannels = (channels: NotificationChannel[]) => {
+  const whatsappEnabled = getWhatsAppIntegrationStatus().enabled
+
+  return channels.filter((channel) => channel !== 'WHATSAPP' || whatsappEnabled)
+}
+
 const getRequestedChannels = (
   explicitChannels: NotificationChannel[] | undefined,
   setting: NotificationEventSettingRow | null,
@@ -429,7 +436,7 @@ const getRequestedChannels = (
   const settingChannels = new Set(enabledChannelsForSetting(setting))
   const requested = explicitChannels?.length ? explicitChannels : notificationChannels
 
-  return requested
+  return filterConfiguredChannels(requested)
     .filter((channel) => settingChannels.has(channel))
     .filter((channel, index, channels) => channels.indexOf(channel) === index)
 }
@@ -442,7 +449,7 @@ const getUserChannels = (
   const allowed = explicitChannels?.length ? explicitChannels : presetChannels[user.preferredNotificationChannels]
   const settingChannels = new Set(enabledChannelsForSetting(setting))
 
-  return allowed
+  return filterConfiguredChannels(allowed)
     .filter((channel) => settingChannels.has(channel))
     .filter((channel) => enabledForChannel(user, channel))
     .filter((channel, index, channels) => channels.indexOf(channel) === index)
@@ -1066,6 +1073,24 @@ const sendWhatsAppMessage = async (input: {
       : input.eventKey.replaceAll('.', '_')
 
   try {
+    if (isMetaWhatsAppProvider(status.config.provider)) {
+      const response = await sendMetaCloudWhatsAppMessage({
+        config: status.config,
+        to: input.to,
+        templateName,
+        title: input.title,
+        body: input.body,
+        payload: input.payload,
+      })
+
+      return {
+        ok: true,
+        providerName: 'META_CLOUD_API',
+        providerMessageId: response.providerMessageId,
+        responseBody: response.responseBody,
+      }
+    }
+
     const response = await $fetch<Record<string, unknown>>(status.config.apiUrl, {
       method: 'POST',
       headers: {
