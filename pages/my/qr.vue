@@ -53,7 +53,7 @@ const formatDateTime = (value: string | null | undefined) =>
         <div>
           <p class="eyebrow">Gate access</p>
           <h1>My QR</h1>
-          <p>One active QR is issued for the current billing period when all linked access flats are paid or waived.</p>
+          <p>One active QR is issued when linked access flats are paid, waived, or CAM-paid for the current access duration.</p>
         </div>
         <Button label="Refresh" icon="pi pi-refresh" severity="secondary" outlined @click="() => refresh()" />
       </header>

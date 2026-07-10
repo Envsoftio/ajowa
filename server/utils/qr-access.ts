@@ -5,6 +5,10 @@ import { z } from 'zod'
 import { getDatabasePool } from './database'
 import { getValidatedRuntimeConfig } from './env'
 import { AppError } from './errors'
+import {
+  chargeBreakdownSchema,
+  getBillingPeriodMonthSegments,
+} from './billing'
 import { normalizeSocietySettings } from './master-data'
 import { enqueueNotificationForUsers } from './notifications'
 import { createStorageObjectKey, uploadPrivateFile } from './storage'
@@ -22,10 +26,17 @@ type RelatedFlatRow = {
 type DueAccessRow = {
   flat_id: string
   label: string
+  billing_period_charge_type: string
+  billing_period_start_date: string
+  billing_period_end_date: string
+  base_amount: string
+  late_fee_amount: string
+  waived_amount: string
   total_amount: string
   paid_amount: string
   balance_amount: string
   status: string
+  charge_breakdown: unknown
 }
 
 type AccessStatusRow = {
@@ -46,6 +57,7 @@ type AccessStatusRow = {
   override_reason: string | null
   override_expires_at: string | null
   computed_at: string
+  access_valid_through_date?: string | null
 }
 
 type AccessRecomputePair = {
@@ -60,6 +72,7 @@ type BatchAccessStatusRow = {
   billing_period_id: string
   is_access_granted: boolean
   was_access_granted: boolean | null
+  access_valid_through_date: string | null
 }
 
 type BillingPeriodQrRow = {
@@ -221,6 +234,59 @@ const getBillingPeriodForQr = async (client: PoolClient, billingPeriodId: string
   return result.rows[0] ?? null
 }
 
+const getQrValidUntil = async (
+  client: PoolClient,
+  period: BillingPeriodQrRow,
+  access: AccessStatusRow,
+) => {
+  const periodValidUntil = new Date(period.valid_until).toISOString()
+  if (!access.access_valid_through_date) {
+    return periodValidUntil
+  }
+
+  const result = await client.query<{ valid_until: string }>(
+    `
+      select least(
+        $1::timestamptz,
+        (($2::date + 1)::timestamp at time zone sp.timezone)
+      )::text as valid_until
+      from society_profile sp
+      where sp.id = $3
+      limit 1
+    `,
+    [periodValidUntil, access.access_valid_through_date, period.society_id],
+  )
+
+  return new Date(result.rows[0]?.valid_until ?? periodValidUntil).toISOString()
+}
+
+const capActiveQrValidUntil = async (
+  client: PoolClient,
+  access: AccessStatusRow,
+) => {
+  if (!access.is_access_granted) return
+
+  const period = await getBillingPeriodForQr(client, access.billing_period_id)
+  if (!period || period.society_id !== access.society_id) return
+
+  const qrValidUntil = await getQrValidUntil(client, period, access)
+
+  await client.query(
+    `
+      update access_tokens
+      set expires_at = least(coalesce(expires_at, valid_until), $3::timestamptz),
+          valid_until = least(coalesce(expires_at, valid_until), $3::timestamptz),
+          updated_at = now()
+      where user_id = $1
+        and billing_period_id = $2
+        and status = 'ACTIVE'
+        and is_valid = true
+        and coalesce(expires_at, valid_until) > $3::timestamptz
+    `,
+    [access.user_id, access.billing_period_id, qrValidUntil],
+  )
+}
+
 const getAccessRows = async (client: PoolClient, userId: string) => {
   const result = await client.query<RelatedFlatRow>(
     `
@@ -271,6 +337,90 @@ const isDueClearForQrAccess = (due: DueAccessRow, isCamAdvanceCovered: boolean) 
   Number(due.balance_amount) <= 0 ||
   isCamAdvanceCovered
 
+const compareDateOnly = (left: string, right: string) => left.localeCompare(right)
+
+const getCamAdvanceAdjustmentAmount = (due: DueAccessRow) => {
+  const parsed = chargeBreakdownSchema.safeParse(due.charge_breakdown)
+  if (!parsed.success) return 0
+
+  return parsed.data.reduce((sum, charge) => {
+    const isCamBreakdownCharge =
+      charge.chargeType === 'CAM' ||
+      charge.calculationMethod === 'AREA_RATE' ||
+      /^cam(?:\s+charges?)?$/i.test(charge.label.trim())
+
+    if (!isCamBreakdownCharge) return sum
+    return sum + Number(charge.camAdvanceAdjustmentAmount ?? 0)
+  }, 0)
+}
+
+const getPartialCamPaidThroughDate = (due: DueAccessRow) => {
+  if (due.billing_period_charge_type !== 'CAM') return null
+
+  const segments = getBillingPeriodMonthSegments(
+    due.billing_period_start_date,
+    due.billing_period_end_date,
+  )
+  const totalMonths = Math.max(1, segments.length)
+  const camAdvanceAdjustment = getCamAdvanceAdjustmentAmount(due)
+  const periodCamAmount = Number(due.base_amount) + camAdvanceAdjustment
+
+  if (!Number.isFinite(periodCamAmount) || periodCamAmount <= 0) return null
+
+  const creditedAmount =
+    Number(due.paid_amount) +
+    Number(due.waived_amount) +
+    camAdvanceAdjustment
+  const monthlyAmount = periodCamAmount / totalMonths
+  const paidMonths = Math.min(
+    totalMonths,
+    Math.floor((creditedAmount + 1) / monthlyAmount),
+  )
+
+  if (paidMonths <= 0) return null
+
+  return segments[paidMonths - 1]?.endDate ?? null
+}
+
+const assessDueForQrAccess = (
+  due: DueAccessRow,
+  isCamAdvanceCovered: boolean,
+  societyToday: string,
+) => {
+  if (isDueClearForQrAccess(due, isCamAdvanceCovered)) {
+    return {
+      isClear: true,
+      validThroughDate: due.billing_period_end_date,
+      blockingBalance: 0,
+    }
+  }
+
+  const partialCamPaidThroughDate = getPartialCamPaidThroughDate(due)
+  if (
+    partialCamPaidThroughDate &&
+    compareDateOnly(partialCamPaidThroughDate, societyToday) >= 0
+  ) {
+    return {
+      isClear: true,
+      validThroughDate: partialCamPaidThroughDate,
+      blockingBalance: 0,
+    }
+  }
+
+  return {
+    isClear: false,
+    validThroughDate: null,
+    blockingBalance: Number(due.balance_amount),
+  }
+}
+
+const minDateOnly = (dates: string[]) =>
+  dates.reduce<string | null>(
+    (earliest, date) =>
+      !earliest || compareDateOnly(date, earliest) < 0 ? date : earliest,
+    null,
+  )
+
 export const recomputeUserAccess = async (
   userId: string,
   billingPeriodId: string,
@@ -291,11 +441,22 @@ export const recomputeUserAccess = async (
       throw new AppError({ code: 'NOT_FOUND', statusCode: 404, message: 'User not found.' })
     }
 
-    const settingsResult = await client.query<{ settings: Record<string, unknown> }>(
-      `select settings from society_profile where id = $1 limit 1`,
+    const settingsResult = await client.query<{
+      settings: Record<string, unknown>
+      today: string
+    }>(
+      `
+        select
+          settings,
+          (now() at time zone timezone)::date::text as today
+        from society_profile
+        where id = $1
+        limit 1
+      `,
       [societyId],
     )
     const societySettings = normalizeSocietySettings(settingsResult.rows[0]?.settings)
+    const societyToday = settingsResult.rows[0]?.today ?? new Date().toISOString().slice(0, 10)
     const relatedFlats = await getAccessRows(client, userId)
     const accessRows = uniqueAccessRows(
       relatedFlats.filter((row) => {
@@ -314,11 +475,19 @@ export const recomputeUserAccess = async (
             select
               md.flat_id,
               concat(b.name, ' ', f.flat_number) as label,
+              bp.charge_type::text as billing_period_charge_type,
+              bp.start_date::text as billing_period_start_date,
+              bp.end_date::text as billing_period_end_date,
+              md.base_amount::text,
+              md.late_fee_amount::text,
+              md.waived_amount::text,
               md.total_amount::text,
               md.paid_amount::text,
               md.balance_amount::text,
-              md.status::text
+              md.status::text,
+              md.charge_breakdown
             from maintenance_dues md
+            inner join billing_periods bp on bp.id = md.billing_period_id
             inner join flats f on f.id = md.flat_id
             inner join blocks b on b.id = f.block_id
             where md.billing_period_id = $1 and md.flat_id = any($2::uuid[])
@@ -344,24 +513,40 @@ export const recomputeUserAccess = async (
 
     const dueByFlat = new Map(dues.rows.map((row) => [row.flat_id, row]))
     const coveredFlatIds = new Set(covered.rows.map((row) => row.flat_id))
-    const unpaidLabels = accessRows
-      .filter((flat) => {
+    const accessAssessments = new Map(
+      accessRows.map((flat) => {
         const due = dueByFlat.get(flat.flat_id)
         const isCamAdvanceCovered = coveredFlatIds.has(flat.flat_id)
-        return due
-          ? !isDueClearForQrAccess(due, isCamAdvanceCovered)
-          : !isCamAdvanceCovered
-      })
+        const assessment = due
+          ? assessDueForQrAccess(due, isCamAdvanceCovered, societyToday)
+          : {
+              isClear: isCamAdvanceCovered,
+              validThroughDate: null,
+              blockingBalance: 0,
+            }
+
+        return [flat.flat_id, assessment] as const
+      }),
+    )
+    const unpaidLabels = accessRows
+      .filter((flat) => !accessAssessments.get(flat.flat_id)?.isClear)
       .map((flat) => flat.label)
 
     const totalDue = dues.rows.reduce((sum, due) => sum + Number(due.total_amount), 0)
     const totalPaid = dues.rows.reduce((sum, due) => sum + Number(due.paid_amount), 0)
     const totalBalance = dues.rows.reduce(
       (sum, due) =>
-        sum + (isDueClearForQrAccess(due, coveredFlatIds.has(due.flat_id)) ? 0 : Number(due.balance_amount)),
+        sum + (accessAssessments.get(due.flat_id)?.blockingBalance ?? Number(due.balance_amount)),
       0,
     )
     const grantedByPolicy = accessRows.length > 0 && unpaidLabels.length === 0
+    const accessValidThroughDate = grantedByPolicy
+      ? minDateOnly(
+          [...accessAssessments.values()]
+            .map((assessment) => assessment.validThroughDate)
+            .filter((date): date is string => Boolean(date)),
+        )
+      : null
 
     const previous = await client.query<{ is_access_granted: boolean }>(
       `select is_access_granted from user_access_status where user_id = $1 and billing_period_id = $2`,
@@ -424,7 +609,14 @@ export const recomputeUserAccess = async (
     )
 
     const access = upserted.rows[0]
-    if (!access?.is_access_granted) {
+    if (access) {
+      access.access_valid_through_date = access.is_access_granted
+        ? accessValidThroughDate
+        : null
+    }
+    if (access?.is_access_granted) {
+      await capActiveQrValidUntil(client, access)
+    } else {
       await revokeActiveQr(client, userId, billingPeriodId, 'Access is currently blocked by maintenance status.')
     }
 
@@ -544,6 +736,7 @@ export const recomputeUserAccessForPairs = async (
       society_settings as (
         select
           sp.id as society_id,
+          (now() at time zone sp.timezone)::date as today,
           case
             when jsonb_typeof(sp.settings->'familyAccessEnabled') = 'boolean'
               then (sp.settings->>'familyAccessEnabled')::boolean
@@ -588,10 +781,26 @@ export const recomputeUserAccessForPairs = async (
         select
           rr.*,
           md.id as due_id,
+          bp.charge_type::text as billing_period_charge_type,
+          bp.start_date as billing_period_start_date,
+          bp.end_date as billing_period_end_date,
+          greatest(
+            1,
+            (
+              (date_part('year', bp.end_date)::integer - date_part('year', bp.start_date)::integer) * 12
+              + date_part('month', bp.end_date)::integer
+              - date_part('month', bp.start_date)::integer
+              + 1
+            )
+          ) as period_months,
+          coalesce(md.base_amount, 0) as base_amount,
+          coalesce(md.late_fee_amount, 0) as late_fee_amount,
+          coalesce(md.waived_amount, 0) as waived_amount,
           coalesce(md.total_amount, 0) as total_amount,
           coalesce(md.paid_amount, 0) as paid_amount,
           coalesce(md.balance_amount, 0) as balance_amount,
           md.status::text as status,
+          coalesce(cam_adjustment.amount, 0) as cam_advance_adjustment_amount,
           (
             bp.charge_type = 'CAM'
             and exists (
@@ -609,6 +818,85 @@ export const recomputeUserAccessForPairs = async (
         left join maintenance_dues md
           on md.billing_period_id = rr.billing_period_id
           and md.flat_id = rr.flat_id
+        left join lateral (
+          select coalesce(sum(
+            case
+              when item->>'camAdvanceAdjustmentAmount' ~ '^[0-9]+([.][0-9]+)?$'
+                then (item->>'camAdvanceAdjustmentAmount')::numeric
+              else 0
+            end
+          ), 0) as amount
+          from jsonb_array_elements(
+            case
+              when jsonb_typeof(md.charge_breakdown) = 'array' then md.charge_breakdown
+              else '[]'::jsonb
+            end
+          ) item
+          where coalesce(item->>'chargeType', '') = 'CAM'
+             or coalesce(item->>'calculationMethod', '') = 'AREA_RATE'
+             or coalesce(item->>'label', '') ~* '^cam(\\s+charges?)?$'
+        ) cam_adjustment on md.id is not null
+      ),
+      access_assessed as (
+        select
+          assessed.*,
+          (
+            (
+              assessed.due_id is not null
+              and (
+                assessed.status in ('PAID', 'WAIVED')
+                or assessed.balance_amount <= 0
+                or assessed.is_cam_advance_covered
+                or coalesce(assessed.partial_cam_paid_through_date >= assessed.society_today, false)
+              )
+            )
+            or (assessed.due_id is null and assessed.is_cam_advance_covered)
+          ) as is_qr_clear,
+          case
+            when assessed.due_id is not null
+              and (
+                assessed.status in ('PAID', 'WAIVED')
+                or assessed.balance_amount <= 0
+                or assessed.is_cam_advance_covered
+              ) then assessed.billing_period_end_date
+            when assessed.due_id is null and assessed.is_cam_advance_covered then assessed.billing_period_end_date
+            when assessed.partial_cam_paid_through_date >= assessed.society_today then assessed.partial_cam_paid_through_date
+            else null::date
+          end as valid_through_date
+        from (
+          select
+            ar.*,
+            ss.today as society_today,
+            case
+              when ar.due_id is not null
+                and ar.billing_period_charge_type = 'CAM'
+                and (ar.base_amount + ar.cam_advance_adjustment_amount) > 0
+              then least(
+                ar.billing_period_end_date,
+                (
+                  ar.billing_period_start_date
+                  + (
+                    least(
+                      ar.period_months,
+                      floor(
+                        (
+                          ar.paid_amount
+                          + ar.waived_amount
+                          + ar.cam_advance_adjustment_amount
+                          + 1
+                        )
+                        / ((ar.base_amount + ar.cam_advance_adjustment_amount) / ar.period_months)
+                      )::integer
+                    ) * interval '1 month'
+                  )
+                  - interval '1 day'
+                )::date
+              )
+              else null::date
+            end as partial_cam_paid_through_date
+          from access_rows ar
+          inner join society_settings ss on ss.society_id = ar.society_id
+        ) assessed
       ),
       access_agg as (
         select
@@ -624,44 +912,26 @@ export const recomputeUserAccessForPairs = async (
           end as access_basis,
           coalesce(
             array_agg(ar.label order by ar.label) filter (
-              where (ar.due_id is not null and not (
-                ar.status in ('PAID', 'WAIVED')
-                or ar.balance_amount <= 0
-                or ar.is_cam_advance_covered
-              ))
-                or (ar.due_id is null and not ar.is_cam_advance_covered)
+              where not ar.is_qr_clear
             ),
             array[]::text[]
           ) as unpaid_flat_numbers,
           count(*) filter (
-            where (ar.due_id is not null and (
-                ar.status in ('PAID', 'WAIVED')
-                or ar.balance_amount <= 0
-                or ar.is_cam_advance_covered
-              ))
-              or (ar.due_id is null and ar.is_cam_advance_covered)
+            where ar.is_qr_clear
           )::integer as total_paid_flats,
           count(*) filter (
-            where (ar.due_id is not null and not (
-                ar.status in ('PAID', 'WAIVED')
-                or ar.balance_amount <= 0
-                or ar.is_cam_advance_covered
-              ))
-              or (ar.due_id is null and not ar.is_cam_advance_covered)
+            where not ar.is_qr_clear
           )::integer as total_unpaid_flats,
           coalesce(sum(ar.total_amount), 0) as total_due_all_flats,
           coalesce(sum(ar.paid_amount), 0) as total_paid_all_flats,
           coalesce(sum(
             case
-              when ar.due_id is not null and (
-                ar.status in ('PAID', 'WAIVED')
-                or ar.balance_amount <= 0
-                or ar.is_cam_advance_covered
-              ) then 0
+              when ar.is_qr_clear then 0
               else ar.balance_amount
             end
-          ), 0) as total_balance_all_flats
-        from access_rows ar
+          ), 0) as total_balance_all_flats,
+          min(ar.valid_through_date) filter (where ar.is_qr_clear) as access_valid_through_date
+        from access_assessed ar
         group by ar.society_id, ar.user_id, ar.billing_period_id
       ),
       computed as (
@@ -680,7 +950,12 @@ export const recomputeUserAccessForPairs = async (
           coalesce(aa.total_unpaid_flats, 0)::integer as total_unpaid_flats,
           coalesce(aa.total_due_all_flats, 0) as total_due_all_flats,
           coalesce(aa.total_paid_all_flats, 0) as total_paid_all_flats,
-          coalesce(aa.total_balance_all_flats, 0) as total_balance_all_flats
+          coalesce(aa.total_balance_all_flats, 0) as total_balance_all_flats,
+          case
+            when coalesce(aa.total_flats, 0) > 0
+              and coalesce(aa.total_unpaid_flats, 0) = 0 then aa.access_valid_through_date
+            else null::date
+          end as access_valid_through_date
         from active_input ai
         left join access_agg aa
           on aa.user_id = ai.user_id
@@ -759,11 +1034,15 @@ export const recomputeUserAccessForPairs = async (
         upserted.user_id,
         upserted.billing_period_id,
         upserted.is_access_granted,
-        previous.is_access_granted as was_access_granted
+        previous.is_access_granted as was_access_granted,
+        computed.access_valid_through_date::text
       from upserted
       left join previous
         on previous.user_id = upserted.user_id
         and previous.billing_period_id = upserted.billing_period_id
+      left join computed
+        on computed.user_id = upserted.user_id
+        and computed.billing_period_id = upserted.billing_period_id
     `,
     [payload],
   )
@@ -771,6 +1050,56 @@ export const recomputeUserAccessForPairs = async (
   const revokedRows = upserted.rows.filter(
     (row) => row.was_access_granted && !row.is_access_granted,
   )
+  const grantedRowsWithExpiryCap = upserted.rows.filter(
+    (row) => row.is_access_granted && row.access_valid_through_date,
+  )
+
+  if (grantedRowsWithExpiryCap.length > 0) {
+    await client.query(
+      `
+        with payload as (
+          select user_id, billing_period_id, access_valid_through_date
+          from jsonb_to_recordset($1::jsonb) as payload(
+            user_id uuid,
+            billing_period_id uuid,
+            access_valid_through_date date
+          )
+          where access_valid_through_date is not null
+        ),
+        caps as (
+          select
+            payload.user_id,
+            payload.billing_period_id,
+            least(
+              ((bp.end_date + 1)::timestamp at time zone sp.timezone),
+              ((payload.access_valid_through_date + 1)::timestamp at time zone sp.timezone)
+            ) as valid_until
+          from payload
+          inner join billing_periods bp on bp.id = payload.billing_period_id
+          inner join society_profile sp on sp.id = bp.society_id
+        )
+        update access_tokens token
+        set expires_at = least(coalesce(token.expires_at, token.valid_until, caps.valid_until), caps.valid_until),
+            valid_until = least(coalesce(token.expires_at, token.valid_until, caps.valid_until), caps.valid_until),
+            updated_at = now()
+        from caps
+        where token.user_id = caps.user_id
+          and token.billing_period_id = caps.billing_period_id
+          and token.status = 'ACTIVE'
+          and token.is_valid = true
+          and coalesce(token.expires_at, token.valid_until, 'infinity'::timestamptz) > caps.valid_until
+      `,
+      [
+        JSON.stringify(
+          grantedRowsWithExpiryCap.map((row) => ({
+            user_id: row.user_id,
+            billing_period_id: row.billing_period_id,
+            access_valid_through_date: row.access_valid_through_date,
+          })),
+        ),
+      ],
+    )
+  }
 
   if (revokedRows.length > 0) {
     await client.query(
@@ -919,7 +1248,7 @@ export const ensureQrForAccess = async (userId: string, billingPeriodId: string)
       await client.query('commit')
       return { access, token: null }
     }
-    const periodValidUntil = new Date(period.valid_until).toISOString()
+    const qrValidUntil = await getQrValidUntil(client, period, grantedAccess)
 
     await client.query(
       `
@@ -936,7 +1265,7 @@ export const ensureQrForAccess = async (userId: string, billingPeriodId: string)
             or coalesce(expires_at, valid_until) is distinct from $3::timestamptz
           )
       `,
-      [userId, billingPeriodId, periodValidUntil],
+      [userId, billingPeriodId, qrValidUntil],
     )
 
     const existing = await client.query(
@@ -948,7 +1277,7 @@ export const ensureQrForAccess = async (userId: string, billingPeriodId: string)
           and coalesce(expires_at, valid_until) = $3::timestamptz
         limit 1
       `,
-      [userId, billingPeriodId, periodValidUntil],
+      [userId, billingPeriodId, qrValidUntil],
     )
 
     if (existing.rows[0]) {
@@ -962,7 +1291,7 @@ export const ensureQrForAccess = async (userId: string, billingPeriodId: string)
       billingPeriodId,
       societyId: grantedAccess.society_id,
       tokenId,
-      validUntil: periodValidUntil,
+      validUntil: qrValidUntil,
     }
     const signedToken = signQrPayload(payload)
     const qrImage = await QRCode.toDataURL(signedToken, { margin: 1, width: 360 })
