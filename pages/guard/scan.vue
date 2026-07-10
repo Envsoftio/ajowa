@@ -43,8 +43,8 @@ type GuardAnalyticsResponse = {
 
 type ScannerController = {
   start: (
-    cameraConfig: { facingMode: string },
-    config: { fps: number; qrbox: { width: number; height: number } },
+    cameraConfig: string | { facingMode: string },
+    config: ScannerScanConfig,
     onSuccess: (decodedText: string) => void,
     onError?: (errorMessage: string) => void,
   ) => Promise<unknown>
@@ -54,8 +54,75 @@ type ScannerController = {
   clear?: () => Promise<void> | void
 }
 
+type ScannerClass = {
+  new (elementId: string): ScannerController
+  getCameras: () => Promise<CameraDevice[]>
+}
+
+type ScannerScanConfig = {
+  fps: number
+  qrbox: { width: number; height: number }
+}
+
+type CameraDevice = {
+  id: string
+  label: string
+}
+
 const getErrorMessage = (error: unknown, fallback: string) =>
   error instanceof Error ? error.message : fallback
+
+const getErrorName = (error: unknown) =>
+  typeof error === 'object' &&
+  error != null &&
+  'name' in error &&
+  typeof (error as { name?: unknown }).name === 'string'
+    ? (error as { name: string }).name
+    : ''
+
+const getCameraStartupErrorMessage = (error: unknown) => {
+  const message = getErrorMessage(error, typeof error === 'string' ? error : '')
+  const text = `${getErrorName(error)} ${message}`.toLowerCase()
+
+  if (text.includes('notallowed') || text.includes('permission') || text.includes('denied')) {
+    return 'Camera permission is blocked. Allow camera access for AJOWA in the browser or phone settings, then tap Start scan again.'
+  }
+
+  if (text.includes('notfound') || text.includes('devicesnotfound') || text.includes('no camera')) {
+    return 'No camera was found on this device.'
+  }
+
+  if (text.includes('notreadable') || text.includes('trackstart') || text.includes('in use')) {
+    return 'The camera is already in use or unavailable. Close other camera apps or browser tabs, then try again.'
+  }
+
+  if (text.includes('overconstrained') || text.includes('constraint')) {
+    return 'Could not open the device camera. Try again, or use manual verification if the camera is unavailable.'
+  }
+
+  if (text.includes('not supported')) {
+    return 'Camera scanning is not supported in this browser. Open AJOWA in Chrome or Safari and try again.'
+  }
+
+  return message || 'Camera permission is needed to scan QR codes.'
+}
+
+const scannerScanConfig: ScannerScanConfig = { fps: 10, qrbox: { width: 260, height: 260 } }
+const rearCameraLabelPattern = /\b(back|rear|environment|main|world)\b/i
+
+const getPreferredCameraId = (cameras: CameraDevice[]) => {
+  const camerasWithIds = cameras.filter((camera) => camera.id)
+  const preferredCamera = camerasWithIds.find((camera) => rearCameraLabelPattern.test(camera.label))
+  return preferredCamera?.id ?? camerasWithIds[camerasWithIds.length - 1]?.id ?? null
+}
+
+const startScannerCamera = async (Scanner: ScannerClass, scannerInstance: ScannerController) => {
+  const cameras = await Scanner.getCameras()
+  const cameraId = getPreferredCameraId(cameras)
+  const cameraConfig = cameraId ?? { facingMode: 'environment' }
+
+  await scannerInstance.start(cameraConfig, scannerScanConfig, (decodedText: string) => verify(decodedText))
+}
 
 const api = useApi()
 const scannerId = 'guard-qr-reader'
@@ -188,18 +255,19 @@ const startScanner = async () => {
       cameraError.value = 'Camera scanning is not supported in this browser.'
       return
     }
+    if (!window.isSecureContext) {
+      cameraError.value = 'Camera access requires HTTPS. Open AJOWA from https://ajowa.in and try again.'
+      return
+    }
     const { Html5Qrcode } = await import('html5-qrcode')
     await nextTick()
-    const scannerInstance: ScannerController = new Html5Qrcode(scannerId)
+    const Scanner = Html5Qrcode as ScannerClass
+    const scannerInstance: ScannerController = new Scanner(scannerId)
     scanner.value = scannerInstance
-    await scannerInstance.start(
-      { facingMode: 'environment' },
-      { fps: 10, qrbox: { width: 260, height: 260 } },
-      (decodedText: string) => verify(decodedText),
-    )
+    await startScannerCamera(Scanner, scannerInstance)
     isScanning.value = true
   } catch (error: unknown) {
-    cameraError.value = getErrorMessage(error, 'Camera permission is needed to scan QR codes.')
+    cameraError.value = getCameraStartupErrorMessage(error)
     await scanner.value?.clear?.()
     scanner.value = null
     isScanning.value = false
