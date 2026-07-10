@@ -168,6 +168,7 @@ export const shellNavigation: Record<AppShellType, AppNavGroup[]> = {
       label: 'Access & Settings',
       icon: 'pi pi-cog',
       items: [
+        { label: 'Scan QR', to: '/guard/scan', icon: 'pi pi-qrcode' },
         { label: 'Gate Log', to: '/admin/gate-log', icon: 'pi pi-qrcode' },
         { label: 'Audit Log', to: '/admin/audit', icon: 'pi pi-history' },
         { label: 'Password Change', to: '/change-password', icon: 'pi pi-key' },
@@ -191,6 +192,7 @@ export const shellNavigation: Record<AppShellType, AppNavGroup[]> = {
       items: [
         { label: 'Dashboard', to: '/service/dashboard', icon: 'pi pi-list-check' },
         { label: 'Tickets', to: '/service/tickets', icon: 'pi pi-ticket' },
+        { label: 'Scan QR', to: '/guard/scan', icon: 'pi pi-qrcode' },
       ],
     },
     {
@@ -207,7 +209,7 @@ export const shellNavigation: Record<AppShellType, AppNavGroup[]> = {
       label: 'Gate',
       icon: 'pi pi-qrcode',
       items: [
-        { label: 'Scan Desk', to: '/guard/scan', icon: 'pi pi-qrcode' },
+        { label: 'Scan QR', to: '/guard/scan', icon: 'pi pi-qrcode' },
         { label: 'Notifications', to: '/guard/notifications', icon: 'pi pi-bell' },
       ],
     },

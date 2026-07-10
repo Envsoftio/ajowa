@@ -20,6 +20,7 @@ export const PASSWORD_POLICY = {
 
 const SAFE_REDIRECT_PREFIXES = ['/admin', '/my', '/service', '/guard', '/change-password', '/verify-email']
 const TEMPORARY_PASSWORD_CHANGE_EXEMPT_ROLES: readonly AppRole[] = ['GUARD']
+export const QR_SCAN_ROLES: readonly AppRole[] = ['ADMIN', 'MANAGER', 'SERVICE_STAFF', 'GUARD']
 
 type RouteAccessUser = {
   role: AppRole
@@ -144,8 +145,12 @@ export const canUserAccessRoute = (path: string, user: RouteAccessUser) => {
     return true
   }
 
+  if (pathname === '/guard/scan') {
+    return QR_SCAN_ROLES.includes(user.role)
+  }
+
   if (pathname.startsWith('/guard')) {
-    return user.role === 'GUARD' && ['/guard/scan', '/guard/notifications'].includes(pathname)
+    return user.role === 'GUARD' && pathname === '/guard/notifications'
   }
 
   if (pathname.startsWith('/service')) {

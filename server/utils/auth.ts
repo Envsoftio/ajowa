@@ -734,7 +734,7 @@ export const requireAuth = async (event: H3Event) => {
   return authMe
 }
 
-export const requireRole = async (event: H3Event, roles: AppRole[]) => {
+export const requireRole = async (event: H3Event, roles: readonly AppRole[]) => {
   const authMe = await requireAuth(event)
 
   if (!roles.includes(authMe.user.role)) {

@@ -1,6 +1,7 @@
 import { createApiSuccess } from '~/server/utils/api'
 import { requireRole } from '~/server/utils/auth'
 import { queryRows } from '~/server/utils/database'
+import { QR_SCAN_ROLES } from '~/shared/auth'
 
 type CountValue = number | string | null | undefined
 
@@ -28,7 +29,7 @@ type DailyRow = {
 const toNumber = (value: CountValue) => Number(value ?? 0)
 
 export default defineEventHandler(async (event) => {
-  const authMe = await requireRole(event, ['GUARD'])
+  const authMe = await requireRole(event, QR_SCAN_ROLES)
   const params = [authMe.user.societyId, authMe.user.id]
 
   const todayResult = await queryRows<TodayRow>(
