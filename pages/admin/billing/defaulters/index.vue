@@ -361,7 +361,18 @@ const overdueSeverity = (days: number) => {
 }
 
 const overdueLabel = (days: number) =>
-  days > 0 ? `${days} day${days === 1 ? '' : 's'}` : 'Not overdue'
+  days > 0 ? `Overdue by: ${formatPlural(days, 'day')}` : 'Not overdue'
+
+const balanceStatusLabel = (daysOverdue: number) =>
+  daysOverdue > 0 ? 'Overdue' : 'Outstanding'
+
+const paymentSummaryLabel = (paidAmount: number, totalAmount: number) => {
+  if (paidAmount <= 0) {
+    return `No payment received: ${formatMoney(paidAmount)} of ${formatMoney(totalAmount)}`
+  }
+
+  return `${paidAmount < totalAmount ? 'Partial payment received' : 'Payment received'}: ${formatMoney(paidAmount)} of ${formatMoney(totalAmount)}`
+}
 
 const paymentProgress = (row: DefaulterSummary) =>
   row.totalDue > 0
@@ -717,10 +728,12 @@ watch(filteredDefaulters, (rows) => {
         <Column field="totalBalance" header="Balance">
           <template #body="{ data: row }">
             <div class="billing-balance-cell">
-              <strong>{{ formatMoney(row.totalBalance) }}</strong>
+              <strong>
+                {{ balanceStatusLabel(row.maxDaysOverdue) }}:
+                {{ formatMoney(row.totalBalance) }}
+              </strong>
               <span>
-                {{ formatMoney(row.totalPaid) }} paid of
-                {{ formatMoney(row.totalDue) }}
+                {{ paymentSummaryLabel(row.totalPaid, row.totalDue) }}
               </span>
               <div class="billing-progress-track">
                 <span :style="{ width: `${paymentProgress(row)}%` }" />
@@ -803,10 +816,12 @@ watch(filteredDefaulters, (rows) => {
             />
           </div>
           <div class="billing-balance-cell billing-balance-cell--card">
-            <strong>{{ formatMoney(row.totalBalance) }}</strong>
+            <strong>
+              {{ balanceStatusLabel(row.maxDaysOverdue) }}:
+              {{ formatMoney(row.totalBalance) }}
+            </strong>
             <span>
-              {{ formatMoney(row.totalPaid) }} paid of
-              {{ formatMoney(row.totalDue) }}
+              {{ paymentSummaryLabel(row.totalPaid, row.totalDue) }}
             </span>
             <div class="billing-progress-track">
               <span :style="{ width: `${paymentProgress(row)}%` }" />
