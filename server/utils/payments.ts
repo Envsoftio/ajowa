@@ -88,8 +88,13 @@ type PaymentRow = {
   payer_user_id: string
   received_for_flat_id: string
   amount: string
+  payment_date: string
   status: string
   allocation_mode: string
+}
+
+export type PaymentAllocationInput = PaymentPreviewInput & {
+  asOfDate?: string
 }
 
 type PaymentReceiptRow = {
@@ -238,6 +243,7 @@ const selectAllocatableDues = async (
     tenureMonths?: number
     graceDays: number
     lateFeePerDay: number
+    asOfDate?: string
     lockRows?: boolean
   },
 ) => {
@@ -291,7 +297,7 @@ const selectAllocatableDues = async (
     params,
   )
 
-  const today = todayDate()
+  const asOfDate = input.asOfDate ?? todayDate()
 
   return result.rows.map((due) => {
     const computed = computeDueAmounts(
@@ -302,7 +308,7 @@ const selectAllocatableDues = async (
         waivedAmount: Number(due.waived_amount),
         storedStatus: due.status,
       },
-      today,
+      asOfDate,
       input.graceDays,
       input.lateFeePerDay,
     )
@@ -319,7 +325,7 @@ const selectAllocatableDues = async (
 
 const previewPaymentAllocationWithClient = async (
   client: PoolClient,
-  input: PaymentPreviewInput,
+  input: PaymentAllocationInput,
 ) => {
   const societyResult = await client.query<{ society_id: string }>(
     `select society_id from flats where id = $1 limit 1`,
@@ -341,6 +347,9 @@ const previewPaymentAllocationWithClient = async (
     selectedDueIds: input.selectedDueIds,
     graceDays: policy.graceDays,
     lateFeePerDay: policy.lateFeePerDay,
+  }
+  if (input.asOfDate !== undefined) {
+    dueInput.asOfDate = input.asOfDate
   }
   if (input.tenureMonths !== undefined) {
     dueInput.tenureMonths = input.tenureMonths
@@ -380,7 +389,7 @@ const previewPaymentAllocationWithClient = async (
   }
 }
 
-export const previewPaymentAllocation = async (input: PaymentPreviewInput) => {
+export const previewPaymentAllocation = async (input: PaymentAllocationInput) => {
   const client = await getDatabasePool().connect()
 
   try {
@@ -395,6 +404,7 @@ const refreshDueTotals = async (
   dueId: string,
   graceDays: number,
   lateFeePerDay: number,
+  asOfDate = todayDate(),
 ) => {
   const dueResult = await client.query<DueRow>(
     `
@@ -439,7 +449,7 @@ const refreshDueTotals = async (
       waivedAmount: Number(due.waived_amount),
       storedStatus: due.status,
     },
-    todayDate(),
+    asOfDate,
     graceDays,
     lateFeePerDay,
   )
@@ -509,6 +519,7 @@ export const allocateMaintenancePaymentWithClient = async (
           payer_user_id,
           received_for_flat_id,
           amount::text,
+          payment_date::text,
           status,
           allocation_mode
         from payments
@@ -551,6 +562,7 @@ export const allocateMaintenancePaymentWithClient = async (
     flatId: payment.received_for_flat_id,
     amount: Number(payment.amount),
     allocationMode: allocationModeSchema.parse(payment.allocation_mode),
+    asOfDate: payment.payment_date,
     selectedDueIds: Array.isArray(snapshot.selectedDueIds)
       ? (snapshot.selectedDueIds as string[])
       : [],
@@ -605,6 +617,7 @@ export const allocateMaintenancePaymentWithClient = async (
         line.dueId,
         policy.graceDays,
         policy.lateFeePerDay,
+        payment.payment_date,
       )
       if (refreshed) affected.push(refreshed)
     }
@@ -700,6 +713,7 @@ export const updatePaymentAmountWithClient = async (
         payer_user_id,
         received_for_flat_id,
         amount::text,
+        payment_date::text,
         status,
         allocation_mode,
         mode::text,
@@ -787,6 +801,7 @@ export const updatePaymentAmountWithClient = async (
   }
 
   const policy = await getPaymentPolicy(client, payment.society_id)
+  const settlementDate = payment.payment_date ?? todayDate()
   const existingAllocations = await client.query<{
     id: string
     maintenance_due_id: string
@@ -919,7 +934,6 @@ export const updatePaymentAmountWithClient = async (
       )
     : { rows: [] as DueRow[] }
 
-  const today = todayDate()
   const lines: PaymentAmountEditAllocationLine[] = []
   let remainingPayment = nextAmount
   let totalDue = 0
@@ -933,7 +947,7 @@ export const updatePaymentAmountWithClient = async (
         waivedAmount: Number(due.waived_amount),
         storedStatus: due.status,
       },
-      today,
+      settlementDate,
       policy.graceDays,
       policy.lateFeePerDay,
     )
@@ -988,6 +1002,7 @@ export const updatePaymentAmountWithClient = async (
       due.id,
       policy.graceDays,
       policy.lateFeePerDay,
+      settlementDate,
     )
     if (refreshed) affected.push(refreshed)
   }
@@ -1151,6 +1166,7 @@ export const consumeAdvanceCreditsForDueWithClient = async (
     })
   }
   const policy = await getPaymentPolicy(client, due.society_id)
+  const settlementDate = todayDate()
   const computed = computeDueAmounts(
     {
       dueDate: due.due_date,
@@ -1159,7 +1175,7 @@ export const consumeAdvanceCreditsForDueWithClient = async (
       waivedAmount: Number(due.waived_amount),
       storedStatus: due.status,
     },
-    todayDate(),
+    settlementDate,
     policy.graceDays,
     policy.lateFeePerDay,
   )
@@ -1200,12 +1216,12 @@ export const consumeAdvanceCreditsForDueWithClient = async (
           notes,
           verified_at
         )
-        select society_id, user_id, flat_id, 'ADVANCE_CREDIT', 'VERIFIED', current_date, $2, 'SELECTED_PERIODS', $3, now()
+        select society_id, user_id, flat_id, 'ADVANCE_CREDIT', 'VERIFIED', $4::date, $2, 'SELECTED_PERIODS', $3, now()
         from resident_advance_credits
         where id = $1
         returning id
       `,
-      [credit.id, amount, `Advance credit consumed against due ${dueId}.`],
+      [credit.id, amount, `Advance credit consumed against due ${dueId}.`, settlementDate],
     )
     const allocation = await client.query<{ id: string }>(
       `
@@ -1270,6 +1286,7 @@ export const consumeAdvanceCreditsForDueWithClient = async (
     dueId,
     policy.graceDays,
     policy.lateFeePerDay,
+    settlementDate,
   )
   if (refreshed) {
     await recomputeAccessForAffectedDues(client, [refreshed])

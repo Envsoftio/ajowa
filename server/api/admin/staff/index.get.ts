@@ -22,6 +22,14 @@ type StaffRow = {
   updated_at: string
 }
 
+type StaffDepartmentRow = {
+  user_id: string
+  department_id: string
+  department_code: string
+  department_name: string
+  is_primary: boolean
+}
+
 const sortColumns: Record<string, string> = {
   fullName: 'u.full_name',
   email: 'u.email',
@@ -105,22 +113,61 @@ export default defineEventHandler(async (event) => {
     ),
   ])
 
-  const items: StaffSummary[] = dataResult.rows.map((row) => ({
-    id: row.id,
-    societyId: row.society_id,
-    authUserId: row.auth_user_id,
-    role: row.role,
-    fullName: row.full_name,
-    email: row.email,
-    mobileNumber: row.mobile_number,
-    whatsappNumber: row.whatsapp_number,
-    canLogin: row.can_login,
-    emailVerified: row.email_verified,
-    isActive: row.is_active,
-    permissions: normalizeRolePermissions(row.role, row.staff_permissions),
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  }))
+  const staffIds = dataResult.rows.map((row) => row.id)
+  const departmentResult = staffIds.length > 0
+    ? await pool.query<StaffDepartmentRow>(
+        `
+          select
+            ssa.user_id,
+            sd.id as department_id,
+            sd.code as department_code,
+            sd.name as department_name,
+            ssa.is_primary
+          from service_staff_assignments ssa
+          inner join service_departments sd on sd.id = ssa.department_id
+          where ssa.user_id = any($1::uuid[])
+            and sd.society_id = $2
+            and ssa.is_active = true
+          order by sd.name asc
+        `,
+        [staffIds, authMe.user.societyId],
+      )
+    : { rows: [] }
+
+  const departmentsByStaffId = new Map<string, StaffDepartmentRow[]>()
+
+  for (const department of departmentResult.rows) {
+    const existing = departmentsByStaffId.get(department.user_id) ?? []
+    existing.push(department)
+    departmentsByStaffId.set(department.user_id, existing)
+  }
+
+  const items: StaffSummary[] = dataResult.rows.map((row) => {
+    const departments = departmentsByStaffId.get(row.id) ?? []
+
+    return {
+      id: row.id,
+      societyId: row.society_id,
+      authUserId: row.auth_user_id,
+      role: row.role,
+      fullName: row.full_name,
+      email: row.email,
+      mobileNumber: row.mobile_number,
+      whatsappNumber: row.whatsapp_number,
+      canLogin: row.can_login,
+      emailVerified: row.email_verified,
+      isActive: row.is_active,
+      permissions: normalizeRolePermissions(row.role, row.staff_permissions),
+      departments: departments.map((department) => ({
+        id: department.department_id,
+        code: department.department_code,
+        name: department.department_name,
+        isPrimary: department.is_primary,
+      })),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }
+  })
 
   return createPaginatedSuccess(event, items, Number(countResult.rows[0]?.count ?? 0), query)
 })

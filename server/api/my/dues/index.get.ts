@@ -1,7 +1,7 @@
 import { createApiSuccess } from '~/server/utils/api'
 import { requireActiveUser } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
-import { computeDueAmounts, todayDate } from '~/server/utils/billing'
+import { resolveDueAmountsForDisplay, todayDate } from '~/server/utils/billing'
 import { normalizeSocietySettings } from '~/server/utils/master-data'
 import { camAdvanceCoverageLateralSql } from '~/server/utils/cam-advance'
 import type { MaintenanceDue } from '~/types/domain'
@@ -190,12 +190,15 @@ export default defineEventHandler(async (event) => {
           balanceAmount: Number(row.balance_amount),
           status: row.status as MaintenanceDue['status'],
         }
-      : computeDueAmounts(
+      : resolveDueAmountsForDisplay(
           {
             dueDate: row.due_date,
             baseAmount,
+            lateFeeAmount: Number(row.late_fee_amount),
             waivedAmount,
             paidAmount,
+            totalAmount: Number(row.total_amount),
+            balanceAmount: Number(row.balance_amount),
             storedStatus: row.status,
           },
           today,

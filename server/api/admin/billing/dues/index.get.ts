@@ -7,7 +7,7 @@ import {
   normalizeSocietySettings,
   parseListQuery,
 } from '~/server/utils/master-data'
-import { computeDueAmounts, todayDate } from '~/server/utils/billing'
+import { resolveDueAmountsForDisplay, todayDate } from '~/server/utils/billing'
 import { camAdvanceCoverageLateralSql } from '~/server/utils/cam-advance'
 import { setEventHeader } from '~/server/utils/http-event'
 import type { ListQueryParams } from '~/types/api'
@@ -302,12 +302,15 @@ const mapDueRows = (
           balanceAmount: Number(row.balance_amount),
           status: row.status as MaintenanceDue['status'],
         }
-      : computeDueAmounts(
+      : resolveDueAmountsForDisplay(
           {
             dueDate: row.due_date,
             baseAmount,
+            lateFeeAmount: Number(row.late_fee_amount),
             waivedAmount,
             paidAmount,
+            totalAmount: Number(row.total_amount),
+            balanceAmount: Number(row.balance_amount),
             storedStatus: row.status,
           },
           today,

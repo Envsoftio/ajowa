@@ -150,6 +150,7 @@ export default defineEventHandler(async (event) => {
     amount: input.amount,
     allocationMode: input.allocationMode ?? 'OLDEST_UNPAID_FIRST',
     selectedDueIds: input.selectedDueIds ?? [],
+    asOfDate: input.paymentDate,
   }
   const preview = await previewPaymentAllocation(
     input.tenureMonths === undefined

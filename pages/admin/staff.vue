@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { DataTablePageEvent, DataTableSortEvent } from 'primevue/datatable'
 import type { ListQueryParams } from '~/types/api'
-import type { StaffSummary } from '~/types/domain'
+import type { ServiceDepartment, StaffSummary } from '~/types/domain'
 import { requiresTemporaryPasswordChangeForRole } from '~/shared/auth'
 import {
   managerDefaultPermissions,
@@ -55,6 +55,7 @@ const form = reactive({
   canLogin: true,
   isActive: true,
   permissions: [] as StaffPermission[],
+  departmentIds: [] as string[],
 })
 
 const permissionOptions = staffPermissions.map((permission) => ({
@@ -64,6 +65,7 @@ const permissionOptions = staffPermissions.map((permission) => ({
 
 const selectedRoleAccess = computed(() => staffRoleAccessDescriptions[form.role])
 const canEditPermissions = computed(() => selectedRoleAccess.value.permissionsEditable)
+const isServiceStaffRole = computed(() => form.role === 'SERVICE_STAFF')
 
 watch(
   () => form.role,
@@ -72,6 +74,10 @@ watch(
       form.permissions = []
     } else if (form.permissions.length === 0) {
       form.permissions = [...managerDefaultPermissions]
+    }
+
+    if (role !== 'SERVICE_STAFF') {
+      form.departmentIds = []
     }
   },
 )
@@ -93,6 +99,11 @@ const loadStaff = () =>
 const { data, pending, refresh } = await useAsyncData('admin-staff', loadStaff, {
   watch: [query],
 })
+const { data: departmentsData, pending: departmentsPending } = await useAsyncData('admin-staff-service-departments', () =>
+  api<{ ok: true; data: { departments: ServiceDepartment[] } }>('/api/admin/service-departments'),
+)
+
+const departmentOptions = computed(() => departmentsData.value?.data.departments ?? [])
 
 const resetForm = () => {
   selectedStaff.value = null
@@ -105,6 +116,7 @@ const resetForm = () => {
   form.canLogin = true
   form.isActive = true
   form.permissions = [...managerDefaultPermissions]
+  form.departmentIds = []
 }
 
 const openCreateDialog = () => {
@@ -125,6 +137,9 @@ const editStaff = (staff: StaffSummary) => {
   form.permissions = staff.permissions.filter((permission): permission is StaffPermission =>
     staffPermissions.includes(permission as StaffPermission),
   )
+  form.departmentIds = staff.role === 'SERVICE_STAFF'
+    ? staff.departments?.map((department) => department.id) ?? []
+    : []
   displayDialog.value = true
 }
 
@@ -145,6 +160,7 @@ const submit = async () => {
       canLogin: form.canLogin,
       isActive: form.isActive,
       permissions: canEditPermissions.value ? form.permissions : [],
+      departmentIds: isServiceStaffRole.value ? form.departmentIds : [],
       ...(selectedStaff.value
         ? {}
         : {
@@ -441,6 +457,25 @@ const roleAccessLabel = (role: StaffSummary['role']) => staffRoleAccessDescripti
       >
         <Column field="fullName" header="Staff member" sortable />
         <Column field="role" header="Role" sortable />
+        <Column header="Departments">
+          <template #body="{ data: row }">
+            <div
+              v-if="row.role === 'SERVICE_STAFF' && row.departments?.length"
+              class="admin-inline-actions"
+              style="gap: 0.35rem; flex-wrap: wrap;"
+            >
+              <Tag
+                v-for="department in row.departments.slice(0, 3)"
+                :key="department.id"
+                severity="secondary"
+                :value="department.name"
+                rounded
+              />
+              <Tag v-if="row.departments.length > 3" severity="contrast" :value="`+${row.departments.length - 3}`" rounded />
+            </div>
+            <span v-else class="muted-line">-</span>
+          </template>
+        </Column>
         <Column field="email" header="Email" sortable />
         <Column header="Access">
           <template #body="{ data: row }">
@@ -552,6 +587,20 @@ const roleAccessLabel = (role: StaffSummary['role']) => staffRoleAccessDescripti
               Guards sign in at /login with this password and continue directly to the scanner.
             </span>
           </div>
+        </section>
+
+        <section v-if="isServiceStaffRole" class="admin-form-subsection">
+          <h3>Departments</h3>
+          <MultiSelect
+            v-model="form.departmentIds"
+            :options="departmentOptions"
+            option-label="name"
+            option-value="id"
+            display="chip"
+            placeholder="Choose departments"
+            :loading="departmentsPending"
+            fluid
+          />
         </section>
 
         <section v-if="canEditPermissions" class="admin-form-subsection">

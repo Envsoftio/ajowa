@@ -253,6 +253,14 @@ export type StaffSummary = AuditFields & {
   emailVerified: boolean
   isActive: boolean
   permissions: string[]
+  departments: StaffDepartmentSummary[]
+}
+
+export type StaffDepartmentSummary = {
+  id: string
+  code: string
+  name: string
+  isPrimary: boolean
 }
 
 export type AmenityBookingStatus =

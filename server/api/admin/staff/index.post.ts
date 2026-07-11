@@ -7,6 +7,7 @@ import { getDatabasePool } from '~/server/utils/database'
 import { AppError } from '~/server/utils/errors'
 import { requiresTemporaryPasswordChangeForRole } from '~/shared/auth'
 import { normalizeRolePermissions, staffPermissions } from '~/shared/permissions'
+import { syncStaffDepartmentAssignments } from '~/server/utils/staff'
 
 const staffSchema = z.object({
   role: z.enum(['MANAGER', 'SERVICE_STAFF', 'GUARD']),
@@ -18,6 +19,7 @@ const staffSchema = z.object({
   canLogin: z.boolean().default(true),
   isActive: z.boolean().default(true),
   permissions: z.array(z.enum(staffPermissions)).default([]),
+  departmentIds: z.array(z.string().uuid()).default([]),
 })
 
 const generateTemporaryPassword = () => `Ajowa@${randomBytes(4).toString('hex').toUpperCase()}2026`
@@ -109,6 +111,23 @@ export default defineEventHandler(async (event) => {
         rolePermissions,
       ],
     )
+    const userId = user.rows[0]?.id
+
+    if (!userId) {
+      throw new AppError({
+        code: 'INTERNAL_ERROR',
+        statusCode: 500,
+        message: 'Staff user creation failed.',
+      })
+    }
+
+    const departmentIds = await syncStaffDepartmentAssignments(
+      client,
+      authMe.user.societyId,
+      userId,
+      body.role,
+      body.departmentIds,
+    )
 
     const passwordHash = await hashPassword(temporaryPassword)
     await client.query(
@@ -124,11 +143,12 @@ export default defineEventHandler(async (event) => {
 
     await client.query('commit')
     return createApiSuccess(event, {
-      id: user.rows[0]?.id,
+      id: userId,
       authUserId,
       email: body.email,
       temporaryPassword,
       requiresPasswordChange,
+      departmentIds,
     })
   } catch (error) {
     await client.query('rollback')

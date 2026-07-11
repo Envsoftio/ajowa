@@ -248,6 +248,12 @@ export type ComputedDueAmounts = {
   status: import('~/types/domain').DueStatus
 }
 
+export type StoredDueAmountInput = DueAmountInput & {
+  lateFeeAmount: number
+  totalAmount: number
+  balanceAmount: number
+}
+
 export const computeLateFee = (
   dueDate: string,
   today: string,
@@ -293,6 +299,24 @@ export const computeDueAmounts = (
     balanceAmount,
     status,
   }
+}
+
+export const resolveDueAmountsForDisplay = (
+  due: StoredDueAmountInput,
+  today: string,
+  graceDays: number,
+  lateFeePerDay: number,
+): ComputedDueAmounts => {
+  if (['PAID', 'WAIVED', 'CANCELLED'].includes(due.storedStatus)) {
+    return {
+      lateFeeAmount: due.lateFeeAmount,
+      totalAmount: due.totalAmount,
+      balanceAmount: due.balanceAmount,
+      status: due.storedStatus as import('~/types/domain').DueStatus,
+    }
+  }
+
+  return computeDueAmounts(due, today, graceDays, lateFeePerDay)
 }
 
 export const getDaysOverdue = (dueDate: string, today: string): number => {
@@ -1378,12 +1402,15 @@ export const getMaintenanceBillData = async (
   const hasFullCamAdvanceCoverage =
     due.billing_period_charge_type === 'CAM' &&
     Boolean(due.cam_advance_coverage_id)
-  const computedCurrentAmounts = computeDueAmounts(
+  const computedCurrentAmounts = resolveDueAmountsForDisplay(
     {
       dueDate: due.due_date,
       baseAmount: Number(due.base_amount),
+      lateFeeAmount: Number(due.late_fee_amount),
       paidAmount: Number(due.paid_amount),
       waivedAmount: Number(due.waived_amount),
+      totalAmount: Number(due.total_amount),
+      balanceAmount: Number(due.balance_amount),
       storedStatus: due.status,
     },
     todayDate(),
