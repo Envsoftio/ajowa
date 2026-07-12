@@ -40,6 +40,10 @@ type DocumentField =
   | 'ownershipProofPath'
   | 'leaseAgreementPath'
 
+type ProfessionProofField =
+  | 'professionConsentProofFilePath'
+  | 'contactConsentProofFilePath'
+
 const route = useRoute()
 const router = useRouter()
 const api = useApi()
@@ -131,6 +135,16 @@ const fileUrl = (field: DocumentField) => {
   }
 
   return `/api/admin/residents/${residentId.value}/files/${field}`
+}
+
+const professionProofUrl = (field: ProfessionProofField) => {
+  const value = resident.value?.professionProfile?.[field]
+
+  if (!value) {
+    return ''
+  }
+
+  return `/api/admin/residents/${residentId.value}/profession-profile/files/${field}`
 }
 
 const profileImageSrc = computed(() => fileUrl('profileImagePath'))
@@ -262,6 +276,31 @@ const documentItems = computed(() => {
       icon: 'pi pi-file-pdf',
       value: current?.leaseAgreementPath,
       detail: 'Tenancy record',
+    },
+  ]
+})
+
+const professionProofItems = computed(() => {
+  const profile = resident.value?.professionProfile
+
+  return [
+    {
+      field: 'professionConsentProofFilePath' as const,
+      label: 'Profession consent',
+      icon: 'pi pi-file-check',
+      value: profile?.professionConsentProofFilePath,
+      detail: profile?.professionConsentSource
+        ? profile.professionConsentSource.replaceAll('_', ' ')
+        : 'Not recorded',
+    },
+    {
+      field: 'contactConsentProofFilePath' as const,
+      label: 'Contact consent',
+      icon: 'pi pi-address-book',
+      value: profile?.contactConsentProofFilePath,
+      detail: profile?.contactConsentSource
+        ? profile.contactConsentSource.replaceAll('_', ' ')
+        : 'Not recorded',
     },
   ]
 })
@@ -597,6 +636,91 @@ const saveResidentNotes = async () => {
             </article>
           </div>
         </section>
+      </section>
+
+      <section
+        v-if="resident.professionProfile?.isActive"
+        class="surface-card resident-info-panel"
+      >
+        <div class="admin-form-section__header">
+          <div>
+            <p class="eyebrow">Profession</p>
+            <h2>{{ resident.professionProfile.professionName }}</h2>
+          </div>
+          <Tag
+            :value="
+              resident.professionProfile.isPublic
+                ? 'Visible to members'
+                : 'Private'
+            "
+            :severity="
+              resident.professionProfile.isPublic ? 'success' : 'secondary'
+            "
+            rounded
+          />
+        </div>
+
+        <div class="resident-fact-grid">
+          <div>
+            <span>Public phone</span>
+            <strong>{{
+              resident.professionProfile.sharePhone
+                ? resident.professionProfile.publicPhone
+                : '-'
+            }}</strong>
+          </div>
+          <div>
+            <span>Public email</span>
+            <strong>{{
+              resident.professionProfile.shareEmail
+                ? resident.professionProfile.publicEmail
+                : '-'
+            }}</strong>
+          </div>
+          <div>
+            <span>Profession consent</span>
+            <strong>{{
+              resident.professionProfile.professionConsentSource || '-'
+            }}</strong>
+          </div>
+          <div>
+            <span>Contact consent</span>
+            <strong>{{
+              resident.professionProfile.contactConsentSource || '-'
+            }}</strong>
+          </div>
+        </div>
+
+        <p v-if="resident.professionProfile.adminNote" class="resident-note">
+          {{ resident.professionProfile.adminNote }}
+        </p>
+
+        <div class="resident-document-list">
+          <article
+            v-for="document in professionProofItems"
+            :key="document.field"
+            class="resident-document-row"
+          >
+            <i :class="document.icon" aria-hidden="true" />
+            <div>
+              <h3>{{ document.label }}</h3>
+              <p>{{ document.value ? document.detail : 'Not uploaded' }}</p>
+            </div>
+            <Button
+              v-if="document.value"
+              icon="pi pi-external-link"
+              severity="secondary"
+              text
+              rounded
+              as="a"
+              :href="professionProofUrl(document.field)"
+              target="_blank"
+              rel="noopener"
+              :aria-label="`Open ${document.label}`"
+              :title="`Open ${document.label}`"
+            />
+          </article>
+        </div>
       </section>
 
       <section class="surface-card resident-notes-panel">

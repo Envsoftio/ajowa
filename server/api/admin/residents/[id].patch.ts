@@ -13,6 +13,7 @@ import {
   residentSchema,
   writeMasterAudit,
 } from '~/server/utils/master-data'
+import { upsertResidentProfessionProfile } from '~/server/utils/professions'
 import { recomputeUserAccessForActiveBillingPeriods } from '~/server/utils/qr-access'
 import { resolveAuthUserForResidentLogin } from '~/server/utils/resident-login'
 
@@ -194,6 +195,13 @@ export default defineEventHandler(async (event) => {
         authUserId,
       ],
     )
+
+    await upsertResidentProfessionProfile({
+      client,
+      authMe,
+      userId: id,
+      input: body.professionProfile,
+    })
 
     const existingRelationships = await client.query<RelationshipRow>(
       `

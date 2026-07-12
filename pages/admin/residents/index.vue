@@ -1,7 +1,11 @@
 <script setup lang="ts">
 import type { DataTablePageEvent, DataTableSortEvent } from 'primevue/datatable'
 import type { ListQueryParams } from '~/types/api'
-import type { FlatSummary, ResidentSummary } from '~/types/domain'
+import type {
+  FlatSummary,
+  ProfessionSummary,
+  ResidentSummary,
+} from '~/types/domain'
 import ResidentEditorDialog from '~/components/residents/ResidentEditorDialog.vue'
 
 definePageMeta({
@@ -63,32 +67,56 @@ const loadResidents = () =>
         canLogin: query.value.filters.canLogin?.[0],
         isActive: query.value.filters.isActive?.[0],
         flatId: query.value.filters.flatId?.[0],
+        professionId: query.value.filters.professionId?.[0],
       },
     },
   )
 
-const [flatsAsyncData, residentsAsyncData] = await Promise.all([
-  useAsyncData('admin-flat-options', () =>
-    api<{ ok: true; data: { items: FlatSummary[] } }>('/api/admin/flats', {
-      query: {
-        page: 1,
-        pageSize: 500,
-        sortBy: 'flatNumber',
-        sortDirection: 'asc',
-      },
+const [flatsAsyncData, professionsAsyncData, residentsAsyncData] =
+  await Promise.all([
+    useAsyncData('admin-flat-options', () =>
+      api<{ ok: true; data: { items: FlatSummary[] } }>('/api/admin/flats', {
+        query: {
+          page: 1,
+          pageSize: 500,
+          sortBy: 'flatNumber',
+          sortDirection: 'asc',
+        },
+      }),
+    ),
+    useAsyncData('admin-profession-options', () =>
+      api<{ ok: true; data: { items: ProfessionSummary[] } }>(
+        '/api/admin/professions',
+        {
+          query: {
+            page: 1,
+            pageSize: 500,
+            sortBy: 'sortOrder',
+            sortDirection: 'asc',
+            isActive: 'true',
+          },
+        },
+      ),
+    ),
+    useAsyncData('admin-residents', loadResidents, {
+      watch: [query],
     }),
-  ),
-  useAsyncData('admin-residents', loadResidents, {
-    watch: [query],
-  }),
-])
+  ])
 
 const { data: flatsData } = flatsAsyncData
+const { data: professionsData } = professionsAsyncData
 const { data, pending, refresh } = residentsAsyncData
 
 const flatOptions = computed(() =>
   (flatsData.value?.data.items ?? []).map((item) => ({
     label: `${item.blockName} · ${item.flatNumber}`,
+    value: item.id,
+  })),
+)
+
+const professionOptions = computed(() =>
+  (professionsData.value?.data.items ?? []).map((item) => ({
+    label: item.name,
     value: item.id,
   })),
 )
@@ -308,6 +336,20 @@ const flatFilter = computed({
   },
 })
 
+const professionFilter = computed({
+  get: () => query.value.filters.professionId?.[0] ?? '',
+  set: (val) => {
+    updateQuery({
+      ...query.value,
+      page: 1,
+      filters: {
+        ...query.value.filters,
+        professionId: val ? [val] : [],
+      },
+    })
+  },
+})
+
 const displayValue = (value: string | null | undefined) => value || '-'
 const relationshipSeverity = (type: string) => {
   if (type === 'OWNER') return 'success'
@@ -361,6 +403,18 @@ const relationshipSeverity = (type: string) => {
               option-label="label"
               option-value="value"
               placeholder="Flat"
+              filter
+              show-clear
+            />
+            <Select
+              v-model="professionFilter"
+              :options="[
+                { label: 'All professions', value: '' },
+                ...professionOptions,
+              ]"
+              option-label="label"
+              option-value="value"
+              placeholder="Profession"
               filter
               show-clear
             />
@@ -428,6 +482,23 @@ const relationshipSeverity = (type: string) => {
                 }}</span>
                 <span v-if="!row.flatNumbers?.length">-</span>
               </div>
+            </template>
+          </Column>
+          <Column header="Profession">
+            <template #body="{ data: row }">
+              <div
+                v-if="row.professionProfile?.isActive"
+                class="resident-table-tags"
+              >
+                <Tag
+                  :value="row.professionProfile.professionName"
+                  :severity="
+                    row.professionProfile.isPublic ? 'success' : 'secondary'
+                  "
+                  rounded
+                />
+              </div>
+              <span v-else>-</span>
             </template>
           </Column>
           <Column field="email" header="Email" sortable>

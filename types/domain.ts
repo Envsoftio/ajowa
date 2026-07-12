@@ -141,6 +141,65 @@ export type FlatDetail = FlatSummary & {
   relationships: FlatResidentRelationship[]
 }
 
+export type ProfessionSummary = AuditFields & {
+  id: string
+  societyId: string
+  name: string
+  description: string | null
+  sortOrder: number
+  isActive: boolean
+  isPublicAllowed: boolean
+  residentProfileCount?: number
+  publicProfileCount?: number
+}
+
+export type ProfessionConsentSource =
+  | 'LETTER'
+  | 'EMAIL'
+  | 'FORM'
+  | 'VERBAL'
+  | 'OTHER'
+
+export type ProfessionPhoneSource = 'REGISTERED_MOBILE' | 'CUSTOM'
+export type ProfessionEmailSource = 'REGISTERED_EMAIL' | 'CUSTOM'
+
+export type ResidentProfessionProfile = AuditFields & {
+  id: string
+  societyId: string
+  userId: string
+  professionId: string
+  professionName: string
+  professionDescription: string | null
+  isActive: boolean
+  isPublic: boolean
+  isProfessionPublicAllowed: boolean
+  adminNote: string | null
+  professionConsentSource: ProfessionConsentSource | null
+  professionConsentProofFilePath: string | null
+  professionConsentProofFileName?: string | null
+  professionConsentNote: string | null
+  professionConsentRecordedAt: string | null
+  professionConsentRecordedByUserId: string | null
+  professionConsentRecordedByName?: string | null
+  sharePhone: boolean
+  phoneSource: ProfessionPhoneSource | null
+  publicPhone: string | null
+  shareEmail: boolean
+  emailSource: ProfessionEmailSource | null
+  publicEmail: string | null
+  contactConsentSource: ProfessionConsentSource | null
+  contactConsentProofFilePath: string | null
+  contactConsentProofFileName?: string | null
+  contactConsentNote: string | null
+  contactConsentRecordedAt: string | null
+  contactConsentRecordedByUserId: string | null
+  contactConsentRecordedByName?: string | null
+  revokedAt: string | null
+  revokedByUserId: string | null
+  revokedByName?: string | null
+  revocationReason: string | null
+}
+
 export type ResidentSummary = AuditFields & {
   id: string
   societyId: string
@@ -159,6 +218,7 @@ export type ResidentSummary = AuditFields & {
   isActive: boolean
   kycStatus: string
   policeVerificationStatus: string
+  professionProfile?: ResidentProfessionProfile | null
   relationshipTypes?: string[]
   flatNumbers?: string[]
   flatCount?: number
@@ -238,6 +298,20 @@ export type ResidentDetail = ResidentSummary & {
   payments: ResidentPaymentSummary[]
   serviceRequests: ResidentServiceRequestSummary[]
   accessLogs: ResidentAccessLogSummary[]
+}
+
+export type ProfessionDirectoryEntry = {
+  id: string
+  userId: string
+  residentName: string
+  professionId: string
+  professionName: string
+  adminNote: string | null
+  publicPhone: string | null
+  publicEmail: string | null
+  flatLabels: string[]
+  relationshipTypes: string[]
+  updatedAt: string
 }
 
 export type StaffSummary = AuditFields & {
@@ -429,7 +503,10 @@ export type ServiceRequestSource =
 
 export type ServiceLocationType = 'FLAT' | 'COMMON_AREA' | 'SOCIETY_ASSET'
 
-export type ServiceCommentVisibility = 'INTERNAL_NOTE' | 'RESIDENT_VISIBLE' | 'SYSTEM'
+export type ServiceCommentVisibility =
+  | 'INTERNAL_NOTE'
+  | 'RESIDENT_VISIBLE'
+  | 'SYSTEM'
 
 export type ServiceDepartment = AuditFields & {
   id: string
@@ -577,7 +654,12 @@ export type ServiceRequestQueueSummary = {
 
 // --- Phase 6: Billing Types ---
 
-export type BillingFrequency = 'MONTHLY' | 'QUARTERLY' | 'HALF_YEARLY' | 'YEARLY' | 'CUSTOM'
+export type BillingFrequency =
+  | 'MONTHLY'
+  | 'QUARTERLY'
+  | 'HALF_YEARLY'
+  | 'YEARLY'
+  | 'CUSTOM'
 export type BillingPeriodChargeType = 'GENERAL' | 'CAM' | 'DG_SET'
 
 export type BillingPeriodStatus = 'OPEN' | 'LOCKED' | 'CLOSED'
@@ -674,7 +756,14 @@ export type CamAdvanceCoverage = AuditFields & {
   primaryResidentName: string | null
 }
 
-export type DueStatus = 'DRAFT' | 'OPEN' | 'PARTIALLY_PAID' | 'PAID' | 'WAIVED' | 'OVERDUE' | 'CANCELLED'
+export type DueStatus =
+  | 'DRAFT'
+  | 'OPEN'
+  | 'PARTIALLY_PAID'
+  | 'PAID'
+  | 'WAIVED'
+  | 'OVERDUE'
+  | 'CANCELLED'
 
 export type MaintenanceDue = AuditFields & {
   id: string
@@ -788,9 +877,19 @@ export type DefaulterSummary = {
 
 // --- Phase 9: Finance Types ---
 
-export type AccountHeadType = 'ASSET' | 'LIABILITY' | 'INCOME' | 'EXPENSE' | 'EQUITY'
+export type AccountHeadType =
+  | 'ASSET'
+  | 'LIABILITY'
+  | 'INCOME'
+  | 'EXPENSE'
+  | 'EQUITY'
 
-export type BankAccountType = 'SAVINGS' | 'CURRENT' | 'CASH_CREDIT' | 'OVERDRAFT' | 'OTHER'
+export type BankAccountType =
+  | 'SAVINGS'
+  | 'CURRENT'
+  | 'CASH_CREDIT'
+  | 'OVERDRAFT'
+  | 'OTHER'
 
 export type AccountHead = AuditFields & {
   id: string
@@ -829,9 +928,22 @@ export type BankAccount = AuditFields & {
 
 export type FinanceTransactionType = 'INCOME' | 'EXPENSE'
 
-export type FinanceLifecycleStatus = 'DRAFT' | 'PENDING_REVIEW' | 'POSTED' | 'REJECTED' | 'RETURNED' | 'REVERSED' | 'CANCELLED'
+export type FinanceLifecycleStatus =
+  | 'DRAFT'
+  | 'PENDING_REVIEW'
+  | 'POSTED'
+  | 'REJECTED'
+  | 'RETURNED'
+  | 'REVERSED'
+  | 'CANCELLED'
 
-export type FinancePaymentMode = 'CASH' | 'BANK_TRANSFER' | 'UPI' | 'CHEQUE' | 'CARD' | 'OTHER'
+export type FinancePaymentMode =
+  | 'CASH'
+  | 'BANK_TRANSFER'
+  | 'UPI'
+  | 'CHEQUE'
+  | 'CARD'
+  | 'OTHER'
 
 export type FinanceCategory = AuditFields & {
   id: string

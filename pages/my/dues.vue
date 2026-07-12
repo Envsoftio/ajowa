@@ -8,6 +8,7 @@ definePageMeta({
 })
 
 type DuesResponse = { ok: true; data: MaintenanceDue[] }
+type SummaryCardKey = 'balance' | 'total' | 'flats'
 
 const api = useApi()
 const authStore = useAuthStore()
@@ -84,6 +85,22 @@ const summary = computed(() => {
 
   return { totalDue, totalPaid, totalBalance, overdueCount, advanceCoveredCount }
 })
+const activeSummaryHelp = ref<SummaryCardKey | null>(null)
+const isSummaryHelpOpen = (key: SummaryCardKey) => activeSummaryHelp.value === key
+const toggleSummaryHelp = (key: SummaryCardKey) => {
+  activeSummaryHelp.value = isSummaryHelpOpen(key) ? null : key
+}
+const summaryHelpIds: Record<SummaryCardKey, string> = {
+  balance: 'my-dues-summary-help-balance',
+  total: 'my-dues-summary-help-total',
+  flats: 'my-dues-summary-help-flats',
+}
+const isBalanceHelpOpen = computed(() => isSummaryHelpOpen('balance'))
+const isTotalHelpOpen = computed(() => isSummaryHelpOpen('total'))
+const isFlatsHelpOpen = computed(() => isSummaryHelpOpen('flats'))
+const toggleBalanceHelp = () => toggleSummaryHelp('balance')
+const toggleTotalHelp = () => toggleSummaryHelp('total')
+const toggleFlatsHelp = () => toggleSummaryHelp('flats')
 
 const flatGroups = computed(() => {
   const groups = new Map<
@@ -130,35 +147,94 @@ const openBreakdown = (due: MaintenanceDue) => {
 
 <template>
   <div class="landing-page">
-    <div class="surface-grid">
-      <section class="surface-card">
-        <p class="eyebrow">Current balance</p>
+    <div class="surface-grid resident-summary-grid">
+      <section class="surface-card resident-summary-card">
+        <div class="resident-summary-card__topline">
+          <p class="eyebrow">Current balance</p>
+          <button
+            type="button"
+            class="resident-summary-card__help-button"
+            :aria-expanded="isBalanceHelpOpen"
+            :aria-controls="summaryHelpIds.balance"
+            aria-label="Show current balance help"
+            @click="toggleBalanceHelp"
+          >
+            <i class="pi pi-info-circle" aria-hidden="true" />
+          </button>
+        </div>
         <h3>{{ formatMoney(summary.totalBalance) }}</h3>
-        <p>
+        <p
+          :id="summaryHelpIds.balance"
+          class="resident-summary-card__help-text"
+          :class="{ 'is-open': isBalanceHelpOpen }"
+        >
           {{ summary.overdueCount }} overdue bills across linked flats.
           {{ summary.advanceCoveredCount }} CAM advance-covered records are already covered.
         </p>
       </section>
-      <section class="surface-card">
-        <p class="eyebrow">Total due</p>
+      <section class="surface-card resident-summary-card">
+        <div class="resident-summary-card__topline">
+          <p class="eyebrow">Total due</p>
+          <button
+            type="button"
+            class="resident-summary-card__help-button"
+            :aria-expanded="isTotalHelpOpen"
+            :aria-controls="summaryHelpIds.total"
+            aria-label="Show total due help"
+            @click="toggleTotalHelp"
+          >
+            <i class="pi pi-info-circle" aria-hidden="true" />
+          </button>
+        </div>
         <h3>{{ formatMoney(summary.totalDue) }}</h3>
-        <p>{{ formatMoney(summary.totalPaid) }} has been collected against these dues.</p>
+        <p
+          :id="summaryHelpIds.total"
+          class="resident-summary-card__help-text"
+          :class="{ 'is-open': isTotalHelpOpen }"
+        >
+          {{ formatMoney(summary.totalPaid) }} has been collected against these dues.
+        </p>
       </section>
-      <section class="surface-card">
-        <p class="eyebrow">Linked flats</p>
+      <section class="surface-card resident-summary-card">
+        <div class="resident-summary-card__topline">
+          <p class="eyebrow">Linked flats</p>
+          <button
+            type="button"
+            class="resident-summary-card__help-button"
+            :aria-expanded="isFlatsHelpOpen"
+            :aria-controls="summaryHelpIds.flats"
+            aria-label="Show linked flats help"
+            @click="toggleFlatsHelp"
+          >
+            <i class="pi pi-info-circle" aria-hidden="true" />
+          </button>
+        </div>
         <h3>{{ authStore.me?.flatAccess.length ?? 0 }}</h3>
-        <p>{{ authStore.me?.flatAccess.map((item) => `${item.blockName} ${item.flatNumber}`).join(', ') || 'No active flats' }}</p>
+        <p
+          :id="summaryHelpIds.flats"
+          class="resident-summary-card__help-text"
+          :class="{ 'is-open': isFlatsHelpOpen }"
+        >
+          {{ authStore.me?.flatAccess.map((item) => `${item.blockName} ${item.flatNumber}`).join(', ') || 'No active flats' }}
+        </p>
       </section>
     </div>
 
-    <section class="list-page surface-card">
+    <section class="list-page surface-card resident-dues-panel">
       <header class="list-page__header">
         <div>
           <h1>My dues</h1>
           <p>Maintenance dues are shown for flats connected to your active resident relationships.</p>
         </div>
         <div class="list-page__exports">
-          <Button label="Refresh" icon="pi pi-refresh" severity="secondary" outlined @click="() => refresh()" />
+          <Button
+            class="resident-dues-panel__refresh"
+            label="Refresh"
+            icon="pi pi-refresh"
+            severity="secondary"
+            outlined
+            @click="() => refresh()"
+          />
         </div>
       </header>
 
@@ -281,6 +357,20 @@ const openBreakdown = (due: MaintenanceDue) => {
                 <AppStatusBadge v-else :status="row.status" />
               </div>
 
+              <div class="resident-due-card__amount-strip">
+                <div class="resident-due-card__amount resident-due-card__amount--balance">
+                  <span>Balance</span>
+                  <strong>{{ formatMoney(row.balanceAmount) }}</strong>
+                  <small v-if="hasCamAdvanceAdjustment(row)">
+                    {{ formatMoney(camAdvanceAdjustmentAmount(row)) }} advance deducted
+                  </small>
+                </div>
+                <div class="resident-due-card__amount">
+                  <span>Paid</span>
+                  <strong>{{ formatMoney(row.paidAmount) }}</strong>
+                </div>
+              </div>
+
               <div
                 class="billing-advance-state billing-advance-state--card"
                 :class="`billing-advance-state--${advanceStatusKind(row)}`"
@@ -291,26 +381,15 @@ const openBreakdown = (due: MaintenanceDue) => {
                 <p>{{ advanceStatusDetail(row) }}</p>
               </div>
 
-              <div class="list-card__row">
-                <span>Base</span>
-                <strong>{{ formatMoney(row.baseAmount) }}</strong>
-              </div>
-              <div class="list-card__row">
-                <span>Late fee</span>
-                <strong>{{ formatMoney(row.lateFeeAmount) }}</strong>
-              </div>
-              <div class="list-card__row">
-                <span>Paid</span>
-                <strong>{{ formatMoney(row.paidAmount) }}</strong>
-              </div>
-              <div class="list-card__row">
-                <span>Balance</span>
-                <strong>
-                  {{ formatMoney(row.balanceAmount) }}
-                  <small v-if="hasCamAdvanceAdjustment(row)">
-                    {{ formatMoney(camAdvanceAdjustmentAmount(row)) }} advance deducted
-                  </small>
-                </strong>
+              <div class="resident-due-card__meta-grid">
+                <div>
+                  <span>Base</span>
+                  <strong>{{ formatMoney(row.baseAmount) }}</strong>
+                </div>
+                <div>
+                  <span>Late fee</span>
+                  <strong>{{ formatMoney(row.lateFeeAmount) }}</strong>
+                </div>
               </div>
 
               <div class="resident-mobile-actions">

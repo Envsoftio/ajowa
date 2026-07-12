@@ -11,6 +11,7 @@ import { requireRole } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
 import { AppError } from '~/server/utils/errors'
 import { readUuidParam } from '~/server/utils/master-data'
+import { getResidentProfessionProfile } from '~/server/utils/professions'
 
 type ResidentRow = {
   id: string
@@ -213,7 +214,9 @@ const mapDue = (row: DueRow): ResidentDueSummary => ({
   updatedAt: row.updated_at,
 })
 
-const mapServiceRequest = (row: ServiceRequestRow): ResidentServiceRequestSummary => ({
+const mapServiceRequest = (
+  row: ServiceRequestRow,
+): ResidentServiceRequestSummary => ({
   id: row.id,
   requestNumber: row.request_number,
   requesterUserId: row.requester_user_id,
@@ -256,6 +259,7 @@ export default defineEventHandler(async (event) => {
     paymentsResult,
     serviceRequestsResult,
     accessLogsResult,
+    professionProfile,
   ] = await Promise.all([
     pool.query<ResidentRow>(
       `
@@ -518,6 +522,7 @@ export default defineEventHandler(async (event) => {
       `,
       [id, authMe.user.societyId],
     ),
+    getResidentProfessionProfile(pool, authMe.user.societyId, id),
   ])
 
   const row = residentResult.rows[0]
@@ -547,6 +552,7 @@ export default defineEventHandler(async (event) => {
     isActive: row.is_active,
     kycStatus: row.kyc_status,
     policeVerificationStatus: row.police_verification_status,
+    professionProfile,
     emergencyContactName: row.emergency_contact_name,
     emergencyContactNumber: row.emergency_contact_number,
     adminNotes: row.admin_notes,

@@ -8,11 +8,7 @@ import { getEventQuery, getEventRouterParam } from './http-event'
 import type { AuditAction } from '~/shared/audit'
 import type { SocietyPolicySettings } from '~/types/domain'
 
-export const relationshipTypes = [
-  'OWNER',
-  'TENANT',
-  'FAMILY_MEMBER',
-] as const
+export const relationshipTypes = ['OWNER', 'TENANT', 'FAMILY_MEMBER'] as const
 
 export const occupancyStatuses = [
   'SELF_OCCUPIED',
@@ -64,6 +60,18 @@ const notificationScopes = [
   'ADMIN_AND_MANAGER',
   'CONFIGURABLE',
 ] as const
+
+export const professionConsentSources = [
+  'LETTER',
+  'EMAIL',
+  'FORM',
+  'VERBAL',
+  'OTHER',
+] as const
+
+export const professionPhoneSources = ['REGISTERED_MOBILE', 'CUSTOM'] as const
+
+export const professionEmailSources = ['REGISTERED_EMAIL', 'CUSTOM'] as const
 
 const emptyTextMarkers = new Set(['', 'NA', 'N/A', 'NIL', '-', '--'])
 
@@ -152,6 +160,131 @@ export const residentRelationshipSchema = z.object({
   relationshipNote: z.string().trim().max(300).nullable().optional(),
 })
 
+export const professionSchema = z.object({
+  name: z.string().trim().min(2).max(120),
+  description: z.string().trim().max(600).nullable().optional(),
+  sortOrder: z.coerce.number().int().min(0).default(0),
+  isActive: z.boolean().default(true),
+  isPublicAllowed: z.boolean().default(false),
+})
+
+const nullableEmailTextSchema = z.preprocess(
+  trimNullableText,
+  z.string().email().max(254).nullable().optional(),
+)
+
+export const residentProfessionProfileSchema = z
+  .object({
+    professionId: z.string().uuid().nullable().optional(),
+    isPublic: z.boolean().default(false),
+    adminNote: z.string().trim().max(1000).nullable().optional(),
+    professionConsentSource: z
+      .enum(professionConsentSources)
+      .nullable()
+      .optional(),
+    professionConsentProofFilePath: z
+      .string()
+      .trim()
+      .max(500)
+      .nullable()
+      .optional(),
+    professionConsentNote: z.string().trim().max(1000).nullable().optional(),
+    sharePhone: z.boolean().default(false),
+    phoneSource: z.enum(professionPhoneSources).nullable().optional(),
+    publicPhone: nullableTextSchema(40),
+    shareEmail: z.boolean().default(false),
+    emailSource: z.enum(professionEmailSources).nullable().optional(),
+    publicEmail: nullableEmailTextSchema,
+    contactConsentSource: z
+      .enum(professionConsentSources)
+      .nullable()
+      .optional(),
+    contactConsentProofFilePath: z
+      .string()
+      .trim()
+      .max(500)
+      .nullable()
+      .optional(),
+    contactConsentNote: z.string().trim().max(1000).nullable().optional(),
+    revocationReason: z.string().trim().max(700).nullable().optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (!value.professionId) {
+      if (value.isPublic || value.sharePhone || value.shareEmail) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['professionId'],
+          message: 'Select a profession before making it visible.',
+        })
+      }
+      return
+    }
+
+    if (value.isPublic && !value.professionConsentSource) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['professionConsentSource'],
+        message: 'Record the profession visibility consent source.',
+      })
+    }
+
+    if (value.sharePhone) {
+      if (!value.isPublic) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['sharePhone'],
+          message: 'Phone can only be shared when the profession is visible.',
+        })
+      }
+      if (!value.phoneSource) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['phoneSource'],
+          message: 'Choose which phone number to share.',
+        })
+      }
+      if (value.phoneSource === 'CUSTOM' && !value.publicPhone) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['publicPhone'],
+          message: 'Enter the public phone number.',
+        })
+      }
+    }
+
+    if (value.shareEmail) {
+      if (!value.isPublic) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['shareEmail'],
+          message: 'Email can only be shared when the profession is visible.',
+        })
+      }
+      if (!value.emailSource) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['emailSource'],
+          message: 'Choose which email address to share.',
+        })
+      }
+      if (value.emailSource === 'CUSTOM' && !value.publicEmail) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['publicEmail'],
+          message: 'Enter the public email address.',
+        })
+      }
+    }
+
+    if ((value.sharePhone || value.shareEmail) && !value.contactConsentSource) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['contactConsentSource'],
+        message: 'Record the contact sharing consent source.',
+      })
+    }
+  })
+
 export const residentSchema = z.object({
   role: z.enum(appRoles).default('RESIDENT'),
   fullName: z.string().trim().min(2),
@@ -175,6 +308,7 @@ export const residentSchema = z.object({
   preferredNotificationChannels: z
     .enum(notificationPresets)
     .default('ALL_CHANNELS'),
+  professionProfile: residentProfessionProfileSchema.nullable().optional(),
   relationships: z.array(residentRelationshipSchema).min(1),
 })
 
@@ -182,6 +316,10 @@ export type SocietyProfileInput = z.infer<typeof societyProfileSchema>
 export type BlockInput = z.infer<typeof blockSchema>
 export type FlatInput = z.infer<typeof flatSchema>
 export type ResidentInput = z.infer<typeof residentSchema>
+export type ProfessionInput = z.infer<typeof professionSchema>
+export type ResidentProfessionProfileInput = z.infer<
+  typeof residentProfessionProfileSchema
+>
 
 export const defaultSocietyPolicies: z.infer<typeof societyPolicySchema> = {
   billingTenure: 'MONTHLY',
@@ -268,7 +406,10 @@ export const normalizeSocietySettings = (
       enumValue(settings.billingFrequency, billingTenures) ??
       defaultSocietyPolicies.billingTenure,
     excessPaymentHandling:
-      enumValue(normalized.excessPaymentHandling, excessPaymentHandlingOptions) ??
+      enumValue(
+        normalized.excessPaymentHandling,
+        excessPaymentHandlingOptions,
+      ) ??
       (settings.advanceCredit === true
         ? 'KEEP_AS_ADVANCE'
         : defaultSocietyPolicies.excessPaymentHandling),
@@ -435,5 +576,4 @@ const resolveMasterAuditModule = (eventKey: string) => {
 export const validatePayload = <T>(
   schema: z.ZodType<T, z.ZodTypeDef, unknown>,
   value: unknown,
-) =>
-  validateInput(schema, value)
+) => validateInput(schema, value)

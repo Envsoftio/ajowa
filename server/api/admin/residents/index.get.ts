@@ -2,6 +2,11 @@ import { createPaginatedSuccess } from '~/server/utils/api'
 import { requireRole } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
 import { parseListQuery } from '~/server/utils/master-data'
+import {
+  mapResidentProfessionProfile,
+  residentProfessionProfileSelectSql,
+  type ResidentProfessionProfileRow,
+} from '~/server/utils/professions'
 import type { ResidentSummary } from '~/types/domain'
 
 type ResidentRow = {
@@ -115,6 +120,21 @@ export default defineEventHandler(async (event) => {
     `)
   }
 
+  const professionFilter = query.filters.professionId?.[0]
+  if (professionFilter) {
+    values.push(professionFilter)
+    where.push(`
+      exists (
+        select 1
+        from resident_profession_profiles filter_rpp
+        where filter_rpp.user_id = u.id
+          and filter_rpp.society_id = u.society_id
+          and filter_rpp.is_active = true
+          and filter_rpp.profession_id = $${values.length}
+      )
+    `)
+  }
+
   const whereSql = where.join(' and ')
   const orderBy = sortColumns[query.sortBy ?? 'fullName'] ?? 'u.full_name'
   const direction = query.sortDirection === 'desc' ? 'desc' : 'asc'
@@ -168,6 +188,23 @@ export default defineEventHandler(async (event) => {
     ),
   ])
 
+  const userIds = dataResult.rows.map((row) => row.id)
+  const profileResult = userIds.length
+    ? await pool.query<ResidentProfessionProfileRow>(
+        `
+          ${residentProfessionProfileSelectSql}
+          where rpp.user_id = any($1::uuid[]) and rpp.society_id = $2
+        `,
+        [userIds, authMe.user.societyId],
+      )
+    : { rows: [] }
+  const profileByUserId = new Map(
+    profileResult.rows.map((row) => [
+      row.user_id,
+      mapResidentProfessionProfile(row),
+    ]),
+  )
+
   const items: ResidentSummary[] = dataResult.rows.map((row) => ({
     id: row.id,
     societyId: row.society_id,
@@ -186,7 +223,9 @@ export default defineEventHandler(async (event) => {
     isActive: row.is_active,
     kycStatus: row.kyc_status,
     policeVerificationStatus: row.police_verification_status,
-    relationshipTypes: row.relationship_types?.split(', ').filter(Boolean) ?? [],
+    professionProfile: profileByUserId.get(row.id) ?? null,
+    relationshipTypes:
+      row.relationship_types?.split(', ').filter(Boolean) ?? [],
     flatNumbers: row.flat_numbers?.split(', ').filter(Boolean) ?? [],
     flatCount: Number(row.flat_count),
     activeRelationshipCount: Number(row.active_relationship_count),
@@ -194,5 +233,10 @@ export default defineEventHandler(async (event) => {
     updatedAt: row.updated_at,
   }))
 
-  return createPaginatedSuccess(event, items, Number(countResult.rows[0]?.count ?? 0), query)
+  return createPaginatedSuccess(
+    event,
+    items,
+    Number(countResult.rows[0]?.count ?? 0),
+    query,
+  )
 })

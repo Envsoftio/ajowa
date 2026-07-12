@@ -1,6 +1,11 @@
 <script setup lang="ts">
 import type { ComponentPublicInstance } from 'vue'
-import type { FlatSummary, ResidentDetail } from '~/types/domain'
+import type {
+  FlatSummary,
+  ProfessionSummary,
+  ResidentDetail,
+  ResidentProfessionProfile,
+} from '~/types/domain'
 
 type ResidentFileField =
   | 'profileImagePath'
@@ -19,6 +24,21 @@ type ResidentFileConfig = {
   invalidSizeDetail: string
 }
 
+type ProfessionProofField =
+  | 'professionConsentProofFilePath'
+  | 'contactConsentProofFilePath'
+
+type ProfessionProofFileConfig = {
+  field: ProfessionProofField
+  label: string
+  accept: string
+  allowedMimeTypes: readonly string[]
+  maxSizeBytes: number
+  icon: string
+  invalidTypeDetail: string
+  invalidSizeDetail: string
+}
+
 type LocalResidentFile = {
   file: File
   previewUrl: string
@@ -26,6 +46,8 @@ type LocalResidentFile = {
   mimeType: string
   sizeBytes: number
 }
+
+type LocalProfessionProofFile = LocalResidentFile
 
 type ResidentSaveResponse = {
   id: string
@@ -50,6 +72,13 @@ type ResidentFileUploadResponse = {
   updatedAt: string
 }
 
+type ProfessionProofUploadResponse = {
+  field: ProfessionProofField
+  filePath: string
+  fileUrl: string
+  updatedAt: string
+}
+
 type ResidentRelationshipForm = {
   id: string | undefined
   flatId: string
@@ -66,6 +95,25 @@ type ResidentRelationshipForm = {
   occupancyStatus: string
   accessScope: string
   relationshipNote: string
+}
+
+type ResidentProfessionProfileForm = {
+  professionId: string
+  isPublic: boolean
+  adminNote: string
+  professionConsentSource: string
+  professionConsentProofFilePath: string
+  professionConsentNote: string
+  sharePhone: boolean
+  phoneSource: string
+  publicPhone: string
+  shareEmail: boolean
+  emailSource: string
+  publicEmail: string
+  contactConsentSource: string
+  contactConsentProofFilePath: string
+  contactConsentNote: string
+  revocationReason: string
 }
 
 type ResidentForm = {
@@ -89,6 +137,7 @@ type ResidentForm = {
   isActive: boolean
   sendInvite: boolean
   preferredNotificationChannels: string
+  professionProfile: ResidentProfessionProfileForm
   relationships: ResidentRelationshipForm[]
 }
 
@@ -176,6 +225,57 @@ const residentFileConfigs = [
   ...residentDocumentFileConfigs,
 ]
 
+const professionProofFileConfigs: ProfessionProofFileConfig[] = [
+  {
+    field: 'professionConsentProofFilePath',
+    label: 'Profession consent proof',
+    accept: 'application/pdf,image/png,image/jpeg,image/webp',
+    allowedMimeTypes: [
+      'application/pdf',
+      'image/png',
+      'image/jpeg',
+      'image/webp',
+    ],
+    maxSizeBytes: 10 * 1024 * 1024,
+    icon: 'pi pi-file-check',
+    invalidTypeDetail: 'Upload a PDF, PNG, JPG, JPEG, or WebP consent proof.',
+    invalidSizeDetail: 'Consent proof files must be 10 MB or smaller.',
+  },
+  {
+    field: 'contactConsentProofFilePath',
+    label: 'Contact sharing consent proof',
+    accept: 'application/pdf,image/png,image/jpeg,image/webp',
+    allowedMimeTypes: [
+      'application/pdf',
+      'image/png',
+      'image/jpeg',
+      'image/webp',
+    ],
+    maxSizeBytes: 10 * 1024 * 1024,
+    icon: 'pi pi-address-book',
+    invalidTypeDetail: 'Upload a PDF, PNG, JPG, JPEG, or WebP consent proof.',
+    invalidSizeDetail: 'Consent proof files must be 10 MB or smaller.',
+  },
+]
+
+const consentSourceOptions = [
+  { label: 'Letter', value: 'LETTER' },
+  { label: 'Email', value: 'EMAIL' },
+  { label: 'Form', value: 'FORM' },
+  { label: 'Verbal', value: 'VERBAL' },
+  { label: 'Other', value: 'OTHER' },
+]
+
+const phoneSourceOptions = [
+  { label: 'Use registered mobile', value: 'REGISTERED_MOBILE' },
+  { label: 'Use different number', value: 'CUSTOM' },
+]
+
+const emailSourceOptions = [
+  { label: 'Use registered email', value: 'REGISTERED_EMAIL' },
+  { label: 'Use different email', value: 'CUSTOM' },
+]
+
 const defaultRelationship = (
   overrides: Partial<ResidentRelationshipForm> = {},
 ): ResidentRelationshipForm => ({
@@ -194,6 +294,28 @@ const defaultRelationship = (
   occupancyStatus: 'SELF_OCCUPIED',
   accessScope: 'OWNERSHIP',
   relationshipNote: '',
+  ...overrides,
+})
+
+const defaultProfessionProfile = (
+  overrides: Partial<ResidentProfessionProfileForm> = {},
+): ResidentProfessionProfileForm => ({
+  professionId: '',
+  isPublic: false,
+  adminNote: '',
+  professionConsentSource: '',
+  professionConsentProofFilePath: '',
+  professionConsentNote: '',
+  sharePhone: false,
+  phoneSource: '',
+  publicPhone: '',
+  shareEmail: false,
+  emailSource: '',
+  publicEmail: '',
+  contactConsentSource: '',
+  contactConsentProofFilePath: '',
+  contactConsentNote: '',
+  revocationReason: '',
   ...overrides,
 })
 
@@ -218,6 +340,7 @@ const form = reactive<ResidentForm>({
   isActive: true,
   sendInvite: false,
   preferredNotificationChannels: 'ALL_CHANNELS',
+  professionProfile: defaultProfessionProfile(),
   relationships: [defaultRelationship()],
 })
 
@@ -257,6 +380,24 @@ const residentFilePreviewVersion = reactive<Record<ResidentFileField, number>>({
   ownershipProofPath: 0,
   leaseAgreementPath: 0,
 })
+const professionProofFileInputs = ref<
+  Record<ProfessionProofField, HTMLInputElement | null>
+>({
+  professionConsentProofFilePath: null,
+  contactConsentProofFilePath: null,
+})
+const selectedProfessionProofFiles = reactive<
+  Record<ProfessionProofField, LocalProfessionProofFile | null>
+>({
+  professionConsentProofFilePath: null,
+  contactConsentProofFilePath: null,
+})
+const professionProofPreviewVersion = reactive<
+  Record<ProfessionProofField, number>
+>({
+  professionConsentProofFilePath: 0,
+  contactConsentProofFilePath: 0,
+})
 let loadToken = 0
 
 const isEditing = computed(() => Boolean(props.residentId))
@@ -274,11 +415,46 @@ const { data: flatsData } = await useAsyncData(
     }),
 )
 
+const { data: professionsData } = await useAsyncData(
+  'resident-editor-profession-options',
+  () =>
+    api<{ ok: true; data: { items: ProfessionSummary[] } }>(
+      '/api/admin/professions',
+      {
+        query: {
+          page: 1,
+          pageSize: 500,
+          sortBy: 'sortOrder',
+          sortDirection: 'asc',
+          isActive: 'true',
+        },
+      },
+    ),
+)
+
 const flatOptions = computed(() =>
   (flatsData.value?.data.items ?? []).map((item) => ({
     label: `${item.blockName} · ${item.flatNumber}`,
     value: item.id,
   })),
+)
+
+const professionOptions = computed(() =>
+  (professionsData.value?.data.items ?? []).map((item) => ({
+    label: item.isPublicAllowed ? item.name : `${item.name} (internal only)`,
+    value: item.id,
+    publicAllowed: item.isPublicAllowed,
+  })),
+)
+
+const selectedProfessionOption = computed(() =>
+  professionOptions.value.find(
+    (item) => item.value === form.professionProfile.professionId,
+  ),
+)
+
+const selectedProfessionAllowsPublic = computed(
+  () => selectedProfessionOption.value?.publicAllowed ?? false,
 )
 
 const clearResidentFileSelection = (field: ResidentFileField) => {
@@ -297,8 +473,25 @@ const clearAllResidentFileSelections = () => {
   )
 }
 
+const clearProfessionProofSelection = (field: ProfessionProofField) => {
+  const selectedFile = selectedProfessionProofFiles[field]
+
+  if (selectedFile?.previewUrl) {
+    URL.revokeObjectURL(selectedFile.previewUrl)
+  }
+
+  selectedProfessionProofFiles[field] = null
+}
+
+const clearAllProfessionProofSelections = () => {
+  professionProofFileConfigs.forEach((config) =>
+    clearProfessionProofSelection(config.field),
+  )
+}
+
 const resetForm = () => {
   clearAllResidentFileSelections()
+  clearAllProfessionProofSelections()
   loadedResidentId.value = ''
   form.role = 'RESIDENT'
   form.fullName = ''
@@ -320,6 +513,7 @@ const resetForm = () => {
   form.isActive = true
   form.sendInvite = false
   form.preferredNotificationChannels = 'ALL_CHANNELS'
+  form.professionProfile = defaultProfessionProfile()
   form.relationships = [defaultRelationship()]
 }
 
@@ -497,6 +691,202 @@ const uploadPendingResidentFiles = async (residentId: string) => {
   return uploadedFiles
 }
 
+const setProfessionProofFileInput = (
+  field: ProfessionProofField,
+  element: Element | ComponentPublicInstance | null,
+) => {
+  if (element instanceof HTMLInputElement) {
+    professionProofFileInputs.value[field] = element
+  } else {
+    professionProofFileInputs.value[field] = null
+  }
+}
+
+const getProfessionProofFilePath = (field: ProfessionProofField) =>
+  form.professionProfile[field]
+
+const setProfessionProofFilePath = (
+  field: ProfessionProofField,
+  value: string,
+) => {
+  form.professionProfile[field] = value
+}
+
+const bumpProfessionProofPreview = (field: ProfessionProofField) => {
+  professionProofPreviewVersion[field] = Date.now()
+}
+
+const getProfessionProofPreviewUrl = (config: ProfessionProofFileConfig) => {
+  const selectedFile = selectedProfessionProofFiles[config.field]
+
+  if (selectedFile) {
+    return selectedFile.previewUrl
+  }
+
+  if (loadedResidentId.value && getProfessionProofFilePath(config.field)) {
+    return `/api/admin/residents/${loadedResidentId.value}/profession-profile/files/${config.field}?v=${professionProofPreviewVersion[config.field]}`
+  }
+
+  return ''
+}
+
+const getProfessionProofFileName = (field: ProfessionProofField) => {
+  const selectedFile = selectedProfessionProofFiles[field]
+
+  if (selectedFile) {
+    return selectedFile.fileName
+  }
+
+  return getProfessionProofFilePath(field).split('/').pop() ?? ''
+}
+
+const getProfessionProofFileMeta = (field: ProfessionProofField) => {
+  const selectedFile = selectedProfessionProofFiles[field]
+
+  if (!selectedFile) {
+    return ''
+  }
+
+  return `${selectedFile.mimeType} · ${formatBytes(selectedFile.sizeBytes)}`
+}
+
+const hasProfessionProofFile = (field: ProfessionProofField) =>
+  Boolean(
+    selectedProfessionProofFiles[field] || getProfessionProofFilePath(field),
+  )
+
+const isProfessionProofImage = (config: ProfessionProofFileConfig) => {
+  const selectedFile = selectedProfessionProofFiles[config.field]
+  return Boolean(selectedFile?.mimeType.startsWith('image/'))
+}
+
+const pickProfessionProofFile = (field: ProfessionProofField) => {
+  professionProofFileInputs.value[field]?.click()
+}
+
+const clearProfessionProofFile = (field: ProfessionProofField) => {
+  clearProfessionProofSelection(field)
+  setProfessionProofFilePath(field, '')
+  bumpProfessionProofPreview(field)
+}
+
+const onProfessionProofFileChange = (
+  config: ProfessionProofFileConfig,
+  event: Event,
+) => {
+  const target = event.target as HTMLInputElement
+  const file = target.files?.[0]
+  target.value = ''
+
+  if (!file) {
+    return
+  }
+
+  if (!config.allowedMimeTypes.includes(file.type)) {
+    toast.add({
+      severity: 'warn',
+      summary: 'Unsupported file',
+      detail: config.invalidTypeDetail,
+      life: 10000,
+    })
+    return
+  }
+
+  if (file.size <= 0 || file.size > config.maxSizeBytes) {
+    toast.add({
+      severity: 'warn',
+      summary: 'File too large',
+      detail: config.invalidSizeDetail,
+      life: 10000,
+    })
+    return
+  }
+
+  clearProfessionProofSelection(config.field)
+  selectedProfessionProofFiles[config.field] = {
+    file,
+    previewUrl: URL.createObjectURL(file),
+    fileName: file.name,
+    mimeType: file.type,
+    sizeBytes: file.size,
+  }
+}
+
+const uploadProfessionProofFile = async (
+  residentId: string,
+  config: ProfessionProofFileConfig,
+) => {
+  const selectedFile = selectedProfessionProofFiles[config.field]
+
+  if (!selectedFile) {
+    return null
+  }
+
+  const formData = new FormData()
+  formData.append('field', config.field)
+  formData.append('file', selectedFile.file)
+
+  const response = await api<{
+    ok: true
+    data: ProfessionProofUploadResponse
+  }>(`/api/admin/residents/${residentId}/profession-profile/files`, {
+    method: 'POST',
+    body: formData,
+  })
+
+  setProfessionProofFilePath(config.field, response.data.filePath)
+  bumpProfessionProofPreview(config.field)
+  clearProfessionProofSelection(config.field)
+
+  return response.data
+}
+
+const uploadPendingProfessionProofFiles = async (residentId: string) => {
+  const uploadedFiles: ProfessionProofUploadResponse[] = []
+
+  if (!form.professionProfile.professionId) {
+    return uploadedFiles
+  }
+
+  for (const config of professionProofFileConfigs) {
+    const uploadedFile = await uploadProfessionProofFile(residentId, config)
+
+    if (uploadedFile) {
+      uploadedFiles.push(uploadedFile)
+    }
+  }
+
+  return uploadedFiles
+}
+
+const toProfessionProfileForm = (
+  profile: ResidentProfessionProfile | null | undefined,
+) => {
+  if (!profile?.isActive) {
+    return defaultProfessionProfile()
+  }
+
+  return defaultProfessionProfile({
+    professionId: profile.professionId,
+    isPublic: profile.isPublic,
+    adminNote: profile.adminNote ?? '',
+    professionConsentSource: profile.professionConsentSource ?? '',
+    professionConsentProofFilePath:
+      profile.professionConsentProofFilePath ?? '',
+    professionConsentNote: profile.professionConsentNote ?? '',
+    sharePhone: profile.sharePhone,
+    phoneSource: profile.phoneSource ?? '',
+    publicPhone: profile.publicPhone ?? '',
+    shareEmail: profile.shareEmail,
+    emailSource: profile.emailSource ?? '',
+    publicEmail: profile.publicEmail ?? '',
+    contactConsentSource: profile.contactConsentSource ?? '',
+    contactConsentProofFilePath: profile.contactConsentProofFilePath ?? '',
+    contactConsentNote: profile.contactConsentNote ?? '',
+    revocationReason: profile.revocationReason ?? '',
+  })
+}
+
 const applyResident = (item: ResidentDetail) => {
   loadedResidentId.value = item.id
   form.role = item.role
@@ -519,6 +909,7 @@ const applyResident = (item: ResidentDetail) => {
   form.isActive = item.isActive
   form.sendInvite = false
   form.preferredNotificationChannels = item.preferredNotificationChannels
+  form.professionProfile = toProfessionProfileForm(item.professionProfile)
   form.relationships = item.relationships.map(
     (relationship: ResidentDetail['relationships'][number]) => ({
       id: relationship.id,
@@ -539,6 +930,9 @@ const applyResident = (item: ResidentDetail) => {
     }),
   )
   residentFileConfigs.forEach((config) => bumpResidentFilePreview(config.field))
+  professionProofFileConfigs.forEach((config) =>
+    bumpProfessionProofPreview(config.field),
+  )
 }
 
 const loadResident = async (residentId: string) => {
@@ -603,6 +997,87 @@ watch(
   { immediate: true },
 )
 
+watch(
+  () => form.professionProfile.professionId,
+  (professionId) => {
+    if (!professionId) {
+      form.professionProfile.isPublic = false
+      form.professionProfile.sharePhone = false
+      form.professionProfile.shareEmail = false
+    }
+  },
+)
+
+watch(selectedProfessionAllowsPublic, (allowsPublic) => {
+  if (!allowsPublic) {
+    form.professionProfile.isPublic = false
+    form.professionProfile.sharePhone = false
+    form.professionProfile.shareEmail = false
+  }
+})
+
+watch(
+  () => form.professionProfile.isPublic,
+  (isPublic) => {
+    if (!isPublic) {
+      form.professionProfile.sharePhone = false
+      form.professionProfile.shareEmail = false
+    }
+  },
+)
+
+watch(
+  () => form.professionProfile.sharePhone,
+  (sharePhone) => {
+    if (sharePhone && !form.professionProfile.phoneSource) {
+      form.professionProfile.phoneSource = 'REGISTERED_MOBILE'
+    }
+  },
+)
+
+watch(
+  () => form.professionProfile.shareEmail,
+  (shareEmail) => {
+    if (shareEmail && !form.professionProfile.emailSource) {
+      form.professionProfile.emailSource = 'REGISTERED_EMAIL'
+    }
+  },
+)
+
+const buildProfessionProfilePayload = () => {
+  const profile = form.professionProfile
+
+  if (!profile.professionId) {
+    return null
+  }
+
+  return {
+    professionId: profile.professionId,
+    isPublic: profile.isPublic,
+    adminNote: profile.adminNote || null,
+    professionConsentSource: profile.professionConsentSource || null,
+    professionConsentProofFilePath:
+      profile.professionConsentProofFilePath || null,
+    professionConsentNote: profile.professionConsentNote || null,
+    sharePhone: profile.sharePhone,
+    phoneSource: profile.sharePhone ? profile.phoneSource || null : null,
+    publicPhone:
+      profile.sharePhone && profile.phoneSource === 'CUSTOM'
+        ? profile.publicPhone || null
+        : null,
+    shareEmail: profile.shareEmail,
+    emailSource: profile.shareEmail ? profile.emailSource || null : null,
+    publicEmail:
+      profile.shareEmail && profile.emailSource === 'CUSTOM'
+        ? profile.publicEmail || null
+        : null,
+    contactConsentSource: profile.contactConsentSource || null,
+    contactConsentProofFilePath: profile.contactConsentProofFilePath || null,
+    contactConsentNote: profile.contactConsentNote || null,
+    revocationReason: profile.revocationReason || null,
+  }
+}
+
 const submit = async () => {
   saving.value = true
 
@@ -621,6 +1096,7 @@ const submit = async () => {
       governmentIdDocumentPath: form.governmentIdDocumentPath || null,
       ownershipProofPath: form.ownershipProofPath || null,
       leaseAgreementPath: form.leaseAgreementPath || null,
+      professionProfile: buildProfessionProfilePayload(),
       relationships: form.relationships.map((relationship) => ({
         ...relationship,
         ownershipStartDate: relationship.ownershipStartDate || null,
@@ -663,6 +1139,7 @@ const submit = async () => {
     try {
       if (savedResidentId) {
         await uploadPendingResidentFiles(savedResidentId)
+        await uploadPendingProfessionProofFiles(savedResidentId)
       }
     } catch (error) {
       if (createdResident) {
@@ -695,7 +1172,10 @@ const submit = async () => {
   }
 }
 
-onBeforeUnmount(clearAllResidentFileSelections)
+onBeforeUnmount(() => {
+  clearAllResidentFileSelections()
+  clearAllProfessionProofSelections()
+})
 </script>
 
 <template>
@@ -848,6 +1328,313 @@ onBeforeUnmount(clearAllResidentFileSelections)
             <span>Emergency contact number</span>
             <InputText v-model="form.emergencyContactNumber" />
           </label>
+        </div>
+      </section>
+
+      <section class="admin-form-subsection">
+        <h3>Profession</h3>
+        <div class="admin-form-grid">
+          <label>
+            <span>Profession</span>
+            <Select
+              v-model="form.professionProfile.professionId"
+              :options="professionOptions"
+              option-label="label"
+              option-value="value"
+              placeholder="Select profession"
+              filter
+              show-clear
+            />
+          </label>
+          <label class="admin-toggle-card">
+            <span>Visible to members</span>
+            <ToggleSwitch
+              v-model="form.professionProfile.isPublic"
+              :disabled="
+                !form.professionProfile.professionId ||
+                !selectedProfessionAllowsPublic
+              "
+            />
+          </label>
+          <label class="admin-form-grid__full">
+            <span>Profession note</span>
+            <Textarea
+              v-model="form.professionProfile.adminNote"
+              rows="2"
+              auto-resize
+            />
+          </label>
+          <label>
+            <span>Profession consent source</span>
+            <Select
+              v-model="form.professionProfile.professionConsentSource"
+              :options="consentSourceOptions"
+              option-label="label"
+              option-value="value"
+              placeholder="Consent source"
+              show-clear
+              :required="form.professionProfile.isPublic"
+              :disabled="!form.professionProfile.professionId"
+            />
+          </label>
+          <label>
+            <span>Profession consent note</span>
+            <InputText
+              v-model="form.professionProfile.professionConsentNote"
+              :disabled="!form.professionProfile.professionId"
+            />
+          </label>
+          <div
+            v-for="config in professionProofFileConfigs.filter(
+              (item) => item.field === 'professionConsentProofFilePath',
+            )"
+            :key="config.field"
+            class="admin-form-grid__full resident-file-upload resident-file-upload--document"
+          >
+            <div class="resident-file-upload__preview">
+              <img
+                v-if="
+                  isProfessionProofImage(config) &&
+                  getProfessionProofPreviewUrl(config)
+                "
+                :src="getProfessionProofPreviewUrl(config)"
+                :alt="config.label"
+              >
+              <i v-else :class="config.icon" aria-hidden="true" />
+            </div>
+            <div class="resident-file-upload__body">
+              <div class="resident-file-upload__header">
+                <span class="field-label">{{ config.label }}</span>
+                <div class="admin-inline-actions">
+                  <Button
+                    type="button"
+                    icon="pi pi-upload"
+                    :label="
+                      hasProfessionProofFile(config.field)
+                        ? 'Replace'
+                        : 'Upload'
+                    "
+                    severity="secondary"
+                    outlined
+                    :disabled="!form.professionProfile.professionId"
+                    @click="pickProfessionProofFile(config.field)"
+                  />
+                  <Button
+                    v-if="getProfessionProofPreviewUrl(config)"
+                    as="a"
+                    :href="getProfessionProofPreviewUrl(config)"
+                    target="_blank"
+                    rel="noopener"
+                    icon="pi pi-search-plus"
+                    label="Open"
+                    severity="secondary"
+                    outlined
+                  />
+                  <Button
+                    v-if="hasProfessionProofFile(config.field)"
+                    type="button"
+                    icon="pi pi-times"
+                    label="Remove"
+                    severity="danger"
+                    outlined
+                    @click="clearProfessionProofFile(config.field)"
+                  />
+                </div>
+              </div>
+              <strong v-if="getProfessionProofFileName(config.field)">{{
+                getProfessionProofFileName(config.field)
+              }}</strong>
+              <span class="muted-line">{{
+                getProfessionProofFileMeta(config.field) ||
+                'PDF, PNG, JPG, JPEG, or WebP'
+              }}</span>
+              <input
+                :ref="
+                  (element) =>
+                    setProfessionProofFileInput(config.field, element)
+                "
+                type="file"
+                :accept="config.accept"
+                class="resident-file-upload__input"
+                @change="onProfessionProofFileChange(config, $event)"
+              >
+            </div>
+          </div>
+        </div>
+
+        <div class="admin-toggle-grid" style="margin-top: 1rem">
+          <label class="admin-toggle-card">
+            <span>Share phone</span>
+            <ToggleSwitch
+              v-model="form.professionProfile.sharePhone"
+              :disabled="!form.professionProfile.isPublic"
+            />
+          </label>
+          <label class="admin-toggle-card">
+            <span>Share email</span>
+            <ToggleSwitch
+              v-model="form.professionProfile.shareEmail"
+              :disabled="!form.professionProfile.isPublic"
+            />
+          </label>
+        </div>
+
+        <div
+          v-if="
+            form.professionProfile.sharePhone ||
+            form.professionProfile.shareEmail ||
+            form.professionProfile.contactConsentProofFilePath
+          "
+          class="admin-form-grid"
+          style="margin-top: 1rem"
+        >
+          <label v-if="form.professionProfile.sharePhone">
+            <span>Phone source</span>
+            <Select
+              v-model="form.professionProfile.phoneSource"
+              :options="phoneSourceOptions"
+              option-label="label"
+              option-value="value"
+              placeholder="Phone source"
+              required
+            />
+          </label>
+          <label v-if="form.professionProfile.sharePhone">
+            <span>Public phone</span>
+            <InputText
+              v-model="form.professionProfile.publicPhone"
+              :placeholder="
+                form.professionProfile.phoneSource === 'REGISTERED_MOBILE'
+                  ? form.mobileNumber || 'Registered mobile'
+                  : 'Public phone'
+              "
+              :disabled="
+                form.professionProfile.phoneSource === 'REGISTERED_MOBILE'
+              "
+              :required="form.professionProfile.phoneSource === 'CUSTOM'"
+            />
+          </label>
+          <label v-if="form.professionProfile.shareEmail">
+            <span>Email source</span>
+            <Select
+              v-model="form.professionProfile.emailSource"
+              :options="emailSourceOptions"
+              option-label="label"
+              option-value="value"
+              placeholder="Email source"
+              required
+            />
+          </label>
+          <label v-if="form.professionProfile.shareEmail">
+            <span>Public email</span>
+            <InputText
+              v-model="form.professionProfile.publicEmail"
+              type="email"
+              :placeholder="
+                form.professionProfile.emailSource === 'REGISTERED_EMAIL'
+                  ? form.email || 'Registered email'
+                  : 'Public email'
+              "
+              :disabled="
+                form.professionProfile.emailSource === 'REGISTERED_EMAIL'
+              "
+              :required="form.professionProfile.emailSource === 'CUSTOM'"
+            />
+          </label>
+          <label>
+            <span>Contact consent source</span>
+            <Select
+              v-model="form.professionProfile.contactConsentSource"
+              :options="consentSourceOptions"
+              option-label="label"
+              option-value="value"
+              placeholder="Consent source"
+              show-clear
+              :required="
+                form.professionProfile.sharePhone ||
+                form.professionProfile.shareEmail
+              "
+            />
+          </label>
+          <label>
+            <span>Contact consent note</span>
+            <InputText v-model="form.professionProfile.contactConsentNote" />
+          </label>
+          <div
+            v-for="config in professionProofFileConfigs.filter(
+              (item) => item.field === 'contactConsentProofFilePath',
+            )"
+            :key="config.field"
+            class="admin-form-grid__full resident-file-upload resident-file-upload--document"
+          >
+            <div class="resident-file-upload__preview">
+              <img
+                v-if="
+                  isProfessionProofImage(config) &&
+                  getProfessionProofPreviewUrl(config)
+                "
+                :src="getProfessionProofPreviewUrl(config)"
+                :alt="config.label"
+              >
+              <i v-else :class="config.icon" aria-hidden="true" />
+            </div>
+            <div class="resident-file-upload__body">
+              <div class="resident-file-upload__header">
+                <span class="field-label">{{ config.label }}</span>
+                <div class="admin-inline-actions">
+                  <Button
+                    type="button"
+                    icon="pi pi-upload"
+                    :label="
+                      hasProfessionProofFile(config.field)
+                        ? 'Replace'
+                        : 'Upload'
+                    "
+                    severity="secondary"
+                    outlined
+                    @click="pickProfessionProofFile(config.field)"
+                  />
+                  <Button
+                    v-if="getProfessionProofPreviewUrl(config)"
+                    as="a"
+                    :href="getProfessionProofPreviewUrl(config)"
+                    target="_blank"
+                    rel="noopener"
+                    icon="pi pi-search-plus"
+                    label="Open"
+                    severity="secondary"
+                    outlined
+                  />
+                  <Button
+                    v-if="hasProfessionProofFile(config.field)"
+                    type="button"
+                    icon="pi pi-times"
+                    label="Remove"
+                    severity="danger"
+                    outlined
+                    @click="clearProfessionProofFile(config.field)"
+                  />
+                </div>
+              </div>
+              <strong v-if="getProfessionProofFileName(config.field)">{{
+                getProfessionProofFileName(config.field)
+              }}</strong>
+              <span class="muted-line">{{
+                getProfessionProofFileMeta(config.field) ||
+                'PDF, PNG, JPG, JPEG, or WebP'
+              }}</span>
+              <input
+                :ref="
+                  (element) =>
+                    setProfessionProofFileInput(config.field, element)
+                "
+                type="file"
+                :accept="config.accept"
+                class="resident-file-upload__input"
+                @change="onProfessionProofFileChange(config, $event)"
+              >
+            </div>
+          </div>
         </div>
       </section>
 

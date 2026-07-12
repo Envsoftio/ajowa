@@ -18,9 +18,21 @@ export const PASSWORD_POLICY = {
   requiresSymbol: true,
 }
 
-const SAFE_REDIRECT_PREFIXES = ['/admin', '/my', '/service', '/guard', '/change-password', '/verify-email']
+const SAFE_REDIRECT_PREFIXES = [
+  '/admin',
+  '/my',
+  '/service',
+  '/guard',
+  '/change-password',
+  '/verify-email',
+]
 const TEMPORARY_PASSWORD_CHANGE_EXEMPT_ROLES: readonly AppRole[] = ['GUARD']
-export const QR_SCAN_ROLES: readonly AppRole[] = ['ADMIN', 'MANAGER', 'SERVICE_STAFF', 'GUARD']
+export const QR_SCAN_ROLES: readonly AppRole[] = [
+  'ADMIN',
+  'MANAGER',
+  'SERVICE_STAFF',
+  'GUARD',
+]
 export const canRoleScanQr = (role: AppRole) => QR_SCAN_ROLES.includes(role)
 
 type RouteAccessUser = {
@@ -58,7 +70,10 @@ const getPathname = (value: string) => value.split(/[?#]/)[0] || '/'
 export const getAdminRoutePermission = (path: string) => {
   const pathname = getPathname(path)
 
-  if (pathname.startsWith('/admin/staff') || pathname.startsWith('/admin/auth/invites')) {
+  if (
+    pathname.startsWith('/admin/staff') ||
+    pathname.startsWith('/admin/auth/invites')
+  ) {
     return 'staff.manage'
   }
   if (pathname.startsWith('/admin/society')) {
@@ -71,6 +86,9 @@ export const getAdminRoutePermission = (path: string) => {
     return 'flats.manage'
   }
   if (pathname.startsWith('/admin/residents')) {
+    return 'residents.manage'
+  }
+  if (pathname.startsWith('/admin/professions')) {
     return 'residents.manage'
   }
   if (pathname.startsWith('/admin/gate-log')) {
@@ -142,7 +160,11 @@ export const getAdminRoutePermission = (path: string) => {
 export const canUserAccessRoute = (path: string, user: RouteAccessUser) => {
   const pathname = getPathname(path)
 
-  if (pathname === '/change-password' || pathname === '/verify-email' || pathname === '/forbidden') {
+  if (
+    pathname === '/change-password' ||
+    pathname === '/verify-email' ||
+    pathname === '/forbidden'
+  ) {
     return true
   }
 
@@ -174,14 +196,17 @@ export const canUserAccessRoute = (path: string, user: RouteAccessUser) => {
   return true
 }
 
-export const isGuestOnlyRoute = (path: string) => PUBLIC_AUTH_ROUTES.includes(path as (typeof PUBLIC_AUTH_ROUTES)[number])
+export const isGuestOnlyRoute = (path: string) =>
+  PUBLIC_AUTH_ROUTES.includes(path as (typeof PUBLIC_AUTH_ROUTES)[number])
 
 export const isSafeRedirectPath = (value: unknown): value is string => {
   if (typeof value !== 'string' || !value.startsWith('/')) {
     return false
   }
 
-  return SAFE_REDIRECT_PREFIXES.some((prefix) => value === prefix || value.startsWith(`${prefix}/`))
+  return SAFE_REDIRECT_PREFIXES.some(
+    (prefix) => value === prefix || value.startsWith(`${prefix}/`),
+  )
 }
 
 export const validatePasswordPolicy = (password: string) => {
