@@ -1166,6 +1166,35 @@ export const recomputeUserAccessForActiveBillingPeriods = async (
   }
 }
 
+export const recomputeFlatAccessForActiveBillingPeriods = async (
+  client: PoolClient,
+  societyId: string,
+  flatIds: string[],
+) => {
+  const uniqueFlatIds = [...new Set(flatIds)].filter(Boolean)
+  if (uniqueFlatIds.length === 0) return { userCount: 0 }
+
+  const users = await client.query<{ user_id: string }>(
+    `
+      select distinct fr.user_id
+      from flat_residents fr
+      inner join flats f on f.id = fr.flat_id
+      where fr.flat_id = any($1::uuid[])
+        and f.society_id = $2
+        and fr.is_active = true
+    `,
+    [uniqueFlatIds, societyId],
+  )
+
+  await recomputeUserAccessForActiveBillingPeriods(
+    client,
+    societyId,
+    users.rows.map((user) => user.user_id),
+  )
+
+  return { userCount: users.rows.length }
+}
+
 export const revokeActiveQr = async (
   client: PoolClient,
   userId: string,
@@ -1466,7 +1495,7 @@ export const verifyQrToken = async (
         let accessAllowed = row.access_is_granted
         let unpaidFlatNumbers = row.unpaid_flat_numbers ?? []
 
-        if (accessAllowed === null) {
+        if (accessAllowed !== true) {
           try {
             const access = await recomputeUserAccess(row.user_id, row.billing_period_id, client)
             accessAllowed = access?.is_access_granted ?? false

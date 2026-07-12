@@ -3,6 +3,7 @@ import { requireRole } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
 import { AppError } from '~/server/utils/errors'
 import { readUuidParam, writeMasterAudit } from '~/server/utils/master-data'
+import { recomputeFlatAccessForActiveBillingPeriods } from '~/server/utils/qr-access'
 
 export default defineEventHandler(async (event) => {
   const authMe = await requireRole(event, ['ADMIN', 'MANAGER'])
@@ -53,6 +54,14 @@ export default defineEventHandler(async (event) => {
       `,
       [id, authMe.user.societyId, authMe.user.id],
     )
+
+    if (before.is_active) {
+      await recomputeFlatAccessForActiveBillingPeriods(
+        client,
+        authMe.user.societyId,
+        [before.flat_id],
+      )
+    }
 
     await writeMasterAudit({
       client,

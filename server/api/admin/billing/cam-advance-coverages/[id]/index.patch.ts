@@ -3,6 +3,7 @@ import { requireRole } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
 import { AppError } from '~/server/utils/errors'
 import { camAdvanceCoverageSchema } from '~/server/utils/cam-advance'
+import { recomputeFlatAccessForActiveBillingPeriods } from '~/server/utils/qr-access'
 import { readUuidParam, validatePayload, writeMasterAudit } from '~/server/utils/master-data'
 
 type CoverageBeforeRow = {
@@ -99,6 +100,14 @@ export default defineEventHandler(async (event) => {
         authMe.user.id,
       ],
     )
+
+    if (before.is_active || body.isActive) {
+      await recomputeFlatAccessForActiveBillingPeriods(
+        client,
+        authMe.user.societyId,
+        [before.flat_id, body.flatId],
+      )
+    }
 
     await writeMasterAudit({
       client,

@@ -3,6 +3,7 @@ import { requireRole } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
 import { AppError } from '~/server/utils/errors'
 import { camAdvanceCoverageSchema } from '~/server/utils/cam-advance'
+import { recomputeFlatAccessForActiveBillingPeriods } from '~/server/utils/qr-access'
 import { validatePayload, writeMasterAudit } from '~/server/utils/master-data'
 
 export default defineEventHandler(async (event) => {
@@ -68,6 +69,14 @@ export default defineEventHandler(async (event) => {
         statusCode: 500,
         message: 'CAM advance coverage creation did not return an identifier.',
       })
+    }
+
+    if (body.isActive) {
+      await recomputeFlatAccessForActiveBillingPeriods(
+        client,
+        authMe.user.societyId,
+        [body.flatId],
+      )
     }
 
     await writeMasterAudit({
