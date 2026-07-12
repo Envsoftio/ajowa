@@ -150,6 +150,7 @@ export type ProfessionSummary = AuditFields & {
   isActive: boolean
   isPublicAllowed: boolean
   residentProfileCount?: number
+  linkedProfileCount?: number
   publicProfileCount?: number
 }
 

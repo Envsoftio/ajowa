@@ -13,6 +13,7 @@ type ProfessionRow = {
   is_active: boolean
   is_public_allowed: boolean
   resident_profile_count: string
+  linked_profile_count: string
   public_profile_count: string
   created_at: string
   updated_at: string
@@ -67,7 +68,8 @@ export default defineEventHandler(async (event) => {
           p.sort_order,
           p.is_active,
           p.is_public_allowed,
-          count(rpp.id)::text as resident_profile_count,
+          count(rpp.id) filter (where rpp.is_active = true)::text as resident_profile_count,
+          count(rpp.id)::text as linked_profile_count,
           count(rpp.id) filter (
             where rpp.is_active = true and rpp.is_public = true and rpp.revoked_at is null
           )::text as public_profile_count,
@@ -102,6 +104,7 @@ export default defineEventHandler(async (event) => {
     isActive: row.is_active,
     isPublicAllowed: row.is_public_allowed,
     residentProfileCount: Number(row.resident_profile_count),
+    linkedProfileCount: Number(row.linked_profile_count),
     publicProfileCount: Number(row.public_profile_count),
     createdAt: row.created_at,
     updatedAt: row.updated_at,

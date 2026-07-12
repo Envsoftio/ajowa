@@ -140,13 +140,15 @@ const submit = async () => {
 }
 
 const deleteProfession = async (profession: ProfessionSummary) => {
-  const linkedCount = profession.residentProfileCount ?? 0
+  const linkedCount =
+    profession.linkedProfileCount ?? profession.residentProfileCount ?? 0
 
   if (linkedCount > 0) {
     toast.add({
       severity: 'warn',
       summary: 'Profession is linked',
-      detail: 'Mark it inactive instead of deleting it.',
+      detail:
+        'This profession has resident history. Mark it inactive instead of deleting it.',
       life: 7000,
     })
     return
