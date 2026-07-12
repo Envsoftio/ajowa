@@ -10,6 +10,7 @@ import { getDatabasePool, queryRows } from './database'
 import { sendTemplatedEmail, buildAppUrl, normalizeAppActionUrl } from './email'
 import { getValidatedRuntimeConfig, type ValidatedRuntimeConfig } from './env'
 import {
+  canRoleScanQr,
   getRoleLandingRoute,
   PASSWORD_POLICY,
   requiresTemporaryPasswordChangeForRole,
@@ -342,11 +343,12 @@ const buildAuthMe = (
   const requiresEmailVerification =
     isEmailVerificationRequiredForRole(appState.user.role) &&
     !appState.user.email_verified
+  const hasQrScanAccess = canRoleScanQr(appState.user.role)
   const hasRoleAccess =
     appState.user.role === 'RESIDENT'
       ? hasResidentAccess
       : appState.user.role === 'SERVICE_STAFF'
-        ? hasDepartmentAccess
+        ? hasDepartmentAccess || hasQrScanAccess
         : true
   const permissions = normalizeStaffPermissions(
     appState.user.role,

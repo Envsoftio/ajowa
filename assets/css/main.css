@@ -1963,6 +1963,10 @@ a {
   color: var(--color-text);
 }
 
+.required-marker {
+  color: var(--color-danger);
+}
+
 .field-label .pi-info-circle,
 .field-help-icon {
   color: var(--color-info);
@@ -1975,6 +1979,12 @@ a {
   font-size: 0.82rem;
   font-weight: 700;
   line-height: 1.35;
+}
+
+.field-help {
+  color: var(--color-muted);
+  font-size: 0.82rem;
+  line-height: 1.45;
 }
 
 .admin-page-guide {

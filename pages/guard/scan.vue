@@ -4,7 +4,7 @@ import type { AppShellType } from '~/shared/shell'
 definePageMeta({
   layout: false,
   middleware: ['protected'],
-  title: 'Guard Scan',
+  title: 'Scan QR',
 })
 
 type VerifyResponse = {

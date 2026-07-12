@@ -1,7 +1,11 @@
-import { canUserAccessRoute } from '~/shared/auth'
+import { canRoleScanQr, canUserAccessRoute } from '~/shared/auth'
 import type { AppRole } from '~/types/auth'
 
 const isCrossRoleRoute = (path: string, role: AppRole) => {
+  if (path === '/guard/scan') {
+    return !canRoleScanQr(role)
+  }
+
   if (path.startsWith('/guard')) {
     return role !== 'GUARD'
   }

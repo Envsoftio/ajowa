@@ -50,20 +50,20 @@ watch(
             Developed by
             <a
               class="app-footer__link"
-              href="https://envsoft.io"
+              href="https://envsoft.io?utm_source=ajowa&utm_medium=footer"
               target="_blank"
               rel="noopener noreferrer"
             >
               Envsoft Solutions LLP
             </a>
-              and 
+            and
             <a
               class="app-footer__link"
-              href="https://proctorplus.io"
+              href="https://proctorplus.io?utm_source=ajowa&utm_medium=footer"
               target="_blank"
               rel="noopener noreferrer"
             >
-             Proctor+
+              Proctor+
             </a>
             <!-- <template v-if="shell === 'public'">
               <span class="app-footer__separator">|</span>

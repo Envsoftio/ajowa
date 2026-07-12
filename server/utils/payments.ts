@@ -64,7 +64,46 @@ export const paymentAmountUpdateSchema = z.object({
   amount: z.coerce.number().positive(),
 })
 
+const optionalNullableText = (max: number) =>
+  z.preprocess(
+    (value) => (value === '' ? null : value),
+    z.string().trim().max(max).nullable().optional(),
+  )
+
+export const paymentUpdateSchema = z.object({
+  flatId: z.string().uuid().optional(),
+  payerUserId: z.string().uuid().optional(),
+  amount: z.coerce.number().positive().optional(),
+  paymentDate: z.string().date().optional(),
+  mode: paymentModeSchema.exclude(['ONLINE_GATEWAY', 'ADVANCE_CREDIT']).optional(),
+  transferKind: z.enum(['NEFT', 'IMPS', 'RTGS', 'BANK_TRANSFER']).nullable().optional(),
+  allocationMode: allocationModeSchema.optional(),
+  selectedDueIds: z.array(z.string().uuid()).optional(),
+  tenureMonths: z.coerce.number().int().positive().max(24).nullable().optional(),
+  utrReference: optionalNullableText(120),
+  bankReference: optionalNullableText(120),
+  chequeNumber: optionalNullableText(120),
+  chequeDate: z.preprocess(
+    (value) => (value === '' ? null : value),
+    z.string().date().nullable().optional(),
+  ),
+  bankName: optionalNullableText(160),
+  account: optionalNullableText(160),
+  notes: optionalNullableText(1000),
+  allowDuplicateUtr: z.boolean().optional().default(false),
+  overrideReason: optionalNullableText(500),
+}).refine(
+  (value) =>
+    Object.entries(value).some(([key, fieldValue]) => {
+      if (key === 'allowDuplicateUtr') return false
+      if (Array.isArray(fieldValue)) return true
+      return fieldValue !== undefined
+    }),
+  { message: 'Change at least one payment field before saving.' },
+)
+
 export type PaymentPreviewInput = z.output<typeof paymentPreviewSchema>
+export type PaymentUpdateInput = z.output<typeof paymentUpdateSchema>
 
 type DueRow = {
   id: string
@@ -719,6 +758,7 @@ export const allocateMaintenancePaymentWithClient = async (
 }
 
 const staffEditablePaymentModes = new Set(['CASH', 'BANK_TRANSFER', 'UPI', 'CHEQUE'])
+const referenceRequiredPaymentModes = new Set(['BANK_TRANSFER', 'UPI'])
 
 const getSnapshotSelectedDueIds = (
   snapshot: Record<string, unknown>,
@@ -729,28 +769,65 @@ const getSnapshotSelectedDueIds = (
     ? (snapshot.selectedDueIds as string[])
     : fallbackDueIds
 
-export const updatePaymentAmountWithClient = async (
+const getSnapshotTenureMonths = (snapshot: Record<string, unknown>) =>
+  typeof snapshot.tenureMonths === 'number' ? snapshot.tenureMonths : undefined
+
+const getSnapshotText = (snapshot: Record<string, unknown>, key: string) => {
+  const value = snapshot[key]
+  return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+const getSnapshotCheque = (snapshot: Record<string, unknown>) => {
+  const cheque = z.object({
+    chequeNumber: z.string().optional(),
+    chequeDate: z.string().optional(),
+    bankName: z.string().optional(),
+  }).passthrough().safeParse(snapshot.cheque)
+
+  return cheque.success ? cheque.data : {}
+}
+
+const normalizeNullableText = (value: string | null | undefined) => {
+  if (value === undefined) return undefined
+  const trimmed = value?.trim() ?? ''
+  return trimmed ? trimmed : null
+}
+
+const pickUpdatedValue = <T>(value: T | undefined, fallback: T) =>
+  value === undefined ? fallback : value
+
+const sameStringArray = (left: string[], right: string[]) =>
+  left.length === right.length && left.every((value, index) => value === right[index])
+
+const getSubmittedReferenceValues = (input: {
+  utrReference?: string | null | undefined
+  bankReference?: string | null | undefined
+}) => [
+  ...new Set(
+    [input.utrReference, input.bankReference]
+      .map((reference) => reference?.trim().toLowerCase())
+      .filter((reference): reference is string => Boolean(reference)),
+  ),
+]
+
+export const updatePaymentWithClient = async (
   client: PoolClient,
   input: {
     paymentId: string
     societyId: string
     actorUserId: string
-    amount: number
+    changes: PaymentUpdateInput
   },
 ) => {
-  const nextAmount = roundMoney(input.amount)
-  if (!Number.isFinite(nextAmount) || nextAmount <= 0) {
-    throw new AppError({
-      code: 'VALIDATION_ERROR',
-      statusCode: 400,
-      message: 'Payment amount must be greater than zero.',
-    })
-  }
-
   const paymentResult = await client.query<PaymentRow & {
     mode: string
+    transfer_kind: string | null
+    utr_reference: string | null
+    bank_reference: string | null
+    is_default_utr: boolean
     receipt_number: string | null
     receipt_file_path: string | null
+    notes: string | null
     allocation_snapshot: Record<string, unknown> | null
   }>(
     `
@@ -764,8 +841,13 @@ export const updatePaymentAmountWithClient = async (
         status,
         allocation_mode,
         mode::text,
+        transfer_kind,
+        utr_reference,
+        bank_reference,
+        is_default_utr,
         receipt_number,
         receipt_file_path,
+        notes,
         allocation_snapshot
       from payments
       where id = $1 and society_id = $2
@@ -786,7 +868,7 @@ export const updatePaymentAmountWithClient = async (
     throw new AppError({
       code: 'VALIDATION_ERROR',
       statusCode: 400,
-      message: 'Only manually recorded payments can have their amount edited.',
+      message: 'Only manually recorded payments can be edited.',
     })
   }
 
@@ -794,61 +876,11 @@ export const updatePaymentAmountWithClient = async (
     throw new AppError({
       code: 'VALIDATION_ERROR',
       statusCode: 400,
-      message: 'Only pending or verified payments can have their amount edited.',
+      message: 'Only pending or verified payments can be edited.',
     })
   }
 
-  const previousAmount = roundMoney(Number(payment.amount))
-  if (previousAmount === nextAmount) {
-    return {
-      paymentId: payment.id,
-      previousAmount,
-      amount: nextAmount,
-      allocatedAmount: null,
-      advanceAmount: null,
-      receiptInvalidated: false,
-      changed: false,
-    }
-  }
-
   const snapshot = payment.allocation_snapshot ?? {}
-
-  if (payment.status === 'PENDING') {
-    const nextSnapshot = {
-      ...snapshot,
-      amountEdit: {
-        previousAmount,
-        amount: nextAmount,
-        editedByUserId: input.actorUserId,
-        editedAt: new Date().toISOString(),
-      },
-    }
-
-    await client.query(
-      `
-        update payments
-        set
-          amount = $2,
-          allocation_snapshot = $3::jsonb,
-          updated_at = now()
-        where id = $1
-      `,
-      [payment.id, nextAmount, JSON.stringify(nextSnapshot)],
-    )
-
-    return {
-      paymentId: payment.id,
-      previousAmount,
-      amount: nextAmount,
-      allocatedAmount: null,
-      advanceAmount: null,
-      receiptInvalidated: false,
-      changed: true,
-    }
-  }
-
-  const policy = await getPaymentPolicy(client, payment.society_id)
-  const settlementDate = payment.payment_date ?? todayDate()
   const existingAllocations = await client.query<{
     id: string
     maintenance_due_id: string
@@ -869,9 +901,379 @@ export const updatePaymentAmountWithClient = async (
       existingAllocations.rows.map((allocation) => allocation.maintenance_due_id),
     ),
   ]
-  const targetDueIds = getSnapshotSelectedDueIds(snapshot, existingDueIds)
 
-  if (allocationIds.length > 0) {
+  const previousAmount = roundMoney(Number(payment.amount))
+  const nextAmount = roundMoney(input.changes.amount ?? previousAmount)
+  if (!Number.isFinite(nextAmount) || nextAmount <= 0) {
+    throw new AppError({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message: 'Payment amount must be greater than zero.',
+    })
+  }
+
+  const nextPaymentDate = input.changes.paymentDate ?? payment.payment_date
+  const nextFlatId = input.changes.flatId ?? payment.received_for_flat_id
+  if (!nextFlatId) {
+    throw new AppError({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message: 'Select the flat this payment was received for.',
+    })
+  }
+
+  const flatResult = await client.query<{
+    id: string
+    default_payer_user_id: string | null
+  }>(
+    `
+      select
+        f.id,
+        (
+          select fr.user_id
+          from flat_residents fr
+          where fr.flat_id = f.id
+            and fr.is_active = true
+            and fr.is_billing_contact = true
+          order by fr.created_at asc
+          limit 1
+        ) as default_payer_user_id
+      from flats f
+      where f.id = $1 and f.society_id = $2
+      limit 1
+    `,
+    [nextFlatId, payment.society_id],
+  )
+  const flat = flatResult.rows[0]
+  if (!flat) {
+    throw new AppError({
+      code: 'NOT_FOUND',
+      statusCode: 404,
+      message: 'Flat not found.',
+    })
+  }
+
+  const nextPayerUserId =
+    input.changes.payerUserId ??
+    (nextFlatId === payment.received_for_flat_id
+      ? payment.payer_user_id
+      : flat.default_payer_user_id)
+
+  if (!nextPayerUserId) {
+    throw new AppError({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message: 'Select a payer for this payment.',
+    })
+  }
+
+  if (
+    nextFlatId !== payment.received_for_flat_id ||
+    nextPayerUserId !== payment.payer_user_id
+  ) {
+    const payerAccess = await client.query<{ id: string }>(
+      `
+        select id
+        from flat_residents
+        where flat_id = $1
+          and user_id = $2
+          and is_active = true
+        limit 1
+      `,
+      [nextFlatId, nextPayerUserId],
+    )
+    if (!payerAccess.rows[0]) {
+      throw new AppError({
+        code: 'VALIDATION_ERROR',
+        statusCode: 400,
+        message: 'Select an active payer linked to the selected flat.',
+      })
+    }
+  }
+
+  const nextMode = input.changes.mode ?? payment.mode
+  const nextTransferKind =
+    nextMode === 'BANK_TRANSFER'
+      ? input.changes.transferKind === undefined
+        ? payment.transfer_kind
+        : input.changes.transferKind
+      : null
+  const inputUtrReference = normalizeNullableText(input.changes.utrReference)
+  const inputBankReference = normalizeNullableText(input.changes.bankReference)
+  const nextUtrReference = referenceRequiredPaymentModes.has(nextMode)
+    ? pickUpdatedValue(inputUtrReference, payment.utr_reference)
+    : null
+  const nextBankReference = referenceRequiredPaymentModes.has(nextMode)
+    ? pickUpdatedValue(inputBankReference, payment.bank_reference)
+    : null
+  const detailValidationRequested = [
+    input.changes.mode,
+    input.changes.transferKind,
+    input.changes.utrReference,
+    input.changes.bankReference,
+    input.changes.chequeNumber,
+    input.changes.chequeDate,
+    input.changes.bankName,
+  ].some((value) => value !== undefined)
+
+  if (
+    detailValidationRequested &&
+    referenceRequiredPaymentModes.has(nextMode) &&
+    !nextUtrReference &&
+    !nextBankReference
+  ) {
+    throw new AppError({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message: 'UTR or bank reference is required for transfer payments.',
+    })
+  }
+
+  if (detailValidationRequested && nextMode === 'BANK_TRANSFER' && !nextTransferKind) {
+    throw new AppError({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message:
+        'Select NEFT, IMPS, RTGS, or bank transfer for bank-transfer payments.',
+    })
+  }
+
+  const existingCheque = getSnapshotCheque(snapshot)
+  const inputChequeNumber = normalizeNullableText(input.changes.chequeNumber)
+  const inputChequeDate = input.changes.chequeDate === undefined
+    ? undefined
+    : input.changes.chequeDate
+  const inputChequeBankName = normalizeNullableText(input.changes.bankName)
+  const nextChequeNumber = nextMode === 'CHEQUE'
+    ? pickUpdatedValue(inputChequeNumber, existingCheque.chequeNumber ?? null)
+    : null
+  const nextChequeDate = nextMode === 'CHEQUE'
+    ? pickUpdatedValue(inputChequeDate, existingCheque.chequeDate ?? null)
+    : null
+  const nextChequeBankName = nextMode === 'CHEQUE'
+    ? pickUpdatedValue(inputChequeBankName, existingCheque.bankName ?? null)
+    : null
+
+  if (
+    detailValidationRequested &&
+    nextMode === 'CHEQUE' &&
+    (!nextChequeNumber || !nextChequeDate || !nextChequeBankName)
+  ) {
+    throw new AppError({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message:
+        'Cheque number, cheque date, and bank name are required for cheque payments.',
+    })
+  }
+
+  const existingAccount = getSnapshotText(snapshot, 'account')
+  const inputAccount = normalizeNullableText(input.changes.account)
+  const nextAccount = pickUpdatedValue(inputAccount, existingAccount)
+  const accountChanged = nextAccount !== existingAccount
+  let bankAccountId: string | null = null
+  if (nextAccount) {
+    const accountIdResult = z.string().uuid().safeParse(nextAccount)
+    if (!accountIdResult.success) {
+      throw new AppError({
+        code: 'VALIDATION_ERROR',
+        statusCode: 400,
+        message: 'Select a valid deposit account for this payment.',
+      })
+    }
+    bankAccountId = accountIdResult.data
+    const accountResult = await client.query<{ id: string }>(
+      `
+        select id
+        from society_bank_accounts
+        where id = $1
+          and society_id = $2
+          and is_active = true
+        limit 1
+      `,
+      [bankAccountId, payment.society_id],
+    )
+    if (!accountResult.rows[0]) {
+      throw new AppError({
+        code: 'VALIDATION_ERROR',
+        statusCode: 400,
+        message: 'Select an active deposit account for this payment.',
+      })
+    }
+  }
+
+  const inputOverrideReason = normalizeNullableText(input.changes.overrideReason)
+  const nextOverrideReason = pickUpdatedValue(
+    inputOverrideReason,
+    getSnapshotText(snapshot, 'overrideReason'),
+  )
+  const referenceValues = getSubmittedReferenceValues({
+    utrReference: nextUtrReference,
+    bankReference: nextBankReference,
+  })
+  const referencesChanged =
+    nextUtrReference !== payment.utr_reference ||
+    nextBankReference !== payment.bank_reference
+  if (referencesChanged && referenceValues.length > 0) {
+    if (input.changes.allowDuplicateUtr && !nextOverrideReason) {
+      throw new AppError({
+        code: 'VALIDATION_ERROR',
+        statusCode: 400,
+        message:
+          'An audit reason is required to allow duplicate reference usage.',
+      })
+    }
+
+    const duplicate = await client.query<{ id: string }>(
+      `
+        select id
+        from payments
+        where society_id = $1
+          and id <> $2
+          and (
+            lower(coalesce(utr_reference, '')) = any($3::text[])
+            or lower(coalesce(bank_reference, '')) = any($3::text[])
+            or lower(coalesce(gateway_payment_id, '')) = any($3::text[])
+          )
+        limit 1
+      `,
+      [payment.society_id, payment.id, referenceValues],
+    )
+    if (duplicate.rows[0] && !input.changes.allowDuplicateUtr) {
+      throw new AppError({
+        code: 'CONFLICT',
+        statusCode: 409,
+        message: 'This UTR/reference is already linked to another payment.',
+      })
+    }
+  }
+
+  const previousAllocationMode = allocationModeSchema.parse(payment.allocation_mode)
+  const nextAllocationMode = input.changes.allocationMode ?? previousAllocationMode
+  const previousSelectedDueIds = getSnapshotSelectedDueIds(snapshot, existingDueIds)
+  const nextSelectedDueIds = nextAllocationMode === 'SELECTED_PERIODS'
+    ? input.changes.selectedDueIds ?? previousSelectedDueIds
+    : []
+  const previousTenureMonths = getSnapshotTenureMonths(snapshot)
+  const nextTenureMonths = nextAllocationMode === 'TENURE_PACK'
+    ? input.changes.tenureMonths === undefined
+      ? previousTenureMonths
+      : input.changes.tenureMonths ?? undefined
+    : undefined
+
+  if (nextAllocationMode === 'SELECTED_PERIODS' && nextSelectedDueIds.length === 0) {
+    throw new AppError({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message:
+        'Select at least one billing period for selected-period allocation.',
+    })
+  }
+
+  const amountChanged = previousAmount !== nextAmount
+  const paymentDateChanged = payment.payment_date !== nextPaymentDate
+  const flatChanged = payment.received_for_flat_id !== nextFlatId
+  const payerChanged = payment.payer_user_id !== nextPayerUserId
+  const modeChanged = payment.mode !== nextMode
+  const transferKindChanged = payment.transfer_kind !== nextTransferKind
+  const notesInput = normalizeNullableText(input.changes.notes)
+  const nextNotes = pickUpdatedValue(notesInput, payment.notes)
+  const notesChanged = payment.notes !== nextNotes
+  const allocationModeChanged = previousAllocationMode !== nextAllocationMode
+  const selectedDueIdsChanged = nextAllocationMode === 'SELECTED_PERIODS' &&
+    !sameStringArray(nextSelectedDueIds, previousSelectedDueIds)
+  const tenureMonthsChanged = nextAllocationMode === 'TENURE_PACK' &&
+    nextTenureMonths !== previousTenureMonths
+  const allocationAffectingChanged =
+    amountChanged ||
+    paymentDateChanged ||
+    flatChanged ||
+    allocationModeChanged ||
+    selectedDueIdsChanged ||
+    tenureMonthsChanged
+  const reallocatePayment =
+    payment.status === 'VERIFIED' && allocationAffectingChanged
+  const changed =
+    allocationAffectingChanged ||
+    payerChanged ||
+    modeChanged ||
+    transferKindChanged ||
+    referencesChanged ||
+    accountChanged ||
+    notesChanged ||
+    (nextMode === 'CHEQUE' &&
+      (
+        nextChequeNumber !== (existingCheque.chequeNumber ?? null) ||
+        nextChequeDate !== (existingCheque.chequeDate ?? null) ||
+        nextChequeBankName !== (existingCheque.bankName ?? null)
+      )) ||
+    (nextMode !== 'CHEQUE' && Boolean(snapshot.cheque))
+
+  const beforeState = {
+    flatId: payment.received_for_flat_id,
+    payerUserId: payment.payer_user_id,
+    amount: previousAmount,
+    paymentDate: payment.payment_date,
+    mode: payment.mode,
+    transferKind: payment.transfer_kind,
+    utrReference: payment.utr_reference,
+    bankReference: payment.bank_reference,
+    allocationMode: previousAllocationMode,
+    selectedDueIds: previousSelectedDueIds,
+    tenureMonths: previousTenureMonths ?? null,
+    cheque: existingCheque,
+    account: existingAccount,
+    notes: payment.notes,
+  }
+  const afterState = {
+    flatId: nextFlatId,
+    payerUserId: nextPayerUserId,
+    amount: nextAmount,
+    paymentDate: nextPaymentDate,
+    mode: nextMode,
+    transferKind: nextTransferKind,
+    utrReference: nextUtrReference,
+    bankReference: nextBankReference,
+    allocationMode: nextAllocationMode,
+    selectedDueIds: nextSelectedDueIds,
+    tenureMonths: nextTenureMonths ?? null,
+    cheque: nextMode === 'CHEQUE'
+      ? {
+          chequeNumber: nextChequeNumber,
+          chequeDate: nextChequeDate,
+          bankName: nextChequeBankName,
+        }
+      : null,
+    account: nextAccount,
+    notes: nextNotes,
+  }
+
+  if (!changed) {
+    return {
+      paymentId: payment.id,
+      previousAmount,
+      amount: nextAmount,
+      allocatedAmount: null,
+      advanceAmount: null,
+      receiptInvalidated: false,
+      changed: false,
+      beforeState,
+      afterState,
+      bankAccountId: null,
+    }
+  }
+
+  const policy = await getPaymentPolicy(client, payment.society_id)
+  const affected: Array<{ billingPeriodId: string; flatId?: string }> = []
+  let preview: {
+    lines: PaymentAmountEditAllocationLine[]
+    totalDue: number
+    allocatedAmount: number
+    advanceAmount: number
+    policy: string
+  } | null = null
+
+  if (reallocatePayment && allocationIds.length > 0) {
     const referencedAllocations = await client.query<{ count: string }>(
       `
         select count(*)::text as count
@@ -890,256 +1292,277 @@ export const updatePaymentAmountWithClient = async (
     }
   }
 
-  const sourceCredits = await client.query<{
-    id: string
-    original_amount: string
-    current_balance: string
-    status: string
-  }>(
-    `
-      select id, original_amount::text, current_balance::text, status::text
-      from resident_advance_credits
-      where source_payment_id = $1
-      for update
-    `,
-    [payment.id],
-  )
-  const sourceCreditIds = sourceCredits.rows.map((credit) => credit.id)
-  const consumedCredit = sourceCredits.rows.find(
-    (credit) =>
-      credit.status !== 'ACTIVE' ||
-      roundMoney(Number(credit.current_balance)) !==
-        roundMoney(Number(credit.original_amount)),
-  )
-  if (consumedCredit) {
-    throw new AppError({
-      code: 'CONFLICT',
-      statusCode: 409,
-      message:
-        'The advance credit created from this payment has already been used. Reverse the dependent credit before editing this amount.',
-    })
-  }
-
-  if (sourceCreditIds.length > 0) {
-    await client.query(
+  if (reallocatePayment || payerChanged || flatChanged) {
+    const sourceCredits = await client.query<{
+      id: string
+      original_amount: string
+      current_balance: string
+      status: string
+    }>(
       `
-        delete from resident_advance_credit_history
-        where credit_id = any($1::uuid[])
+        select id, original_amount::text, current_balance::text, status::text
+        from resident_advance_credits
+        where source_payment_id = $1
+        for update
       `,
-      [sourceCreditIds],
+      [payment.id],
     )
-    await client.query(
-      `
-        delete from resident_advance_credits
-        where id = any($1::uuid[])
-      `,
-      [sourceCreditIds],
+    const consumedCredit = sourceCredits.rows.find(
+      (credit) =>
+        credit.status !== 'ACTIVE' ||
+        roundMoney(Number(credit.current_balance)) !==
+          roundMoney(Number(credit.original_amount)),
     )
-  }
-
-  await client.query(`delete from payment_allocations where payment_id = $1`, [
-    payment.id,
-  ])
-
-  const affected: Array<{ billingPeriodId: string; flatId?: string }> = []
-  for (const dueId of existingDueIds) {
-    const refreshed = await refreshDueTotals(
-      client,
-      dueId,
-      policy.graceDays,
-      policy.lateFeePerDay,
-    )
-    if (refreshed) affected.push(refreshed)
-  }
-
-  const dueResult = targetDueIds.length
-    ? await client.query<DueRow>(
-        `
-          select
-            md.id,
-            md.society_id,
-            md.billing_period_id,
-            bp.label as billing_period_label,
-            md.flat_id,
-            md.due_date::text,
-            md.base_amount::text,
-            md.late_fee_amount::text,
-            md.waived_amount::text,
-            md.paid_amount::text,
-            md.total_amount::text,
-            md.balance_amount::text,
-            md.status
-          from maintenance_dues md
-          inner join billing_periods bp on bp.id = md.billing_period_id
-          where md.id = any($1::uuid[])
-            and md.flat_id = $2
-            and md.society_id = $3
-          order by array_position($1::uuid[], md.id)
-          for update of md
-        `,
-        [targetDueIds, payment.received_for_flat_id, payment.society_id],
-      )
-    : { rows: [] as DueRow[] }
-
-  const lines: PaymentAmountEditAllocationLine[] = []
-  let remainingPayment = nextAmount
-  let totalDue = 0
-
-  for (const due of dueResult.rows) {
-    totalDue = roundMoney(totalDue + getPaymentCreditedBalance(due))
-    const allocatedAmount = roundMoney(
-      Math.min(remainingPayment, getPaymentCreditedBalance(due)),
-    )
-    if (allocatedAmount <= 0) {
-      continue
+    if (consumedCredit) {
+      throw new AppError({
+        code: 'CONFLICT',
+        statusCode: 409,
+        message:
+          'The advance credit created from this payment has already been used. Reverse the dependent credit before editing this payment.',
+      })
     }
 
-    remainingPayment = roundMoney(remainingPayment - allocatedAmount)
-    const allocationAmounts = buildAllocationLineAmounts(
-      due,
-      allocatedAmount,
-      settlementDate,
-      policy.graceDays,
-      policy.lateFeePerDay,
-    )
-    const allocationOrder = lines.length + 1
-    await client.query(
-      `
-        insert into payment_allocations (
-          payment_id,
-          maintenance_due_id,
-          allocated_amount,
-          due_amount,
-          late_fee_component,
-          remaining_balance,
-          allocation_order
-        )
-        values ($1, $2, $3, $4, $5, $6, $7)
-      `,
-      [
-        payment.id,
-        due.id,
-        allocatedAmount,
-        allocationAmounts.dueAmount,
-        allocationAmounts.lateFeeComponent,
-        allocationAmounts.remainingBalance,
-        allocationOrder,
-      ],
-    )
+    const sourceCreditIds = sourceCredits.rows.map((credit) => credit.id)
+    if (reallocatePayment && sourceCreditIds.length > 0) {
+      await client.query(
+        `
+          delete from resident_advance_credit_history
+          where credit_id = any($1::uuid[])
+        `,
+        [sourceCreditIds],
+      )
+      await client.query(
+        `
+          delete from resident_advance_credits
+          where id = any($1::uuid[])
+        `,
+        [sourceCreditIds],
+      )
+    } else if (payerChanged && sourceCreditIds.length > 0) {
+      await client.query(
+        `
+          update resident_advance_credits
+          set user_id = $2,
+              updated_at = now()
+          where id = any($1::uuid[])
+        `,
+        [sourceCreditIds, nextPayerUserId],
+      )
+    }
+  }
 
-    lines.push({
-      dueId: due.id,
-      billingPeriodId: due.billing_period_id,
-      billingPeriodLabel: due.billing_period_label,
-      dueAmount: allocationAmounts.dueAmount,
-      lateFeeComponent: allocationAmounts.lateFeeComponent,
-      allocatedAmount,
-      remainingBalance: allocationAmounts.remainingBalance,
-      allocationOrder,
-    })
+  if (reallocatePayment) {
+    await client.query(`delete from payment_allocations where payment_id = $1`, [
+      payment.id,
+    ])
 
-    const refreshed = await refreshDueTotals(
+    for (const dueId of existingDueIds) {
+      const refreshed = await refreshDueTotals(
+        client,
+        dueId,
+        policy.graceDays,
+        policy.lateFeePerDay,
+      )
+      if (refreshed) affected.push(refreshed)
+    }
+
+    const previewInput: PaymentAllocationInput = {
+      flatId: nextFlatId,
+      amount: nextAmount,
+      allocationMode: nextAllocationMode,
+      selectedDueIds: nextAllocationMode === 'SELECTED_PERIODS'
+        ? nextSelectedDueIds
+        : [],
+      asOfDate: nextPaymentDate,
+    }
+    if (nextAllocationMode === 'TENURE_PACK' && nextTenureMonths !== undefined) {
+      previewInput.tenureMonths = nextTenureMonths
+    }
+    const nextPreview = await previewPaymentAllocationWithClient(
       client,
-      due.id,
-      policy.graceDays,
-      policy.lateFeePerDay,
-      settlementDate,
+      previewInput,
     )
-    if (refreshed) affected.push(refreshed)
+
+    if (
+      nextPreview.advanceAmount > 0 &&
+      policy.excessPaymentHandling !== 'KEEP_AS_ADVANCE'
+    ) {
+      throw new AppError({
+        code: 'CONFLICT',
+        statusCode: 409,
+        message:
+          'The edited payment exceeds the selected dues and the society policy does not allow advance credit.',
+      })
+    }
+
+    for (const line of nextPreview.lines) {
+      await client.query(
+        `
+          insert into payment_allocations (
+            payment_id,
+            maintenance_due_id,
+            allocated_amount,
+            due_amount,
+            late_fee_component,
+            remaining_balance,
+            allocation_order
+          )
+          values ($1, $2, $3, $4, $5, $6, $7)
+        `,
+        [
+          payment.id,
+          line.dueId,
+          line.allocatedAmount,
+          line.dueAmount,
+          line.lateFeeComponent,
+          line.remainingBalance,
+          line.allocationOrder,
+        ],
+      )
+
+      const refreshed = await refreshDueTotals(
+        client,
+        line.dueId,
+        policy.graceDays,
+        policy.lateFeePerDay,
+        nextPaymentDate,
+      )
+      if (refreshed) affected.push(refreshed)
+    }
+
+    if (nextPreview.advanceAmount > 0) {
+      const creditResult = await client.query<{ id: string }>(
+        `
+          insert into resident_advance_credits (
+            society_id,
+            user_id,
+            flat_id,
+            source_payment_id,
+            original_amount,
+            current_balance,
+            notes
+          )
+          values ($1, $2, $3, $4, $5, $5, $6)
+          returning id
+        `,
+        [
+          payment.society_id,
+          nextPayerUserId,
+          nextFlatId,
+          payment.id,
+          nextPreview.advanceAmount,
+          'Excess payment retained as advance credit after payment edit.',
+        ],
+      )
+      await client.query(
+        `
+          insert into resident_advance_credit_history (
+            credit_id,
+            action,
+            amount,
+            payment_id,
+            actor_user_id,
+            notes
+          )
+          values ($1, 'CREATED', $2, $3, $4, $5)
+        `,
+        [
+          creditResult.rows[0]?.id,
+          nextPreview.advanceAmount,
+          payment.id,
+          input.actorUserId,
+          'Created during payment edit.',
+        ],
+      )
+    }
+
+    preview = {
+      lines: nextPreview.lines,
+      totalDue: nextPreview.totalDue,
+      allocatedAmount: nextPreview.allocatedAmount,
+      advanceAmount: nextPreview.advanceAmount,
+      policy: nextPreview.policy,
+    }
   }
 
-  const advanceAmount = roundMoney(Math.max(0, remainingPayment))
-  if (
-    advanceAmount > 0 &&
-    policy.excessPaymentHandling !== 'KEEP_AS_ADVANCE'
-  ) {
-    throw new AppError({
-      code: 'CONFLICT',
-      statusCode: 409,
-      message:
-        'The edited amount exceeds the selected dues and the society policy does not allow advance credit.',
-    })
-  }
-
-  if (advanceAmount > 0) {
-    const creditResult = await client.query<{ id: string }>(
-      `
-        insert into resident_advance_credits (
-          society_id,
-          user_id,
-          flat_id,
-          source_payment_id,
-          original_amount,
-          current_balance,
-          notes
-        )
-        values ($1, $2, $3, $4, $5, $5, $6)
-        returning id
-      `,
-      [
-        payment.society_id,
-        payment.payer_user_id,
-        payment.received_for_flat_id,
-        payment.id,
-        advanceAmount,
-        'Excess payment retained as advance credit after amount edit.',
-      ],
-    )
-    await client.query(
-      `
-        insert into resident_advance_credit_history (
-          credit_id,
-          action,
-          amount,
-          payment_id,
-          actor_user_id,
-          notes
-        )
-        values ($1, 'CREATED', $2, $3, $4, $5)
-      `,
-      [
-        creditResult.rows[0]?.id,
-        advanceAmount,
-        payment.id,
-        input.actorUserId,
-        'Created during payment amount edit.',
-      ],
-    )
-  }
-
-  const preview = {
-    lines,
-    totalDue,
-    allocatedAmount: roundMoney(
-      lines.reduce((sum, line) => sum + line.allocatedAmount, 0),
-    ),
-    advanceAmount,
-    policy: policy.excessPaymentHandling,
-  }
   const nextSnapshot = {
     ...snapshot,
-    selectedDueIds: targetDueIds,
-    preview,
-    amountEdit: {
+    selectedDueIds: nextSelectedDueIds,
+    tenureMonths: nextTenureMonths,
+    preview: preview ?? snapshot.preview,
+    cheque: nextMode === 'CHEQUE'
+      ? {
+          chequeNumber: nextChequeNumber,
+          chequeDate: nextChequeDate,
+          bankName: nextChequeBankName,
+        }
+      : undefined,
+    account: nextAccount ?? undefined,
+    overrideReason: nextOverrideReason ?? undefined,
+    paymentEdit: {
+      before: beforeState,
+      after: afterState,
+      editedByUserId: input.actorUserId,
+      editedAt: new Date().toISOString(),
+    },
+    amountEdit: amountChanged ? {
       previousAmount,
       amount: nextAmount,
       editedByUserId: input.actorUserId,
       editedAt: new Date().toISOString(),
-    },
+    } : snapshot.amountEdit,
   }
+
+  const receiptShouldInvalidate =
+    Boolean(payment.receipt_number) &&
+    (
+      amountChanged ||
+      paymentDateChanged ||
+      flatChanged ||
+      payerChanged ||
+      modeChanged ||
+      transferKindChanged ||
+      referencesChanged ||
+      reallocatePayment
+    )
 
   await client.query(
     `
       update payments
       set
-        amount = $2,
-        allocation_snapshot = $3::jsonb,
-        receipt_file_path = case when receipt_number is null then receipt_file_path else null end,
-        receipt_generated_at = case when receipt_number is null then receipt_generated_at else now() end,
+        payer_user_id = $2,
+        received_for_flat_id = $3,
+        mode = $4::payment_mode,
+        transfer_kind = $5,
+        payment_date = $6::date,
+        amount = $7,
+        allocation_mode = $8,
+        allocation_snapshot = $9::jsonb,
+        utr_reference = $10,
+        bank_reference = $11,
+        is_default_utr = $12,
+        notes = $13,
+        receipt_file_path = case when $14::boolean then null else receipt_file_path end,
+        receipt_generated_at = case when $14::boolean then now() else receipt_generated_at end,
         updated_at = now()
       where id = $1
     `,
-    [payment.id, nextAmount, JSON.stringify(nextSnapshot)],
+    [
+      payment.id,
+      nextPayerUserId,
+      nextFlatId,
+      nextMode,
+      nextTransferKind,
+      nextPaymentDate,
+      nextAmount,
+      nextAllocationMode,
+      JSON.stringify(nextSnapshot),
+      nextUtrReference,
+      nextBankReference,
+      referencesChanged ? !input.changes.allowDuplicateUtr : payment.is_default_utr,
+      nextNotes,
+      receiptShouldInvalidate,
+    ],
   )
 
   await recomputeAccessForAffectedDues(client, affected)
@@ -1148,12 +1571,31 @@ export const updatePaymentAmountWithClient = async (
     paymentId: payment.id,
     previousAmount,
     amount: nextAmount,
-    allocatedAmount: preview.allocatedAmount,
-    advanceAmount,
-    receiptInvalidated: Boolean(payment.receipt_file_path),
+    allocatedAmount: preview?.allocatedAmount ?? null,
+    advanceAmount: preview?.advanceAmount ?? null,
+    receiptInvalidated: Boolean(payment.receipt_file_path && receiptShouldInvalidate),
     changed: true,
+    beforeState,
+    afterState,
+    bankAccountId: accountChanged ? bankAccountId : null,
   }
 }
+
+export const updatePaymentAmountWithClient = async (
+  client: PoolClient,
+  input: {
+    paymentId: string
+    societyId: string
+    actorUserId: string
+    amount: number
+  },
+) =>
+  updatePaymentWithClient(client, {
+    paymentId: input.paymentId,
+    societyId: input.societyId,
+    actorUserId: input.actorUserId,
+    changes: { amount: input.amount, allowDuplicateUtr: false },
+  })
 
 export const allocateMaintenancePayment = async (paymentId: string) => {
   const client = await getDatabasePool().connect()

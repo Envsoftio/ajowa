@@ -4,29 +4,30 @@ import { getDatabasePool } from '~/server/utils/database'
 import { refreshMaintenanceReceiptJournalForPayment } from '~/server/utils/finance'
 import { readUuidParam, writeMasterAudit } from '~/server/utils/master-data'
 import {
-  paymentAmountUpdateSchema,
-  updatePaymentAmountWithClient,
+  paymentUpdateSchema,
+  updatePaymentWithClient,
 } from '~/server/utils/payments'
 
 export default defineEventHandler(async (event) => {
   const authMe = await requireRole(event, ['ADMIN'])
   const paymentId = readUuidParam(event)
-  const input = validateInput(paymentAmountUpdateSchema, await readJsonBody(event))
+  const input = validateInput(paymentUpdateSchema, await readJsonBody(event))
   const client = await getDatabasePool().connect()
 
   try {
     await client.query('begin')
 
-    const result = await updatePaymentAmountWithClient(client, {
+    const result = await updatePaymentWithClient(client, {
       paymentId,
       societyId: authMe.user.societyId,
       actorUserId: authMe.user.id,
-      amount: input.amount,
+      changes: input,
     })
     const journal = result.changed
       ? await refreshMaintenanceReceiptJournalForPayment(client, {
           paymentId,
           societyId: authMe.user.societyId,
+          bankAccountId: result.bankAccountId,
         })
       : null
 
@@ -37,12 +38,10 @@ export default defineEventHandler(async (event) => {
         actorUserId: authMe.user.id,
         actorAuthUserId: authMe.authUser.id,
         action: 'UPDATED',
-        eventKey: 'payment.amount_updated',
-        beforeState: {
-          amount: result.previousAmount,
-        },
+        eventKey: 'payment.updated',
+        beforeState: result.beforeState,
         afterState: {
-          amount: result.amount,
+          ...result.afterState,
           allocatedAmount: result.allocatedAmount,
           advanceAmount: result.advanceAmount,
           journalVoucherNumber: journal?.voucherNumber ?? null,

@@ -262,6 +262,12 @@ const accountOptions = computed(() =>
   })),
 )
 
+const autoDepositAccountId = computed(() => {
+  const accounts = bankAccountsData.value?.data.items ?? []
+  if (accounts.length === 1) return accounts[0]?.id ?? ''
+  return accounts.find((account) => account.isDefault)?.id ?? ''
+})
+
 const openDues = computed(() => duesData.value?.data.items ?? [])
 const dueOptions = computed(() =>
   openDues.value.map((due) => ({
@@ -309,11 +315,124 @@ const proofFile = ref<LocalPaymentProof | null>(null)
 const proofAccept = 'application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,image/jpeg,image/png,image/webp'
 const proofAllowedMimeTypes = proofAccept.split(',')
 const proofMaxSizeBytes = 10 * 1024 * 1024
+const formSubmitted = ref(false)
+const fieldErrors = reactive<Record<string, string>>({})
+
+const fieldError = (field: string) => fieldErrors[field] ?? ''
+
+const setFieldError = (field: string, message: string) => {
+  if (!fieldErrors[field]) {
+    fieldErrors[field] = message
+  }
+}
+
+const clearFieldErrors = () => {
+  for (const key of Object.keys(fieldErrors)) {
+    fieldErrors[key] = ''
+  }
+}
+
+const requireField = (field: string, value: unknown, message: string) => {
+  if (
+    value == null ||
+    value === '' ||
+    (Array.isArray(value) && value.length === 0)
+  ) {
+    setFieldError(field, message)
+  }
+}
+
+const validatePaymentForm = (showToast = false) => {
+  clearFieldErrors()
+
+  requireField('flatId', form.flatId, 'Select a flat.')
+  requireField('payerUserId', form.payerUserId, 'Select a payer.')
+  if (amountNumber.value <= 0) {
+    setFieldError('amount', 'Enter a payment amount greater than zero.')
+  }
+  requireField('paymentDate', form.paymentDate, 'Select a payment date.')
+  requireField('account', form.account, 'Select the deposit account.')
+  requireField('mode', form.mode, 'Select the payment mode.')
+
+  if (form.mode === 'BANK_TRANSFER') {
+    requireField('transferKind', form.transferKind, 'Select NEFT, IMPS, RTGS, or bank transfer.')
+  }
+
+  if (needsReference.value && !referenceValue.value) {
+    setFieldError('reference', 'Enter UTR or bank reference.')
+  }
+
+  if (needsCheque.value) {
+    requireField('chequeNumber', form.chequeNumber, 'Enter the cheque number.')
+    requireField('chequeDate', form.chequeDate, 'Select the cheque date.')
+    requireField('bankName', form.bankName, 'Enter the cheque bank.')
+  }
+
+  if (form.allocationMode === 'SELECTED_PERIODS') {
+    requireField('selectedDueIds', form.selectedDueIds, 'Select at least one due row.')
+  }
+
+  if (form.allocationMode === 'TENURE_PACK') {
+    const months = Number(form.tenureMonths)
+    if (!Number.isInteger(months) || months <= 0) {
+      setFieldError('tenureMonths', 'Enter a valid tenure in months.')
+    }
+  }
+
+  if (form.allowDuplicateUtr) {
+    requireField('overrideReason', form.overrideReason, 'Enter the duplicate reference approval reason.')
+  }
+
+  const messages = Object.values(fieldErrors).filter(Boolean)
+  if (showToast && messages.length > 0) {
+    toast.add({
+      severity: 'warn',
+      summary: 'Complete required fields',
+      detail: messages[0],
+      life: 8000,
+    })
+  }
+
+  return messages.length === 0
+}
 
 watch(
   () => [form.flatId, form.amount, form.allocationMode, form.selectedDueIds.join(','), form.tenureMonths],
   () => {
     preview.value = null
+  },
+)
+
+watch(autoDepositAccountId, (accountId) => {
+  if (!form.account && accountId) {
+    form.account = accountId
+  }
+}, { immediate: true })
+
+watch(
+  () => [
+    form.flatId,
+    form.payerUserId,
+    form.amount,
+    form.paymentDate,
+    form.account,
+    form.mode,
+    form.transferKind,
+    form.utrReference,
+    form.bankReference,
+    form.chequeNumber,
+    form.chequeDate,
+    form.bankName,
+    form.allocationMode,
+    form.selectedDueIds.join(','),
+    form.tenureMonths,
+    form.allowDuplicateUtr,
+    form.overrideReason,
+  ],
+  () => {
+    if (formSubmitted.value) {
+      validatePaymentForm(false)
+    }
   },
 )
 
@@ -359,7 +478,11 @@ watch(
 )
 
 const previewAllocation = async () => {
-  if (!form.flatId || amountNumber.value <= 0) return
+  if (!form.flatId || amountNumber.value <= 0) {
+    formSubmitted.value = true
+    validatePaymentForm(true)
+    return
+  }
   previewPending.value = true
 
   try {
@@ -453,8 +576,12 @@ const uploadProofFile = async (paymentId: string) => {
 }
 
 const submitPayment = async () => {
-  saving.value = true
+  formSubmitted.value = true
+  if (!validatePaymentForm(true)) {
+    return
+  }
 
+  saving.value = true
   try {
     const response = await api<PaymentCreateResponse>('/api/payments', {
       method: 'POST',
@@ -504,11 +631,13 @@ const resetForm = () => {
   form.chequeNumber = ''
   form.chequeDate = ''
   form.bankName = ''
-  form.account = ''
+  form.account = autoDepositAccountId.value
   form.notes = ''
   form.allowDuplicateUtr = false
   form.overrideReason = ''
   clearProofFile()
+  formSubmitted.value = false
+  clearFieldErrors()
   preview.value = null
   duplicate.value = null
   success.value = null
@@ -538,7 +667,7 @@ const resetForm = () => {
     </section>
 
     <section v-else class="admin-two-column admin-two-column--wide">
-      <form class="surface-card admin-form-layout" @submit.prevent="submitPayment">
+      <form class="surface-card admin-form-layout" novalidate @submit.prevent="submitPayment">
         <header class="list-page__header">
           <div>
             <h1>Record payment</h1>
@@ -556,33 +685,40 @@ const resetForm = () => {
           </div>
           <div class="admin-form-grid">
             <label>
-              <span class="field-label">Flat</span>
-              <Select v-model="form.flatId" :options="flatOptions" option-label="label" option-value="value" filter required placeholder="Select flat" />
+              <span class="field-label">Flat <span class="required-marker">*</span></span>
+              <Select v-model="form.flatId" :options="flatOptions" option-label="label" option-value="value" filter required placeholder="Select flat" :invalid="Boolean(fieldError('flatId'))" />
+              <small v-if="fieldError('flatId')" class="field-error">{{ fieldError('flatId') }}</small>
             </label>
             <label>
-              <span class="field-label">Payer</span>
+              <span class="field-label">Payer <span class="required-marker">*</span></span>
               <Select
                 v-model="form.payerUserId"
                 :options="residentOptions"
                 option-label="label"
                 option-value="value"
                 filter
+                required
                 :loading="payerPending"
                 :disabled="!form.flatId || payerPending || residentOptions.length === 0"
                 :placeholder="payerPlaceholder"
+                :invalid="Boolean(fieldError('payerUserId'))"
               />
+              <small v-if="fieldError('payerUserId')" class="field-error">{{ fieldError('payerUserId') }}</small>
             </label>
             <label>
-              <span class="field-label">Amount</span>
-              <InputText v-model="form.amount" inputmode="decimal" required placeholder="0.00" />
+              <span class="field-label">Amount <span class="required-marker">*</span></span>
+              <InputText v-model="form.amount" inputmode="decimal" required placeholder="0.00" :invalid="Boolean(fieldError('amount'))" />
+              <small v-if="fieldError('amount')" class="field-error">{{ fieldError('amount') }}</small>
             </label>
             <label>
-              <span class="field-label">Payment date</span>
-              <InputText v-model="form.paymentDate" type="date" required />
+              <span class="field-label">Payment date <span class="required-marker">*</span></span>
+              <InputText v-model="form.paymentDate" type="date" required :invalid="Boolean(fieldError('paymentDate'))" />
+              <small v-if="fieldError('paymentDate')" class="field-error">{{ fieldError('paymentDate') }}</small>
             </label>
             <label class="admin-form-grid__full">
-              <span class="field-label">Deposit account</span>
-              <Select v-model="form.account" :options="accountOptions" option-label="label" option-value="value" filter placeholder="Default account" />
+              <span class="field-label">Deposit account <span class="required-marker">*</span></span>
+              <Select v-model="form.account" :options="accountOptions" option-label="label" option-value="value" filter required placeholder="Select deposit account" :invalid="Boolean(fieldError('account'))" />
+              <small v-if="fieldError('account')" class="field-error">{{ fieldError('account') }}</small>
             </label>
           </div>
         </section>
@@ -597,32 +733,38 @@ const resetForm = () => {
           </div>
           <div class="admin-form-grid">
             <label>
-              <span class="field-label">Mode</span>
-              <Select v-model="form.mode" :options="paymentModes" option-label="label" option-value="value" required />
+              <span class="field-label">Mode <span class="required-marker">*</span></span>
+              <Select v-model="form.mode" :options="paymentModes" option-label="label" option-value="value" required :invalid="Boolean(fieldError('mode'))" />
+              <small v-if="fieldError('mode')" class="field-error">{{ fieldError('mode') }}</small>
             </label>
             <label v-if="form.mode === 'BANK_TRANSFER'">
-              <span class="field-label">Transfer kind</span>
-              <Select v-model="form.transferKind" :options="transferKinds" option-label="label" option-value="value" required placeholder="NEFT / IMPS / RTGS" />
+              <span class="field-label">Transfer kind <span class="required-marker">*</span></span>
+              <Select v-model="form.transferKind" :options="transferKinds" option-label="label" option-value="value" required placeholder="NEFT / IMPS / RTGS" :invalid="Boolean(fieldError('transferKind'))" />
+              <small v-if="fieldError('transferKind')" class="field-error">{{ fieldError('transferKind') }}</small>
             </label>
             <label v-if="needsReference">
-              <span class="field-label">UTR</span>
-              <InputText v-model="form.utrReference" placeholder="UPI or bank UTR" />
+              <span class="field-label">UTR / reference <span class="required-marker">*</span></span>
+              <InputText v-model="form.utrReference" placeholder="UPI or bank UTR" :invalid="Boolean(fieldError('reference'))" />
             </label>
             <label v-if="needsReference">
               <span class="field-label">Bank reference</span>
-              <InputText v-model="form.bankReference" placeholder="Optional bank reference" />
+              <InputText v-model="form.bankReference" placeholder="Optional bank reference" :invalid="Boolean(fieldError('reference'))" />
+              <small v-if="fieldError('reference')" class="field-error">{{ fieldError('reference') }}</small>
             </label>
             <label v-if="needsCheque">
-              <span class="field-label">Cheque number</span>
-              <InputText v-model="form.chequeNumber" required />
+              <span class="field-label">Cheque number <span class="required-marker">*</span></span>
+              <InputText v-model="form.chequeNumber" required :invalid="Boolean(fieldError('chequeNumber'))" />
+              <small v-if="fieldError('chequeNumber')" class="field-error">{{ fieldError('chequeNumber') }}</small>
             </label>
             <label v-if="needsCheque">
-              <span class="field-label">Cheque date</span>
-              <InputText v-model="form.chequeDate" type="date" required />
+              <span class="field-label">Cheque date <span class="required-marker">*</span></span>
+              <InputText v-model="form.chequeDate" type="date" required :invalid="Boolean(fieldError('chequeDate'))" />
+              <small v-if="fieldError('chequeDate')" class="field-error">{{ fieldError('chequeDate') }}</small>
             </label>
             <label v-if="needsCheque" class="admin-form-grid__full">
-              <span class="field-label">Cheque bank</span>
-              <InputText v-model="form.bankName" required />
+              <span class="field-label">Cheque bank <span class="required-marker">*</span></span>
+              <InputText v-model="form.bankName" required :invalid="Boolean(fieldError('bankName'))" />
+              <small v-if="fieldError('bankName')" class="field-error">{{ fieldError('bankName') }}</small>
             </label>
           </div>
 
@@ -635,8 +777,9 @@ const resetForm = () => {
               <Checkbox v-model="form.allowDuplicateUtr" binary />
             </label>
             <label>
-              <span class="field-label">Override reason</span>
-              <Textarea v-model="form.overrideReason" rows="2" auto-resize :required="form.allowDuplicateUtr" />
+              <span class="field-label">Override reason <span class="required-marker">*</span></span>
+              <Textarea v-model="form.overrideReason" rows="2" auto-resize :required="form.allowDuplicateUtr" :invalid="Boolean(fieldError('overrideReason'))" />
+              <small v-if="fieldError('overrideReason')" class="field-error">{{ fieldError('overrideReason') }}</small>
             </label>
           </div>
         </section>
@@ -694,16 +837,18 @@ const resetForm = () => {
           </div>
           <div class="admin-form-grid">
             <label>
-              <span class="field-label">Allocation mode</span>
+              <span class="field-label">Allocation mode <span class="required-marker">*</span></span>
               <Select v-model="form.allocationMode" :options="allocationModes" option-label="label" option-value="value" />
             </label>
             <label v-if="form.allocationMode === 'TENURE_PACK'">
-              <span class="field-label">Tenure months</span>
-              <InputText v-model="form.tenureMonths" inputmode="numeric" />
+              <span class="field-label">Tenure months <span class="required-marker">*</span></span>
+              <InputText v-model="form.tenureMonths" inputmode="numeric" :invalid="Boolean(fieldError('tenureMonths'))" />
+              <small v-if="fieldError('tenureMonths')" class="field-error">{{ fieldError('tenureMonths') }}</small>
             </label>
             <label v-if="form.allocationMode === 'SELECTED_PERIODS'" class="admin-form-grid__full">
-              <span class="field-label">Selected periods</span>
-              <MultiSelect v-model="form.selectedDueIds" :options="dueOptions" option-label="label" option-value="value" display="chip" placeholder="Choose due rows" />
+              <span class="field-label">Selected periods <span class="required-marker">*</span></span>
+              <MultiSelect v-model="form.selectedDueIds" :options="dueOptions" option-label="label" option-value="value" display="chip" placeholder="Choose due rows" :invalid="Boolean(fieldError('selectedDueIds'))" />
+              <small v-if="fieldError('selectedDueIds')" class="field-error">{{ fieldError('selectedDueIds') }}</small>
             </label>
             <label class="admin-form-grid__full">
               <span class="field-label">Notes</span>
@@ -714,7 +859,7 @@ const resetForm = () => {
 
         <div class="admin-inline-actions dialog-actions">
           <Button type="button" label="Preview" icon="pi pi-calculator" severity="secondary" outlined :loading="previewPending" :disabled="!form.flatId || amountNumber <= 0" @click="previewAllocation" />
-          <Button type="submit" label="Record payment" icon="pi pi-check" :loading="saving" :disabled="!form.flatId || amountNumber <= 0" />
+          <Button type="submit" label="Record payment" icon="pi pi-check" :loading="saving" :disabled="saving" />
         </div>
       </form>
 

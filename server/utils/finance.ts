@@ -1189,7 +1189,7 @@ export const postMaintenanceReceiptJournal = async (
 
 export const refreshMaintenanceReceiptJournalForPayment = async (
   client: PoolClient,
-  input: { paymentId: string; societyId: string },
+  input: { paymentId: string; societyId: string; bankAccountId?: string | null },
 ) => {
   const journalResult = await client.query<{
     id: string
@@ -1219,9 +1219,11 @@ export const refreshMaintenanceReceiptJournalForPayment = async (
   const payment = await client.query<{
     amount: string
     status: string
+    payment_date: string
+    notes: string | null
   }>(
     `
-      select amount::text, status::text
+      select amount::text, status::text, payment_date::text, notes
       from payments
       where id = $1 and society_id = $2
       for update
@@ -1236,22 +1238,35 @@ export const refreshMaintenanceReceiptJournalForPayment = async (
     throw new AppError({ code: 'CONFLICT', statusCode: 409, message: 'Only verified payments can have receipt journals.' })
   }
 
-  const debitLine = await client.query<{ account_head_id: string }>(
-    `
-      select account_head_id
-      from journal_lines
-      where journal_entry_id = $1 and line_type = 'DEBIT'
-      order by line_no asc
-      limit 1
-    `,
-    [journal.id],
-  )
-  const bankAccountHeadId = debitLine.rows[0]?.account_head_id
+  const bankAccountHeadId = input.bankAccountId
+    ? (await client.query<{ account_head_id: string }>(
+        `
+          select account_head_id
+          from society_bank_accounts
+          where id = $1
+            and society_id = $2
+            and is_active = true
+          limit 1
+        `,
+        [input.bankAccountId, input.societyId],
+      )).rows[0]?.account_head_id
+    : (await client.query<{ account_head_id: string }>(
+        `
+          select account_head_id
+          from journal_lines
+          where journal_entry_id = $1 and line_type = 'DEBIT'
+          order by line_no asc
+          limit 1
+        `,
+        [journal.id],
+      )).rows[0]?.account_head_id
   if (!bankAccountHeadId) {
     throw new AppError({
       code: 'CONFLICT',
       statusCode: 409,
-      message: 'Receipt journal is missing its bank debit line.',
+      message: input.bankAccountId
+        ? 'Selected receipt bank account is unavailable.'
+        : 'Receipt journal is missing its bank debit line.',
     })
   }
 
@@ -1307,7 +1322,16 @@ export const refreshMaintenanceReceiptJournalForPayment = async (
       [journal.id, ...line],
     )
   }
-  await client.query(`update journal_entries set updated_at = now() where id = $1`, [journal.id])
+  await client.query(
+    `
+      update journal_entries
+      set entry_date = $2::date,
+          description = $3,
+          updated_at = now()
+      where id = $1
+    `,
+    [journal.id, paymentRow.payment_date, paymentRow.notes ?? 'Maintenance receipt'],
+  )
 
   return {
     id: journal.id,

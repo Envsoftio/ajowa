@@ -68,15 +68,15 @@ export const staffRoleAccessDescriptions: Record<StaffManagedRole, {
 }> = {
   MANAGER: {
     title: 'Manager workspace',
-    description: 'Managers use selected admin permissions for society, billing, finance, residents, service requests, staff, and notifications.',
+    description: 'Managers use selected admin permissions for society, billing, finance, residents, service requests, staff, notifications, and QR scanning.',
     permissionsEditable: true,
-    accessLabel: 'Configurable admin access',
+    accessLabel: 'Admin access and QR scan',
   },
   SERVICE_STAFF: {
     title: 'Service console',
-    description: 'Service staff access assigned departments and tickets only. Department assignments decide what work appears.',
+    description: 'Service staff can scan QR codes and use assigned department tickets when departments are selected.',
     permissionsEditable: false,
-    accessLabel: 'Assigned tickets only',
+    accessLabel: 'Tickets and QR scan',
   },
   GUARD: {
     title: 'Gate desk',
