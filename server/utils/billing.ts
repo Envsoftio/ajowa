@@ -273,7 +273,9 @@ export const computeDueAmounts = (
   graceDays: number,
   lateFeePerDay: number,
 ): ComputedDueAmounts => {
-  const lateFeeAmount = computeLateFee(due.dueDate, today, graceDays, lateFeePerDay)
+  const lateFeeAmount = due.paidAmount > 0
+    ? 0
+    : computeLateFee(due.dueDate, today, graceDays, lateFeePerDay)
   const totalAmount = Math.max(
     0,
     Math.round((due.baseAmount + lateFeeAmount - due.waivedAmount) * 100) / 100,

@@ -174,6 +174,45 @@ const formatReceiptDate = (value: string | null | undefined) =>
       })
     : '-'
 
+const getPaymentCreditedBalance = (due: DueRow) => {
+  const principalAmount = Math.max(
+    0,
+    roundMoney(Number(due.base_amount) - Number(due.waived_amount)),
+  )
+
+  return Math.max(
+    0,
+    roundMoney(principalAmount - Number(due.paid_amount)),
+  )
+}
+
+const buildAllocationLineAmounts = (
+  due: DueRow,
+  allocatedAmount: number,
+  asOfDate: string,
+  graceDays: number,
+  lateFeePerDay: number,
+) => {
+  const computed = computeDueAmounts(
+    {
+      dueDate: due.due_date,
+      baseAmount: Number(due.base_amount),
+      paidAmount: roundMoney(Number(due.paid_amount) + allocatedAmount),
+      waivedAmount: Number(due.waived_amount),
+      storedStatus: due.status,
+    },
+    asOfDate,
+    graceDays,
+    lateFeePerDay,
+  )
+
+  return {
+    dueAmount: computed.totalAmount,
+    lateFeeComponent: computed.lateFeeAmount,
+    remainingBalance: computed.balanceAmount,
+  }
+}
+
 const syncFlatCamAdvancePaidUntil = async (
   client: PoolClient,
   dueId: string,
@@ -357,20 +396,28 @@ const previewPaymentAllocationWithClient = async (
   const dues = await selectAllocatableDues(client, dueInput)
 
   let remainingPayment = input.amount
+  const asOfDate = input.asOfDate ?? todayDate()
   const lines = dues
     .map((due, index) => {
       const allocatedAmount = roundMoney(
-        Math.min(remainingPayment, due.computedBalance),
+        Math.min(remainingPayment, getPaymentCreditedBalance(due)),
       )
       remainingPayment = roundMoney(remainingPayment - allocatedAmount)
+      const allocationAmounts = buildAllocationLineAmounts(
+        due,
+        allocatedAmount,
+        asOfDate,
+        policy.graceDays,
+        policy.lateFeePerDay,
+      )
       return {
         dueId: due.id,
         billingPeriodId: due.billing_period_id,
         billingPeriodLabel: due.billing_period_label,
-        dueAmount: due.computedTotal,
-        lateFeeComponent: due.computedLateFee,
+        dueAmount: allocationAmounts.dueAmount,
+        lateFeeComponent: allocationAmounts.lateFeeComponent,
         allocatedAmount,
-        remainingBalance: roundMoney(due.computedBalance - allocatedAmount),
+        remainingBalance: allocationAmounts.remainingBalance,
         allocationOrder: index + 1,
       }
     })
@@ -379,7 +426,7 @@ const previewPaymentAllocationWithClient = async (
   return {
     lines,
     totalDue: roundMoney(
-      dues.reduce((sum, due) => sum + due.computedBalance, 0),
+      dues.reduce((sum, due) => sum + getPaymentCreditedBalance(due), 0),
     ),
     allocatedAmount: roundMoney(
       lines.reduce((sum, line) => sum + line.allocatedAmount, 0),
@@ -939,28 +986,22 @@ export const updatePaymentAmountWithClient = async (
   let totalDue = 0
 
   for (const due of dueResult.rows) {
-    const computed = computeDueAmounts(
-      {
-        dueDate: due.due_date,
-        baseAmount: Number(due.base_amount),
-        paidAmount: Number(due.paid_amount),
-        waivedAmount: Number(due.waived_amount),
-        storedStatus: due.status,
-      },
-      settlementDate,
-      policy.graceDays,
-      policy.lateFeePerDay,
-    )
-    totalDue = roundMoney(totalDue + computed.balanceAmount)
+    totalDue = roundMoney(totalDue + getPaymentCreditedBalance(due))
     const allocatedAmount = roundMoney(
-      Math.min(remainingPayment, computed.balanceAmount),
+      Math.min(remainingPayment, getPaymentCreditedBalance(due)),
     )
     if (allocatedAmount <= 0) {
       continue
     }
 
     remainingPayment = roundMoney(remainingPayment - allocatedAmount)
-    const remainingBalance = roundMoney(computed.balanceAmount - allocatedAmount)
+    const allocationAmounts = buildAllocationLineAmounts(
+      due,
+      allocatedAmount,
+      settlementDate,
+      policy.graceDays,
+      policy.lateFeePerDay,
+    )
     const allocationOrder = lines.length + 1
     await client.query(
       `
@@ -979,9 +1020,9 @@ export const updatePaymentAmountWithClient = async (
         payment.id,
         due.id,
         allocatedAmount,
-        computed.totalAmount,
-        computed.lateFeeAmount,
-        remainingBalance,
+        allocationAmounts.dueAmount,
+        allocationAmounts.lateFeeComponent,
+        allocationAmounts.remainingBalance,
         allocationOrder,
       ],
     )
@@ -990,10 +1031,10 @@ export const updatePaymentAmountWithClient = async (
       dueId: due.id,
       billingPeriodId: due.billing_period_id,
       billingPeriodLabel: due.billing_period_label,
-      dueAmount: computed.totalAmount,
-      lateFeeComponent: computed.lateFeeAmount,
+      dueAmount: allocationAmounts.dueAmount,
+      lateFeeComponent: allocationAmounts.lateFeeComponent,
       allocatedAmount,
-      remainingBalance,
+      remainingBalance: allocationAmounts.remainingBalance,
       allocationOrder,
     })
 
@@ -1167,19 +1208,7 @@ export const consumeAdvanceCreditsForDueWithClient = async (
   }
   const policy = await getPaymentPolicy(client, due.society_id)
   const settlementDate = todayDate()
-  const computed = computeDueAmounts(
-    {
-      dueDate: due.due_date,
-      baseAmount: Number(due.base_amount),
-      paidAmount: Number(due.paid_amount),
-      waivedAmount: Number(due.waived_amount),
-      storedStatus: due.status,
-    },
-    settlementDate,
-    policy.graceDays,
-    policy.lateFeePerDay,
-  )
-  let remaining = computed.balanceAmount
+  let remaining = getPaymentCreditedBalance(due)
   let consumedAmount = 0
   let consumedCreditCount = 0
   const credits = await client.query<{
@@ -1201,6 +1230,13 @@ export const consumeAdvanceCreditsForDueWithClient = async (
     if (remaining <= 0) break
     const amount = roundMoney(
       Math.min(remaining, Number(credit.current_balance)),
+    )
+    const allocationAmounts = buildAllocationLineAmounts(
+      due,
+      roundMoney(consumedAmount + amount),
+      settlementDate,
+      policy.graceDays,
+      policy.lateFeePerDay,
     )
     const payment = await client.query<{ id: string }>(
       `
@@ -1242,9 +1278,9 @@ export const consumeAdvanceCreditsForDueWithClient = async (
         payment.rows[0]?.id,
         dueId,
         amount,
-        computed.totalAmount,
-        computed.lateFeeAmount,
-        roundMoney(remaining - amount),
+        allocationAmounts.dueAmount,
+        allocationAmounts.lateFeeComponent,
+        allocationAmounts.remainingBalance,
       ],
     )
     await client.query(
