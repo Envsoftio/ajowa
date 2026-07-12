@@ -102,6 +102,60 @@ type NotificationUserRow = {
   notification_in_app_enabled: boolean
 }
 
+type QrVerifyTokenRow = {
+  id: string
+  status: string
+  is_valid: boolean
+  expires_at: string | null
+  user_id: string
+  society_id: string
+  billing_period_id: string
+  is_current_period: boolean
+  access_is_granted: boolean | null
+  access_basis: string | null
+  unpaid_flat_numbers: string[] | null
+  total_flats: number | null
+  total_paid_flats: number | null
+  total_unpaid_flats: number | null
+  total_balance_all_flats: string | null
+  resident_name: string | null
+  resident_mobile_number: string | null
+  resident_profile_image_path: string | null
+  resident_updated_at: string | null
+}
+
+type QrVerifyFlatRow = {
+  flat_id: string
+  label: string
+  block_name: string | null
+  flat_number: string | null
+  unit_type: string | null
+  flat_occupancy_status: string | null
+  relationship_type: string
+  access_scope: string | null
+  is_primary_contact: boolean
+  is_billing_contact: boolean
+  relationship_occupancy_status: string | null
+  lease_end_date: string | null
+}
+
+type QrVerifyHouseholdMemberRow = {
+  relationship_id: string
+  user_id: string
+  full_name: string
+  mobile_number: string | null
+  profile_image_path: string | null
+  updated_at: string
+  flat_id: string
+  flat_label: string
+  relationship_type: string
+  access_scope: string | null
+  is_primary_contact: boolean
+  is_billing_contact: boolean
+  occupancy_status: string | null
+  lease_end_date: string | null
+}
+
 export const qrVerifySchema = z.object({
   token: z.string().trim().min(20),
   gateName: z.string().trim().max(120).optional(),
@@ -136,6 +190,15 @@ const safeEqual = (left: string, right: string) => {
   const rightBuffer = Buffer.from(right)
   return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer)
 }
+
+const getQrResidentPhotoUrl = (
+  userId: string,
+  profileImagePath: string | null,
+  updatedAt?: string | null,
+) =>
+  profileImagePath
+    ? `/api/qr/resident-photo/${userId}${updatedAt ? `?v=${encodeURIComponent(updatedAt)}` : ''}`
+    : null
 
 const signQrPayload = (payload: Record<string, unknown>) => {
   const encoded = base64url(JSON.stringify(payload))
@@ -1397,6 +1460,141 @@ export const ensureQrForAccess = async (userId: string, billingPeriodId: string)
   }
 }
 
+const mapQrVerifyFlat = (row: QrVerifyFlatRow) => ({
+  id: row.flat_id,
+  label: row.label,
+  blockName: row.block_name,
+  flatNumber: row.flat_number,
+  unitType: row.unit_type,
+  occupancyStatus: row.relationship_occupancy_status ?? row.flat_occupancy_status,
+  relationshipType: row.relationship_type,
+  accessScope: row.access_scope,
+  isPrimaryContact: row.is_primary_contact,
+  isBillingContact: row.is_billing_contact,
+  leaseEndDate: row.lease_end_date,
+})
+
+const mapQrVerifyHouseholdMember = (row: QrVerifyHouseholdMemberRow) => ({
+  relationshipId: row.relationship_id,
+  userId: row.user_id,
+  name: row.full_name,
+  mobileNumber: row.mobile_number,
+  profilePhotoUrl: getQrResidentPhotoUrl(row.user_id, row.profile_image_path, row.updated_at),
+  flatId: row.flat_id,
+  flatLabel: row.flat_label,
+  relationshipType: row.relationship_type,
+  accessScope: row.access_scope,
+  isPrimaryContact: row.is_primary_contact,
+  isBillingContact: row.is_billing_contact,
+  occupancyStatus: row.occupancy_status,
+  leaseEndDate: row.lease_end_date,
+})
+
+const loadQrScanResidentDetails = async (
+  client: PoolClient,
+  userId: string,
+  societyId: string,
+) => {
+  const flatRows = await client.query<QrVerifyFlatRow>(
+    `
+      select
+        fr.flat_id,
+        concat(b.name, ' ', f.flat_number) as label,
+        b.name as block_name,
+        f.flat_number,
+        f.unit_type,
+        f.occupancy_status::text as flat_occupancy_status,
+        fr.relationship_type::text,
+        fr.access_scope::text,
+        fr.is_primary_contact,
+        fr.is_billing_contact,
+        fr.occupancy_status::text as relationship_occupancy_status,
+        fr.lease_end_date::text
+      from flat_residents fr
+      inner join flats f on f.id = fr.flat_id
+      inner join blocks b on b.id = f.block_id
+      where fr.user_id = $1
+        and f.society_id = $2
+        and fr.is_active = true
+        and (fr.ended_at is null or fr.ended_at > now())
+        and (
+          fr.relationship_type <> 'TENANT'
+          or (
+            (fr.lease_start_date is null or fr.lease_start_date <= current_date)
+            and (fr.lease_end_date is null or fr.lease_end_date >= current_date)
+          )
+        )
+      order by
+        b.name,
+        f.flat_number,
+        case fr.relationship_type when 'OWNER' then 0 when 'TENANT' then 1 else 2 end,
+        fr.is_primary_contact desc,
+        fr.created_at
+    `,
+    [userId, societyId],
+  )
+
+  const uniqueFlatsById = new Map<string, QrVerifyFlatRow>()
+  for (const row of flatRows.rows) {
+    if (!uniqueFlatsById.has(row.flat_id)) {
+      uniqueFlatsById.set(row.flat_id, row)
+    }
+  }
+  const flats = [...uniqueFlatsById.values()].map(mapQrVerifyFlat)
+  const flatIds = flats.map((flat) => flat.id)
+
+  const householdRows = flatIds.length
+    ? await client.query<QrVerifyHouseholdMemberRow>(
+        `
+          select
+            fr.id as relationship_id,
+            fr.user_id,
+            u.full_name,
+            u.mobile_number,
+            u.profile_image_path,
+            u.updated_at::text,
+            fr.flat_id,
+            concat(b.name, ' ', f.flat_number) as flat_label,
+            fr.relationship_type::text,
+            fr.access_scope::text,
+            fr.is_primary_contact,
+            fr.is_billing_contact,
+            fr.occupancy_status::text,
+            fr.lease_end_date::text
+          from flat_residents fr
+          inner join users u on u.id = fr.user_id and u.is_active = true
+          inner join flats f on f.id = fr.flat_id
+          inner join blocks b on b.id = f.block_id
+          where fr.flat_id = any($1::uuid[])
+            and f.society_id = $2
+            and fr.is_active = true
+            and (fr.ended_at is null or fr.ended_at > now())
+            and (
+              fr.relationship_type <> 'TENANT'
+              or (
+                (fr.lease_start_date is null or fr.lease_start_date <= current_date)
+                and (fr.lease_end_date is null or fr.lease_end_date >= current_date)
+              )
+            )
+          order by
+            b.name,
+            f.flat_number,
+            case fr.relationship_type when 'OWNER' then 0 when 'TENANT' then 1 else 2 end,
+            fr.is_primary_contact desc,
+            u.full_name
+        `,
+        [flatIds, societyId],
+      )
+    : { rows: [] as QrVerifyHouseholdMemberRow[] }
+
+  return {
+    flats,
+    flatLabels: flats.map((flat) => flat.label),
+    primaryFlatId: flats[0]?.id ?? null,
+    householdMembers: householdRows.rows.map(mapQrVerifyHouseholdMember),
+  }
+}
+
 export const verifyQrToken = async (
   input: z.infer<typeof qrVerifySchema>,
   guardUserId: string,
@@ -1409,6 +1607,22 @@ export const verifyQrToken = async (
   let tokenId: string | null = null
   let residentName: string | null = null
   let flatLabels: string[] = []
+  let primaryFlatId: string | null = null
+  let resident: {
+    id: string
+    name: string | null
+    mobileNumber: string | null
+    profilePhotoUrl: string | null
+  } | null = null
+  let flats: ReturnType<typeof mapQrVerifyFlat>[] = []
+  let householdMembers: ReturnType<typeof mapQrVerifyHouseholdMember>[] = []
+  let access: {
+    basis: string | null
+    totalFlats: number
+    totalPaidFlats: number
+    totalUnpaidFlats: number
+    totalBalance: number
+  } | null = null
 
   try {
     try {
@@ -1419,20 +1633,7 @@ export const verifyQrToken = async (
 
     if (parsed) {
       const tokenHash = sha256(input.token)
-      const token = await client.query<{
-        id: string
-        status: string
-        is_valid: boolean
-        expires_at: string | null
-        user_id: string
-        society_id: string
-        billing_period_id: string
-        is_current_period: boolean
-        access_is_granted: boolean | null
-        unpaid_flat_numbers: string[] | null
-        resident_name: string | null
-        flat_labels: string[] | null
-      }>(
+      const token = await client.query<QrVerifyTokenRow>(
         `
           select
             at.id,
@@ -1447,9 +1648,16 @@ export const verifyQrToken = async (
               and bp.end_date >= (now() at time zone sp.timezone)::date
             ) as is_current_period,
             uas.is_access_granted as access_is_granted,
+            uas.access_basis::text,
             uas.unpaid_flat_numbers,
+            uas.total_flats,
+            uas.total_paid_flats,
+            uas.total_unpaid_flats,
+            uas.total_balance_all_flats::text,
             u.full_name as resident_name,
-            coalesce(flat_lookup.flat_labels, array[]::text[]) as flat_labels
+            u.mobile_number as resident_mobile_number,
+            u.profile_image_path as resident_profile_image_path,
+            u.updated_at::text as resident_updated_at
           from access_tokens at
           inner join billing_periods bp on bp.id = at.billing_period_id
           inner join society_profile sp on sp.id = at.society_id
@@ -1457,21 +1665,12 @@ export const verifyQrToken = async (
           left join user_access_status uas
             on uas.user_id = at.user_id
             and uas.billing_period_id = at.billing_period_id
-          left join lateral (
-            select array_agg(distinct concat(b.name, ' ', f.flat_number) order by concat(b.name, ' ', f.flat_number)) as flat_labels
-            from flat_residents fr
-            inner join flats f on f.id = fr.flat_id
-            inner join blocks b on b.id = f.block_id
-            where fr.user_id = at.user_id
-              and fr.is_active = true
-          ) flat_lookup on true
           where at.token_hash = $1 and at.society_id = $2
           limit 1
         `,
         [tokenHash, societyId],
       )
       const row = token.rows[0]
-      tokenId = row?.id ?? null
 
       if (
         !row ||
@@ -1482,52 +1681,88 @@ export const verifyQrToken = async (
       ) {
         scanResult = 'INVALID'
         denialReason = 'QR code is not recognized.'
-      } else if (new Date(parsed.validUntil).getTime() <= Date.now() || (row.expires_at && new Date(row.expires_at).getTime() <= Date.now())) {
-        scanResult = 'EXPIRED'
-        denialReason = 'QR code has expired.'
-      } else if (!row.is_current_period) {
-        scanResult = 'EXPIRED'
-        denialReason = 'QR code is not for the current billing period.'
-      } else if (row.status !== 'ACTIVE' || !row.is_valid) {
-        scanResult = 'REVOKED'
-        denialReason = 'QR code has been revoked.'
       } else {
-        let accessAllowed = row.access_is_granted
-        let unpaidFlatNumbers = row.unpaid_flat_numbers ?? []
-
-        if (accessAllowed !== true) {
-          try {
-            const access = await recomputeUserAccess(row.user_id, row.billing_period_id, client)
-            accessAllowed = access?.is_access_granted ?? false
-            unpaidFlatNumbers = access?.unpaid_flat_numbers ?? []
-          } catch {
-            accessAllowed = false
-            denialReason = 'Access status could not be verified.'
-          }
+        tokenId = row.id
+        residentName = row.resident_name
+        resident = {
+          id: row.user_id,
+          name: row.resident_name,
+          mobileNumber: row.resident_mobile_number,
+          profilePhotoUrl: getQrResidentPhotoUrl(
+            row.user_id,
+            row.resident_profile_image_path,
+            row.resident_updated_at,
+          ),
+        }
+        access = {
+          basis: row.access_basis,
+          totalFlats: Number(row.total_flats ?? 0),
+          totalPaidFlats: Number(row.total_paid_flats ?? 0),
+          totalUnpaidFlats: Number(row.total_unpaid_flats ?? 0),
+          totalBalance: Number(row.total_balance_all_flats ?? 0),
         }
 
-        if (!accessAllowed) {
-          scanResult = 'DENIED'
-          if (denialReason === 'Invalid QR code.') {
-            denialReason = unpaidFlatNumbers.length
-            ? `Blocked by unpaid flat(s): ${unpaidFlatNumbers.join(', ')}`
-            : 'Access is currently blocked.'
-          }
+        const detail = await loadQrScanResidentDetails(client, row.user_id, societyId)
+        flats = detail.flats
+        flatLabels = detail.flatLabels
+        primaryFlatId = detail.primaryFlatId
+        householdMembers = detail.householdMembers
+
+        if (new Date(parsed.validUntil).getTime() <= Date.now() || (row.expires_at && new Date(row.expires_at).getTime() <= Date.now())) {
+          scanResult = 'EXPIRED'
+          denialReason = 'QR code has expired.'
+        } else if (!row.is_current_period) {
+          scanResult = 'EXPIRED'
+          denialReason = 'QR code is not for the current billing period.'
+        } else if (row.status !== 'ACTIVE' || !row.is_valid) {
+          scanResult = 'REVOKED'
+          denialReason = 'QR code has been revoked.'
         } else {
-          residentName = row.resident_name
-          flatLabels = row.flat_labels ?? []
-          scanResult = 'GRANTED'
-          denialReason = ''
+          let accessAllowed = row.access_is_granted
+          let unpaidFlatNumbers = row.unpaid_flat_numbers ?? []
+
+          if (accessAllowed !== true) {
+            try {
+              const recomputedAccess = await recomputeUserAccess(row.user_id, row.billing_period_id, client)
+              accessAllowed = recomputedAccess?.is_access_granted ?? false
+              unpaidFlatNumbers = recomputedAccess?.unpaid_flat_numbers ?? []
+              if (recomputedAccess) {
+                access = {
+                  basis: recomputedAccess.access_basis,
+                  totalFlats: recomputedAccess.total_flats,
+                  totalPaidFlats: recomputedAccess.total_paid_flats,
+                  totalUnpaidFlats: recomputedAccess.total_unpaid_flats,
+                  totalBalance: Number(recomputedAccess.total_balance_all_flats),
+                }
+              }
+            } catch {
+              accessAllowed = false
+              denialReason = 'Access status could not be verified.'
+            }
+          }
+
+          if (!accessAllowed) {
+            scanResult = 'DENIED'
+            if (denialReason === 'Invalid QR code.') {
+              denialReason = unpaidFlatNumbers.length
+                ? `Blocked by unpaid flat(s): ${unpaidFlatNumbers.join(', ')}`
+                : 'Access is currently blocked.'
+            }
+          } else {
+            scanResult = 'GRANTED'
+            denialReason = ''
+          }
         }
       }
     }
 
-    await client.query(
-        `
+    const logResult = await client.query<{ scanned_at: string }>(
+      `
         insert into gate_scan_logs (
           society_id,
           billing_period_id,
           user_id,
+          flat_id,
           access_token_id,
           guard_user_id,
           scan_result,
@@ -1536,12 +1771,14 @@ export const verifyQrToken = async (
           device_id,
           scan_payload
         )
-        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)
+        returning scanned_at::text
       `,
       [
         societyId,
         tokenId ? parsed?.billingPeriodId ?? null : null,
         tokenId ? parsed?.userId ?? null : null,
+        primaryFlatId,
         tokenId,
         guardUserId,
         scanResult,
@@ -1556,8 +1793,13 @@ export const verifyQrToken = async (
       allowed: scanResult === 'GRANTED',
       result: scanResult,
       reason: denialReason || null,
+      scannedAt: logResult.rows[0]?.scanned_at ?? new Date().toISOString(),
       residentName,
+      resident,
       flatLabels,
+      flats,
+      householdMembers,
+      access,
     }
   } finally {
     client.release()

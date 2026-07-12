@@ -13,8 +13,50 @@ type VerifyResponse = {
     allowed: boolean
     result: string
     reason: string | null
+    scannedAt: string
     residentName: string | null
+    resident: {
+      id: string
+      name: string | null
+      mobileNumber: string | null
+      profilePhotoUrl: string | null
+    } | null
     flatLabels: string[]
+    flats: {
+      id: string
+      label: string
+      blockName: string | null
+      flatNumber: string | null
+      unitType: string | null
+      occupancyStatus: string | null
+      relationshipType: string
+      accessScope: string | null
+      isPrimaryContact: boolean
+      isBillingContact: boolean
+      leaseEndDate: string | null
+    }[]
+    householdMembers: {
+      relationshipId: string
+      userId: string
+      name: string
+      mobileNumber: string | null
+      profilePhotoUrl: string | null
+      flatId: string
+      flatLabel: string
+      relationshipType: string
+      accessScope: string | null
+      isPrimaryContact: boolean
+      isBillingContact: boolean
+      occupancyStatus: string | null
+      leaseEndDate: string | null
+    }[]
+    access: {
+      basis: string | null
+      totalFlats: number
+      totalPaidFlats: number
+      totalUnpaidFlats: number
+      totalBalance: number
+    } | null
   }
 }
 
@@ -180,6 +222,73 @@ const formatDayLabel = (value: string) =>
 const formatTimeLabel = (value: string | null) =>
   value ? new Date(value).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : '-'
 
+const formatDateTimeLabel = (value: string | null) =>
+  value
+    ? new Date(value).toLocaleString('en-IN', {
+        day: '2-digit',
+        month: 'short',
+        hour: '2-digit',
+        minute: '2-digit',
+      })
+    : '-'
+
+const formatLabel = (value: string | null | undefined) =>
+  value
+    ? value
+        .replaceAll('_', ' ')
+        .toLowerCase()
+        .replace(/\b\w/g, (letter) => letter.toUpperCase())
+    : '-'
+
+const getInitials = (name: string | null | undefined) =>
+  (name || 'Resident')
+    .split(/[\s/]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join('') || 'R'
+
+const getResultSeverity = (scanResult: string) => {
+  if (scanResult === 'GRANTED') return 'success'
+  if (
+    scanResult === 'DENIED' ||
+    scanResult === 'REVOKED' ||
+    scanResult === 'EXPIRED'
+  ) {
+    return 'danger'
+  }
+  return 'secondary'
+}
+
+const getResultTitle = (scanResult: VerifyResponse['data']) => {
+  if (scanResult.allowed) return 'Access allowed'
+  if (scanResult.result === 'DENIED') return 'Access blocked'
+  if (scanResult.result === 'EXPIRED') return 'QR expired'
+  if (scanResult.result === 'REVOKED') return 'QR revoked'
+  return 'QR invalid'
+}
+
+const getFlatDetail = (flat: VerifyResponse['data']['flats'][number]) =>
+  [
+    flat.unitType,
+    formatLabel(flat.relationshipType),
+    formatLabel(flat.occupancyStatus),
+  ]
+    .filter((value) => value && value !== '-')
+    .join(' - ')
+
+const getMemberDetail = (
+  member: VerifyResponse['data']['householdMembers'][number],
+) =>
+  [formatLabel(member.relationshipType), member.flatLabel].filter(Boolean).join(' - ')
+
+const formatAccessBalance = (value: number | null | undefined) =>
+  new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    maximumFractionDigits: 0,
+  }).format(value ?? 0)
+
 const scannerButtonLabel = computed(() => {
   if (isScanning.value) return 'Scanning'
   if (scanner.value) return 'Resume scan'
@@ -236,8 +345,13 @@ const verify = async (token: string) => {
         typeof (error as { data?: { message?: unknown } }).data?.message === 'string'
           ? (error as { data: { message: string } }).data.message
           : 'Network or verification error. Try again.',
+      scannedAt: new Date().toISOString(),
       residentName: null,
+      resident: null,
       flatLabels: [],
+      flats: [],
+      householdMembers: [],
+      access: null,
     }
   } finally {
     if (result.value) {
@@ -370,13 +484,124 @@ onBeforeUnmount(async () => {
         </div>
 
         <div v-if="result" class="scan-result" :class="result.allowed ? 'scan-result--allowed' : 'scan-result--blocked'">
-          <Tag :severity="result.allowed ? 'success' : 'danger'" :value="result.result" rounded />
-          <h2>{{ result.allowed ? 'Allowed' : 'Blocked' }}</h2>
-          <p v-if="result.allowed">
-            {{ result.residentName }} · {{ result.flatLabels.join(', ') || 'Linked resident' }}
-          </p>
-          <p v-else>{{ result.reason }}</p>
-          <Button label="Scan next" icon="pi pi-qrcode" size="large" @click="rescan" />
+          <div class="scan-result__topline">
+            <Tag :severity="getResultSeverity(result.result)" :value="result.result" rounded />
+            <span>{{ formatDateTimeLabel(result.scannedAt) }}</span>
+          </div>
+
+          <div class="scan-result__hero">
+            <div class="scan-result__photo">
+              <img
+                v-if="result.resident?.profilePhotoUrl"
+                :src="result.resident.profilePhotoUrl"
+                :alt="result.resident.name || 'Resident photo'"
+              >
+              <span v-else>{{ getInitials(result.residentName) }}</span>
+            </div>
+            <div class="scan-result__identity">
+              <p class="eyebrow">Gate result</p>
+              <h2>{{ getResultTitle(result) }}</h2>
+              <strong>{{ result.residentName || 'Unknown resident' }}</strong>
+              <p>{{ result.flatLabels.join(', ') || result.reason || 'No linked flat details' }}</p>
+            </div>
+          </div>
+
+          <Message
+            v-if="!result.allowed && result.reason"
+            :severity="result.result === 'INVALID' ? 'warn' : 'error'"
+            :closable="false"
+          >
+            {{ result.reason }}
+          </Message>
+
+          <div v-if="result.access || result.flats.length" class="scan-result__summary">
+            <div>
+              <span>Access basis</span>
+              <strong>{{ formatLabel(result.access?.basis) }}</strong>
+            </div>
+            <div>
+              <span>Cleared flats</span>
+              <strong>
+                {{ result.access?.totalPaidFlats ?? 0 }}/{{ result.access?.totalFlats ?? result.flats.length }}
+              </strong>
+            </div>
+            <div>
+              <span>Blocked balance</span>
+              <strong>{{ formatAccessBalance(result.access?.totalBalance) }}</strong>
+            </div>
+          </div>
+
+          <section v-if="result.flats.length" class="scan-result__section">
+            <div class="scan-result__section-header">
+              <div>
+                <p class="eyebrow">Linked flats</p>
+                <h3>
+                  {{ result.flats.length }} active link{{ result.flats.length === 1 ? '' : 's' }}
+                </h3>
+              </div>
+            </div>
+            <div class="scan-flat-list">
+              <article v-for="flat in result.flats" :key="flat.id" class="scan-flat-row">
+                <div>
+                  <strong>{{ flat.label }}</strong>
+                  <span>{{ getFlatDetail(flat) }}</span>
+                </div>
+                <div class="scan-chip-row">
+                  <Tag v-if="flat.isPrimaryContact" value="Primary" severity="success" rounded />
+                  <Tag v-if="flat.isBillingContact" value="Billing" severity="info" rounded />
+                </div>
+              </article>
+            </div>
+          </section>
+
+          <section v-if="result.householdMembers.length" class="scan-result__section">
+            <div class="scan-result__section-header">
+              <div>
+                <p class="eyebrow">Registered residents</p>
+                <h3>
+                  {{ result.householdMembers.length }} owner, tenant, or member record{{
+                    result.householdMembers.length === 1 ? '' : 's'
+                  }}
+                </h3>
+              </div>
+            </div>
+            <div class="scan-household-list">
+              <article
+                v-for="member in result.householdMembers"
+                :key="member.relationshipId"
+                class="scan-member-row"
+              >
+                <div class="scan-member-photo">
+                  <img
+                    v-if="member.profilePhotoUrl"
+                    :src="member.profilePhotoUrl"
+                    :alt="member.name"
+                  >
+                  <span v-else>{{ getInitials(member.name) }}</span>
+                </div>
+                <div>
+                  <strong>{{ member.name }}</strong>
+                  <span>{{ getMemberDetail(member) }}</span>
+                  <small v-if="member.mobileNumber">{{ member.mobileNumber }}</small>
+                </div>
+                <Tag
+                  :severity="
+                    member.relationshipType === 'OWNER'
+                      ? 'success'
+                      : member.relationshipType === 'TENANT'
+                        ? 'info'
+                        : 'secondary'
+                  "
+                  :value="formatLabel(member.relationshipType)"
+                  rounded
+                />
+              </article>
+            </div>
+          </section>
+
+          <div class="scan-result__actions">
+            <Button label="Scan next" icon="pi pi-qrcode" size="large" @click="rescan" />
+          </div>
         </div>
 
         <div v-else class="guard-scan-panel">
