@@ -38,6 +38,7 @@ const saving = ref(false)
 const createdBooking = ref<{ id: string; bookingNumber: string } | null>(null)
 const dateValue = ref<Date | null>(null)
 const fieldErrors = ref<Partial<Record<BookingField, string>>>({})
+const nowMs = ref(Date.now())
 
 const form = reactive({
   amenityId: '',
@@ -124,15 +125,15 @@ const selectedWeekday = computed(() => {
 const slotIntervalMinutes = computed(() => selectedAmenity.value?.bookingRules.slotIntervalMinutes ?? 30)
 const minDurationMinutes = computed(() => selectedAmenity.value?.bookingRules.minDurationMinutes ?? 60)
 const maxDurationMinutes = computed(() => selectedAmenity.value?.bookingRules.maxDurationMinutes ?? 240)
-const minimumLeadHours = computed(() => selectedAmenity.value?.bookingRules.minimumLeadHours ?? 24)
+const minimumLeadHours = computed(() => selectedAmenity.value?.bookingRules.minimumLeadHours ?? 0)
 const maximumAdvanceDays = computed(() => selectedAmenity.value?.bookingRules.maximumAdvanceDays ?? 60)
 
 const minBookingDate = computed(() => {
-  const earliest = new Date(Date.now() + minimumLeadHours.value * 60 * 60 * 1000)
-  return new Date(earliest.getFullYear(), earliest.getMonth(), earliest.getDate())
+  const today = new Date(nowMs.value)
+  return new Date(today.getFullYear(), today.getMonth(), today.getDate())
 })
 
-const maxBookingDate = computed(() => addDays(new Date(), maximumAdvanceDays.value))
+const maxBookingDate = computed(() => addDays(new Date(nowMs.value), maximumAdvanceDays.value))
 const blockedDatesStart = computed(() => dateToKey(minBookingDate.value))
 const blockedDatesEnd = computed(() => dateToKey(maxBookingDate.value))
 
@@ -182,8 +183,8 @@ const startMeetsBookingWindow = (startMinutes: number) => {
   if (!form.date) return false
 
   const startsAt = dateTimeAtMinutes(form.date, startMinutes).getTime()
-  const earliestStart = Date.now() + minimumLeadHours.value * 60 * 60 * 1000
-  const latestStart = Date.now() + maximumAdvanceDays.value * 24 * 60 * 60 * 1000
+  const earliestStart = nowMs.value + minimumLeadHours.value * 60 * 60 * 1000
+  const latestStart = nowMs.value + maximumAdvanceDays.value * 24 * 60 * 60 * 1000
   return startsAt >= earliestStart && startsAt <= latestStart
 }
 
@@ -275,7 +276,7 @@ const fieldError = (field: BookingField) => fieldErrors.value[field]
 
 const clearFieldError = (field: BookingField) => {
   if (!fieldErrors.value[field]) return
-  delete fieldErrors.value[field]
+  fieldErrors.value[field] = ''
 }
 
 const getApiPayload = (error: unknown) => {
@@ -319,6 +320,20 @@ const getApiErrorMessage = (error: unknown, fallback = 'Booking submission faile
 
   return detail
 }
+
+let clockTimer: ReturnType<typeof setInterval> | null = null
+
+onMounted(() => {
+  clockTimer = setInterval(() => {
+    nowMs.value = Date.now()
+  }, 60_000)
+})
+
+onBeforeUnmount(() => {
+  if (clockTimer) {
+    clearInterval(clockTimer)
+  }
+})
 
 const applyApiFieldErrors = (error: unknown) => {
   fieldErrors.value = {}
@@ -566,7 +581,7 @@ const submit = async () => {
         </div>
         <div class="booking-rule-metrics">
           <span>Capacity {{ selectedAmenity.capacity ?? '-' }}</span>
-          <span>Lead {{ selectedAmenity.bookingRules.minimumLeadHours ?? 24 }}h</span>
+          <span>Lead {{ selectedAmenity.bookingRules.minimumLeadHours ?? 0 }}h</span>
           <span>Duration {{ selectedAmenity.bookingRules.minDurationMinutes ?? 60 }}-{{ selectedAmenity.bookingRules.maxDurationMinutes ?? 240 }} min</span>
         </div>
       </section>

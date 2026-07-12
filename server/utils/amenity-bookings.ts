@@ -151,7 +151,7 @@ const defaultRules: Required<AmenityBookingRules> = {
   minDurationMinutes: 60,
   maxDurationMinutes: 240,
   slotIntervalMinutes: 30,
-  minimumLeadHours: 24,
+  minimumLeadHours: 0,
   maximumAdvanceDays: 60,
   cancellationCutoffHours: 24,
 }
@@ -673,7 +673,9 @@ const validateBookingRules = async (
     throw new AppError({
       code: 'VALIDATION_ERROR',
       statusCode: 400,
-      message: `Bookings require at least ${rules.minimumLeadHours} hours of lead time.`,
+      message: rules.minimumLeadHours === 0
+        ? 'Booking start time must be current time or later.'
+        : `Bookings require at least ${rules.minimumLeadHours} hours of lead time.`,
     })
   }
 

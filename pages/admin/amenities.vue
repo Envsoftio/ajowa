@@ -29,7 +29,7 @@ const form = reactive({
   minDurationMinutes: 60,
   maxDurationMinutes: 240,
   slotIntervalMinutes: 30,
-  minimumLeadHours: 24,
+  minimumLeadHours: 0,
   maximumAdvanceDays: 60,
   cancellationCutoffHours: 24,
   rulesText: '',
@@ -59,7 +59,7 @@ const resetForm = () => {
     minDurationMinutes: 60,
     maxDurationMinutes: 240,
     slotIntervalMinutes: 30,
-    minimumLeadHours: 24,
+    minimumLeadHours: 0,
     maximumAdvanceDays: 60,
     cancellationCutoffHours: 24,
     rulesText: '',
@@ -99,7 +99,7 @@ const openEdit = (amenity: AmenitySummary) => {
     minDurationMinutes: amenity.bookingRules.minDurationMinutes ?? 60,
     maxDurationMinutes: amenity.bookingRules.maxDurationMinutes ?? 240,
     slotIntervalMinutes: amenity.bookingRules.slotIntervalMinutes ?? 30,
-    minimumLeadHours: amenity.bookingRules.minimumLeadHours ?? 24,
+    minimumLeadHours: amenity.bookingRules.minimumLeadHours ?? 0,
     maximumAdvanceDays: amenity.bookingRules.maximumAdvanceDays ?? 60,
     cancellationCutoffHours: amenity.bookingRules.cancellationCutoffHours ?? 24,
     rulesText: amenity.rulesText ?? '',
@@ -193,7 +193,7 @@ const saveAmenity = async () => {
         <Column field="bookingRules" header="Rules">
           <template #body="{ data: row }">
             {{ row.bookingRules.minDurationMinutes ?? 60 }}-{{ row.bookingRules.maxDurationMinutes ?? 240 }} min
-            <p class="table-muted">{{ row.bookingRules.minimumLeadHours ?? 24 }}h lead · {{ row.bookingRules.maximumAdvanceDays ?? 60 }}d advance</p>
+            <p class="table-muted">{{ row.bookingRules.minimumLeadHours ?? 0 }}h lead · {{ row.bookingRules.maximumAdvanceDays ?? 60 }}d advance</p>
           </template>
         </Column>
         <Column field="isActive" header="State">
