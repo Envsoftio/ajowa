@@ -9,7 +9,7 @@ import {
 } from '~/server/utils/payments'
 
 export default defineEventHandler(async (event) => {
-  const authMe = await requireRole(event, ['ADMIN'])
+  const authMe = await requireRole(event, ['ADMIN', 'MANAGER'])
   const paymentId = readUuidParam(event)
   const input = validateInput(paymentUpdateSchema, await readJsonBody(event))
   const client = await getDatabasePool().connect()

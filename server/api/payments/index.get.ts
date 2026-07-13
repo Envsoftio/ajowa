@@ -1,7 +1,123 @@
-import { createPaginatedSuccess, getPaginationParams } from '~/server/utils/api'
+import { createApiSuccess, getPaginationParams } from '~/server/utils/api'
 import { requireActiveUser } from '~/server/utils/auth'
 import { queryRows } from '~/server/utils/database'
 import { getQuerySafe } from '~/server/utils/master-data'
+import { createPaginatedResult } from '~/shared/api'
+
+type PaymentCamAdvanceMatchRow = {
+  id: string
+  flatId: string
+  flatNumber: string
+  blockName: string
+  primaryResidentName: string | null
+  coveredFrom: string
+  coveredUntil: string
+  amount: string | null
+  source: string
+  reference: string | null
+  notes: string | null
+}
+
+const loadPaymentCamAdvanceMatches = async (
+  societyId: string,
+  query: Record<string, unknown>,
+) => {
+  const conditions = ['cac.society_id = $1', 'cac.is_active = true']
+  const params: unknown[] = [societyId]
+
+  if (query.flatId) {
+    params.push(String(query.flatId))
+    conditions.push(`cac.flat_id = $${params.length}`)
+  }
+
+  const searchTerm = String(query.search ?? query.reference ?? '').trim().toLowerCase()
+  if (searchTerm) {
+    const normalizedSearch = searchTerm.replace(/[^a-z0-9]/g, '')
+    params.push(`%${searchTerm}%`)
+    const searchParamIndex = params.length
+    const normalizedFlatSearchSql = normalizedSearch
+      ? (() => {
+          params.push(`%${normalizedSearch}%`)
+          return `
+            or regexp_replace(lower(concat_ws('', b.name, f.flat_number)), '[^a-z0-9]', '', 'g') like $${params.length}
+          `
+        })()
+      : ''
+
+    conditions.push(`
+      (
+        lower(coalesce(f.flat_number, '')) like $${searchParamIndex}
+        or lower(coalesce(b.name, '')) like $${searchParamIndex}
+        or lower(concat_ws(' ', b.name, f.flat_number)) like $${searchParamIndex}
+        or lower(concat_ws('-', b.name, f.flat_number)) like $${searchParamIndex}
+        ${normalizedFlatSearchSql}
+        or lower(coalesce(u.full_name, '')) like $${searchParamIndex}
+        or lower(coalesce(cac.reference, '')) like $${searchParamIndex}
+        or lower(coalesce(cac.notes, '')) like $${searchParamIndex}
+        or lower(coalesce(cac.source, '')) like $${searchParamIndex}
+      )
+    `)
+  }
+
+  if (!query.flatId && !searchTerm) {
+    return []
+  }
+
+  if (query.fromDate) {
+    params.push(String(query.fromDate))
+    conditions.push(`cac.covered_until >= $${params.length}::date`)
+  }
+
+  if (query.toDate) {
+    params.push(String(query.toDate))
+    conditions.push(`cac.covered_from <= $${params.length}::date`)
+  }
+
+  if (query.minAmount) {
+    params.push(String(query.minAmount))
+    conditions.push(`coalesce(cac.amount, 0) >= $${params.length}`)
+  }
+
+  if (query.maxAmount) {
+    params.push(String(query.maxAmount))
+    conditions.push(`coalesce(cac.amount, 0) <= $${params.length}`)
+  }
+
+  const result = await queryRows<PaymentCamAdvanceMatchRow>(
+    `
+      select
+        cac.id,
+        cac.flat_id as "flatId",
+        f.flat_number as "flatNumber",
+        b.name as "blockName",
+        u.full_name as "primaryResidentName",
+        cac.covered_from::text as "coveredFrom",
+        cac.covered_until::text as "coveredUntil",
+        cac.amount::text,
+        cac.source,
+        cac.reference,
+        cac.notes
+      from cam_advance_coverages cac
+      inner join flats f on f.id = cac.flat_id
+      inner join blocks b on b.id = f.block_id
+      left join lateral (
+        select u.full_name
+        from flat_residents fr
+        inner join users u on u.id = fr.user_id
+        where fr.flat_id = f.id
+          and fr.is_active = true
+          and fr.is_billing_contact = true
+        limit 1
+      ) u on true
+      where ${conditions.join(' and ')}
+      order by cac.covered_until desc, cac.updated_at desc
+      limit 5
+    `,
+    params,
+  )
+
+  return result.rows
+}
 
 export default defineEventHandler(async (event) => {
   const authMe = await requireActiveUser(event)
@@ -71,9 +187,30 @@ export default defineEventHandler(async (event) => {
   }
 
   if (query.search) {
-    params.push(`%${String(query.search).toLowerCase()}%`)
+    const search = String(query.search).trim().toLowerCase()
+    const normalizedSearch = search.replace(/[^a-z0-9]/g, '')
+    params.push(`%${search}%`)
+    const searchParamIndex = params.length
+    const normalizedFlatSearchSql = normalizedSearch
+      ? (() => {
+          params.push(`%${normalizedSearch}%`)
+          return `
+            or regexp_replace(lower(concat_ws('', b.name, f.flat_number)), '[^a-z0-9]', '', 'g') like $${params.length}
+          `
+        })()
+      : ''
     conditions.push(
-      `(lower(coalesce(u.full_name, '')) like $${params.length} or lower(coalesce(f.flat_number, '')) like $${params.length} or lower(coalesce(b.name, '')) like $${params.length} or lower(coalesce(p.utr_reference, '')) like $${params.length} or lower(coalesce(p.bank_reference, '')) like $${params.length} or lower(coalesce(p.receipt_number, '')) like $${params.length})`,
+      `(
+        lower(coalesce(u.full_name, '')) like $${searchParamIndex}
+        or lower(coalesce(f.flat_number, '')) like $${searchParamIndex}
+        or lower(coalesce(b.name, '')) like $${searchParamIndex}
+        or lower(concat_ws(' ', b.name, f.flat_number)) like $${searchParamIndex}
+        or lower(concat_ws('-', b.name, f.flat_number)) like $${searchParamIndex}
+        ${normalizedFlatSearchSql}
+        or lower(coalesce(p.utr_reference, '')) like $${searchParamIndex}
+        or lower(coalesce(p.bank_reference, '')) like $${searchParamIndex}
+        or lower(coalesce(p.receipt_number, '')) like $${searchParamIndex}
+      )`,
     )
   }
 
@@ -141,5 +278,12 @@ export default defineEventHandler(async (event) => {
     params,
   )
 
-  return createPaginatedSuccess(event, rows.rows, Number(totalResult.rows[0]?.count ?? 0), pagination)
+  const camAdvanceMatches = isStaff
+    ? await loadPaymentCamAdvanceMatches(authMe.user.societyId, query)
+    : []
+
+  return createApiSuccess(event, {
+    ...createPaginatedResult(rows.rows, Number(totalResult.rows[0]?.count ?? 0), pagination),
+    camAdvanceMatches,
+  })
 })

@@ -43,6 +43,20 @@ type PaymentSummary = {
   payerName: string | null
 }
 
+type PaymentCamAdvanceMatch = {
+  id: string
+  flatId: string
+  flatNumber: string
+  blockName: string
+  primaryResidentName: string | null
+  coveredFrom: string
+  coveredUntil: string
+  amount: string | null
+  source: string
+  reference: string | null
+  notes: string | null
+}
+
 type PaymentAllocation = {
   id: string
   dueId: string
@@ -89,7 +103,12 @@ type PaymentDetail = {
   allocations: PaymentAllocation[]
 }
 
-type PaymentsResponse = { ok: true; data: Paginated<PaymentSummary> }
+type PaymentsResponse = {
+  ok: true
+  data: Paginated<PaymentSummary> & {
+    camAdvanceMatches?: PaymentCamAdvanceMatch[]
+  }
+}
 type DetailResponse = { ok: true; data: PaymentDetail }
 type PaymentUpdateResponse = {
   ok: true
@@ -263,6 +282,7 @@ const { data: bankAccountsData } = bankAccountsAsyncData
 
 const payments = computed(() => data.value?.data.items ?? [])
 const totalRecords = computed(() => data.value?.data.total ?? 0)
+const camAdvanceMatches = computed(() => data.value?.data.camAdvanceMatches ?? [])
 
 const flatOptions = computed(() => [
   { label: 'All flats', value: '' },
@@ -311,7 +331,7 @@ const kpis = computed(() => ({
 const hasActiveFilters = computed(() =>
   Object.entries(query).some(([key, value]) => !['page', 'pageSize'].includes(key) && Boolean(value)),
 )
-const canEditPayment = computed(() => authStore.me?.user.role === 'ADMIN')
+const canEditPayment = computed(() => ['ADMIN', 'MANAGER'].includes(authStore.me?.user.role ?? ''))
 
 watch(
   () => [
@@ -893,6 +913,23 @@ const onProofFileChange = async (event: Event) => {
           </label>
         </div>
       </div>
+
+      <section v-if="camAdvanceMatches.length" class="admin-page-guide">
+        <h2>CAM advance records matched this search</h2>
+        <p>
+          These are advance coverage entries, not regular payment receipts, so they are managed from the CAM advance register.
+        </p>
+        <ul>
+          <li v-for="advance in camAdvanceMatches" :key="advance.id">
+            <strong>{{ advance.blockName }} {{ advance.flatNumber }}</strong>
+            <span>
+              · {{ formatMoney(advance.amount) }} covered {{ formatDate(advance.coveredFrom) }} to {{ formatDate(advance.coveredUntil) }}
+              · {{ advance.source }}<template v-if="advance.reference"> / {{ advance.reference }}</template><template v-if="advance.notes"> / {{ advance.notes }}</template>
+            </span>
+          </li>
+        </ul>
+        <Button as="router-link" to="/admin/billing/cam-advance" label="Open CAM advance register" icon="pi pi-calendar" severity="secondary" outlined />
+      </section>
 
       <AppDataTable
         :value="payments"
