@@ -1,7 +1,7 @@
 import { createApiSuccess } from '~/server/utils/api'
 import { requireActiveUser } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
-import { resolveDueAmountsForDisplay, todayDate } from '~/server/utils/billing'
+import { getCamAdvanceAdjustedDueDate, resolveDueAmountsForDisplay, todayDate } from '~/server/utils/billing'
 import { normalizeSocietySettings } from '~/server/utils/master-data'
 import { camAdvanceCoverageLateralSql } from '~/server/utils/cam-advance'
 import type { MaintenanceDue } from '~/types/domain'
@@ -183,6 +183,16 @@ export default defineEventHandler(async (event) => {
     const baseAmount = Number(row.base_amount)
     const waivedAmount = Number(row.waived_amount)
     const paidAmount = Number(row.paid_amount)
+    const chargeBreakdown = Array.isArray(row.charge_breakdown)
+      ? row.charge_breakdown as MaintenanceDue['chargeBreakdown']
+      : []
+    const effectiveDueDate = getCamAdvanceAdjustedDueDate({
+      dueDate: row.due_date,
+      billingPeriodChargeType: row.billing_period_charge_type,
+      billingPeriodStartDate: row.billing_period_start_date,
+      billingPeriodEndDate: row.billing_period_end_date,
+      chargeBreakdown,
+    })
     const computed = isCoverageRow
       ? {
           lateFeeAmount: Number(row.late_fee_amount),
@@ -192,7 +202,7 @@ export default defineEventHandler(async (event) => {
         }
       : resolveDueAmountsForDisplay(
           {
-            dueDate: row.due_date,
+            dueDate: effectiveDueDate,
             baseAmount,
             lateFeeAmount: Number(row.late_fee_amount),
             waivedAmount,
@@ -227,7 +237,7 @@ export default defineEventHandler(async (event) => {
       totalAmount: computed.totalAmount,
       balanceAmount: computed.balanceAmount,
       status: computed.status,
-      chargeBreakdown: Array.isArray(row.charge_breakdown) ? row.charge_breakdown : [],
+      chargeBreakdown,
       generatedAt: row.generated_at,
       primaryResidentName: authMe.user.fullName,
       isCamAdvanceCovered: isCoverageRow,

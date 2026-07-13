@@ -1,6 +1,7 @@
 import * as XLSX from 'xlsx/xlsx.mjs'
 import {
   computeDueAmounts,
+  getCamAdvanceAdjustedDueDate,
   getDaysOverdue,
   todayDate,
 } from '~/server/utils/billing'
@@ -8,7 +9,7 @@ import { getDatabasePool } from '~/server/utils/database'
 import { normalizeSocietySettings } from '~/server/utils/master-data'
 import { createPdfBuffer, getSocietyStampImage } from '~/server/utils/pdf'
 import { getSocietyInfo } from '~/server/utils/reports'
-import type { BillingPeriodChargeType, DefaulterSummary } from '~/types/domain'
+import type { BillingPeriodChargeType, ChargeBreakdownItem, DefaulterSummary } from '~/types/domain'
 
 type DefaulterRow = {
   user_id: string
@@ -26,10 +27,13 @@ type DefaulterRow = {
   billing_period_id: string
   billing_period_label: string
   billing_period_charge_type: BillingPeriodChargeType
+  billing_period_start_date: string
+  billing_period_end_date: string
   base_amount: string
   waived_amount: string
   paid_amount: string
   due_date: string
+  charge_breakdown: ChargeBreakdownItem[] | null
   cam_advance_note: string | null
 }
 
@@ -287,10 +291,13 @@ export const listDefaulters = async ({
         bp.id as billing_period_id,
         bp.label as billing_period_label,
         bp.charge_type::text as billing_period_charge_type,
+        bp.start_date::text as billing_period_start_date,
+        bp.end_date::text as billing_period_end_date,
         md.base_amount::text,
         md.waived_amount::text,
         md.paid_amount::text,
         md.due_date::text,
+        md.charge_breakdown,
         (
           select item->>'camAdvanceNote'
           from jsonb_array_elements(
@@ -346,9 +353,17 @@ export const listDefaulters = async ({
 
   for (const row of result.rows) {
     const existing = userMap.get(row.user_id)
+    const chargeBreakdown = Array.isArray(row.charge_breakdown) ? row.charge_breakdown : []
+    const effectiveDueDate = getCamAdvanceAdjustedDueDate({
+      dueDate: row.due_date,
+      billingPeriodChargeType: row.billing_period_charge_type,
+      billingPeriodStartDate: row.billing_period_start_date,
+      billingPeriodEndDate: row.billing_period_end_date,
+      chargeBreakdown,
+    })
     const computed = computeDueAmounts(
       {
-        dueDate: row.due_date,
+        dueDate: effectiveDueDate,
         baseAmount: Number(row.base_amount),
         waivedAmount: Number(row.waived_amount),
         paidAmount: Number(row.paid_amount),
@@ -359,7 +374,7 @@ export const listDefaulters = async ({
       settings.lateFeePerDay,
     )
 
-    const daysOverdue = getDaysOverdue(row.due_date, today)
+    const daysOverdue = getDaysOverdue(effectiveDueDate, today)
     if (
       computed.balanceAmount <= 0 ||
       ['PAID', 'WAIVED', 'CANCELLED'].includes(computed.status)

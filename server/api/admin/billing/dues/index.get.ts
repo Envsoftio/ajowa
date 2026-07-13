@@ -7,7 +7,7 @@ import {
   normalizeSocietySettings,
   parseListQuery,
 } from '~/server/utils/master-data'
-import { resolveDueAmountsForDisplay, todayDate } from '~/server/utils/billing'
+import { getCamAdvanceAdjustedDueDate, resolveDueAmountsForDisplay, todayDate } from '~/server/utils/billing'
 import { camAdvanceCoverageLateralSql } from '~/server/utils/cam-advance'
 import { setEventHeader } from '~/server/utils/http-event'
 import type { ListQueryParams } from '~/types/api'
@@ -253,7 +253,31 @@ const buildDueWhere = (
 
   const overdueFilter = query.filters.overdue?.[0]
   if (overdueFilter === 'true') {
-    where.push(`c.balance_amount::numeric > 0 and c.due_date::date < $${values.length + 1}::date`)
+    where.push(`
+      c.balance_amount::numeric > 0
+      and c.due_date::date < $${values.length + 1}::date
+      and not exists (
+        select 1
+        from jsonb_array_elements(
+          case
+            when jsonb_typeof(c.charge_breakdown) = 'array' then c.charge_breakdown
+            else '[]'::jsonb
+          end
+        ) item
+        where c.billing_period_charge_type = 'CAM'
+          and coalesce(item->>'camAdvanceAdjustmentAmount', '') ~ '^[0-9]+([.][0-9]+)?$'
+          and coalesce(item->>'camAdvanceCoveredMonths', '') ~ '^[0-9]+$'
+          and (item->>'camAdvanceAdjustmentAmount')::numeric > 0
+          and (item->>'camAdvanceCoveredMonths')::integer > 0
+          and $${values.length + 1}::date < greatest(
+            c.due_date::date,
+            (
+              c.billing_period_start_date::date
+              + ((item->>'camAdvanceCoveredMonths')::integer * interval '1 month')
+            )::date
+          )
+      )
+    `)
     values.push(today)
   }
 
@@ -295,6 +319,16 @@ const mapDueRows = (
     const baseAmount = Number(row.base_amount)
     const waivedAmount = Number(row.waived_amount)
     const paidAmount = Number(row.paid_amount)
+    const chargeBreakdown = Array.isArray(row.charge_breakdown)
+      ? row.charge_breakdown as MaintenanceDue['chargeBreakdown']
+      : []
+    const effectiveDueDate = getCamAdvanceAdjustedDueDate({
+      dueDate: row.due_date,
+      billingPeriodChargeType: row.billing_period_charge_type,
+      billingPeriodStartDate: row.billing_period_start_date,
+      billingPeriodEndDate: row.billing_period_end_date,
+      chargeBreakdown,
+    })
     const computed = isCoverageRow
       ? {
           lateFeeAmount: Number(row.late_fee_amount),
@@ -304,7 +338,7 @@ const mapDueRows = (
         }
       : resolveDueAmountsForDisplay(
           {
-            dueDate: row.due_date,
+            dueDate: effectiveDueDate,
             baseAmount,
             lateFeeAmount: Number(row.late_fee_amount),
             waivedAmount,
@@ -339,9 +373,7 @@ const mapDueRows = (
       totalAmount: computed.totalAmount,
       balanceAmount: computed.balanceAmount,
       status: computed.status,
-      chargeBreakdown: Array.isArray(row.charge_breakdown)
-        ? row.charge_breakdown as MaintenanceDue['chargeBreakdown']
-        : [],
+      chargeBreakdown,
       generatedAt: row.generated_at,
       primaryResidentName: row.primary_resident_name,
       isCamAdvanceCovered: isCoverageRow,
