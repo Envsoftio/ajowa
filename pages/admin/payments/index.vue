@@ -25,6 +25,7 @@ type Paginated<T> = {
 
 type PaymentSummary = {
   id: string
+  recordType?: 'PAYMENT' | 'CAM_ADVANCE'
   paymentDate: string
   amount: string
   mode: string
@@ -41,6 +42,9 @@ type PaymentSummary = {
   flatNumber: string | null
   blockName: string | null
   payerName: string | null
+  camAdvanceCoverageId?: string | null
+  coveredFrom?: string | null
+  coveredUntil?: string | null
 }
 
 type PaymentCamAdvanceMatch = {
@@ -222,6 +226,21 @@ const flatLabel = (payment: Pick<PaymentSummary, 'blockName' | 'flatNumber'>) =>
 const referenceLabel = (payment: Pick<PaymentSummary, 'utrReference' | 'bankReference'>) =>
   payment.utrReference || payment.bankReference || '-'
 
+const isCamAdvancePayment = (payment: Pick<PaymentSummary, 'recordType' | 'id' | 'mode'>) =>
+  payment.recordType === 'CAM_ADVANCE' ||
+  payment.mode === 'CAM_ADVANCE' ||
+  payment.id.startsWith('cam-advance:')
+
+const paymentModeLabel = (payment: Pick<PaymentSummary, 'mode' | 'transferKind'>) =>
+  payment.mode === 'CAM_ADVANCE'
+    ? [payment.transferKind, 'CAM advance'].filter(Boolean).join(' · ')
+    : payment.transferKind || payment.mode
+
+const paymentDateLabel = (payment: PaymentSummary) =>
+  isCamAdvancePayment(payment) && payment.coveredFrom && payment.coveredUntil
+    ? `${formatDate(payment.coveredFrom)} - ${formatDate(payment.coveredUntil)}`
+    : formatDate(payment.paymentDate)
+
 const loadPayments = () =>
   api<PaymentsResponse>('/api/payments', {
     query: {
@@ -282,7 +301,6 @@ const { data: bankAccountsData } = bankAccountsAsyncData
 
 const payments = computed(() => data.value?.data.items ?? [])
 const totalRecords = computed(() => data.value?.data.total ?? 0)
-const camAdvanceMatches = computed(() => data.value?.data.camAdvanceMatches ?? [])
 
 const flatOptions = computed(() => [
   { label: 'All flats', value: '' },
@@ -443,7 +461,7 @@ const resetFilters = () => {
 }
 
 const copyReceipt = async (payment: PaymentSummary) => {
-  if (!payment.receiptNumber) return
+  if (isCamAdvancePayment(payment) || !payment.receiptNumber) return
   await navigator.clipboard.writeText(payment.receiptNumber)
   toast.add({ severity: 'success', summary: 'Receipt copied', life: 10000 })
 }
@@ -613,6 +631,7 @@ const applyPaymentDetailToEditForm = (payment: PaymentDetail) => {
 }
 
 const openPaymentEdit = async (payment: PaymentSummary) => {
+  if (isCamAdvancePayment(payment)) return
   paymentEditVisible.value = true
   paymentEditLoading.value = true
   paymentEditPayment.value = null
@@ -761,6 +780,7 @@ const pickProofFileById = (paymentId: string) => {
 }
 
 const pickProofFile = (payment: Pick<PaymentSummary, 'id'>) => {
+  if (payment.id.startsWith('cam-advance:')) return
   pickProofFileById(payment.id)
 }
 
@@ -914,23 +934,6 @@ const onProofFileChange = async (event: Event) => {
         </div>
       </div>
 
-      <section v-if="camAdvanceMatches.length" class="admin-page-guide">
-        <h2>CAM advance records matched this search</h2>
-        <p>
-          These are advance coverage entries, not regular payment receipts, so they are managed from the CAM advance register.
-        </p>
-        <ul>
-          <li v-for="advance in camAdvanceMatches" :key="advance.id">
-            <strong>{{ advance.blockName }} {{ advance.flatNumber }}</strong>
-            <span>
-              · {{ formatMoney(advance.amount) }} covered {{ formatDate(advance.coveredFrom) }} to {{ formatDate(advance.coveredUntil) }}
-              · {{ advance.source }}<template v-if="advance.reference"> / {{ advance.reference }}</template><template v-if="advance.notes"> / {{ advance.notes }}</template>
-            </span>
-          </li>
-        </ul>
-        <Button as="router-link" to="/admin/billing/cam-advance" label="Open CAM advance register" icon="pi pi-calendar" severity="secondary" outlined />
-      </section>
-
       <AppDataTable
         :value="payments"
         :loading="pending"
@@ -950,13 +953,15 @@ const onProofFileChange = async (event: Event) => {
       >
         <Column field="paymentDate" header="Date">
           <template #body="{ data: row }">
-            {{ formatDate(row.paymentDate) }}
+            {{ paymentDateLabel(row) }}
           </template>
         </Column>
         <Column field="flatNumber" header="Flat">
           <template #body="{ data: row }">
             <strong>{{ flatLabel(row) }}</strong>
-            <p class="table-muted">{{ row.payerName || '-' }}</p>
+            <p class="table-muted">
+              {{ row.payerName || '-' }}<template v-if="isCamAdvancePayment(row)"> · CAM advance</template>
+            </p>
           </template>
         </Column>
         <Column field="amount" header="Amount">
@@ -966,7 +971,7 @@ const onProofFileChange = async (event: Event) => {
         </Column>
         <Column field="mode" header="Mode">
           <template #body="{ data: row }">
-            <span>{{ row.transferKind || row.mode }}</span>
+            <span>{{ paymentModeLabel(row) }}</span>
             <p class="table-muted">{{ referenceLabel(row) }}</p>
           </template>
         </Column>
@@ -977,7 +982,8 @@ const onProofFileChange = async (event: Event) => {
         </Column>
         <Column field="receiptNumber" header="Receipt">
           <template #body="{ data: row }">
-            <button v-if="row.receiptNumber" class="text-button" type="button" @click="copyReceipt(row)">
+            <Tag v-if="isCamAdvancePayment(row)" value="Advance register" severity="info" rounded />
+            <button v-else-if="row.receiptNumber" class="text-button" type="button" @click="copyReceipt(row)">
               {{ row.receiptNumber }}
             </button>
             <span v-else>-</span>
@@ -986,10 +992,18 @@ const onProofFileChange = async (event: Event) => {
         <Column header="Files">
           <template #body="{ data: row }">
             <div class="admin-inline-actions">
-              <Tag :severity="row.proofFilePath ? 'success' : 'warn'" :value="row.proofFilePath ? 'Proof' : 'No proof'" rounded />
-              <Tag :severity="row.receiptNumber ? 'success' : 'warn'" :value="row.receiptNumber ? 'Receipt' : 'No receipt'" rounded />
+              <Tag
+                v-if="isCamAdvancePayment(row)"
+                severity="info"
+                value="CAM advance"
+                rounded
+              />
+              <template v-else>
+                <Tag :severity="row.proofFilePath ? 'success' : 'warn'" :value="row.proofFilePath ? 'Proof' : 'No proof'" rounded />
+                <Tag :severity="row.receiptNumber ? 'success' : 'warn'" :value="row.receiptNumber ? 'Receipt' : 'No receipt'" rounded />
+              </template>
               <Button
-                v-if="row.proofFilePath"
+                v-if="!isCamAdvancePayment(row) && row.proofFilePath"
                 as="a"
                 :href="`/api/payments/${row.id}/proof`"
                 target="_blank"
@@ -1001,6 +1015,7 @@ const onProofFileChange = async (event: Event) => {
                 title="Open proof"
               />
               <Button
+                v-if="!isCamAdvancePayment(row)"
                 type="button"
                 icon="pi pi-upload"
                 severity="secondary"
@@ -1017,9 +1032,20 @@ const onProofFileChange = async (event: Event) => {
         <Column header="Actions" style="width: 150px">
           <template #body="{ data: row }">
             <div class="admin-inline-actions">
-              <Button icon="pi pi-eye" severity="secondary" text rounded aria-label="View payment" title="View payment" @click="openDetail(row)" />
               <Button
-                v-if="canEditPayment"
+                v-if="isCamAdvancePayment(row)"
+                as="router-link"
+                to="/admin/billing/cam-advance"
+                icon="pi pi-calendar"
+                severity="secondary"
+                text
+                rounded
+                aria-label="Open CAM advance"
+                title="Open CAM advance"
+              />
+              <Button v-else icon="pi pi-eye" severity="secondary" text rounded aria-label="View payment" title="View payment" @click="openDetail(row)" />
+              <Button
+                v-if="canEditPayment && !isCamAdvancePayment(row)"
                 icon="pi pi-pencil"
                 severity="secondary"
                 text
@@ -1029,6 +1055,7 @@ const onProofFileChange = async (event: Event) => {
                 @click="openPaymentEdit(row)"
               />
               <AppDocumentLink
+                v-if="!isCamAdvancePayment(row)"
                 :href="`/api/payments/${row.id}/receipt`"
                 viewer-title="Receipt PDF"
                 icon="pi pi-download"
@@ -1049,13 +1076,13 @@ const onProofFileChange = async (event: Event) => {
           <div class="list-card__header">
             <div>
               <h3>{{ formatMoney(payment.amount) }}</h3>
-              <p>{{ flatLabel(payment) }} · {{ formatDate(payment.paymentDate) }}</p>
+              <p>{{ flatLabel(payment) }} · {{ paymentDateLabel(payment) }}</p>
             </div>
             <AppStatusBadge :status="payment.status" />
           </div>
           <div class="list-card__row">
             <span>Payer</span>
-            <strong>{{ payment.payerName || '-' }}</strong>
+            <strong>{{ payment.payerName || '-' }}<template v-if="isCamAdvancePayment(payment)"> · CAM advance</template></strong>
           </div>
           <div class="list-card__row">
             <span>Reference</span>
@@ -1063,12 +1090,22 @@ const onProofFileChange = async (event: Event) => {
           </div>
           <div class="list-card__row">
             <span>Receipt</span>
-            <strong>{{ payment.receiptNumber || '-' }}</strong>
+            <strong>{{ isCamAdvancePayment(payment) ? 'Advance register' : payment.receiptNumber || '-' }}</strong>
           </div>
           <div class="admin-inline-actions">
-            <Button label="View" icon="pi pi-eye" size="small" severity="secondary" outlined @click="openDetail(payment)" />
             <Button
-              v-if="canEditPayment"
+              v-if="isCamAdvancePayment(payment)"
+              as="router-link"
+              to="/admin/billing/cam-advance"
+              label="Open advance"
+              icon="pi pi-calendar"
+              size="small"
+              severity="secondary"
+              outlined
+            />
+            <Button v-else label="View" icon="pi pi-eye" size="small" severity="secondary" outlined @click="openDetail(payment)" />
+            <Button
+              v-if="canEditPayment && !isCamAdvancePayment(payment)"
               label="Edit payment"
               icon="pi pi-pencil"
               size="small"
@@ -1077,7 +1114,7 @@ const onProofFileChange = async (event: Event) => {
               @click="openPaymentEdit(payment)"
             />
             <Button
-              v-if="payment.proofFilePath"
+              v-if="!isCamAdvancePayment(payment) && payment.proofFilePath"
               as="a"
               :href="`/api/payments/${payment.id}/proof`"
               target="_blank"
@@ -1088,6 +1125,7 @@ const onProofFileChange = async (event: Event) => {
               outlined
             />
             <Button
+              v-if="!isCamAdvancePayment(payment)"
               type="button"
               :label="payment.proofFilePath ? 'Replace proof' : 'Upload proof'"
               icon="pi pi-upload"
@@ -1098,6 +1136,7 @@ const onProofFileChange = async (event: Event) => {
               @click="pickProofFile(payment)"
             />
             <AppDocumentLink
+              v-if="!isCamAdvancePayment(payment)"
               :href="`/api/payments/${payment.id}/receipt`"
               viewer-title="Receipt PDF"
               label="Receipt"

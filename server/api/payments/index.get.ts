@@ -18,6 +18,78 @@ type PaymentCamAdvanceMatchRow = {
   notes: string | null
 }
 
+type PaymentSummaryRow = {
+  id: string
+  recordType: 'PAYMENT'
+  paymentDate: string
+  amount: string
+  mode: string
+  transferKind: string | null
+  status: string
+  payerUserId: string | null
+  flatId: string | null
+  utrReference: string | null
+  bankReference: string | null
+  proofFilePath: string | null
+  receiptNumber: string | null
+  receiptFilePath: string | null
+  createdAt: string
+  flatNumber: string | null
+  blockName: string | null
+  payerName: string | null
+  camAdvanceCoverageId: null
+  coveredFrom: null
+  coveredUntil: null
+}
+
+type PaymentListRow = PaymentSummaryRow | {
+  id: string
+  recordType: 'CAM_ADVANCE'
+  paymentDate: string
+  amount: string
+  mode: 'CAM_ADVANCE'
+  transferKind: string | null
+  status: string
+  payerUserId: null
+  flatId: string
+  utrReference: string | null
+  bankReference: string | null
+  proofFilePath: null
+  receiptNumber: null
+  receiptFilePath: null
+  createdAt: string
+  flatNumber: string
+  blockName: string
+  payerName: string | null
+  camAdvanceCoverageId: string
+  coveredFrom: string
+  coveredUntil: string
+}
+
+const mapCamAdvanceMatchToPaymentRow = (row: PaymentCamAdvanceMatchRow): PaymentListRow => ({
+  id: `cam-advance:${row.id}`,
+  recordType: 'CAM_ADVANCE',
+  paymentDate: row.coveredFrom,
+  amount: row.amount ?? '0',
+  mode: 'CAM_ADVANCE',
+  transferKind: row.source,
+  status: row.source === 'PAYMENT' ? 'PAID' : 'ACTIVE',
+  payerUserId: null,
+  flatId: row.flatId,
+  utrReference: row.reference,
+  bankReference: row.notes,
+  proofFilePath: null,
+  receiptNumber: null,
+  receiptFilePath: null,
+  createdAt: row.coveredFrom,
+  flatNumber: row.flatNumber,
+  blockName: row.blockName,
+  payerName: row.primaryResidentName,
+  camAdvanceCoverageId: row.id,
+  coveredFrom: row.coveredFrom,
+  coveredUntil: row.coveredUntil,
+})
+
 const loadPaymentCamAdvanceMatches = async (
   societyId: string,
   query: Record<string, unknown>,
@@ -111,7 +183,7 @@ const loadPaymentCamAdvanceMatches = async (
       ) u on true
       where ${conditions.join(' and ')}
       order by cac.covered_until desc, cac.updated_at desc
-      limit 5
+      limit 50
     `,
     params,
   )
@@ -247,10 +319,11 @@ export default defineEventHandler(async (event) => {
     params,
   )
   params.push(pagination.pageSize, offset)
-  const rows = await queryRows(
+  const rows = await queryRows<PaymentSummaryRow>(
     `
       select
         p.id,
+        'PAYMENT'::text as "recordType",
         p.payment_date::text as "paymentDate",
         p.amount::text,
         p.mode,
@@ -266,7 +339,10 @@ export default defineEventHandler(async (event) => {
         p.created_at as "createdAt",
         f.flat_number as "flatNumber",
         b.name as "blockName",
-        u.full_name as "payerName"
+        u.full_name as "payerName",
+        null::text as "camAdvanceCoverageId",
+        null::text as "coveredFrom",
+        null::text as "coveredUntil"
       from payments p
       left join flats f on f.id = p.received_for_flat_id
       left join blocks b on b.id = f.block_id
@@ -281,9 +357,12 @@ export default defineEventHandler(async (event) => {
   const camAdvanceMatches = isStaff
     ? await loadPaymentCamAdvanceMatches(authMe.user.societyId, query)
     : []
+  const camAdvanceRows = camAdvanceMatches.map(mapCamAdvanceMatchToPaymentRow)
+  const paymentTotal = Number(totalResult.rows[0]?.count ?? 0)
+  const items: PaymentListRow[] = [...rows.rows, ...camAdvanceRows]
 
   return createApiSuccess(event, {
-    ...createPaginatedResult(rows.rows, Number(totalResult.rows[0]?.count ?? 0), pagination),
+    ...createPaginatedResult(items, paymentTotal + camAdvanceRows.length, pagination),
     camAdvanceMatches,
   })
 })

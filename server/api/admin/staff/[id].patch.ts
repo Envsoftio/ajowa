@@ -33,7 +33,7 @@ export default defineEventHandler(async (event) => {
     const result = await client.query<{ id: string; auth_user_id: string }>(
       `
         update users
-        set role = $3,
+        set role = $3::app_role,
             full_name = $4,
             mobile_number = $5,
             whatsapp_number = $6,
@@ -41,7 +41,10 @@ export default defineEventHandler(async (event) => {
             is_active = $8,
             staff_permissions = $9,
             email_verified = $10,
-            must_change_password = case when $3 = 'GUARD' then false else must_change_password end,
+            must_change_password = case
+              when $3::app_role = 'GUARD'::app_role then false
+              else must_change_password
+            end,
             updated_at = now()
         where id = $1
           and society_id = $2
