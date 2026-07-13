@@ -214,6 +214,54 @@ const buildDueWhere = (
 ) => {
   const where: string[] = []
   const values: unknown[] = [societyId]
+  const overduePredicate = (todayParam: string) => `
+    c.row_kind = 'DUE'
+    and c.balance_amount::numeric > 0
+    and c.due_date::date < ${todayParam}::date
+    and not exists (
+      select 1
+      from jsonb_array_elements(
+        case
+          when jsonb_typeof(c.charge_breakdown) = 'array' then c.charge_breakdown
+          else '[]'::jsonb
+        end
+      ) item
+      where c.billing_period_charge_type = 'CAM'
+        and coalesce(item->>'camAdvanceAdjustmentAmount', '') ~ '^[0-9]+([.][0-9]+)?$'
+        and coalesce(item->>'camAdvanceCoveredMonths', '') ~ '^[0-9]+$'
+        and (item->>'camAdvanceAdjustmentAmount')::numeric > 0
+        and (item->>'camAdvanceCoveredMonths')::integer > 0
+        and ${todayParam}::date < greatest(
+          c.due_date::date,
+          (
+            c.billing_period_start_date::date
+            + ((item->>'camAdvanceCoveredMonths')::integer * interval '1 month')
+          )::date
+        )
+    )
+  `
+  const camAdvanceAdjustmentPredicate = `
+    exists (
+      select 1
+      from jsonb_array_elements(
+        case
+          when jsonb_typeof(c.charge_breakdown) = 'array' then c.charge_breakdown
+          else '[]'::jsonb
+        end
+      ) item
+      where c.billing_period_charge_type = 'CAM'
+        and (
+          (
+            coalesce(item->>'camAdvanceAdjustmentAmount', '') ~ '^[0-9]+([.][0-9]+)?$'
+            and (item->>'camAdvanceAdjustmentAmount')::numeric > 0
+          )
+          or (
+            coalesce(item->>'camAdvanceCoveredMonths', '') ~ '^[0-9]+$'
+            and (item->>'camAdvanceCoveredMonths')::integer > 0
+          )
+        )
+    )
+  `
 
   if (query.search) {
     values.push(`%${query.search}%`)
@@ -239,7 +287,13 @@ const buildDueWhere = (
   }
 
   const statusFilter = query.filters.status?.[0]
-  if (statusFilter) {
+  if (statusFilter === 'OVERDUE') {
+    where.push(`(${overduePredicate(`$${values.length + 1}`)})`)
+    values.push(today)
+  } else if (statusFilter === 'OPEN') {
+    where.push(`c.row_kind = 'DUE' and c.status = 'OPEN' and not (${overduePredicate(`$${values.length + 1}`)})`)
+    values.push(today)
+  } else if (statusFilter) {
     values.push(statusFilter)
     where.push(`c.row_kind = 'DUE' and c.status = $${values.length}`)
   }
@@ -249,35 +303,22 @@ const buildDueWhere = (
     where.push(`c.row_kind = 'DUE' and c.balance_amount::numeric > 0`)
   } else if (balanceFilter === 'paid') {
     where.push(`c.row_kind = 'DUE' and c.balance_amount::numeric = 0`)
+  } else if (balanceFilter === 'unpaid') {
+    where.push(`
+      c.row_kind = 'DUE'
+      and c.paid_amount::numeric = 0
+      and c.waived_amount::numeric = 0
+      and c.balance_amount::numeric > 0
+      and c.balance_amount::numeric = c.total_amount::numeric
+      and c.status not in ('PAID', 'PARTIALLY_PAID', 'WAIVED', 'CANCELLED')
+      and c.is_cam_advance_covered = false
+      and not (${camAdvanceAdjustmentPredicate})
+    `)
   }
 
   const overdueFilter = query.filters.overdue?.[0]
   if (overdueFilter === 'true') {
-    where.push(`
-      c.balance_amount::numeric > 0
-      and c.due_date::date < $${values.length + 1}::date
-      and not exists (
-        select 1
-        from jsonb_array_elements(
-          case
-            when jsonb_typeof(c.charge_breakdown) = 'array' then c.charge_breakdown
-            else '[]'::jsonb
-          end
-        ) item
-        where c.billing_period_charge_type = 'CAM'
-          and coalesce(item->>'camAdvanceAdjustmentAmount', '') ~ '^[0-9]+([.][0-9]+)?$'
-          and coalesce(item->>'camAdvanceCoveredMonths', '') ~ '^[0-9]+$'
-          and (item->>'camAdvanceAdjustmentAmount')::numeric > 0
-          and (item->>'camAdvanceCoveredMonths')::integer > 0
-          and $${values.length + 1}::date < greatest(
-            c.due_date::date,
-            (
-              c.billing_period_start_date::date
-              + ((item->>'camAdvanceCoveredMonths')::integer * interval '1 month')
-            )::date
-          )
-      )
-    `)
+    where.push(`(${overduePredicate(`$${values.length + 1}`)})`)
     values.push(today)
   }
 
@@ -404,6 +445,7 @@ const filterDescription = (query: ListQueryParams) => {
       `Bill type: ${billTypeLabel(filterValue(query, 'chargeType') as MaintenanceDue['billingPeriodChargeType'])}`,
     filterValue(query, 'status') && `Status: ${filterValue(query, 'status')}`,
     filterValue(query, 'balance') === 'outstanding' && 'Balance: Outstanding',
+    filterValue(query, 'balance') === 'unpaid' && 'Balance: Unpaid - no payment or advance',
     filterValue(query, 'balance') === 'paid' && 'Balance: Paid off',
     filterValue(query, 'overdue') === 'true' && 'Overdue only',
     filterValue(query, 'advance') === 'covered' && 'Advance: Covered',

@@ -100,6 +100,28 @@ const buildFilterWhere = (
 ) => {
   const where: string[] = ['md.society_id = $1']
   const values: unknown[] = [societyId]
+  const camAdvanceAdjustmentPredicate = `
+    exists (
+      select 1
+      from jsonb_array_elements(
+        case
+          when jsonb_typeof(md.charge_breakdown) = 'array' then md.charge_breakdown
+          else '[]'::jsonb
+        end
+      ) item
+      where bp.charge_type = 'CAM'
+        and (
+          (
+            coalesce(item->>'camAdvanceAdjustmentAmount', '') ~ '^[0-9]+([.][0-9]+)?$'
+            and (item->>'camAdvanceAdjustmentAmount')::numeric > 0
+          )
+          or (
+            coalesce(item->>'camAdvanceCoveredMonths', '') ~ '^[0-9]+$'
+            and (item->>'camAdvanceCoveredMonths')::integer > 0
+          )
+        )
+    )
+  `
 
   if (filters.search) {
     values.push(`%${filters.search}%`)
@@ -125,6 +147,16 @@ const buildFilterWhere = (
     where.push(`not ${camAdvanceCoveredSql} and md.balance_amount::numeric > 0`)
   } else if (filters.balance === 'paid') {
     where.push(`(${camAdvanceCoveredSql} or md.balance_amount::numeric = 0)`)
+  } else if (filters.balance === 'unpaid') {
+    where.push(`
+      not ${camAdvanceCoveredSql}
+      and md.paid_amount::numeric = 0
+      and md.waived_amount::numeric = 0
+      and md.balance_amount::numeric > 0
+      and md.balance_amount::numeric = md.total_amount::numeric
+      and md.status not in ('PAID', 'PARTIALLY_PAID', 'WAIVED', 'CANCELLED')
+      and not (${camAdvanceAdjustmentPredicate})
+    `)
   }
 
   if (filters.overdue === 'true') {

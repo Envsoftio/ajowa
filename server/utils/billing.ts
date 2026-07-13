@@ -124,7 +124,7 @@ const dueFilterSchema = z.object({
   billingPeriodId: z.string().uuid().optional(),
   chargeType: z.enum(['GENERAL', 'CAM', 'DG_SET']).optional(),
   status: z.enum(['OPEN', 'PARTIALLY_PAID', 'PAID', 'OVERDUE', 'WAIVED', 'CANCELLED']).optional(),
-  balance: z.enum(['outstanding', 'paid']).optional(),
+  balance: z.enum(['outstanding', 'paid', 'unpaid']).optional(),
   overdue: z.literal('true').optional(),
   advance: z.enum(['covered', 'billable']).optional(),
 }).refine(

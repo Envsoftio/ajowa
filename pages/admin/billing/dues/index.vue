@@ -64,7 +64,7 @@ type DueFilterPayload = {
   chargeType?: 'GENERAL' | 'CAM' | 'DG_SET'
   chargeTypes?: Array<'GENERAL' | 'CAM' | 'DG_SET'>
   status?: MaintenanceDue['status']
-  balance?: 'outstanding' | 'paid'
+  balance?: 'outstanding' | 'paid' | 'unpaid'
   overdue?: 'true'
   advance?: 'covered' | 'billable'
   sortBy?: 'flatNumber' | 'blockName' | 'dueDate' | 'totalAmount' | 'balanceAmount' | 'status'
@@ -227,6 +227,7 @@ const statusOptions = [
 const balanceOptions = [
   { label: 'All balances', value: '' },
   { label: 'Outstanding', value: 'outstanding' },
+  { label: 'Unpaid - no payment or advance', value: 'unpaid' },
   { label: 'Paid off', value: 'paid' },
 ]
 
@@ -1347,7 +1348,7 @@ watch(
             <span class="field-label">
               Balance
               <AppHelpIcon
-                text="Show dues that still have money pending or dues that are fully paid."
+                text="Show dues that still have money pending, dues with no payment/advance at all, or dues that are fully paid."
               />
             </span>
             <Select
