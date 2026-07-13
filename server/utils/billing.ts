@@ -321,6 +321,50 @@ export const resolveDueAmountsForDisplay = (
   return computeDueAmounts(due, today, graceDays, lateFeePerDay)
 }
 
+export const getCamAdvanceAdjustedDueDate = (
+  input: {
+    dueDate: string
+    billingPeriodChargeType: string | null | undefined
+    billingPeriodStartDate: string | null | undefined
+    billingPeriodEndDate: string | null | undefined
+    chargeBreakdown: readonly ChargeBreakdownItem[]
+  },
+) => {
+  if (
+    input.billingPeriodChargeType !== 'CAM' ||
+    !input.billingPeriodStartDate ||
+    !input.billingPeriodEndDate
+  ) {
+    return input.dueDate
+  }
+
+  const advanceCharge = input.chargeBreakdown.find(
+    (charge) => Number(charge.camAdvanceAdjustmentAmount ?? 0) > 0,
+  )
+  const coveredMonths = Math.max(0, Number(advanceCharge?.camAdvanceCoveredMonths ?? 0))
+  const totalMonths = Math.max(0, Number(advanceCharge?.camAdvanceTotalMonths ?? 0))
+
+  if (!Number.isFinite(coveredMonths) || coveredMonths <= 0) {
+    return input.dueDate
+  }
+
+  if (Number.isFinite(totalMonths) && totalMonths > 0 && coveredMonths >= totalMonths) {
+    return input.billingPeriodEndDate
+  }
+
+  const segments = getBillingPeriodMonthSegments(
+    input.billingPeriodStartDate,
+    input.billingPeriodEndDate,
+  )
+  const firstBillableSegment = segments[Math.floor(coveredMonths)]
+
+  if (!firstBillableSegment) {
+    return input.billingPeriodEndDate
+  }
+
+  return maxBillingDate(input.dueDate, firstBillableSegment.startDate)
+}
+
 export const getDaysOverdue = (dueDate: string, today: string): number => {
   const due = new Date(dueDate)
   const now = new Date(today)

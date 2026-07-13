@@ -31,8 +31,8 @@ type PaymentSummary = {
   mode: string
   transferKind: string | null
   status: string
-  payerUserId: string
-  flatId: string
+  payerUserId: string | null
+  flatId: string | null
   utrReference: string | null
   bankReference: string | null
   proofFilePath: string | null
@@ -60,6 +60,13 @@ type PaymentCamAdvanceMatch = {
   reference: string | null
   notes: string | null
 }
+
+type CamAdvancePaymentSource =
+  | 'MANUAL'
+  | 'PAYMENT'
+  | 'IMPORT'
+  | 'OPENING_BALANCE'
+  | 'LEGACY_MARKER'
 
 type PaymentAllocation = {
   id: string
@@ -138,6 +145,7 @@ type PeriodsResponse = { ok: true; data: Paginated<BillingPeriod> }
 type BankAccountsResponse = { ok: true; data: { items: BankAccount[] } }
 type FlatDetailResponse = { ok: true; data: FlatDetail }
 type DuesResponse = { ok: true; data: Paginated<MaintenanceDue> }
+type SaveResponse = { ok: true; data: { id: string; updated?: boolean; deleted?: boolean } }
 
 const api = useApi()
 const toast = useToast()
@@ -182,6 +190,14 @@ const transferKinds = [
   { label: 'IMPS', value: 'IMPS' },
   { label: 'RTGS', value: 'RTGS' },
   { label: 'Bank transfer', value: 'BANK_TRANSFER' },
+]
+
+const camAdvanceSourceOptions: Array<{ label: string; value: CamAdvancePaymentSource }> = [
+  { label: 'Manual', value: 'MANUAL' },
+  { label: 'Payment', value: 'PAYMENT' },
+  { label: 'Import', value: 'IMPORT' },
+  { label: 'Opening balance', value: 'OPENING_BALANCE' },
+  { label: 'Legacy marker', value: 'LEGACY_MARKER' },
 ]
 
 const allocationModes = [
@@ -408,6 +424,19 @@ const proofAllowedMimeTypes = proofAccept.split(',')
 const proofMaxSizeBytes = 10 * 1024 * 1024
 const paymentEditSubmitted = ref(false)
 const paymentEditFieldErrors = reactive<Record<string, string>>({})
+const camAdvanceEditVisible = ref(false)
+const camAdvanceEditSaving = ref(false)
+const camAdvanceEditPayment = ref<PaymentSummary | null>(null)
+const camAdvanceEditForm = reactive({
+  flatId: '',
+  amount: null as number | null,
+  coveredFrom: '',
+  coveredUntil: '',
+  source: 'MANUAL' as CamAdvancePaymentSource,
+  reference: '',
+  notes: '',
+  isActive: true,
+})
 
 const paymentEditFieldError = (field: string) => paymentEditFieldErrors[field] ?? ''
 
@@ -631,7 +660,10 @@ const applyPaymentDetailToEditForm = (payment: PaymentDetail) => {
 }
 
 const openPaymentEdit = async (payment: PaymentSummary) => {
-  if (isCamAdvancePayment(payment)) return
+  if (isCamAdvancePayment(payment)) {
+    openCamAdvanceEdit(payment)
+    return
+  }
   paymentEditVisible.value = true
   paymentEditLoading.value = true
   paymentEditPayment.value = null
@@ -647,6 +679,58 @@ const openPaymentEdit = async (payment: PaymentSummary) => {
     await loadPaymentEditFlatContext(response.data.received_for_flat_id)
   } finally {
     paymentEditLoading.value = false
+  }
+}
+
+const openCamAdvanceEdit = (payment: PaymentSummary) => {
+  if (!isCamAdvancePayment(payment) || !payment.camAdvanceCoverageId || !payment.flatId) return
+
+  const source = camAdvanceSourceOptions.some((option) => option.value === payment.transferKind)
+    ? payment.transferKind as CamAdvancePaymentSource
+    : 'MANUAL'
+
+  camAdvanceEditPayment.value = payment
+  camAdvanceEditForm.flatId = payment.flatId
+  camAdvanceEditForm.amount = payment.amount ? Number(payment.amount) : null
+  camAdvanceEditForm.coveredFrom = payment.coveredFrom ?? payment.paymentDate
+  camAdvanceEditForm.coveredUntil = payment.coveredUntil ?? payment.paymentDate
+  camAdvanceEditForm.source = source
+  camAdvanceEditForm.reference = payment.utrReference ?? ''
+  camAdvanceEditForm.notes = payment.bankReference ?? ''
+  camAdvanceEditForm.isActive = payment.status !== 'INACTIVE'
+  camAdvanceEditVisible.value = true
+}
+
+const saveCamAdvanceEdit = async () => {
+  const payment = camAdvanceEditPayment.value
+  if (!payment?.camAdvanceCoverageId || !camAdvanceEditForm.flatId) return
+
+  camAdvanceEditSaving.value = true
+  try {
+    await api<SaveResponse>(`/api/admin/billing/cam-advance-coverages/${payment.camAdvanceCoverageId}`, {
+      method: 'PATCH',
+      body: {
+        flatId: camAdvanceEditForm.flatId,
+        coveredFrom: camAdvanceEditForm.coveredFrom,
+        coveredUntil: camAdvanceEditForm.coveredUntil,
+        amount: camAdvanceEditForm.amount,
+        source: camAdvanceEditForm.source,
+        reference: camAdvanceEditForm.reference || null,
+        notes: camAdvanceEditForm.notes || null,
+        isActive: camAdvanceEditForm.isActive,
+      },
+    })
+
+    toast.add({
+      severity: 'success',
+      summary: 'Advance payment updated',
+      detail: 'The CAM advance record was updated from Payments.',
+      life: 10000,
+    })
+    camAdvanceEditVisible.value = false
+    await refresh()
+  } finally {
+    camAdvanceEditSaving.value = false
   }
 }
 
@@ -1034,14 +1118,13 @@ const onProofFileChange = async (event: Event) => {
             <div class="admin-inline-actions">
               <Button
                 v-if="isCamAdvancePayment(row)"
-                as="router-link"
-                to="/admin/billing/cam-advance"
-                icon="pi pi-calendar"
+                icon="pi pi-pencil"
                 severity="secondary"
                 text
                 rounded
-                aria-label="Open CAM advance"
-                title="Open CAM advance"
+                aria-label="Edit advance payment"
+                title="Edit advance payment"
+                @click="openCamAdvanceEdit(row)"
               />
               <Button v-else icon="pi pi-eye" severity="secondary" text rounded aria-label="View payment" title="View payment" @click="openDetail(row)" />
               <Button
@@ -1095,13 +1178,12 @@ const onProofFileChange = async (event: Event) => {
           <div class="admin-inline-actions">
             <Button
               v-if="isCamAdvancePayment(payment)"
-              as="router-link"
-              to="/admin/billing/cam-advance"
-              label="Open advance"
-              icon="pi pi-calendar"
+              label="Edit advance"
+              icon="pi pi-pencil"
               size="small"
               severity="secondary"
               outlined
+              @click="openCamAdvanceEdit(payment)"
             />
             <Button v-else label="View" icon="pi pi-eye" size="small" severity="secondary" outlined @click="openDetail(payment)" />
             <Button
@@ -1192,6 +1274,85 @@ const onProofFileChange = async (event: Event) => {
           </Column>
         </AppDataTable>
       </div>
+    </Dialog>
+
+    <Dialog v-model:visible="camAdvanceEditVisible" header="Edit advance payment" modal :style="{ width: '640px' }">
+      <form v-if="camAdvanceEditPayment" class="admin-form-layout" novalidate @submit.prevent="saveCamAdvanceEdit">
+        <section class="admin-form-section">
+          <div class="admin-form-section__header">
+            <div>
+              <p class="eyebrow">CAM advance</p>
+              <h2>{{ flatLabel(camAdvanceEditPayment) }}</h2>
+              <p>
+                This updates the advance record used by dues for CAM advance deduction.
+              </p>
+            </div>
+          </div>
+          <div class="admin-form-grid">
+            <label class="admin-form-grid__full">
+              <span class="field-label">Flat <span class="required-marker">*</span></span>
+              <Select
+                v-model="camAdvanceEditForm.flatId"
+                :options="flatOptions"
+                option-label="label"
+                option-value="value"
+                filter
+                required
+              />
+            </label>
+            <label>
+              <span class="field-label">Amount</span>
+              <InputNumber
+                v-model="camAdvanceEditForm.amount"
+                mode="currency"
+                currency="INR"
+                locale="en-IN"
+                :min="0"
+                :max-fraction-digits="2"
+                fluid
+                autofocus
+              />
+            </label>
+            <label>
+              <span class="field-label">Source <span class="required-marker">*</span></span>
+              <Select
+                v-model="camAdvanceEditForm.source"
+                :options="camAdvanceSourceOptions"
+                option-label="label"
+                option-value="value"
+                required
+              />
+            </label>
+            <label>
+              <span class="field-label">Covered from <span class="required-marker">*</span></span>
+              <InputText v-model="camAdvanceEditForm.coveredFrom" type="date" required />
+            </label>
+            <label>
+              <span class="field-label">Covered until <span class="required-marker">*</span></span>
+              <InputText v-model="camAdvanceEditForm.coveredUntil" type="date" required />
+            </label>
+            <label>
+              <span class="field-label">Reference</span>
+              <InputText v-model="camAdvanceEditForm.reference" placeholder="Receipt, cash, UTR, import ref" />
+            </label>
+            <label>
+              <span class="field-label">Notes</span>
+              <InputText v-model="camAdvanceEditForm.notes" placeholder="Cash, bank, remarks" />
+            </label>
+            <label class="admin-toggle-card admin-form-grid__full">
+              <span>Active advance record</span>
+              <Checkbox v-model="camAdvanceEditForm.isActive" binary />
+              <small class="field-help">
+                Turn off only if this advance should no longer reduce CAM dues.
+              </small>
+            </label>
+          </div>
+        </section>
+        <div class="admin-form-actions">
+          <Button type="button" label="Cancel" severity="secondary" outlined @click="camAdvanceEditVisible = false" />
+          <Button type="submit" label="Save advance payment" icon="pi pi-check" :loading="camAdvanceEditSaving" />
+        </div>
+      </form>
     </Dialog>
 
     <Dialog v-model:visible="paymentEditVisible" header="Edit payment" modal :style="{ width: '760px' }">
