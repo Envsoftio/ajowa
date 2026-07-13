@@ -2,10 +2,11 @@ import { createApiSuccess } from '~/server/utils/api'
 import { requireActiveUser } from '~/server/utils/auth'
 import { queryRows } from '~/server/utils/database'
 import { AppError } from '~/server/utils/errors'
+import { readUuidParam } from '~/server/utils/master-data'
 
 export default defineEventHandler(async (event) => {
   const authMe = await requireActiveUser(event)
-  const id = getRouterParam(event, 'id')
+  const id = readUuidParam(event)
   const isStaff = ['ADMIN', 'MANAGER'].includes(authMe.user.role)
   const result = await queryRows(
     `
