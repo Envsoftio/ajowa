@@ -115,8 +115,16 @@ const summary = computed(() => ({
   flatCount: new Set(receipts.value.map((receipt) => receipt.flatId)).size,
 }))
 
-const hasActiveFilters = computed(() =>
-  Object.entries(query).some(([key, value]) => !['page', 'pageSize'].includes(key) && Boolean(value)),
+const filtersExpanded = ref(false)
+
+const activeFilterCount = computed(() =>
+  Object.entries(query).filter(([key, value]) => !['page', 'pageSize'].includes(key) && Boolean(value)).length,
+)
+
+const hasActiveFilters = computed(() => activeFilterCount.value > 0)
+
+const filterToggleLabel = computed(() =>
+  activeFilterCount.value > 0 ? `Search (${activeFilterCount.value})` : 'Search',
 )
 
 watch(
@@ -157,19 +165,29 @@ const resetFilters = () => {
       </section>
     </div>
 
-    <section class="list-page surface-card">
+    <section class="list-page surface-card resident-receipts-panel">
       <header class="list-page__header">
         <div>
           <h1>My receipts</h1>
           <p>Payment history and downloadable maintenance receipts for your active resident relationships.</p>
         </div>
         <div class="list-page__exports">
+          <Button
+            class="resident-receipts__filter-toggle"
+            :label="filterToggleLabel"
+            :icon="filtersExpanded ? 'pi pi-chevron-up' : 'pi pi-search'"
+            severity="secondary"
+            outlined
+            aria-controls="resident-receipts-filters"
+            :aria-expanded="filtersExpanded"
+            @click="filtersExpanded = !filtersExpanded"
+          />
           <Button label="Refresh" icon="pi pi-refresh" severity="secondary" outlined :loading="pending" @click="() => refresh()" />
           <Button label="Clear filters" icon="pi pi-filter-slash" severity="secondary" outlined :disabled="!hasActiveFilters" @click="resetFilters" />
         </div>
       </header>
 
-      <div class="list-page__toolbar">
+      <div id="resident-receipts-filters" class="list-page__toolbar resident-receipts__toolbar" :class="{ 'is-expanded': filtersExpanded }">
         <label class="list-page__search">
           <span class="field-label">Search</span>
           <IconField>

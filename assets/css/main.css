@@ -1364,6 +1364,10 @@ a {
   gap: 1rem;
 }
 
+.resident-receipts__filter-toggle {
+  display: none;
+}
+
 .app-data-table {
   display: grid;
   gap: 0.5rem;
@@ -4707,6 +4711,18 @@ button *,
     margin-inline: -0.9rem;
     padding: 0.8rem 0.9rem;
     border-radius: 0;
+  }
+
+  .app-shell--resident .resident-receipts__filter-toggle {
+    display: inline-flex;
+  }
+
+  .app-shell--resident .resident-receipts-panel .resident-receipts__toolbar {
+    display: none;
+  }
+
+  .app-shell--resident .resident-receipts-panel .resident-receipts__toolbar.is-expanded {
+    display: grid;
   }
 
   .app-shell--resident .list-page__filters {
