@@ -95,6 +95,56 @@ a {
   min-height: 100vh;
 }
 
+.app-loading-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+
+.app-loading-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid color-mix(in srgb, var(--color-brand) 20%, var(--color-border));
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--color-surface) 94%, transparent);
+  color: var(--color-text);
+  box-shadow: var(--shadow-lg);
+  font-size: 0.9rem;
+  font-weight: 800;
+  backdrop-filter: blur(10px);
+}
+
+.app-loading-spinner {
+  width: 1.35rem;
+  height: 1.35rem;
+  border: 3px solid color-mix(in srgb, var(--color-brand) 18%, var(--color-border));
+  border-top-color: var(--color-brand);
+  border-radius: 999px;
+  animation: app-loading-spin 0.75s linear infinite;
+}
+
+.app-loading-fade-enter-active,
+.app-loading-fade-leave-active {
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+
+.app-loading-fade-enter-from,
+.app-loading-fade-leave-to {
+  opacity: 0;
+  transform: scale(0.98);
+}
+
+@keyframes app-loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .app-shell__layout {
   min-height: 100vh;
   display: grid;
@@ -317,31 +367,6 @@ a {
   line-height: 1;
   box-shadow: 0 0 0 2px var(--admin-topbar-bg);
   pointer-events: none;
-}
-
-.topbar-loading {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.38rem 0.65rem;
-  border-radius: var(--radius-md);
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  color: var(--color-muted);
-  box-shadow: none;
-  font-size: 0.85rem;
-}
-
-.topbar-loading-dot {
-  width: 0.6rem;
-  height: 0.6rem;
-  border-radius: 50%;
-  background: var(--color-success);
-}
-
-.topbar-loading[data-loading='true'] .topbar-loading-dot {
-  background: var(--color-accent);
-  box-shadow: 0 0 0 0.3rem rgba(32, 39, 47, 0.16);
 }
 
 .eyebrow {
@@ -4504,8 +4529,7 @@ button *,
     background: color-mix(in srgb, var(--admin-topbar-bg) 94%, transparent);
   }
 
-  .app-shell--resident .topbar-brand,
-  .app-shell--resident .topbar-loading {
+  .app-shell--resident .topbar-brand {
     display: none;
   }
 
@@ -4723,6 +4747,67 @@ button *,
 
   .app-shell--resident .resident-receipts-panel .resident-receipts__toolbar.is-expanded {
     display: grid;
+  }
+
+  .app-shell--resident .resident-receipts-panel .list-card__header {
+    align-items: flex-start;
+    gap: 0.6rem;
+    padding-bottom: 0.6rem;
+  }
+
+  .app-shell--resident .resident-receipts-panel .list-card__header h3 {
+    font-size: 0.98rem;
+    line-height: 1.2;
+  }
+
+  .app-shell--resident .resident-receipts-panel .list-card__header p {
+    font-size: 0.78rem;
+    line-height: 1.35;
+  }
+
+  .app-shell--resident .resident-receipts-panel .app-status-badge.p-tag {
+    flex: 0 0 auto;
+    max-width: 5.6rem;
+    min-height: 1.45rem;
+    padding: 0.22rem 0.48rem;
+    font-size: 0.68rem;
+    line-height: 1;
+    white-space: nowrap;
+  }
+
+  .app-shell--resident .resident-receipts-panel .app-status-badge .p-tag-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .app-shell--resident .resident-receipts-panel .resident-receipts-card__meta {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.45rem;
+    padding-block: 0.65rem;
+  }
+
+  .app-shell--resident .resident-receipts-panel .resident-receipts-card__meta .list-card__row {
+    display: grid;
+    align-content: start;
+    gap: 0.2rem;
+    min-width: 0;
+    padding: 0.6rem;
+    border: 1px solid color-mix(in srgb, var(--color-border) 82%, transparent);
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--color-bg) 72%, var(--color-surface));
+  }
+
+  .app-shell--resident .resident-receipts-panel .resident-receipts-card__meta .list-card__row span {
+    font-size: 0.68rem;
+    font-weight: 800;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+
+  .app-shell--resident .resident-receipts-panel .resident-receipts-card__meta .list-card__row strong {
+    text-align: left;
   }
 
   .app-shell--resident .list-page__filters {
@@ -5017,23 +5102,6 @@ button *,
     width: auto;
     gap: 0.5rem;
     align-items: center;
-  }
-
-  .topbar-loading {
-    flex: 0 0 auto;
-    width: auto;
-    min-height: 2rem;
-    padding: 0 0.5rem;
-    gap: 0.35rem;
-    justify-content: flex-start;
-    min-width: 0;
-    font-size: 0.75rem;
-    line-height: 1;
-  }
-
-  .topbar-loading-dot {
-    width: 0.45rem;
-    height: 0.45rem;
   }
 
   .topbar-actions .p-button:not(.avatar-trigger):not(.topbar-icon-button) {
@@ -5480,6 +5548,15 @@ button *,
 
   .list-card__row strong {
     text-align: left;
+  }
+
+  .app-shell--resident .resident-receipts-panel .list-card__header {
+    display: flex;
+  }
+
+  .app-shell--resident .resident-receipts-panel .resident-receipts-card__meta .list-card__row {
+    display: grid;
+    grid-template-columns: 1fr;
   }
 
   .resident-due-card__header {

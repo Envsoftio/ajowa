@@ -11,9 +11,11 @@ const theme = useTheme()
 const appStore = useAppStore()
 const authStore = useAuthStore()
 const route = useRoute()
+const loading = useLoadingIndicator()
 const shell = computed(() => props.shell ?? 'public')
 const shellClass = computed(() => `app-shell--${shell.value}`)
 const isCompactPublicShell = computed(() => shell.value === 'public' && route.meta.publicShell === 'compact')
+const isLoading = computed(() => loading.isLoading.value)
 const contentRef = ref<HTMLElement | null>(null)
 const residentMobileNavRoutes = new Set(['/my/dues', '/my/receipts', '/my/notices', '/my/qr'])
 
@@ -64,6 +66,14 @@ watch(
     <Toast />
     <ConfirmDialog />
     <AppNotificationListener />
+    <Transition name="app-loading-fade">
+      <div v-if="isLoading" class="app-loading-overlay" role="status" aria-live="polite" aria-label="Loading">
+        <div class="app-loading-card">
+          <span class="app-loading-spinner" aria-hidden="true" />
+          <span>Loading</span>
+        </div>
+      </div>
+    </Transition>
     <div class="app-shell__layout">
       <AppSidebar :shell="shell" />
       <div class="app-frame">

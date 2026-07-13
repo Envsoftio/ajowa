@@ -34,6 +34,8 @@ type ReceiptsResponse = {
   }
 }
 
+type SummaryCardKey = 'paid' | 'receipts' | 'flats'
+
 const api = useApi()
 const authStore = useAuthStore()
 
@@ -127,6 +129,23 @@ const filterToggleLabel = computed(() =>
   activeFilterCount.value > 0 ? `Search (${activeFilterCount.value})` : 'Search',
 )
 
+const activeSummaryHelp = ref<SummaryCardKey | null>(null)
+const isSummaryHelpOpen = (key: SummaryCardKey) => activeSummaryHelp.value === key
+const toggleSummaryHelp = (key: SummaryCardKey) => {
+  activeSummaryHelp.value = isSummaryHelpOpen(key) ? null : key
+}
+const summaryHelpIds: Record<SummaryCardKey, string> = {
+  paid: 'my-receipts-summary-help-paid',
+  receipts: 'my-receipts-summary-help-receipts',
+  flats: 'my-receipts-summary-help-flats',
+}
+const isPaidHelpOpen = computed(() => isSummaryHelpOpen('paid'))
+const isReceiptsHelpOpen = computed(() => isSummaryHelpOpen('receipts'))
+const isFlatsHelpOpen = computed(() => isSummaryHelpOpen('flats'))
+const togglePaidHelp = () => toggleSummaryHelp('paid')
+const toggleReceiptsHelp = () => toggleSummaryHelp('receipts')
+const toggleFlatsHelp = () => toggleSummaryHelp('flats')
+
 watch(
   () => [query.search, query.fromDate, query.toDate, query.minAmount, query.maxAmount, query.mode, query.flatId],
   () => {
@@ -147,21 +166,75 @@ const resetFilters = () => {
 
 <template>
   <div class="landing-page">
-    <div class="surface-grid">
-      <section class="surface-card">
-        <p class="eyebrow">Visible paid</p>
+    <div class="surface-grid resident-summary-grid">
+      <section class="surface-card resident-summary-card">
+        <div class="resident-summary-card__topline">
+          <p class="eyebrow">Visible paid</p>
+          <button
+            type="button"
+            class="resident-summary-card__help-button"
+            :aria-expanded="isPaidHelpOpen"
+            :aria-controls="summaryHelpIds.paid"
+            aria-label="Show visible paid help"
+            @click="togglePaidHelp"
+          >
+            <i class="pi pi-info-circle" aria-hidden="true" />
+          </button>
+        </div>
         <h3>{{ formatMoney(summary.totalPaid) }}</h3>
-        <p>{{ totalRecords }} receipts match the current filters.</p>
+        <p
+          :id="summaryHelpIds.paid"
+          class="resident-summary-card__help-text"
+          :class="{ 'is-open': isPaidHelpOpen }"
+        >
+          {{ totalRecords }} receipts match the current filters.
+        </p>
       </section>
-      <section class="surface-card">
-        <p class="eyebrow">Receipts shown</p>
+      <section class="surface-card resident-summary-card">
+        <div class="resident-summary-card__topline">
+          <p class="eyebrow">Receipts shown</p>
+          <button
+            type="button"
+            class="resident-summary-card__help-button"
+            :aria-expanded="isReceiptsHelpOpen"
+            :aria-controls="summaryHelpIds.receipts"
+            aria-label="Show receipts shown help"
+            @click="toggleReceiptsHelp"
+          >
+            <i class="pi pi-info-circle" aria-hidden="true" />
+          </button>
+        </div>
         <h3>{{ summary.receiptCount }}</h3>
-        <p>Download PDF receipts for your linked payments.</p>
+        <p
+          :id="summaryHelpIds.receipts"
+          class="resident-summary-card__help-text"
+          :class="{ 'is-open': isReceiptsHelpOpen }"
+        >
+          Download PDF receipts for your linked payments.
+        </p>
       </section>
-      <section class="surface-card">
-        <p class="eyebrow">Linked flats</p>
+      <section class="surface-card resident-summary-card">
+        <div class="resident-summary-card__topline">
+          <p class="eyebrow">Linked flats</p>
+          <button
+            type="button"
+            class="resident-summary-card__help-button"
+            :aria-expanded="isFlatsHelpOpen"
+            :aria-controls="summaryHelpIds.flats"
+            aria-label="Show linked flats help"
+            @click="toggleFlatsHelp"
+          >
+            <i class="pi pi-info-circle" aria-hidden="true" />
+          </button>
+        </div>
         <h3>{{ summary.flatCount }}</h3>
-        <p>Receipt rows currently visible across your flats.</p>
+        <p
+          :id="summaryHelpIds.flats"
+          class="resident-summary-card__help-text"
+          :class="{ 'is-open': isFlatsHelpOpen }"
+        >
+          Receipt rows currently visible across your flats.
+        </p>
       </section>
     </div>
 
@@ -291,17 +364,19 @@ const resetFilters = () => {
               </div>
               <AppStatusBadge :status="receipt.status" />
             </div>
-            <div class="list-card__row">
-              <span>Amount</span>
-              <strong>{{ formatMoney(receipt.amount) }}</strong>
-            </div>
-            <div class="list-card__row">
-              <span>Mode</span>
-              <strong>{{ receipt.mode }}</strong>
-            </div>
-            <div class="list-card__row">
-              <span>Reference</span>
-              <strong>{{ referenceLabel(receipt) }}</strong>
+            <div class="resident-receipts-card__meta">
+              <div class="list-card__row">
+                <span>Amount</span>
+                <strong>{{ formatMoney(receipt.amount) }}</strong>
+              </div>
+              <div class="list-card__row">
+                <span>Mode</span>
+                <strong>{{ receipt.mode }}</strong>
+              </div>
+              <div class="list-card__row">
+                <span>Reference</span>
+                <strong>{{ referenceLabel(receipt) }}</strong>
+              </div>
             </div>
             <AppDocumentLink :href="receipt.downloadUrl" viewer-title="Receipt PDF" label="Download receipt" icon="pi pi-download" size="small" severity="secondary" outlined />
           </article>

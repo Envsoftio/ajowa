@@ -13,14 +13,12 @@ const notificationsStore = useNotificationsStore()
 const theme = useTheme()
 const route = useRoute()
 const toast = useToast()
-const loading = useLoadingIndicator()
 const menu = ref()
 const loggingOut = ref(false)
 
 const firstCharacter = (value: string | null | undefined) => value?.trim().charAt(0).toUpperCase() || ''
 
 const pageTitle = computed(() => String(route.meta.title ?? 'AJOWA'))
-const isLoading = computed(() => loading.isLoading.value)
 const userDisplayName = computed(() =>
   authStore.me?.user.fullName?.trim()
   || authStore.me?.authUser.name?.trim()
@@ -152,14 +150,6 @@ onMounted(() => {
     </div>
 
     <div class="topbar-actions">
-      <span
-        class="topbar-loading"
-        :data-loading="isLoading"
-        aria-live="polite"
-      >
-        <span class="topbar-loading-dot" />
-        {{ isLoading ? 'Loading' : 'Synced' }}
-      </span>
       <Button
         v-if="notificationRoute"
         class="topbar-icon-button topbar-notification-button"
