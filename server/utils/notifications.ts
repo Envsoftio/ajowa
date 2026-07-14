@@ -164,6 +164,7 @@ type ProviderSendResult = {
   responseBody?: Record<string, unknown> | undefined
   failureReason?: string | undefined
   permanentFailure?: boolean | undefined
+  skipped?: boolean | undefined
 }
 
 type NotificationEmailAttachment = {
@@ -1340,6 +1341,55 @@ const dispatchJob = async (
   const title = job.title ?? 'AJOWA notification'
   const body = job.body ?? ''
 
+  if (['maintenance_due.reminder', 'maintenance_due.overdue'].includes(job.event_key)) {
+    const dueId = typeof job.payload.dueId === 'string' ? job.payload.dueId : null
+
+    if (!dueId) {
+      return {
+        ok: false,
+        providerName: 'SYSTEM',
+        failureReason: 'Skipped billing reminder because the notification payload has no due id.',
+        permanentFailure: true,
+        skipped: true,
+      }
+    }
+
+    const dueResult = await client.query<{
+      balance_amount: string
+      status: string
+    }>(
+      `
+        select balance_amount::text, status::text
+        from maintenance_dues
+        where id = $1
+          and society_id = $2
+        limit 1
+      `,
+      [dueId, job.society_id],
+    )
+    const due = dueResult.rows[0]
+
+    if (
+      !due ||
+      Number(due.balance_amount) <= 0 ||
+      ['PAID', 'WAIVED', 'CANCELLED'].includes(due.status)
+    ) {
+      return {
+        ok: false,
+        providerName: 'SYSTEM',
+        failureReason: due
+          ? `Skipped billing reminder because the due is ${due.status} with balance ${due.balance_amount}.`
+          : 'Skipped billing reminder because the due no longer exists.',
+        permanentFailure: true,
+        skipped: true,
+        responseBody: {
+          dueId,
+          ...(due ? { status: due.status, balanceAmount: Number(due.balance_amount) } : {}),
+        },
+      }
+    }
+  }
+
   if (job.channel === 'IN_APP') {
     return sendInAppForJob(client, job)
   }
@@ -1445,6 +1495,7 @@ export const dispatchNotificationJobs = async (
   let sent = 0
   let failed = 0
   let retried = 0
+  let skipped = 0
 
   for (const job of jobs) {
     const attemptNumber = job.attempt_count + 1
@@ -1460,8 +1511,12 @@ export const dispatchNotificationJobs = async (
         permanentFailure: isPermanentProviderError(error),
       }
     }
-    const nextStatus = result.ok ? (job.channel === 'IN_APP' ? 'DELIVERED' : 'SENT') : 'FAILED'
-    const shouldRetry = !result.ok && !result.permanentFailure && attemptNumber < job.max_attempts
+    const nextStatus = result.skipped
+      ? 'CANCELLED'
+      : result.ok
+        ? (job.channel === 'IN_APP' ? 'DELIVERED' : 'SENT')
+        : 'FAILED'
+    const shouldRetry = !result.skipped && !result.ok && !result.permanentFailure && attemptNumber < job.max_attempts
     const finalStatus = shouldRetry ? 'RETRYING' : nextStatus
     const nextAttemptAt = shouldRetry
       ? `now() + interval '${getBackoffMinutes(attemptNumber)} minutes'`
@@ -1518,14 +1573,16 @@ export const dispatchNotificationJobs = async (
         result.providerName,
         result.providerMessageId ?? null,
         job.channel,
-        result.ok ? (job.channel === 'IN_APP' ? 'DELIVERED' : 'SENT') : 'FAILED',
+        result.skipped ? 'FAILED' : result.ok ? (job.channel === 'IN_APP' ? 'DELIVERED' : 'SENT') : 'FAILED',
         attemptNumber,
         JSON.stringify(result.responseBody ?? {}),
         result.failureReason ?? null,
       ],
     )
 
-    if (result.ok) {
+    if (result.skipped) {
+      skipped += 1
+    } else if (result.ok) {
       sent += 1
     } else if (shouldRetry) {
       retried += 1
@@ -1575,6 +1632,7 @@ export const dispatchNotificationJobs = async (
     sent,
     failed,
     retried,
+    skipped,
   }
 }
 
