@@ -278,7 +278,7 @@ const sortFinanceTransactions = (
   const direction = sortDirection === 'asc' ? 1 : -1
 
   return [...items].sort((left, right) => {
-    let result = 0
+    let result: number
 
     switch (orderBy) {
       case 't.title':
@@ -319,6 +319,7 @@ const sortFinanceTransactions = (
 export const getFinanceTransactionSummary = async (
   pool: Pool,
   filterSql: FinanceTransactionFilterSql,
+  query: Record<string, unknown>,
 ): Promise<FinanceTransactionSummary> => {
   const summary = await pool.query<{
     count: string
@@ -353,12 +354,169 @@ export const getFinanceTransactionSummary = async (
     filterSql.params,
   )
 
+  const camCollectionIncome = await getCamCollectionIncomeSummary(pool, queryText(filterSql.params[0]), query)
+
   return {
     total: Number(summary.rows[0]?.count ?? 0),
-    income: Number(summary.rows[0]?.incomeTotal ?? 0),
+    income: Number(summary.rows[0]?.incomeTotal ?? 0) + camCollectionIncome,
     expense: Number(summary.rows[0]?.expenseTotal ?? 0),
     missingAttachments: Number(summary.rows[0]?.missingAttachments ?? 0),
   }
+}
+
+const getCamCollectionIncomeSummary = async (
+  pool: Pool,
+  societyId: string,
+  query: Record<string, unknown>,
+) => {
+  const transactionType = queryText(query.transactionType)
+  const status = queryText(query.status)
+  const attachment = queryText(query.attachment)
+
+  if (
+    transactionType === 'EXPENSE' ||
+    (status && status !== 'POSTED') ||
+    attachment === 'present'
+  ) {
+    return 0
+  }
+
+  const search = queryText(query.search).trim().toLowerCase()
+  const categoryId = queryText(query.categoryId)
+  const bankAccountId = queryText(query.bankAccountId)
+  const billingPeriodId = queryText(query.billingPeriodId)
+  const dateFrom = queryText(query.dateFrom)
+  const dateTo = queryText(query.dateTo)
+  const counterparty = queryText(query.counterparty).trim().toLowerCase()
+  const voucherNumber = queryText(query.voucherNumber).trim().toLowerCase()
+  const mode = queryText(query.mode).trim().toUpperCase()
+  const minAmount = queryNumber(query.minAmount)
+  const maxAmount = queryNumber(query.maxAmount)
+  const highValueOnly = queryText(query.highValueOnly) === 'true'
+  const highValueThreshold = queryNumber(query.highValueThreshold) ?? 0
+
+  const params: unknown[] = [societyId]
+  const where = [
+    'p.society_id = $1',
+    "p.status = 'VERIFIED'",
+    "bp.charge_type = 'CAM'",
+    `not exists (
+      select 1
+      from transactions source_t
+      join transaction_categories source_tc on source_tc.id = source_t.category_id
+      where source_t.source_payment_id = p.id
+        and source_t.society_id = p.society_id
+        and source_t.transaction_type = 'INCOME'
+        and source_t.status = 'POSTED'
+        and source_tc.code = 'INC-MNT-001'
+    )`,
+  ]
+
+  if (categoryId) {
+    params.push(categoryId)
+    where.push(`cc.id = $${params.length}`)
+  }
+  if (bankAccountId) {
+    params.push(bankAccountId)
+    where.push(`exists (
+      select 1
+      from journal_entries je
+      join journal_lines jl on jl.journal_entry_id = je.id and jl.line_type = 'DEBIT'
+      join society_bank_accounts ba on ba.account_head_id = jl.account_head_id
+      where je.payment_id = p.id
+        and je.status = 'POSTED'
+        and ba.society_id = p.society_id
+        and ba.id = $${params.length}
+    )`)
+  }
+  if (billingPeriodId) {
+    params.push(billingPeriodId)
+    where.push(`bp.id = $${params.length}`)
+  }
+  if (dateFrom) {
+    params.push(dateFrom)
+    where.push(`p.payment_date >= $${params.length}`)
+  }
+  if (dateTo) {
+    params.push(dateTo)
+    where.push(`p.payment_date <= $${params.length}`)
+  }
+  if (search) {
+    params.push(`%${search}%`)
+    where.push(`(
+      lower(cc.name) like $${params.length}
+      or lower(coalesce(u.full_name, '')) like $${params.length}
+      or lower(coalesce(f.flat_number, '')) like $${params.length}
+      or lower(coalesce(b.name, '')) like $${params.length}
+      or lower(coalesce(p.receipt_number, '')) like $${params.length}
+      or lower(coalesce(p.utr_reference, '')) like $${params.length}
+      or lower(coalesce(p.bank_reference, '')) like $${params.length}
+      or lower(coalesce(bp.label, '')) like $${params.length}
+      or lower(coalesce(p.notes, '')) like $${params.length}
+    )`)
+  }
+  if (counterparty) {
+    params.push(`%${counterparty}%`)
+    where.push(`lower(coalesce(u.full_name, '')) like $${params.length}`)
+  }
+  if (mode) {
+    params.push(mode)
+    where.push(`p.mode::text = $${params.length}`)
+  }
+  if (voucherNumber) {
+    params.push(`%${voucherNumber}%`)
+    where.push(`(
+      lower(coalesce(p.receipt_number, '')) like $${params.length}
+      or lower(coalesce(p.utr_reference, '')) like $${params.length}
+      or lower(coalesce(p.bank_reference, '')) like $${params.length}
+    )`)
+  }
+
+  const amountFilters: string[] = []
+
+  if (minAmount !== null) {
+    params.push(minAmount)
+    amountFilters.push(`sum(pa.allocated_amount) >= $${params.length}`)
+  }
+  if (maxAmount !== null) {
+    params.push(maxAmount)
+    amountFilters.push(`sum(pa.allocated_amount) <= $${params.length}`)
+  }
+  if (highValueOnly && highValueThreshold > 0) {
+    params.push(highValueThreshold)
+    amountFilters.push(`sum(pa.allocated_amount) >= $${params.length}`)
+  }
+
+  const result = await pool.query<{ income_total: string }>(
+    `
+      with cam_category as (
+        select id
+        from transaction_categories
+        where code = 'INC-MNT-001'
+          and transaction_type = 'INCOME'
+        limit 1
+      ),
+      cam_payments as (
+        select sum(pa.allocated_amount) as amount
+        from payment_allocations pa
+        join payments p on p.id = pa.payment_id
+        join maintenance_dues md on md.id = pa.maintenance_due_id
+        join billing_periods bp on bp.id = md.billing_period_id
+        join flats f on f.id = md.flat_id
+        join blocks b on b.id = f.block_id
+        left join users u on u.id = p.payer_user_id
+        cross join cam_category cc
+        where ${where.join(' and ')}
+        group by p.id
+        ${amountFilters.length > 0 ? `having ${amountFilters.join(' and ')}` : ''}
+      )
+      select coalesce(sum(amount), 0)::text as income_total
+      from cam_payments
+    `,
+    params,
+  )
+
+  return Number(result.rows[0]?.income_total ?? 0)
 }
 
 export const getFinanceTransactionRows = async (

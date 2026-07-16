@@ -294,7 +294,7 @@ export default defineEventHandler(async (event) => {
     rows = result.items
   } else {
     const filterSql = buildFinanceTransactionFilterSql(authMe.user.societyId, query)
-    summary = await getFinanceTransactionSummary(pool, filterSql)
+    summary = await getFinanceTransactionSummary(pool, filterSql, query)
     const result = await getFinanceTransactionRows(pool, filterSql, {
       limit: financeTransactionExportLimit,
       ...sort,

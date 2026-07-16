@@ -48,7 +48,7 @@ export default defineEventHandler(async (event) => {
   }
 
   const filterSql = buildFinanceTransactionFilterSql(authMe.user.societyId, query)
-  const summary = await getFinanceTransactionSummary(pool, filterSql)
+  const summary = await getFinanceTransactionSummary(pool, filterSql, query)
   const sort = getFinanceTransactionSort(query)
   const result = await getFinanceTransactionRows(pool, filterSql, {
     limit: pagination.pageSize,
