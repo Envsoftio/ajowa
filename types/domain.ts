@@ -757,6 +757,27 @@ export type CamAdvanceCoverage = AuditFields & {
   primaryResidentName: string | null
 }
 
+export type CamPaymentArrangement = AuditFields & {
+  id: string
+  societyId: string
+  flatId: string
+  flatNumber: string
+  blockName: string
+  unitType: string
+  penaltyFreeUntilDay: number
+  effectiveFrom: string
+  effectiveUntil: string | null
+  reason: string
+  reference: string | null
+  approvedByUserId: string | null
+  approvedByName: string | null
+  approvedAt: string
+  revokedByUserId: string | null
+  revokedAt: string | null
+  isActive: boolean
+  primaryResidentName: string | null
+}
+
 export type DueStatus =
   | 'DRAFT'
   | 'OPEN'
@@ -780,6 +801,9 @@ export type MaintenanceDue = AuditFields & {
   blockName: string
   unitType: string
   dueDate: string
+  lateFeeStartsOn?: string | null
+  penaltyFreeUntilDate?: string | null
+  camPaymentArrangementId?: string | null
   baseAmount: number
   lateFeeAmount: number
   waivedAmount: number

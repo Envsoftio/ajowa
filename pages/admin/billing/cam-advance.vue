@@ -330,7 +330,7 @@ const summary = computed(() => {
           <span class="field-label">Search</span>
           <IconField>
             <InputIcon class="pi pi-search" />
-            <InputText v-model="query.search" placeholder="Flat, block, resident, reference" />
+            <InputText v-model="query.search" placeholder="Flat, tower, resident, reference" />
           </IconField>
         </label>
         <div class="list-page__filters">

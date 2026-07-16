@@ -2300,7 +2300,7 @@ watch(
           <label>
             <span class="field-label">
               Find flat
-              <AppHelpIcon text="Search by block, flat number, or unit type." />
+              <AppHelpIcon text="Search by tower, flat number, or unit type." />
             </span>
             <IconField>
               <InputIcon class="pi pi-search" />

@@ -21,7 +21,7 @@ export type StaffPermission = (typeof staffPermissions)[number]
 
 export const staffPermissionLabels: Record<StaffPermission, string> = {
   'society.manage': 'Society settings',
-  'blocks.manage': 'Blocks',
+  'blocks.manage': 'Towers',
   'flats.manage': 'Flats',
   'residents.manage': 'Residents and gate logs',
   'billing.view': 'Billing view',

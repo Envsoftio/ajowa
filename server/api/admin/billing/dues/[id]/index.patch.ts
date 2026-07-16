@@ -1,5 +1,9 @@
 import { createApiSuccess, readJsonBody } from '~/server/utils/api'
 import { requireRole } from '~/server/utils/auth'
+import {
+  getActiveCamPaymentArrangementsForDueDate,
+  getArrangementLateFeeStartsOn,
+} from '~/server/utils/cam-payment-arrangements'
 import { getDatabasePool } from '~/server/utils/database'
 import { AppError } from '~/server/utils/errors'
 import {
@@ -28,6 +32,8 @@ type DueEditRow = {
   flat_number: string
   block_name: string
   due_date: string
+  late_fee_starts_on: string | null
+  cam_payment_arrangement_id: string | null
   base_amount: string
   late_fee_amount: string
   paid_amount: string
@@ -87,6 +93,8 @@ export default defineEventHandler(async (event) => {
           f.flat_number,
           b.name as block_name,
           md.due_date::text,
+          md.late_fee_starts_on::text,
+          md.cam_payment_arrangement_id::text,
           md.base_amount::text,
           md.late_fee_amount::text,
           md.paid_amount::text,
@@ -144,9 +152,21 @@ export default defineEventHandler(async (event) => {
     const nextBaseAmount = roundMoney(body.baseAmount ?? previousBaseAmount)
     const paidAmount = Number(due.paid_amount)
     const waivedAmount = Number(due.waived_amount)
+    const arrangementsByFlatId = due.billing_period_charge_type === 'CAM'
+      ? await getActiveCamPaymentArrangementsForDueDate(client, {
+          societyId: authMe.user.societyId,
+          flatIds: [due.flat_id],
+          dueDate: nextDueDate,
+        })
+      : new Map()
+    const arrangement = arrangementsByFlatId.get(due.flat_id)
+    const nextLateFeeStartsOn = arrangement
+      ? getArrangementLateFeeStartsOn(nextDueDate, arrangement.penalty_free_until_day)
+      : null
     const nextComputed = computeDueAmounts(
       {
         dueDate: nextDueDate,
+        lateFeeStartsOn: nextLateFeeStartsOn,
         baseAmount: nextBaseAmount,
         paidAmount,
         waivedAmount,
@@ -181,6 +201,8 @@ export default defineEventHandler(async (event) => {
           balance_amount = $6,
           status = $7::due_status,
           charge_breakdown = $8::jsonb,
+          cam_payment_arrangement_id = $9,
+          late_fee_starts_on = $10::date,
           updated_at = now()
         where id = $1
       `,
@@ -193,6 +215,8 @@ export default defineEventHandler(async (event) => {
         nextComputed.balanceAmount,
         nextComputed.status,
         JSON.stringify(nextChargeBreakdown),
+        arrangement?.id ?? null,
+        nextLateFeeStartsOn,
       ],
     )
 
@@ -210,6 +234,8 @@ export default defineEventHandler(async (event) => {
         totalAmount: Number(due.total_amount),
         balanceAmount: Number(due.balance_amount),
         status: due.status,
+        lateFeeStartsOn: due.late_fee_starts_on,
+        camPaymentArrangementId: due.cam_payment_arrangement_id,
       },
       afterState: {
         dueDate: nextDueDate,
@@ -218,6 +244,8 @@ export default defineEventHandler(async (event) => {
         totalAmount: nextComputed.totalAmount,
         balanceAmount: nextComputed.balanceAmount,
         status: nextComputed.status,
+        lateFeeStartsOn: nextLateFeeStartsOn,
+        camPaymentArrangementId: arrangement?.id ?? null,
         note: body.note ?? null,
       },
       metadata: {

@@ -1,6 +1,7 @@
 import { AppError } from '~/server/utils/errors'
 import { createApiSuccess, readJsonBody } from '~/server/utils/api'
 import { requireRole } from '~/server/utils/auth'
+import { getArrangementLateFeeStartsOn } from '~/server/utils/cam-payment-arrangements'
 import { getDatabasePool } from '~/server/utils/database'
 import { recomputeUserAccessForPairs } from '~/server/utils/qr-access'
 import {
@@ -42,6 +43,8 @@ type DueRow = {
   paid_amount: string
   waived_amount: string
   status: string
+  arrangement_id: string | null
+  penalty_free_until_day: number | null
 }
 
 type ChargeConfig = {
@@ -63,6 +66,8 @@ type DueUpdatePayload = {
   totalAmount: number
   balanceAmount: number
   status: string
+  arrangementId: string | null
+  lateFeeStartsOn: string | null
   chargeBreakdown: ChargeBreakdownItem[]
 }
 
@@ -259,10 +264,24 @@ export default defineEventHandler(async (event) => {
           md.base_amount::text,
           md.paid_amount::text,
           md.waived_amount::text,
-          md.status::text
+          md.status::text,
+          arrangement.id as arrangement_id,
+          arrangement.penalty_free_until_day
         from maintenance_dues md
         inner join flats f on f.id = md.flat_id
         inner join blocks b on b.id = f.block_id
+        left join lateral (
+          select cpa.id, cpa.penalty_free_until_day
+          from cam_payment_arrangements cpa
+          where cpa.society_id = md.society_id
+            and cpa.flat_id = md.flat_id
+            and cpa.is_active = true
+            and cpa.revoked_at is null
+            and cpa.effective_from <= md.due_date
+            and (cpa.effective_until is null or cpa.effective_until >= md.due_date)
+          order by cpa.effective_from desc, cpa.created_at desc
+          limit 1
+        ) arrangement on true
         where md.society_id = $1
           and md.billing_period_id = $2
           and md.status not in ('WAIVED', 'CANCELLED')
@@ -374,9 +393,13 @@ export default defineEventHandler(async (event) => {
       const isFullyCovered = nextBaseAmount <= 0
       const paidAmount = Number(due.paid_amount)
       const waivedAmount = Number(due.waived_amount)
+      const lateFeeStartsOn = due.arrangement_id && due.penalty_free_until_day
+        ? getArrangementLateFeeStartsOn(due.due_date, due.penalty_free_until_day)
+        : null
       const computed = computeDueAmounts(
         {
           dueDate: due.due_date,
+          lateFeeStartsOn,
           baseAmount: nextBaseAmount,
           paidAmount,
           waivedAmount,
@@ -396,6 +419,8 @@ export default defineEventHandler(async (event) => {
         totalAmount: computed.totalAmount,
         balanceAmount: computed.balanceAmount,
         status: computed.status,
+        arrangementId: due.arrangement_id,
+        lateFeeStartsOn,
         chargeBreakdown: breakdownResult.breakdown,
       })
     }
@@ -410,6 +435,8 @@ export default defineEventHandler(async (event) => {
             total_amount = payload.total_amount,
             balance_amount = payload.balance_amount,
             status = payload.status::due_status,
+            cam_payment_arrangement_id = payload.arrangement_id,
+            late_fee_starts_on = payload.late_fee_starts_on,
             charge_breakdown = payload.charge_breakdown,
             updated_at = now()
           from jsonb_to_recordset($1::jsonb) as payload(
@@ -419,6 +446,8 @@ export default defineEventHandler(async (event) => {
             total_amount numeric,
             balance_amount numeric,
             status text,
+            arrangement_id uuid,
+            late_fee_starts_on date,
             charge_breakdown jsonb
           )
           where md.id = payload.due_id
@@ -432,6 +461,8 @@ export default defineEventHandler(async (event) => {
             total_amount: due.totalAmount,
             balance_amount: due.balanceAmount,
             status: due.status,
+            arrangement_id: due.arrangementId,
+            late_fee_starts_on: due.lateFeeStartsOn,
             charge_breakdown: due.chargeBreakdown,
           }))),
           authMe.user.societyId,

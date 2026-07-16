@@ -18,13 +18,14 @@ import {
   sendInviteEmailSafely,
   type PendingInviteEmail,
 } from '~/server/utils/invite-email'
-import { writeMasterAudit } from '~/server/utils/master-data'
+import { relationshipTypes, writeMasterAudit } from '~/server/utils/master-data'
 import { recomputeUserAccessForActiveBillingPeriods } from '~/server/utils/qr-access'
 import { resolveAuthUserForResidentLogin } from '~/server/utils/resident-login'
 
 const schema = z.object({
   search: z.string().trim().max(120).optional().default(''),
   flatId: z.string().uuid().optional(),
+  relationshipType: z.enum(relationshipTypes).optional(),
   isActive: z.enum(['true', 'false']).optional().default('true'),
   canLogin: z.enum(['true', 'false']).optional().default('false'),
   expiresInDays: z
@@ -284,6 +285,14 @@ export default defineEventHandler(async (event) => {
 
   if (body.flatId) {
     values.push(body.flatId)
+    const flatParam = values.length
+    let relationshipCondition = ''
+
+    if (body.relationshipType) {
+      values.push(body.relationshipType)
+      relationshipCondition = `and filter_fr.relationship_type = $${values.length}::relationship_type`
+    }
+
     where.push(`
       exists (
         select 1
@@ -291,7 +300,20 @@ export default defineEventHandler(async (event) => {
         inner join flats filter_f on filter_f.id = filter_fr.flat_id
         where filter_fr.user_id = u.id
           and filter_f.society_id = u.society_id
-          and filter_f.id = $${values.length}
+          and filter_f.id = $${flatParam}
+          ${relationshipCondition}
+      )
+    `)
+  } else if (body.relationshipType) {
+    values.push(body.relationshipType)
+    where.push(`
+      exists (
+        select 1
+        from flat_residents filter_fr
+        inner join flats filter_f on filter_f.id = filter_fr.flat_id
+        where filter_fr.user_id = u.id
+          and filter_f.society_id = u.society_id
+          and filter_fr.relationship_type = $${values.length}::relationship_type
       )
     `)
   }

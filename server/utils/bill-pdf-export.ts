@@ -132,7 +132,21 @@ const buildFilteredDueQuery = (
 
   if (filters.overdue === true || filters.overdue === 'true') {
     values.push(today)
-    where.push(`md.balance_amount::numeric > 0 and md.due_date < $${values.length}::date`)
+    where.push(`
+      md.balance_amount::numeric > 0
+      and coalesce(
+        md.late_fee_starts_on,
+        (
+          md.due_date
+          + (
+            (
+              coalesce(nullif(sp.settings->>'graceDays', '')::integer, 0)
+              + 1
+            ) * interval '1 day'
+          )
+        )::date
+      ) <= $${values.length}::date
+    `)
   }
 
   if (filters.advance === 'covered') {
@@ -150,6 +164,7 @@ const buildFilteredDueQuery = (
   const fromSql = `
       select md.id::text
       from maintenance_dues md
+      inner join society_profile sp on sp.id = md.society_id
       inner join billing_periods bp on bp.id = md.billing_period_id
       inner join flats f on f.id = md.flat_id
       inner join blocks b on b.id = f.block_id

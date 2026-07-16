@@ -15,6 +15,7 @@ type DueWaiveRow = {
   flat_number: string
   block_name: string
   due_date: string
+  late_fee_starts_on: string | null
   base_amount: string
   paid_amount: string
   waived_amount: string
@@ -49,6 +50,7 @@ export default defineEventHandler(async (event) => {
           f.flat_number,
           b.name as block_name,
           md.due_date::text,
+          md.late_fee_starts_on::text,
           md.base_amount::text,
           md.paid_amount::text,
           md.waived_amount::text,
@@ -87,6 +89,7 @@ export default defineEventHandler(async (event) => {
     const currentComputed = computeDueAmounts(
       {
         dueDate: due.due_date,
+        lateFeeStartsOn: due.late_fee_starts_on,
         baseAmount,
         paidAmount,
         waivedAmount: previousWaivedAmount,

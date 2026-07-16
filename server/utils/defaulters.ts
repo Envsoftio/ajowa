@@ -3,6 +3,7 @@ import {
   computeDueAmounts,
   getCamAdvanceAdjustedDueDate,
   getDaysOverdue,
+  getLateFeeStartDate,
   todayDate,
 } from '~/server/utils/billing'
 import { getDatabasePool } from '~/server/utils/database'
@@ -33,6 +34,7 @@ type DefaulterRow = {
   waived_amount: string
   paid_amount: string
   due_date: string
+  late_fee_starts_on: string | null
   charge_breakdown: ChargeBreakdownItem[] | null
   cam_advance_note: string | null
 }
@@ -297,6 +299,7 @@ export const listDefaulters = async ({
         md.waived_amount::text,
         md.paid_amount::text,
         md.due_date::text,
+        md.late_fee_starts_on::text,
         md.charge_breakdown,
         (
           select item->>'camAdvanceNote'
@@ -361,9 +364,16 @@ export const listDefaulters = async ({
       billingPeriodEndDate: row.billing_period_end_date,
       chargeBreakdown,
     })
+    const defaultLateFeeStartsOn = getLateFeeStartDate(effectiveDueDate, settings.graceDays)
+    const effectiveLateFeeStartsOn = row.late_fee_starts_on
+      ? row.late_fee_starts_on >= defaultLateFeeStartsOn
+        ? row.late_fee_starts_on
+        : defaultLateFeeStartsOn
+      : null
     const computed = computeDueAmounts(
       {
         dueDate: effectiveDueDate,
+        lateFeeStartsOn: effectiveLateFeeStartsOn,
         baseAmount: Number(row.base_amount),
         waivedAmount: Number(row.waived_amount),
         paidAmount: Number(row.paid_amount),
@@ -374,7 +384,12 @@ export const listDefaulters = async ({
       settings.lateFeePerDay,
     )
 
-    const daysOverdue = getDaysOverdue(effectiveDueDate, today)
+    const daysOverdue = getDaysOverdue(
+      effectiveDueDate,
+      today,
+      settings.graceDays,
+      effectiveLateFeeStartsOn,
+    )
     if (
       computed.balanceAmount <= 0 ||
       ['PAID', 'WAIVED', 'CANCELLED'].includes(computed.status)

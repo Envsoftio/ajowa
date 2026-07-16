@@ -4,7 +4,7 @@ import type { BlockSummary } from '~/types/domain'
 definePageMeta({
   layout: 'admin',
   middleware: ['protected'],
-  title: 'Blocks',
+  title: 'Towers',
 })
 
 const api = useApi()
@@ -117,7 +117,7 @@ const submit = async () => {
     toast.add({
       severity: 'success',
       summary: 'Saved',
-      detail: selectedBlock.value ? 'Block updated.' : 'Block created.',
+      detail: selectedBlock.value ? 'Tower updated.' : 'Tower created.',
       life: 10000,
     })
     closeDialog()
@@ -133,13 +133,13 @@ const submit = async () => {
     <!-- <div class="surface-grid">
       <section class="surface-card">
         <p class="eyebrow">Inventory</p>
-        <h3>{{ data?.data.total ?? 0 }} blocks</h3>
+        <h3>{{ data?.data.total ?? 0 }} towers</h3>
         <p>Wing structures used by flats, billing, and resident occupancy mapping.</p>
       </section>
       <section class="surface-card">
         <p class="eyebrow">Active</p>
         <h3>{{ data?.data.items.filter((item) => item.isActive).length ?? 0 }}</h3>
-        <p>Inactive blocks remain preserved for financial and occupancy history.</p>
+        <p>Inactive towers remain preserved for financial and occupancy history.</p>
       </section>
     </div> -->
 
@@ -147,11 +147,11 @@ const submit = async () => {
       <section class="list-page surface-card">
         <header class="list-page__header">
           <div>
-            <h1>Blocks and wings</h1>
-            <p>Manage block and wing master data.</p>
+            <h1>Towers and wings</h1>
+            <p>Manage tower and wing master data.</p>
           </div>
           <div class="list-page__exports">
-            <Button label="Create block" icon="pi pi-plus" @click="openCreateDialog" />
+            <Button label="Create tower" icon="pi pi-plus" @click="openCreateDialog" />
           </div>
         </header>
 
@@ -160,7 +160,7 @@ const submit = async () => {
             <InputIcon class="pi pi-search" />
             <InputText
               v-model="globalSearch"
-              placeholder="Search by block code or name"
+              placeholder="Search by tower code or name"
             />
           </IconField>
           <div class="list-page__filters">
@@ -186,7 +186,7 @@ const submit = async () => {
           removable-sort
         >
           <Column field="code" header="Code" sortable />
-          <Column field="name" header="Block" sortable />
+          <Column field="name" header="Tower" sortable />
           <Column field="description" header="Description" sortable>
             <template #body="{ data: row }">
               <span>{{ row.description || '—' }}</span>
@@ -216,7 +216,7 @@ const submit = async () => {
 
     <Dialog
       v-model:visible="displayDialog"
-      :header="selectedBlock ? 'Edit Block' : 'Create Block'"
+      :header="selectedBlock ? 'Edit Tower' : 'Create Tower'"
       modal
       class="p-dialog-custom"
       :style="{ width: '450px' }"
@@ -239,7 +239,7 @@ const submit = async () => {
             <Textarea v-model="form.description" rows="3" auto-resize />
           </label>
           <label>
-            <span>Flats in block</span>
+            <span>Flats in tower</span>
             <InputNumber :model-value="selectedBlockFlatCount" disabled fluid />
             <small class="table-muted">
               Flat count is auto-calculated from linked flats in <strong>Flats</strong>.
@@ -250,14 +250,14 @@ const submit = async () => {
             <InputNumber v-model="form.sortOrder" :min="0" fluid />
           </label>
           <label class="admin-toggle-card">
-            <span>Active block</span>
+            <span>Active tower</span>
             <ToggleSwitch v-model="form.isActive" />
           </label>
         </div>
 
         <div class="admin-inline-actions" style="justify-content: flex-end; margin-top: 2rem; gap: 0.75rem;">
           <Button type="button" label="Cancel" severity="secondary" outlined @click="closeDialog" />
-          <Button type="submit" :label="selectedBlock ? 'Update block' : 'Create block'" :loading="saving" />
+          <Button type="submit" :label="selectedBlock ? 'Update tower' : 'Create tower'" :loading="saving" />
         </div>
       </form>
     </Dialog>

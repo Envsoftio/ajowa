@@ -1,7 +1,7 @@
 import { createPaginatedSuccess } from '~/server/utils/api'
 import { requireRole } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
-import { parseListQuery } from '~/server/utils/master-data'
+import { parseListQuery, relationshipTypes } from '~/server/utils/master-data'
 import {
   mapResidentProfessionProfile,
   residentProfessionProfileSelectSql,
@@ -62,6 +62,7 @@ const sortColumns: Record<string, string> = {
   email: `coalesce(u.email::text, ${sourceEmailSql})`,
   role: 'u.role',
   canLogin: 'u.can_login',
+  isActive: 'u.is_active',
   kycStatus: 'u.kyc_status',
 }
 
@@ -105,9 +106,22 @@ export default defineEventHandler(async (event) => {
     where.push(`u.can_login = $${values.length}`)
   }
 
+  const relationshipTypeFilter = query.filters.relationshipType?.[0]
+  const hasRelationshipTypeFilter = relationshipTypes.includes(
+    relationshipTypeFilter as (typeof relationshipTypes)[number],
+  )
+
   const flatFilter = query.filters.flatId?.[0]
   if (flatFilter) {
     values.push(flatFilter)
+    const flatParam = values.length
+    let relationshipCondition = ''
+
+    if (hasRelationshipTypeFilter) {
+      values.push(relationshipTypeFilter)
+      relationshipCondition = `and filter_fr.relationship_type = $${values.length}::relationship_type`
+    }
+
     where.push(`
       exists (
         select 1
@@ -115,7 +129,20 @@ export default defineEventHandler(async (event) => {
         inner join flats filter_f on filter_f.id = filter_fr.flat_id
         where filter_fr.user_id = u.id
           and filter_f.society_id = u.society_id
-          and filter_f.id = $${values.length}
+          and filter_f.id = $${flatParam}
+          ${relationshipCondition}
+      )
+    `)
+  } else if (hasRelationshipTypeFilter) {
+    values.push(relationshipTypeFilter)
+    where.push(`
+      exists (
+        select 1
+        from flat_residents filter_fr
+        inner join flats filter_f on filter_f.id = filter_fr.flat_id
+        where filter_fr.user_id = u.id
+          and filter_f.society_id = u.society_id
+          and filter_fr.relationship_type = $${values.length}::relationship_type
       )
     `)
   }

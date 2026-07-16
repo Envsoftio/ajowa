@@ -1,5 +1,9 @@
 import { createApiSuccess, readJsonBody } from '~/server/utils/api'
 import { requireRole } from '~/server/utils/auth'
+import {
+  getActiveCamPaymentArrangementsForDueDate,
+  getArrangementLateFeeStartsOn,
+} from '~/server/utils/cam-payment-arrangements'
 import { getDatabasePool } from '~/server/utils/database'
 import { validatePayload, writeMasterAudit } from '~/server/utils/master-data'
 import {
@@ -53,6 +57,8 @@ type OverlappingCamDueRow = ExistingDueRow & {
 
 type DueInsertPayload = {
   flatId: string
+  camPaymentArrangementId: string | null
+  lateFeeStartsOn: string | null
   baseAmount: number
   totalAmount: number
   status: 'OPEN' | 'PAID'
@@ -280,6 +286,13 @@ export default defineEventHandler(async (event) => {
         )
       : { rows: [] }
     const overlappingCamByFlatId = new Map(overlappingCamResult.rows.map((row) => [row.flat_id, row]))
+    const arrangementsByFlatId = isCamPeriod
+      ? await getActiveCamPaymentArrangementsForDueDate(client, {
+          societyId: authMe.user.societyId,
+          flatIds: flatsResult.rows.map((flat) => flat.flatId),
+          dueDate: periodDueDate,
+        })
+      : new Map()
     const insertPayload: DueInsertPayload[] = []
 
     // Generate dues
@@ -289,6 +302,7 @@ export default defineEventHandler(async (event) => {
     let advanceProratedCount = 0
     let advanceProratedAmount = 0
     let overlapSkippedCount = 0
+    let paymentArrangementAppliedCount = 0
 
     for (const flat of flatsResult.rows) {
       if (overlappingCamByFlatId.has(flat.flatId)) {
@@ -366,9 +380,19 @@ export default defineEventHandler(async (event) => {
 
       const lateFee = 0
       const totalAmount = roundMoney(totalBase + lateFee)
+      const arrangement = arrangementsByFlatId.get(flat.flatId)
+      const lateFeeStartsOn = arrangement
+        ? getArrangementLateFeeStartsOn(periodDueDate, arrangement.penalty_free_until_day)
+        : null
+
+      if (arrangement) {
+        paymentArrangementAppliedCount += 1
+      }
 
       insertPayload.push({
         flatId: flat.flatId,
+        camPaymentArrangementId: arrangement?.id ?? null,
+        lateFeeStartsOn,
         baseAmount: totalBase,
         totalAmount,
         status: totalAmount <= 0 ? 'PAID' : 'OPEN',
@@ -381,6 +405,7 @@ export default defineEventHandler(async (event) => {
             `
             insert into maintenance_dues (
               society_id, billing_period_id, flat_id, due_date, generated_at,
+              cam_payment_arrangement_id, late_fee_starts_on,
               base_amount, late_fee_amount, waived_amount, paid_amount,
               total_amount, balance_amount, status, charge_breakdown
             )
@@ -390,6 +415,8 @@ export default defineEventHandler(async (event) => {
               payload.flat_id,
               $3::date,
               $4::date,
+              payload.cam_payment_arrangement_id,
+              payload.late_fee_starts_on,
               payload.base_amount,
               0,
               0,
@@ -400,6 +427,8 @@ export default defineEventHandler(async (event) => {
               payload.charge_breakdown
             from jsonb_to_recordset($5::jsonb) as payload(
               flat_id uuid,
+              cam_payment_arrangement_id uuid,
+              late_fee_starts_on date,
               base_amount numeric,
               total_amount numeric,
               status text,
@@ -415,6 +444,8 @@ export default defineEventHandler(async (event) => {
             generatedAtDate,
             JSON.stringify(insertPayload.map((payload) => ({
               flat_id: payload.flatId,
+              cam_payment_arrangement_id: payload.camPaymentArrangementId,
+              late_fee_starts_on: payload.lateFeeStartsOn,
               base_amount: payload.baseAmount,
               total_amount: payload.totalAmount,
               status: payload.status,
@@ -523,6 +554,7 @@ export default defineEventHandler(async (event) => {
           overlapSkippedCount,
           advanceAppliedCount,
           advanceAppliedAmount,
+          paymentArrangementAppliedCount,
           flatIds: body.flatIds,
           notificationEventCount: queued.eventCount,
           notificationAudienceCount: queued.audienceCount,
@@ -544,6 +576,7 @@ export default defineEventHandler(async (event) => {
       overlapSkippedCount,
       advanceAppliedCount,
       advanceAppliedAmount,
+      paymentArrangementAppliedCount,
       dueIds: generatedDueIds,
       generatedDues,
       skippedDues,

@@ -7,6 +7,10 @@ import {
   todayDate,
   type DueBulkDueDateUpdateInput,
 } from '~/server/utils/billing'
+import {
+  getActiveCamPaymentArrangementsForDueDate,
+  getArrangementLateFeeStartsOn,
+} from '~/server/utils/cam-payment-arrangements'
 import { camAdvanceCoverageExistsSql } from '~/server/utils/cam-advance'
 import { getDatabasePool } from '~/server/utils/database'
 import {
@@ -21,6 +25,7 @@ type BulkDueDateRow = {
   billing_period_id: string
   billing_period_label: string
   billing_period_start_date: string
+  billing_period_charge_type: string
   flat_id: string
   flat_number: string
   block_name: string
@@ -39,6 +44,8 @@ type BulkDueDateRow = {
 type BulkDueDateUpdatePayload = {
   id: string
   dueDate: string
+  arrangementId: string | null
+  lateFeeStartsOn: string | null
   lateFeeAmount: number
   totalAmount: number
   balanceAmount: number
@@ -63,6 +70,7 @@ const bulkDueDateRowsSql = (whereSql: string) => `
     md.billing_period_id,
     bp.label as billing_period_label,
     bp.start_date::text as billing_period_start_date,
+    bp.charge_type::text as billing_period_charge_type,
     md.flat_id,
     f.flat_number,
     b.name as block_name,
@@ -97,9 +105,17 @@ const buildFilterWhere = (
   societyId: string,
   filters: BulkDueDateFilters,
   today: string,
+  graceDays: number,
 ) => {
   const where: string[] = ['md.society_id = $1']
   const values: unknown[] = [societyId]
+  const defaultLateFeeStartOffset = Math.max(0, Math.trunc(graceDays)) + 1
+  const lateFeeStartSql = `
+    coalesce(
+      md.late_fee_starts_on,
+      (md.due_date + (${defaultLateFeeStartOffset} * interval '1 day'))::date
+    )
+  `
   const camAdvanceAdjustmentPredicate = `
     exists (
       select 1
@@ -161,7 +177,7 @@ const buildFilterWhere = (
 
   if (filters.overdue === 'true') {
     values.push(today)
-    where.push(`not ${camAdvanceCoveredSql} and md.balance_amount::numeric > 0 and md.due_date < $${values.length}::date`)
+    where.push(`not ${camAdvanceCoveredSql} and md.balance_amount::numeric > 0 and ${lateFeeStartSql} <= $${values.length}::date`)
   }
 
   if (filters.advance === 'covered') {
@@ -191,8 +207,9 @@ const getFilteredDueRows = async (
   societyId: string,
   filters: BulkDueDateFilters,
   today: string,
+  graceDays: number,
 ) => {
-  const filterWhere = buildFilterWhere(societyId, filters, today)
+  const filterWhere = buildFilterWhere(societyId, filters, today, graceDays)
 
   return client.query<BulkDueDateRow>(
     bulkDueDateRowsSql(filterWhere.whereSql),
@@ -222,7 +239,13 @@ export default defineEventHandler(async (event) => {
 
     const selectionSource = body.filters ? 'filters' : 'ids'
     const dueResult = body.filters
-      ? await getFilteredDueRows(client, authMe.user.societyId, body.filters, today)
+      ? await getFilteredDueRows(
+          client,
+          authMe.user.societyId,
+          body.filters,
+          today,
+          settings.graceDays,
+        )
       : await getSelectedDueRows(client, authMe.user.societyId, dueIds)
 
     const updatePayload: BulkDueDateUpdatePayload[] = []
@@ -243,6 +266,16 @@ export default defineEventHandler(async (event) => {
     const previousDueDateCounts: Record<string, number> = {}
     let accessRecomputed = 0
     let accessRevoked = 0
+    const camFlatIds = dueResult.rows
+      .filter((due) => due.billing_period_charge_type === 'CAM')
+      .map((due) => due.flat_id)
+    const arrangementsByFlatId = camFlatIds.length
+      ? await getActiveCamPaymentArrangementsForDueDate(client, {
+          societyId: authMe.user.societyId,
+          flatIds: camFlatIds,
+          dueDate: body.dueDate,
+        })
+      : new Map()
 
     for (const due of dueResult.rows) {
       incrementCount(previousDueDateCounts, due.due_date)
@@ -273,9 +306,16 @@ export default defineEventHandler(async (event) => {
       }
 
       const paidAmount = Number(due.paid_amount)
+      const arrangement = due.billing_period_charge_type === 'CAM'
+        ? arrangementsByFlatId.get(due.flat_id)
+        : null
+      const lateFeeStartsOn = arrangement
+        ? getArrangementLateFeeStartsOn(body.dueDate, arrangement.penalty_free_until_day)
+        : null
       const computed = computeDueAmounts(
         {
           dueDate: body.dueDate,
+          lateFeeStartsOn,
           baseAmount: Number(due.base_amount),
           paidAmount,
           waivedAmount: Number(due.waived_amount),
@@ -294,6 +334,8 @@ export default defineEventHandler(async (event) => {
       updatePayload.push({
         id: due.id,
         dueDate: body.dueDate,
+        arrangementId: arrangement?.id ?? null,
+        lateFeeStartsOn,
         lateFeeAmount: computed.lateFeeAmount,
         totalAmount: computed.totalAmount,
         balanceAmount: computed.balanceAmount,
@@ -307,6 +349,8 @@ export default defineEventHandler(async (event) => {
           update maintenance_dues md
           set
             due_date = payload.due_date,
+            cam_payment_arrangement_id = payload.arrangement_id,
+            late_fee_starts_on = payload.late_fee_starts_on,
             late_fee_amount = payload.late_fee_amount,
             total_amount = payload.total_amount,
             balance_amount = payload.balance_amount,
@@ -315,6 +359,8 @@ export default defineEventHandler(async (event) => {
           from jsonb_to_recordset($1::jsonb) as payload(
             id uuid,
             due_date date,
+            arrangement_id uuid,
+            late_fee_starts_on date,
             late_fee_amount numeric,
             total_amount numeric,
             balance_amount numeric,
@@ -327,6 +373,8 @@ export default defineEventHandler(async (event) => {
           JSON.stringify(updatePayload.map((due) => ({
             id: due.id,
             due_date: due.dueDate,
+            arrangement_id: due.arrangementId,
+            late_fee_starts_on: due.lateFeeStartsOn,
             late_fee_amount: due.lateFeeAmount,
             total_amount: due.totalAmount,
             balance_amount: due.balanceAmount,

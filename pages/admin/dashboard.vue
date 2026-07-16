@@ -14,14 +14,38 @@ type Paginated<T> = {
   pageSize?: number
 }
 
+type DashboardStats = {
+  blocks: number
+  activeBlocks: number
+  flats: number
+  activeFlats: number
+  vacantFlats: number
+  tenantedFlats: number
+  selfOccupiedFlats: number
+  tenantRelationships: number
+  ownerRelationships: number
+  residents: number
+  activeResidents: number
+  outstandingDues: number
+  overdueDues: number
+  unpaidOwners: number
+  unpaidFlats: number
+  outstandingBalance: number
+  riskPercent: number
+}
+
+type DashboardOverviewResponse = {
+  stats: DashboardStats
+  topDefaulters: DefaulterSummary[]
+}
+
 type DashboardResponse = {
+  stats: DashboardStats
   blocks: Paginated<BlockSummary>
   flats: Paginated<FlatSummary>
   residents: Paginated<ResidentSummary>
-  outstanding: Paginated<MaintenanceDue>
-  overdue: Paginated<MaintenanceDue>
   recentOutstanding: Paginated<MaintenanceDue>
-  defaulters: DefaulterSummary[]
+  topDefaulters: DefaulterSummary[]
 }
 
 const api = useApi()
@@ -49,7 +73,8 @@ const overdueLabel = (days: number) =>
 const statusBadge = (value: boolean) => (value ? 'success' : 'secondary')
 
 const loadDashboard = async () => {
-  const [blocks, flats, residents, outstanding, overdue, recentOutstanding, defaulters] = await Promise.all([
+  const [overview, blocks, flats, residents, recentOutstanding] = await Promise.all([
+    api<{ ok: true; data: DashboardOverviewResponse }>('/api/admin/dashboard'),
     api<{ ok: true; data: Paginated<BlockSummary> }>('/api/admin/blocks', {
       query: { page: 1, pageSize: 1000, sortBy: 'name', sortDirection: 'asc' },
     }),
@@ -60,25 +85,17 @@ const loadDashboard = async () => {
       query: { page: 1, pageSize: 1000, sortBy: 'fullName', sortDirection: 'asc' },
     }),
     api<{ ok: true; data: Paginated<MaintenanceDue> }>('/api/admin/billing/dues', {
-      query: { page: 1, pageSize: 1, balance: 'outstanding' },
-    }),
-    api<{ ok: true; data: Paginated<MaintenanceDue> }>('/api/admin/billing/dues', {
-      query: { page: 1, pageSize: 1, overdue: 'true' },
-    }),
-    api<{ ok: true; data: Paginated<MaintenanceDue> }>('/api/admin/billing/dues', {
       query: { page: 1, pageSize: 8, balance: 'outstanding', sortBy: 'dueDate', sortDirection: 'desc' },
     }),
-    api<{ ok: true; data: DefaulterSummary[] }>('/api/admin/billing/defaulters'),
   ])
 
   return {
+    stats: overview.data.stats,
     blocks: blocks.data,
     flats: flats.data,
     residents: residents.data,
-    outstanding: outstanding.data,
-    overdue: overdue.data,
     recentOutstanding: recentOutstanding.data,
-    defaulters: defaulters.data,
+    topDefaulters: overview.data.topDefaulters,
   } as DashboardResponse
 }
 
@@ -86,51 +103,62 @@ const { data: dashboardData, pending, refresh } = await useAsyncData('admin-dash
 
 const dashboard = computed(() => dashboardData.value)
 
+const emptyStats: DashboardStats = {
+  blocks: 0,
+  activeBlocks: 0,
+  flats: 0,
+  activeFlats: 0,
+  vacantFlats: 0,
+  tenantedFlats: 0,
+  selfOccupiedFlats: 0,
+  tenantRelationships: 0,
+  ownerRelationships: 0,
+  residents: 0,
+  activeResidents: 0,
+  outstandingDues: 0,
+  overdueDues: 0,
+  unpaidOwners: 0,
+  unpaidFlats: 0,
+  outstandingBalance: 0,
+  riskPercent: 0,
+}
+
 const summary = computed(() => {
   const model = dashboard.value
-  if (!model) {
-    return {
-      blocks: 0,
-      flats: 0,
-      residents: 0,
-      outstandingDues: 0,
-      overdueDues: 0,
-      defaulterCount: 0,
-      outstandingBalance: 0,
-      riskPercent: 0,
-    }
-  }
 
-  const outstandingBalance = model.defaulters.reduce((sum, row) => sum + row.totalBalance, 0)
-  const riskPercent = model.outstanding.total > 0 ? Math.round((model.overdue.total / model.outstanding.total) * 100) : 0
-
-  return {
-    blocks: model.blocks.total,
-    flats: model.flats.total,
-    residents: model.residents.total,
-    outstandingDues: model.outstanding.total,
-    overdueDues: model.overdue.total,
-    defaulterCount: model.defaulters.length,
-    outstandingBalance,
-    riskPercent,
-  }
+  return model?.stats ?? emptyStats
 })
 
 const kpiCards = computed(() => [
   {
-    title: 'Blocks',
+    title: 'Towers',
     value: formatNumber(summary.value.blocks),
-    note: `${(dashboard.value?.blocks.items ?? []).length} shown in active snapshot`,
+    note: `${formatNumber(summary.value.activeBlocks)} active towers`,
   },
   {
     title: 'Flats',
     value: formatNumber(summary.value.flats),
-    note: `${(dashboard.value?.flats.items ?? []).filter((flat) => flat.isActive).length} currently active`,
+    note: `${formatNumber(summary.value.activeFlats)} active flats`,
+  },
+  {
+    title: 'Vacant flats',
+    value: formatNumber(summary.value.vacantFlats),
+    note: `Of ${formatNumber(summary.value.activeFlats)} active flats`,
+  },
+  {
+    title: 'Tenanted flats',
+    value: formatNumber(summary.value.tenantedFlats),
+    note: `${formatNumber(summary.value.tenantRelationships)} active tenant records`,
+  },
+  {
+    title: 'Self occupied',
+    value: formatNumber(summary.value.selfOccupiedFlats),
+    note: `${formatNumber(summary.value.ownerRelationships)} active owner records`,
   },
   {
     title: 'Residents',
     value: formatNumber(summary.value.residents),
-    note: `${(dashboard.value?.residents.items ?? []).filter((resident) => resident.isActive).length} currently active`,
+    note: `${formatNumber(summary.value.activeResidents)} active residents`,
   },
   {
     title: 'Outstanding dues',
@@ -144,13 +172,13 @@ const kpiCards = computed(() => [
   },
   {
     title: 'Unpaid owners',
-    value: formatNumber(summary.value.defaulterCount),
-    note: formatMoney(summary.value.outstandingBalance),
+    value: formatNumber(summary.value.unpaidOwners),
+    note: `${formatNumber(summary.value.unpaidFlats)} flats · ${formatMoney(summary.value.outstandingBalance)}`,
     isAmount: true,
   },
 ])
 
-const topDefaulters = computed(() => (dashboard.value?.defaulters ?? []).slice(0, 5))
+const topDefaulters = computed(() => dashboard.value?.topDefaulters ?? [])
 
 const recentOutstanding = computed(() => (dashboard.value?.recentOutstanding?.items ?? []).slice(0, 5))
 const recentFlats = computed(() => (dashboard.value?.flats?.items ?? []).slice(0, 5))
@@ -178,7 +206,7 @@ const hasWelcomeName = computed(() => authStore.me?.user?.fullName || authStore.
 
     <div class="surface-grid dashboard-kpis">
       <template v-if="pending">
-        <section v-for="item in 6" :key="`kpi-skeleton-${item}`" class="surface-card">
+        <section v-for="item in 9" :key="`kpi-skeleton-${item}`" class="surface-card">
           <AppSkeletonState :lines="2" />
         </section>
       </template>
@@ -244,7 +272,7 @@ const hasWelcomeName = computed(() => authStore.me?.user?.fullName || authStore.
         <div class="dashboard-action-grid">
           <Button label="Residents" icon="pi pi-users" as="a" href="/admin/residents" outlined />
           <Button label="Flats" icon="pi pi-home" as="a" href="/admin/flats" outlined />
-          <Button label="Blocks" icon="pi pi-th-large" as="a" href="/admin/blocks" outlined />
+          <Button label="Towers" icon="pi pi-th-large" as="a" href="/admin/blocks" outlined />
           <Button label="Staff" icon="pi pi-id-card" as="a" href="/admin/staff" outlined />
           <Button label="Generate dues" icon="pi pi-calendar" as="a" href="/admin/billing/periods" outlined />
           <Button label="Record payment" icon="pi pi-credit-card" as="a" href="/admin/payments/new" severity="secondary" outlined />
@@ -285,7 +313,7 @@ const hasWelcomeName = computed(() => authStore.me?.user?.fullName || authStore.
       <section class="surface-card">
         <div class="dashboard-panel__header">
           <div>
-            <p class="eyebrow">Latest blocks</p>
+            <p class="eyebrow">Latest towers</p>
             <h2>Inventory sample</h2>
           </div>
         </div>
@@ -300,8 +328,8 @@ const hasWelcomeName = computed(() => authStore.me?.user?.fullName || authStore.
           <AppState
             v-if="recentBlocks.length === 0 && !pending"
             variant="empty"
-            title="No blocks available"
-            message="Configure blocks from your society setup to start management."
+            title="No towers available"
+            message="Configure towers from your society setup to start management."
           />
         </div>
       </section>

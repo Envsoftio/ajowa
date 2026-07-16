@@ -235,6 +235,7 @@ const roundAreaRateChargeAmount = (
 
 export type DueAmountInput = {
   dueDate: string
+  lateFeeStartsOn?: string | null
   baseAmount: number
   paidAmount: number
   waivedAmount: number
@@ -254,16 +255,37 @@ export type StoredDueAmountInput = DueAmountInput & {
   balanceAmount: number
 }
 
+const formatBillingDateInput = (date: Date) => date.toISOString().slice(0, 10)
+
+export const addBillingDays = (value: string, days: number) => {
+  const date = parseBillingDate(value)
+  date.setUTCDate(date.getUTCDate() + days)
+  return formatBillingDateInput(date)
+}
+
+export const getLateFeeStartDate = (
+  dueDate: string,
+  graceDays: number,
+  lateFeeStartsOn?: string | null,
+) => lateFeeStartsOn ?? addBillingDays(dueDate, Math.max(0, graceDays) + 1)
+
+export const getPenaltyFreeUntilDate = (
+  dueDate: string,
+  graceDays: number,
+  lateFeeStartsOn?: string | null,
+) => addBillingDays(getLateFeeStartDate(dueDate, graceDays, lateFeeStartsOn), -1)
+
 export const computeLateFee = (
   dueDate: string,
   today: string,
   graceDays: number,
   lateFeePerDay: number,
+  lateFeeStartsOn?: string | null,
 ): number => {
-  const due = new Date(dueDate)
-  const now = new Date(today)
-  const diffMs = now.getTime() - due.getTime()
-  const diffDays = Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24)) - graceDays)
+  const start = parseBillingDate(getLateFeeStartDate(dueDate, graceDays, lateFeeStartsOn))
+  const now = parseBillingDate(today)
+  const diffMs = now.getTime() - start.getTime()
+  const diffDays = Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24)) + 1)
   return Math.round(diffDays * lateFeePerDay * 100) / 100
 }
 
@@ -273,9 +295,13 @@ export const computeDueAmounts = (
   graceDays: number,
   lateFeePerDay: number,
 ): ComputedDueAmounts => {
-  const lateFeeAmount = due.paidAmount > 0
-    ? 0
-    : computeLateFee(due.dueDate, today, graceDays, lateFeePerDay)
+  const lateFeeAmount = computeLateFee(
+    due.dueDate,
+    today,
+    graceDays,
+    lateFeePerDay,
+    due.lateFeeStartsOn,
+  )
   const totalAmount = Math.max(
     0,
     Math.round((due.baseAmount + lateFeeAmount - due.waivedAmount) * 100) / 100,
@@ -365,11 +391,16 @@ export const getCamAdvanceAdjustedDueDate = (
   return maxBillingDate(input.dueDate, firstBillableSegment.startDate)
 }
 
-export const getDaysOverdue = (dueDate: string, today: string): number => {
-  const due = new Date(dueDate)
-  const now = new Date(today)
-  const diffMs = now.getTime() - due.getTime()
-  return Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24)))
+export const getDaysOverdue = (
+  dueDate: string,
+  today: string,
+  graceDays = 0,
+  lateFeeStartsOn?: string | null,
+): number => {
+  const lateFeeStart = parseBillingDate(getLateFeeStartDate(dueDate, graceDays, lateFeeStartsOn))
+  const now = parseBillingDate(today)
+  const diffMs = now.getTime() - lateFeeStart.getTime()
+  return Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24)) + 1)
 }
 
 export const mapRowToBillingPeriod = <
@@ -800,6 +831,8 @@ type MaintenanceBillDueRow = {
   period_start_date: string
   period_end_date: string
   due_date: string
+  late_fee_starts_on: string | null
+  cam_payment_arrangement_id: string | null
   flat_id: string
   flat_number: string
   block_name: string
@@ -834,6 +867,7 @@ type MaintenanceBillDueRow = {
 
 type PreviousDueRow = {
   due_date: string
+  late_fee_starts_on: string | null
   base_amount: string
   waived_amount: string
   paid_amount: string
@@ -1340,6 +1374,8 @@ export const getMaintenanceBillData = async (
         bp.start_date::text as period_start_date,
         bp.end_date::text as period_end_date,
         md.due_date::text,
+        md.late_fee_starts_on::text,
+        md.cam_payment_arrangement_id::text,
         md.flat_id,
         f.flat_number,
         b.name as block_name,
@@ -1451,6 +1487,7 @@ export const getMaintenanceBillData = async (
   const computedCurrentAmounts = resolveDueAmountsForDisplay(
     {
       dueDate: due.due_date,
+      lateFeeStartsOn: due.late_fee_starts_on,
       baseAmount: Number(due.base_amount),
       lateFeeAmount: Number(due.late_fee_amount),
       paidAmount: Number(due.paid_amount),
@@ -1476,6 +1513,7 @@ export const getMaintenanceBillData = async (
     `
       select
         md.due_date::text,
+        md.late_fee_starts_on::text,
         md.base_amount::text,
         md.waived_amount::text,
         md.paid_amount::text,
@@ -1497,6 +1535,7 @@ export const getMaintenanceBillData = async (
       const computed = computeDueAmounts(
         {
           dueDate: previousDue.due_date,
+          lateFeeStartsOn: previousDue.late_fee_starts_on,
           baseAmount: Number(previousDue.base_amount),
           paidAmount: Number(previousDue.paid_amount),
           waivedAmount: Number(previousDue.waived_amount),
@@ -1675,6 +1714,9 @@ export const generateMaintenanceBillPdf = async (
           ? `${formatBillPlainNumber(areaSqFt)} Sq Feet`
           : '',
       invoiceFlatNumber,
+      ...(due.late_fee_starts_on
+        ? [`Approved payment arrangement: no late fee through ${formatInvoiceDate(addBillingDays(due.late_fee_starts_on, -1))}`]
+        : []),
       ...(camAdvanceAdjustmentAmount > 0
         ? [
             `CAM advance paid: ${formatInvoiceCurrency(camAdvanceAdjustmentAmount)} deducted; remaining CAM dues: ${formatInvoiceCurrency(maintenanceAmount)}`,

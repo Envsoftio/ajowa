@@ -136,7 +136,7 @@ const billingPeriodOptions = computed(() => [
 ])
 
 const blockOptions = computed(() => [
-  { label: 'All blocks', value: '' },
+  { label: 'All towers', value: '' },
   ...(blocksData.value?.data.items ?? []).map((block) => ({
     label: block.name,
     value: block.id,
@@ -572,7 +572,7 @@ watch(filteredDefaulters, (rows) => {
           <span class="field-label">
             Search
             <AppHelpIcon
-              text="Find owners by name, email, mobile number, block, flat, or billing period."
+              text="Find owners by name, email, mobile number, tower, flat, or billing period."
             />
           </span>
           <IconField>
@@ -601,9 +601,9 @@ watch(filteredDefaulters, (rows) => {
           </label>
           <label>
             <span class="field-label">
-              Block
+              Tower
               <AppHelpIcon
-                text="Show unpaid dues for flats in one block."
+                text="Show unpaid dues for flats in one tower."
               />
             </span>
             <Select
@@ -611,7 +611,7 @@ watch(filteredDefaulters, (rows) => {
               :options="blockOptions"
               option-label="label"
               option-value="value"
-              placeholder="Block"
+              placeholder="Tower"
             />
           </label>
           <label>

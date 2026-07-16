@@ -68,6 +68,7 @@ const loadResidents = () =>
         isActive: query.value.filters.isActive?.[0],
         flatId: query.value.filters.flatId?.[0],
         professionId: query.value.filters.professionId?.[0],
+        relationshipType: query.value.filters.relationshipType?.[0],
       },
     },
   )
@@ -121,6 +122,13 @@ const professionOptions = computed(() =>
   })),
 )
 
+const relationshipTypeOptions = [
+  { label: 'All types', value: '' },
+  { label: 'Owner', value: 'OWNER' },
+  { label: 'Tenant', value: 'TENANT' },
+  { label: 'Family member', value: 'FAMILY_MEMBER' },
+]
+
 const openCreateDialog = () => {
   selectedResidentId.value = null
   displayDialog.value = true
@@ -144,9 +152,44 @@ const onResidentSaved = async () => {
 const buildBulkInvitePayload = () => ({
   search: query.value.search ?? '',
   flatId: flatFilter.value || undefined,
+  relationshipType: relationshipTypeFilter.value || undefined,
   isActive: activeFilter.value || 'true',
   canLogin: 'false',
 })
+
+const exportUrl = (format: 'pdf' | 'xlsx') => {
+  const params = new URLSearchParams()
+
+  if (query.value.search) {
+    params.set('search', query.value.search)
+  }
+
+  if (query.value.sortBy) {
+    params.set('sortBy', query.value.sortBy)
+  }
+
+  if (query.value.sortDirection) {
+    params.set('sortDirection', query.value.sortDirection)
+  }
+
+  for (const key of [
+    'canLogin',
+    'isActive',
+    'flatId',
+    'professionId',
+    'relationshipType',
+  ]) {
+    const value = query.value.filters[key]?.[0]
+
+    if (value) {
+      params.set(key, value)
+    }
+  }
+
+  params.set('format', format)
+
+  return `/api/admin/residents/export?${params.toString()}`
+}
 
 const formatBulkInvitePreview = (preview: BulkInvitePreviewResponse) => {
   const parts = [
@@ -336,6 +379,20 @@ const flatFilter = computed({
   },
 })
 
+const relationshipTypeFilter = computed({
+  get: () => query.value.filters.relationshipType?.[0] ?? '',
+  set: (val) => {
+    updateQuery({
+      ...query.value,
+      page: 1,
+      filters: {
+        ...query.value.filters,
+        relationshipType: val ? [val] : [],
+      },
+    })
+  },
+})
+
 const professionFilter = computed({
   get: () => query.value.filters.professionId?.[0] ?? '',
   set: (val) => {
@@ -371,6 +428,24 @@ const relationshipSeverity = (type: string) => {
             </p>
           </div>
           <div class="list-page__exports">
+            <AppDocumentLink
+              :href="exportUrl('pdf')"
+              viewer-title="Resident details PDF"
+              label="PDF"
+              icon="pi pi-file-pdf"
+              severity="secondary"
+              outlined
+            />
+            <Button
+              as="a"
+              :href="exportUrl('xlsx')"
+              label="Excel"
+              icon="pi pi-file-excel"
+              severity="secondary"
+              outlined
+              target="_blank"
+              rel="noopener"
+            />
             <Button
               label="Invite pending logins"
               icon="pi pi-send"
@@ -405,6 +480,13 @@ const relationshipSeverity = (type: string) => {
               placeholder="Flat"
               filter
               show-clear
+            />
+            <Select
+              v-model="relationshipTypeFilter"
+              :options="relationshipTypeOptions"
+              option-label="label"
+              option-value="value"
+              placeholder="Type"
             />
             <Select
               v-model="professionFilter"

@@ -261,6 +261,12 @@ const openBreakdown = (due: MaintenanceDue) => {
               <template #body="{ data: row }">
                 <strong>{{ row.billingPeriodLabel }}</strong>
                 <p class="table-muted">Due {{ formatDate(row.dueDate) }}</p>
+                <p
+                  v-if="row.penaltyFreeUntilDate && row.penaltyFreeUntilDate > row.dueDate"
+                  class="table-muted"
+                >
+                  No late fee through {{ formatDate(row.penaltyFreeUntilDate) }}
+                </p>
               </template>
             </Column>
             <Column header="Advance">
@@ -350,6 +356,9 @@ const openBreakdown = (due: MaintenanceDue) => {
                 <div>
                   <h3>{{ row.billingPeriodLabel }}</h3>
                   <p>Due {{ formatDate(row.dueDate) }}</p>
+                  <p v-if="row.penaltyFreeUntilDate && row.penaltyFreeUntilDate > row.dueDate">
+                    No late fee through {{ formatDate(row.penaltyFreeUntilDate) }}
+                  </p>
                 </div>
                 <span v-if="row.isCamAdvanceCovered" class="billing-advance-pill">
                   Covered

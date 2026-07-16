@@ -900,7 +900,25 @@ const buildDefaulterReport = async ({ societyId, filters, exportMode }: ReportQu
         md.total_amount::text as "totalAmount",
         md.paid_amount::text as "paidAmount",
         md.balance_amount::text as "balanceAmount",
-        greatest((current_date - md.due_date), 0)::text as "daysOverdue",
+        greatest(
+          (
+            current_date
+            - coalesce(
+              md.late_fee_starts_on,
+              (
+                md.due_date
+                + (
+                  (
+                    coalesce(nullif(sp.settings->>'graceDays', '')::integer, 0)
+                    + 1
+                  ) * interval '1 day'
+                )
+              )::date
+            )
+            + 1
+          ),
+          0
+        )::text as "daysOverdue",
         coalesce((
           select item->>'camAdvanceNote'
           from jsonb_array_elements(
@@ -913,6 +931,7 @@ const buildDefaulterReport = async ({ societyId, filters, exportMode }: ReportQu
           limit 1
         ), '') as "camAdvanceNote"
       from maintenance_dues md
+      join society_profile sp on sp.id = md.society_id
       join billing_periods bp on bp.id = md.billing_period_id
       join flats f on f.id = md.flat_id
       join blocks b on b.id = f.block_id

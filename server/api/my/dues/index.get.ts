@@ -1,7 +1,13 @@
 import { createApiSuccess } from '~/server/utils/api'
 import { requireActiveUser } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
-import { getCamAdvanceAdjustedDueDate, resolveDueAmountsForDisplay, todayDate } from '~/server/utils/billing'
+import {
+  getCamAdvanceAdjustedDueDate,
+  getLateFeeStartDate,
+  getPenaltyFreeUntilDate,
+  resolveDueAmountsForDisplay,
+  todayDate,
+} from '~/server/utils/billing'
 import { normalizeSocietySettings } from '~/server/utils/master-data'
 import { camAdvanceCoverageLateralSql } from '~/server/utils/cam-advance'
 import type { MaintenanceDue } from '~/types/domain'
@@ -24,6 +30,8 @@ type DueRow = {
   cam_advance_covered_from: string | null
   cam_advance_paid_until: string | null
   due_date: string
+  late_fee_starts_on: string | null
+  cam_payment_arrangement_id: string | null
   base_amount: string
   late_fee_amount: string
   waived_amount: string
@@ -79,6 +87,8 @@ export default defineEventHandler(async (event) => {
           coverage.covered_from::text as cam_advance_covered_from,
           coverage.covered_until::text as cam_advance_paid_until,
           md.due_date::text as due_date,
+          md.late_fee_starts_on::text as late_fee_starts_on,
+          md.cam_payment_arrangement_id::text as cam_payment_arrangement_id,
           md.base_amount::text as base_amount,
           md.late_fee_amount::text as late_fee_amount,
           md.waived_amount::text as waived_amount,
@@ -131,6 +141,8 @@ export default defineEventHandler(async (event) => {
           coverage.covered_from::text as cam_advance_covered_from,
           coverage.covered_until::text as cam_advance_paid_until,
           bp.due_date::text as due_date,
+          null::text as late_fee_starts_on,
+          null::text as cam_payment_arrangement_id,
           '0' as base_amount,
           '0' as late_fee_amount,
           '0' as waived_amount,
@@ -193,6 +205,12 @@ export default defineEventHandler(async (event) => {
       billingPeriodEndDate: row.billing_period_end_date,
       chargeBreakdown,
     })
+    const defaultLateFeeStartsOn = getLateFeeStartDate(effectiveDueDate, settings.graceDays)
+    const effectiveLateFeeStartsOn = row.late_fee_starts_on
+      ? row.late_fee_starts_on >= defaultLateFeeStartsOn
+        ? row.late_fee_starts_on
+        : defaultLateFeeStartsOn
+      : null
     const computed = isCoverageRow
       ? {
           lateFeeAmount: Number(row.late_fee_amount),
@@ -203,6 +221,7 @@ export default defineEventHandler(async (event) => {
       : resolveDueAmountsForDisplay(
           {
             dueDate: effectiveDueDate,
+            lateFeeStartsOn: effectiveLateFeeStartsOn,
             baseAmount,
             lateFeeAmount: Number(row.late_fee_amount),
             waivedAmount,
@@ -230,6 +249,11 @@ export default defineEventHandler(async (event) => {
       blockName: row.block_name,
       unitType: row.unit_type,
       dueDate: row.due_date,
+      lateFeeStartsOn: effectiveLateFeeStartsOn,
+      penaltyFreeUntilDate: isCoverageRow
+        ? null
+        : getPenaltyFreeUntilDate(effectiveDueDate, settings.graceDays, effectiveLateFeeStartsOn),
+      camPaymentArrangementId: row.cam_payment_arrangement_id,
       baseAmount,
       lateFeeAmount: computed.lateFeeAmount,
       waivedAmount,

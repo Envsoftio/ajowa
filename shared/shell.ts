@@ -143,7 +143,7 @@ export const shellNavigation: Record<AppShellType, AppNavGroup[]> = {
           to: '/admin/society',
           icon: 'pi pi-building',
         },
-        { label: 'Blocks', to: '/admin/blocks', icon: 'pi pi-th-large' },
+        { label: 'Towers', to: '/admin/blocks', icon: 'pi pi-th-large' },
         { label: 'Flats', to: '/admin/flats', icon: 'pi pi-home' },
         { label: 'Residents', to: '/admin/residents', icon: 'pi pi-users' },
         {
@@ -221,6 +221,11 @@ export const shellNavigation: Record<AppShellType, AppNavGroup[]> = {
           label: 'CAM Advance',
           to: '/admin/billing/cam-advance',
           icon: 'pi pi-calendar-clock',
+        },
+        {
+          label: 'CAM Arrangements',
+          to: '/admin/billing/cam-payment-arrangements',
+          icon: 'pi pi-calendar-plus',
         },
         {
           label: 'DG Set Charges',

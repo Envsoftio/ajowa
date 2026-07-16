@@ -1288,13 +1288,13 @@ watch(
         <label class="list-page__search">
           <span class="field-label">
             Search
-            <AppHelpIcon text="Find dues by flat number or block name." />
+            <AppHelpIcon text="Find dues by flat number or tower name." />
           </span>
           <IconField>
             <InputIcon class="pi pi-search" />
             <InputText
               v-model="query.search"
-              placeholder="Search by flat or block"
+              placeholder="Search by flat or tower"
             />
           </IconField>
         </label>
@@ -1422,6 +1422,12 @@ watch(
             <span>{{ row.billingPeriodLabel }}</span>
             <p class="table-muted">
               {{ billTypeLabel(row) }} · Due {{ formatDate(row.dueDate) }}
+            </p>
+            <p
+              v-if="row.penaltyFreeUntilDate && row.penaltyFreeUntilDate > row.dueDate"
+              class="table-muted"
+            >
+              No late fee through {{ formatDate(row.penaltyFreeUntilDate) }}
             </p>
           </template>
         </Column>
@@ -1571,6 +1577,9 @@ watch(
               <p>
                 {{ due.billingPeriodLabel }} · {{ billTypeLabel(due) }} · Due
                 {{ formatDate(due.dueDate) }}
+              </p>
+              <p v-if="due.penaltyFreeUntilDate && due.penaltyFreeUntilDate > due.dueDate">
+                No late fee through {{ formatDate(due.penaltyFreeUntilDate) }}
               </p>
             </div>
             <div>

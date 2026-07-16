@@ -225,16 +225,16 @@ const deleteFlat = async (flat: FlatSummary) => {
             <InputIcon class="pi pi-search" />
             <InputText
               v-model="globalSearch"
-              placeholder="Search by flat, block, or unit type"
+              placeholder="Search by flat, tower, or unit type"
             />
           </IconField>
           <div class="list-page__filters">
             <Select
               v-model="blockFilter"
-              :options="[{ label: 'All blocks', value: '' }, ...blockOptions]"
+              :options="[{ label: 'All towers', value: '' }, ...blockOptions]"
               option-label="label"
               option-value="value"
-              placeholder="Select Block"
+              placeholder="Select Tower"
             />
             <Select
               v-model="occupancyFilter"
@@ -273,7 +273,7 @@ const deleteFlat = async (flat: FlatSummary) => {
           removable-sort
         >
           <Column field="flatNumber" header="Flat" sortable />
-          <Column field="blockName" header="Block" sortable />
+          <Column field="blockName" header="Tower" sortable />
           <Column field="floorLabel" header="Floor" sortable>
             <template #body="{ data: row }">
               <span>{{ row.floorLabel || '—' }}</span>
@@ -354,7 +354,7 @@ const deleteFlat = async (flat: FlatSummary) => {
       <form class="admin-form-layout" style="padding: 1.5rem 0 0;" @submit.prevent="submit">
         <div class="admin-form-grid">
           <label>
-            <span>Block</span>
+            <span>Tower</span>
             <Select v-model="form.blockId" :options="blockOptions" option-label="label" option-value="value" required />
           </label>
           <label>

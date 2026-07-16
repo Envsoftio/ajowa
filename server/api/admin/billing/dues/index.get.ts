@@ -7,7 +7,13 @@ import {
   normalizeSocietySettings,
   parseListQuery,
 } from '~/server/utils/master-data'
-import { getCamAdvanceAdjustedDueDate, resolveDueAmountsForDisplay, todayDate } from '~/server/utils/billing'
+import {
+  getCamAdvanceAdjustedDueDate,
+  getLateFeeStartDate,
+  getPenaltyFreeUntilDate,
+  resolveDueAmountsForDisplay,
+  todayDate,
+} from '~/server/utils/billing'
 import { camAdvanceCoverageLateralSql } from '~/server/utils/cam-advance'
 import { setEventHeader } from '~/server/utils/http-event'
 import type { ListQueryParams } from '~/types/api'
@@ -32,6 +38,8 @@ type DueRow = {
   cam_advance_covered_from: string | null
   cam_advance_paid_until: string | null
   due_date: string
+  late_fee_starts_on: string | null
+  cam_payment_arrangement_id: string | null
   base_amount: string
   late_fee_amount: string
   waived_amount: string
@@ -83,6 +91,8 @@ const combinedDuesSql = `
       coverage.covered_from::text as cam_advance_covered_from,
       coverage.covered_until::text as cam_advance_paid_until,
       md.due_date::text as due_date,
+      md.late_fee_starts_on::text as late_fee_starts_on,
+      md.cam_payment_arrangement_id::text as cam_payment_arrangement_id,
       md.base_amount::text as base_amount,
       md.late_fee_amount::text as late_fee_amount,
       md.waived_amount::text as waived_amount,
@@ -142,6 +152,8 @@ const combinedDuesSql = `
       coverage.covered_from::text as cam_advance_covered_from,
       coverage.covered_until::text as cam_advance_paid_until,
       bp.due_date::text as due_date,
+      null::text as late_fee_starts_on,
+      null::text as cam_payment_arrangement_id,
       '0' as base_amount,
       '0' as late_fee_amount,
       '0' as waived_amount,
@@ -211,13 +223,21 @@ const buildDueWhere = (
   societyId: string,
   query: ListQueryParams,
   today: string,
+  graceDays: number,
 ) => {
   const where: string[] = []
   const values: unknown[] = [societyId]
+  const defaultLateFeeStartOffset = Math.max(0, Math.trunc(graceDays)) + 1
+  const lateFeeStartSql = `
+    coalesce(
+      c.late_fee_starts_on::date,
+      (c.due_date::date + (${defaultLateFeeStartOffset} * interval '1 day'))::date
+    )
+  `
   const overduePredicate = (todayParam: string) => `
     c.row_kind = 'DUE'
     and c.balance_amount::numeric > 0
-    and c.due_date::date < ${todayParam}::date
+    and ${lateFeeStartSql} <= ${todayParam}::date
     and not exists (
       select 1
       from jsonb_array_elements(
@@ -370,6 +390,12 @@ const mapDueRows = (
       billingPeriodEndDate: row.billing_period_end_date,
       chargeBreakdown,
     })
+    const defaultLateFeeStartsOn = getLateFeeStartDate(effectiveDueDate, settings.graceDays)
+    const effectiveLateFeeStartsOn = row.late_fee_starts_on
+      ? row.late_fee_starts_on >= defaultLateFeeStartsOn
+        ? row.late_fee_starts_on
+        : defaultLateFeeStartsOn
+      : null
     const computed = isCoverageRow
       ? {
           lateFeeAmount: Number(row.late_fee_amount),
@@ -380,6 +406,7 @@ const mapDueRows = (
       : resolveDueAmountsForDisplay(
           {
             dueDate: effectiveDueDate,
+            lateFeeStartsOn: effectiveLateFeeStartsOn,
             baseAmount,
             lateFeeAmount: Number(row.late_fee_amount),
             waivedAmount,
@@ -407,6 +434,11 @@ const mapDueRows = (
       blockName: row.block_name,
       unitType: row.unit_type,
       dueDate: row.due_date,
+      lateFeeStartsOn: effectiveLateFeeStartsOn,
+      penaltyFreeUntilDate: isCoverageRow
+        ? null
+        : getPenaltyFreeUntilDate(effectiveDueDate, settings.graceDays, effectiveLateFeeStartsOn),
+      camPaymentArrangementId: row.cam_payment_arrangement_id,
       baseAmount,
       lateFeeAmount: computed.lateFeeAmount,
       waivedAmount,
@@ -500,6 +532,8 @@ const mapDueWorkbookRow = (due: MaintenanceDue) => ({
   'Period start': due.billingPeriodStartDate ?? '',
   'Period end': due.billingPeriodEndDate ?? '',
   'Due date': due.dueDate,
+  'Penalty-free until': due.penaltyFreeUntilDate ?? '',
+  'Late fee starts on': due.lateFeeStartsOn ?? '',
   'Base amount': due.baseAmount,
   'Late fee': due.lateFeeAmount,
   'Waived amount': due.waivedAmount,
@@ -595,12 +629,18 @@ export default defineEventHandler(async (event) => {
   const query = parseListQuery(event)
   const pool = getDatabasePool()
   const today = todayDate()
-  const { whereSql, values } = buildDueWhere(authMe.user.societyId, query, today)
-  const orderSql = buildDueOrderSql(query)
-  const settingsPromise = pool.query<{ settings: Record<string, unknown> }>(
+  const settingsResult = await pool.query<{ settings: Record<string, unknown> }>(
     `select settings from society_profile where id = $1 limit 1`,
     [authMe.user.societyId],
   )
+  const settings = normalizeSocietySettings(settingsResult.rows[0]?.settings)
+  const { whereSql, values } = buildDueWhere(
+    authMe.user.societyId,
+    query,
+    today,
+    settings.graceDays,
+  )
+  const orderSql = buildDueOrderSql(query)
   const countPromise = pool.query<{ count: string }>(
     `
       ${combinedDuesSql}
@@ -613,7 +653,7 @@ export default defineEventHandler(async (event) => {
 
   if (isExcelExportRequest(rawQuery)) {
     const exportValues = [...values, dueExcelExportLimit]
-    const [dataResult, countResult, settingsResult] = await Promise.all([
+    const [dataResult, countResult] = await Promise.all([
       pool.query<DueRow>(
         `
           ${combinedDuesSql}
@@ -626,9 +666,7 @@ export default defineEventHandler(async (event) => {
         exportValues,
       ),
       countPromise,
-      settingsPromise,
     ])
-    const settings = normalizeSocietySettings(settingsResult.rows[0]?.settings)
     const items = mapDueRows(dataResult.rows, settings, today)
     const total = Number(countResult.rows[0]?.count ?? 0)
 
@@ -647,7 +685,7 @@ export default defineEventHandler(async (event) => {
   }
 
   const dataValues = [...values, query.pageSize, (query.page - 1) * query.pageSize]
-  const [dataResult, countResult, settingsResult] = await Promise.all([
+  const [dataResult, countResult] = await Promise.all([
     pool.query<DueRow>(
       `
         ${combinedDuesSql}
@@ -661,9 +699,7 @@ export default defineEventHandler(async (event) => {
       dataValues,
     ),
     countPromise,
-    settingsPromise,
   ])
-  const settings = normalizeSocietySettings(settingsResult.rows[0]?.settings)
   const items = mapDueRows(dataResult.rows, settings, today)
 
   return createPaginatedSuccess(event, items, Number(countResult.rows[0]?.count ?? 0), query)

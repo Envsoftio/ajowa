@@ -112,6 +112,7 @@ type DueRow = {
   billing_period_label: string
   flat_id: string
   due_date: string
+  late_fee_starts_on: string | null
   base_amount: string
   late_fee_amount: string
   waived_amount: string
@@ -213,7 +214,11 @@ const formatReceiptDate = (value: string | null | undefined) =>
       })
     : '-'
 
-const getPaymentCreditedBalance = (due: DueRow) => {
+const getPaymentCreditedBalance = (due: DueRow & { computedBalance?: number }) => {
+  if (due.computedBalance != null) {
+    return Math.max(0, roundMoney(due.computedBalance))
+  }
+
   const principalAmount = Math.max(
     0,
     roundMoney(Number(due.base_amount) - Number(due.waived_amount)),
@@ -235,6 +240,7 @@ const buildAllocationLineAmounts = (
   const computed = computeDueAmounts(
     {
       dueDate: due.due_date,
+      lateFeeStartsOn: due.late_fee_starts_on,
       baseAmount: Number(due.base_amount),
       paidAmount: roundMoney(Number(due.paid_amount) + allocatedAmount),
       waivedAmount: Number(due.waived_amount),
@@ -358,6 +364,7 @@ const selectAllocatableDues = async (
         bp.label as billing_period_label,
         md.flat_id,
         md.due_date::text,
+        md.late_fee_starts_on::text,
         md.base_amount::text,
         md.late_fee_amount::text,
         md.waived_amount::text,
@@ -381,6 +388,7 @@ const selectAllocatableDues = async (
     const computed = computeDueAmounts(
       {
         dueDate: due.due_date,
+        lateFeeStartsOn: due.late_fee_starts_on,
         baseAmount: Number(due.base_amount),
         paidAmount: Number(due.paid_amount),
         waivedAmount: Number(due.waived_amount),
@@ -501,6 +509,7 @@ const refreshDueTotals = async (
         bp.label as billing_period_label,
         md.flat_id,
         md.due_date::text,
+        md.late_fee_starts_on::text,
         md.base_amount::text,
         md.late_fee_amount::text,
         md.waived_amount::text,
@@ -530,6 +539,7 @@ const refreshDueTotals = async (
   const computed = computeDueAmounts(
     {
       dueDate: due.due_date,
+      lateFeeStartsOn: due.late_fee_starts_on,
       baseAmount: Number(due.base_amount),
       paidAmount,
       waivedAmount: Number(due.waived_amount),

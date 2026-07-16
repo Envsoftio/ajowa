@@ -144,7 +144,7 @@ const displayRelationshipNote = (note: string | null | undefined) => {
 
         <div class="flat-fact-grid">
           <div>
-            <span>Block</span>
+            <span>Tower</span>
             <strong>{{ flat.blockName }}</strong>
           </div>
           <div>
