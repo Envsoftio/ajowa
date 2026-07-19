@@ -412,20 +412,28 @@ const summary = computed(() => {
             />
           </label>
           <label class="admin-form-grid__full">
-            <span class="field-label">Late-fee-free through (day of due month) <span class="required-marker">*</span></span>
+            <span class="field-label">Last day to pay without a late fee <span class="required-marker">*</span></span>
             <InputNumber v-model="form.penaltyFreeUntilDay" :min="1" :max="31" fluid />
             <small class="field-help">
-              For each CAM due covered below, no late fee is charged through this calendar day. Late fees start the following day.
+              Enter a day of the month. The normal CAM due date remains the 10th; this arrangement only extends the fee-free payment period.
+            </small>
+          </label>
+          <Message severity="info" :closable="false" class="admin-form-grid__full">
+            <strong>Example:</strong> If you enter 26 and cover CAM dues from 10 Jul 2026 through 10 Sep 2026, the July, August, and September CAM dues can each be paid through the 26th of their month without a late fee. Late fees start on the 27th.
+          </Message>
+          <label>
+            <span class="field-label">First monthly CAM due covered <span class="required-marker">*</span></span>
+            <InputText v-model="form.effectiveFrom" type="date" required />
+            <small class="field-help">
+              Choose the 10th of the first month to include. For example, 10 Jul 2026 includes the July CAM due.
             </small>
           </label>
           <label>
-            <span class="field-label">Apply to CAM dues due from <span class="required-marker">*</span></span>
-            <InputText v-model="form.effectiveFrom" type="date" required />
-          </label>
-          <label>
-            <span class="field-label">Apply to CAM dues due until</span>
+            <span class="field-label">Last monthly CAM due covered (optional)</span>
             <InputText v-model="form.effectiveUntil" type="date" />
-            <small class="field-help">Leave blank to keep the arrangement open-ended.</small>
+            <small class="field-help">
+              Choose the 10th of the final month to include. Leave blank to include every future CAM month.
+            </small>
           </label>
           <label class="admin-form-grid__full">
             <span class="field-label">Reason <span class="required-marker">*</span></span>
@@ -436,10 +444,10 @@ const summary = computed(() => {
             <InputText v-model="form.reference" placeholder="Committee minutes, email, or note number" />
           </label>
           <label class="admin-toggle-card admin-form-grid__full">
-            <span>
-              <strong>Active</strong>
-              <small>Inactive records will not affect CAM dues.</small>
-            </span>
+            <span class="field-label">Apply this arrangement</span>
+            <small class="field-help">
+              On: CAM dues in the date range above use this late-fee arrangement. Off: normal late-fee rules apply, and this record is kept for history.
+            </small>
             <ToggleSwitch v-model="form.isActive" />
           </label>
         </div>
