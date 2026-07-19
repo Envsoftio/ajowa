@@ -411,17 +411,21 @@ const summary = computed(() => {
               required
             />
           </label>
-          <label>
-            <span class="field-label">No late fee through day <span class="required-marker">*</span></span>
-            <InputNumber v-model="form.penaltyFreeUntilDay" :min="1" :max="31" suffix=" day" fluid />
+          <label class="admin-form-grid__full">
+            <span class="field-label">Late-fee-free through (day of due month) <span class="required-marker">*</span></span>
+            <InputNumber v-model="form.penaltyFreeUntilDay" :min="1" :max="31" fluid />
+            <small class="field-help">
+              For each CAM due covered below, no late fee is charged through this calendar day. Late fees start the following day.
+            </small>
           </label>
           <label>
-            <span class="field-label">Effective from <span class="required-marker">*</span></span>
+            <span class="field-label">Apply to CAM dues due from <span class="required-marker">*</span></span>
             <InputText v-model="form.effectiveFrom" type="date" required />
           </label>
           <label>
-            <span class="field-label">Effective until</span>
+            <span class="field-label">Apply to CAM dues due until</span>
             <InputText v-model="form.effectiveUntil" type="date" />
+            <small class="field-help">Leave blank to keep the arrangement open-ended.</small>
           </label>
           <label class="admin-form-grid__full">
             <span class="field-label">Reason <span class="required-marker">*</span></span>
