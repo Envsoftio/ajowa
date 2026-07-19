@@ -397,50 +397,52 @@ const summary = computed(() => {
       :header="editingArrangement ? 'Edit arrangement' : 'Add arrangement'"
       :style="{ width: 'min(94vw, 720px)' }"
     >
-      <form class="form-grid" @submit.prevent="saveArrangement">
-        <label>
-          <span class="field-label">Flat <span class="required-marker">*</span></span>
-          <Select
-            v-model="form.flatId"
-            :options="flatOptions"
-            option-label="label"
-            option-value="value"
-            filter
-            placeholder="Choose flat"
-            required
-          />
-        </label>
-        <label>
-          <span class="field-label">No late fee through day <span class="required-marker">*</span></span>
-          <InputNumber v-model="form.penaltyFreeUntilDay" :min="1" :max="31" suffix=" day" fluid />
-        </label>
-        <label>
-          <span class="field-label">Effective from <span class="required-marker">*</span></span>
-          <InputText v-model="form.effectiveFrom" type="date" required />
-        </label>
-        <label>
-          <span class="field-label">Effective until</span>
-          <InputText v-model="form.effectiveUntil" type="date" />
-        </label>
-        <label class="form-grid__wide">
-          <span class="field-label">Reason <span class="required-marker">*</span></span>
-          <Textarea v-model="form.reason" rows="3" auto-resize required />
-        </label>
-        <label class="form-grid__wide">
-          <span class="field-label">Approval reference</span>
-          <InputText v-model="form.reference" placeholder="Committee minutes, email, or note number" />
-        </label>
-        <label class="toggle-row form-grid__wide">
-          <span>
-            <strong>Active</strong>
-            <small>Inactive records will not affect CAM dues.</small>
-          </span>
-          <ToggleSwitch v-model="form.isActive" />
-        </label>
-        <footer class="dialog-actions form-grid__wide">
+      <form class="admin-form-layout" @submit.prevent="saveArrangement">
+        <div class="admin-form-grid">
+          <label class="admin-form-grid__full">
+            <span class="field-label">Flat <span class="required-marker">*</span></span>
+            <Select
+              v-model="form.flatId"
+              :options="flatOptions"
+              option-label="label"
+              option-value="value"
+              filter
+              placeholder="Choose flat"
+              required
+            />
+          </label>
+          <label>
+            <span class="field-label">No late fee through day <span class="required-marker">*</span></span>
+            <InputNumber v-model="form.penaltyFreeUntilDay" :min="1" :max="31" suffix=" day" fluid />
+          </label>
+          <label>
+            <span class="field-label">Effective from <span class="required-marker">*</span></span>
+            <InputText v-model="form.effectiveFrom" type="date" required />
+          </label>
+          <label>
+            <span class="field-label">Effective until</span>
+            <InputText v-model="form.effectiveUntil" type="date" />
+          </label>
+          <label class="admin-form-grid__full">
+            <span class="field-label">Reason <span class="required-marker">*</span></span>
+            <Textarea v-model="form.reason" rows="3" auto-resize required />
+          </label>
+          <label class="admin-form-grid__full">
+            <span class="field-label">Approval reference</span>
+            <InputText v-model="form.reference" placeholder="Committee minutes, email, or note number" />
+          </label>
+          <label class="admin-toggle-card admin-form-grid__full">
+            <span>
+              <strong>Active</strong>
+              <small>Inactive records will not affect CAM dues.</small>
+            </span>
+            <ToggleSwitch v-model="form.isActive" />
+          </label>
+        </div>
+        <div class="admin-inline-actions dialog-actions">
           <Button type="button" label="Cancel" severity="secondary" outlined @click="dialogVisible = false" />
           <Button type="submit" label="Save arrangement" icon="pi pi-save" :loading="saving" :disabled="!canManageBilling" />
-        </footer>
+        </div>
       </form>
     </Dialog>
   </div>
