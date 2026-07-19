@@ -125,9 +125,46 @@ const form = reactive({
 
 const dialogVisible = ref(false)
 const saving = ref(false)
+const validationAttempted = ref(false)
 const editingArrangement = computed(() => Boolean(form.id))
 
+type ArrangementFormField =
+  | 'flatId'
+  | 'penaltyFreeUntilDay'
+  | 'effectiveFrom'
+  | 'effectiveUntil'
+  | 'reason'
+  | 'reference'
+
+const formErrors = computed<Partial<Record<ArrangementFormField, string>>>(() => {
+  const errors: Partial<Record<ArrangementFormField, string>> = {}
+
+  if (!form.flatId) errors.flatId = 'Flat is required.'
+  if (!Number.isInteger(form.penaltyFreeUntilDay) || form.penaltyFreeUntilDay < 1 || form.penaltyFreeUntilDay > 31) {
+    errors.penaltyFreeUntilDay = 'Enter a day from 1 to 31.'
+  }
+  if (!form.effectiveFrom) errors.effectiveFrom = 'First monthly CAM due is required.'
+  if (form.effectiveUntil && form.effectiveFrom && form.effectiveUntil < form.effectiveFrom) {
+    errors.effectiveUntil = 'Last monthly CAM due cannot be before the first one.'
+  }
+
+  const reason = form.reason.trim()
+  if (!reason) errors.reason = 'Reason is required.'
+  else if (reason.length < 2) errors.reason = 'Reason must contain at least 2 characters.'
+  else if (reason.length > 500) errors.reason = 'Reason cannot exceed 500 characters.'
+
+  if (form.reference.trim().length > 200) {
+    errors.reference = 'Approval reference cannot exceed 200 characters.'
+  }
+
+  return errors
+})
+
+const formFieldError = (field: ArrangementFormField) =>
+  validationAttempted.value ? formErrors.value[field] ?? '' : ''
+
 const resetForm = () => {
+  validationAttempted.value = false
   form.id = ''
   form.flatId = ''
   form.penaltyFreeUntilDay = 26
@@ -144,6 +181,7 @@ const openCreateDialog = () => {
 }
 
 const editArrangement = (arrangement: CamPaymentArrangement) => {
+  validationAttempted.value = false
   form.id = arrangement.id
   form.flatId = arrangement.flatId
   form.penaltyFreeUntilDay = arrangement.penaltyFreeUntilDay
@@ -156,7 +194,19 @@ const editArrangement = (arrangement: CamPaymentArrangement) => {
 }
 
 const saveArrangement = async () => {
-  if (!canManageBilling.value || !form.flatId || !form.reason.trim()) return
+  if (!canManageBilling.value) return
+
+  validationAttempted.value = true
+  if (Object.keys(formErrors.value).length > 0) {
+    toast.add({
+      severity: 'warn',
+      summary: 'Complete required fields',
+      detail: 'Check the highlighted fields before saving the arrangement.',
+      life: 5000,
+    })
+    return
+  }
+
   saving.value = true
 
   try {
@@ -399,6 +449,9 @@ const summary = computed(() => {
     >
       <form class="admin-form-layout" @submit.prevent="saveArrangement">
         <div class="admin-form-grid">
+          <small class="field-help admin-form-grid__full">
+            Fields marked <span class="required-marker">*</span> are required.
+          </small>
           <label class="admin-form-grid__full">
             <span class="field-label">Flat <span class="required-marker">*</span></span>
             <Select
@@ -409,13 +462,25 @@ const summary = computed(() => {
               filter
               placeholder="Choose flat"
               required
+              :invalid="Boolean(formFieldError('flatId'))"
             />
+            <small v-if="formFieldError('flatId')" class="field-error">{{ formFieldError('flatId') }}</small>
           </label>
           <label class="admin-form-grid__full">
             <span class="field-label">Last day to pay without a late fee <span class="required-marker">*</span></span>
-            <InputNumber v-model="form.penaltyFreeUntilDay" :min="1" :max="31" fluid />
+            <InputNumber
+              v-model="form.penaltyFreeUntilDay"
+              :min="1"
+              :max="31"
+              required
+              fluid
+              :invalid="Boolean(formFieldError('penaltyFreeUntilDay'))"
+            />
             <small class="field-help">
               Enter a day of the month. The normal CAM due date remains the 10th; this arrangement only extends the fee-free payment period.
+            </small>
+            <small v-if="formFieldError('penaltyFreeUntilDay')" class="field-error">
+              {{ formFieldError('penaltyFreeUntilDay') }}
             </small>
           </label>
           <Message severity="info" :closable="false" class="admin-form-grid__full">
@@ -423,25 +488,56 @@ const summary = computed(() => {
           </Message>
           <label>
             <span class="field-label">First monthly CAM due covered <span class="required-marker">*</span></span>
-            <InputText v-model="form.effectiveFrom" type="date" required />
+            <InputText
+              v-model="form.effectiveFrom"
+              type="date"
+              required
+              :invalid="Boolean(formFieldError('effectiveFrom'))"
+            />
             <small class="field-help">
               Choose the 10th of the first month to include. For example, 10 Jul 2026 includes the July CAM due.
+            </small>
+            <small v-if="formFieldError('effectiveFrom')" class="field-error">
+              {{ formFieldError('effectiveFrom') }}
             </small>
           </label>
           <label>
             <span class="field-label">Last monthly CAM due covered (optional)</span>
-            <InputText v-model="form.effectiveUntil" type="date" />
+            <InputText
+              v-model="form.effectiveUntil"
+              type="date"
+              :invalid="Boolean(formFieldError('effectiveUntil'))"
+            />
             <small class="field-help">
               Choose the 10th of the final month to include. Leave blank to include every future CAM month.
+            </small>
+            <small v-if="formFieldError('effectiveUntil')" class="field-error">
+              {{ formFieldError('effectiveUntil') }}
             </small>
           </label>
           <label class="admin-form-grid__full">
             <span class="field-label">Reason <span class="required-marker">*</span></span>
-            <Textarea v-model="form.reason" rows="3" auto-resize required />
+            <Textarea
+              v-model="form.reason"
+              rows="3"
+              auto-resize
+              required
+              maxlength="500"
+              :invalid="Boolean(formFieldError('reason'))"
+            />
+            <small v-if="formFieldError('reason')" class="field-error">{{ formFieldError('reason') }}</small>
           </label>
           <label class="admin-form-grid__full">
-            <span class="field-label">Approval reference</span>
-            <InputText v-model="form.reference" placeholder="Committee minutes, email, or note number" />
+            <span class="field-label">Approval reference (optional)</span>
+            <InputText
+              v-model="form.reference"
+              maxlength="200"
+              placeholder="Committee minutes, email, or note number"
+              :invalid="Boolean(formFieldError('reference'))"
+            />
+            <small v-if="formFieldError('reference')" class="field-error">
+              {{ formFieldError('reference') }}
+            </small>
           </label>
           <label class="admin-toggle-card admin-form-grid__full">
             <span class="field-label">Apply this arrangement</span>
