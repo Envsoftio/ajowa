@@ -12,7 +12,11 @@ import {
   type NotificationChannel,
   type NotificationUser,
 } from './notifications'
-import { createStorageObjectKey, downloadPrivateFile, uploadPrivateFile } from './storage'
+import {
+  createStorageObjectKey,
+  downloadPrivateFile,
+  uploadPrivateFile,
+} from './storage'
 import type { AuthMe } from '~/types/auth'
 import type {
   ServiceRequestAttachment,
@@ -30,12 +34,10 @@ import type {
 import {
   activeTicketStatuses,
   closedTicketStatuses,
-  servicePriorities,
   serviceRequestStatuses,
 } from '~/shared/service-requests'
+import type { serviceRequestCreateSchema } from '~/shared/service-request-validation'
 
-const serviceLocationTypes = ['FLAT', 'COMMON_AREA', 'SOCIETY_ASSET'] as const
-const serviceSources = ['RESIDENT_REQUEST', 'ADMIN_CREATED', 'COMMON_AREA_REPORT', 'STAFF_REPORTED'] as const
 const commentVisibilities = ['INTERNAL_NOTE', 'RESIDENT_VISIBLE'] as const
 const immediateServiceRequestNotificationChannel: NotificationChannel = 'IN_APP'
 const immediateServiceRequestNotificationLimit = 25
@@ -166,35 +168,28 @@ type ManagerTicketNotificationRow = TicketNotificationRow & {
 }
 
 export const serviceDepartmentSchema = z.object({
-  code: z.string().trim().min(2).max(40).transform((value) => value.toUpperCase().replace(/\s+/g, '_')),
+  code: z
+    .string()
+    .trim()
+    .min(2)
+    .max(40)
+    .transform((value) => value.toUpperCase().replace(/\s+/g, '_')),
   name: z.string().trim().min(2).max(120),
   description: z.string().trim().max(300).nullable().optional(),
   isActive: z.boolean().default(true),
   allowsQueueVisibility: z.boolean().default(true),
-  staffAssignments: z.array(z.object({
-    userId: z.string().uuid(),
-    isPrimary: z.boolean().default(false),
-    isActive: z.boolean().default(true),
-  })).default([]),
+  staffAssignments: z
+    .array(
+      z.object({
+        userId: z.string().uuid(),
+        isPrimary: z.boolean().default(false),
+        isActive: z.boolean().default(true),
+      }),
+    )
+    .default([]),
 })
 
-export const serviceRequestCreateSchema = z.object({
-  idempotencyKey: z.string().trim().min(8).max(160).nullable().optional(),
-  requesterUserId: z.string().uuid().nullable().optional(),
-  flatId: z.string().uuid().nullable().optional(),
-  departmentId: z.string().uuid().nullable().optional(),
-  assigneeUserId: z.string().uuid().nullable().optional(),
-  category: z.string().trim().min(2).max(80),
-  title: z.string().trim().min(3).max(160),
-  description: z.string().trim().min(10).max(4000),
-  sourceType: z.enum(serviceSources).default('RESIDENT_REQUEST'),
-  locationType: z.enum(serviceLocationTypes),
-  areaName: z.string().trim().max(160).nullable().optional(),
-  assetReference: z.string().trim().max(160).nullable().optional(),
-  priority: z.enum(servicePriorities).default('MEDIUM'),
-  preferredVisitTime: z.string().trim().max(120).nullable().optional(),
-  emergencyConfirmed: z.boolean().default(false),
-})
+export { serviceRequestCreateSchema } from '~/shared/service-request-validation'
 
 export const serviceRequestAssignSchema = z.object({
   departmentId: z.string().uuid(),
@@ -217,17 +212,30 @@ export const serviceRequestAttachmentSchema = z.object({
   fileName: z.string().trim().min(1).max(240),
   filePath: z.string().trim().min(1).max(500),
   mimeType: z.string().trim().min(3).max(120),
-  sizeBytes: z.coerce.number().int().positive().max(10 * 1024 * 1024),
+  sizeBytes: z.coerce
+    .number()
+    .int()
+    .positive()
+    .max(10 * 1024 * 1024),
   checksum: z.string().trim().max(160).nullable().optional(),
 })
 
-const ticketAttachmentDownloadUrl = (scope: TicketScope, ticketId: string, attachmentId: string) => {
-  if (scope === 'admin') return `/api/admin/service-requests/${ticketId}/attachments/${attachmentId}/download`
-  if (scope === 'service') return `/api/service/tickets/${ticketId}/attachments/${attachmentId}/download`
+const ticketAttachmentDownloadUrl = (
+  scope: TicketScope,
+  ticketId: string,
+  attachmentId: string,
+) => {
+  if (scope === 'admin')
+    return `/api/admin/service-requests/${ticketId}/attachments/${attachmentId}/download`
+  if (scope === 'service')
+    return `/api/service/tickets/${ticketId}/attachments/${attachmentId}/download`
   return `/api/my/service-requests/${ticketId}/attachments/${attachmentId}/download`
 }
 
-const mapDepartment = (row: DepartmentRow, assignments: StaffAssignmentRow[] = []): ServiceDepartment => ({
+const mapDepartment = (
+  row: DepartmentRow,
+  assignments: StaffAssignmentRow[] = [],
+): ServiceDepartment => ({
   id: row.id,
   societyId: row.society_id,
   code: row.code,
@@ -349,7 +357,12 @@ const sortColumns: Record<string, string> = {
   title: 'sr.title',
 }
 
-const scopeWhere = (scope: TicketScope, authMe: AuthMe, values: unknown[], alias = 'sr') => {
+const scopeWhere = (
+  scope: TicketScope,
+  authMe: AuthMe,
+  values: unknown[],
+  alias = 'sr',
+) => {
   const clauses = [`${alias}.society_id = $1`]
 
   if (scope === 'resident') {
@@ -359,14 +372,20 @@ const scopeWhere = (scope: TicketScope, authMe: AuthMe, values: unknown[], alias
 
     if (flatIds.length > 0) {
       values.push(flatIds)
-      clauses.push(`(${alias}.visibility = 'RESIDENT_VISIBLE' and (${alias}.requester_user_id = $${requesterParam} or ${alias}.flat_id = any($${values.length}::uuid[])))`)
+      clauses.push(
+        `(${alias}.visibility = 'RESIDENT_VISIBLE' and (${alias}.requester_user_id = $${requesterParam} or ${alias}.flat_id = any($${values.length}::uuid[])))`,
+      )
     } else {
-      clauses.push(`(${alias}.visibility = 'RESIDENT_VISIBLE' and ${alias}.requester_user_id = $${requesterParam})`)
+      clauses.push(
+        `(${alias}.visibility = 'RESIDENT_VISIBLE' and ${alias}.requester_user_id = $${requesterParam})`,
+      )
     }
   }
 
   if (scope === 'service') {
-    const departmentIds = authMe.departmentAssignments.map((item) => item.departmentId)
+    const departmentIds = authMe.departmentAssignments.map(
+      (item) => item.departmentId,
+    )
     values.push(authMe.user.id)
     const userParam = values.length
     values.push(departmentIds)
@@ -387,7 +406,11 @@ const scopeWhere = (scope: TicketScope, authMe: AuthMe, values: unknown[], alias
   return clauses
 }
 
-const applyTicketFilters = (filters: Record<string, string[]>, where: string[], values: unknown[]) => {
+const applyTicketFilters = (
+  filters: Record<string, string[]>,
+  where: string[],
+  values: unknown[],
+) => {
   const simpleFilters: Record<string, string> = {
     status: 'sr.status::text',
     priority: 'sr.priority::text',
@@ -420,7 +443,9 @@ const applyTicketFilters = (filters: Record<string, string[]>, where: string[], 
   }
 
   if (filters.overdue?.[0] === 'true') {
-    where.push("sr.due_by_at < now() and sr.status not in ('RESOLVED', 'CLOSED', 'CANCELLED')")
+    where.push(
+      "sr.due_by_at < now() and sr.status not in ('RESOLVED', 'CLOSED', 'CANCELLED')",
+    )
   }
 
   if (filters.closedOnly?.[0] === 'true') {
@@ -434,7 +459,10 @@ const applyTicketFilters = (filters: Record<string, string[]>, where: string[], 
   }
 }
 
-export const listServiceDepartments = async (authMe: AuthMe, includeInactive = true) => {
+export const listServiceDepartments = async (
+  authMe: AuthMe,
+  includeInactive = true,
+) => {
   const pool = getDatabasePool()
   const values: unknown[] = [authMe.user.societyId]
   const activeSql = includeInactive ? '' : 'and sd.is_active = true'
@@ -486,7 +514,9 @@ export const listServiceDepartments = async (authMe: AuthMe, includeInactive = t
   return departmentResult.rows.map((department) =>
     mapDepartment(
       department,
-      assignmentResult.rows.filter((assignment) => assignment.department_id === department.id),
+      assignmentResult.rows.filter(
+        (assignment) => assignment.department_id === department.id,
+      ),
     ),
   )
 }
@@ -552,7 +582,9 @@ export const upsertServiceDepartment = async (
       throw new AppError({
         code: 'NOT_FOUND',
         statusCode: departmentId ? 404 : 500,
-        message: departmentId ? 'Department not found.' : 'Department creation failed.',
+        message: departmentId
+          ? 'Department not found.'
+          : 'Department creation failed.',
       })
     }
 
@@ -581,9 +613,16 @@ export const upsertServiceDepartment = async (
   }
 }
 
-export const listServiceStaffOptions = async (authMe: AuthMe, departmentId?: string) => {
+export const listServiceStaffOptions = async (
+  authMe: AuthMe,
+  departmentId?: string,
+) => {
   const values: unknown[] = [authMe.user.societyId]
-  const where = ['u.society_id = $1', "u.role = 'SERVICE_STAFF'", 'u.is_active = true']
+  const where = [
+    'u.society_id = $1',
+    "u.role = 'SERVICE_STAFF'",
+    'u.is_active = true',
+  ]
 
   if (departmentId) {
     values.push(departmentId)
@@ -668,7 +707,11 @@ const resolveSla = async (
   return result.rows[0] ?? null
 }
 
-const assertFlatAccessForResident = async (client: PoolClient, authMe: AuthMe, flatId: string) => {
+const assertFlatAccessForResident = async (
+  client: PoolClient,
+  authMe: AuthMe,
+  flatId: string,
+) => {
   if (authMe.flatAccess.some((flat) => flat.flatId === flatId)) {
     return
   }
@@ -690,6 +733,66 @@ const assertFlatAccessForResident = async (client: PoolClient, authMe: AuthMe, f
       code: 'FORBIDDEN',
       statusCode: 403,
       message: 'You cannot raise a ticket for this flat.',
+    })
+  }
+}
+
+const assertFlatBelongsToSociety = async (
+  client: PoolClient,
+  societyId: string,
+  flatId: string,
+) => {
+  const result = await client.query<{ id: string }>(
+    `
+      select id
+      from flats
+      where id = $1
+        and society_id = $2
+      limit 1
+    `,
+    [flatId, societyId],
+  )
+
+  if (!result.rows[0]) {
+    throw new AppError({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message: 'Choose a flat from this society.',
+      details: {
+        fieldErrors: {
+          flatId: ['Choose a flat from this society.'],
+        },
+      },
+    })
+  }
+}
+
+const assertRequesterBelongsToSociety = async (
+  client: PoolClient,
+  societyId: string,
+  requesterUserId: string,
+) => {
+  const result = await client.query<{ id: string }>(
+    `
+      select id
+      from users
+      where id = $1
+        and society_id = $2
+      limit 1
+    `,
+    [requesterUserId, societyId],
+  )
+
+  if (!result.rows[0]) {
+    throw new AppError({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message: 'Choose a requester from this society.',
+      details: {
+        fieldErrors: {
+          requesterUserId: ['Choose a requester from this society.'],
+        },
+      },
     })
   }
 }
@@ -756,34 +859,40 @@ const assertAssigneeInDepartment = async (
     throw new AppError({
       code: 'VALIDATION_ERROR',
       statusCode: 400,
-      message: 'The assignee must be active service staff in the selected department.',
+      message:
+        'The assignee must be active service staff in the selected department.',
     })
   }
 }
 
 const warnNotificationFailure = (serviceRequestId: string, error: unknown) => {
-  const message = error instanceof Error ? error.message : 'Service request notification enqueue failed.'
+  const message =
+    error instanceof Error
+      ? error.message
+      : 'Service request notification enqueue failed.'
   console.warn(JSON.stringify({ level: 'warn', message, serviceRequestId }))
 }
 
 const logServiceRequestNotificationQueueResult = (
   serviceRequestId: string,
   scope: 'resident' | 'manager',
-  result: { eventId: string | null, audienceCount: number, jobCount: number },
+  result: { eventId: string | null; audienceCount: number; jobCount: number },
 ) => {
   if (result.eventId && result.jobCount > 0) {
     return
   }
 
-  console.warn(JSON.stringify({
-    level: 'warn',
-    message: 'Service request notification queued zero jobs.',
-    serviceRequestId,
-    notificationScope: scope,
-    eventId: result.eventId,
-    audienceCount: result.audienceCount,
-    jobCount: result.jobCount,
-  }))
+  console.warn(
+    JSON.stringify({
+      level: 'warn',
+      message: 'Service request notification queued zero jobs.',
+      serviceRequestId,
+      notificationScope: scope,
+      eventId: result.eventId,
+      audienceCount: result.audienceCount,
+      jobCount: result.jobCount,
+    }),
+  )
 }
 
 type ServiceRequestNotificationQueueResult = {
@@ -804,7 +913,10 @@ const processImmediateServiceRequestNotifications = async (
   options: ServiceRequestNotificationDispatchOptions = {},
 ) => {
   const eventIds = new Set<string>()
-  const channel = options.channel === undefined ? immediateServiceRequestNotificationChannel : options.channel
+  const channel =
+    options.channel === undefined
+      ? immediateServiceRequestNotificationChannel
+      : options.channel
 
   for (const result of results) {
     if (result.status === 'rejected') {
@@ -836,12 +948,15 @@ const processImmediateServiceRequestNotifications = async (
 
   for (const eventId of eventIds) {
     if (!allowedEventIds.has(eventId)) {
-      console.warn(JSON.stringify({
-        level: 'warn',
-        message: 'Skipped immediate notification dispatch for non-service-request event.',
-        serviceRequestId,
-        eventId,
-      }))
+      console.warn(
+        JSON.stringify({
+          level: 'warn',
+          message:
+            'Skipped immediate notification dispatch for non-service-request event.',
+          serviceRequestId,
+          eventId,
+        }),
+      )
       continue
     }
 
@@ -853,14 +968,21 @@ const processImmediateServiceRequestNotifications = async (
         lockTimeoutMinutes: 1,
       })
 
-      if (dispatchResult.failed > 0 || dispatchResult.retried > 0 || dispatchResult.claimed === 0) {
-        console.warn(JSON.stringify({
-          level: 'warn',
-          message: 'Service request notification dispatch completed with pending or failed jobs.',
-          serviceRequestId,
-          eventId,
-          ...dispatchResult,
-        }))
+      if (
+        dispatchResult.failed > 0 ||
+        dispatchResult.retried > 0 ||
+        dispatchResult.claimed === 0
+      ) {
+        console.warn(
+          JSON.stringify({
+            level: 'warn',
+            message:
+              'Service request notification dispatch completed with pending or failed jobs.',
+            serviceRequestId,
+            eventId,
+            ...dispatchResult,
+          }),
+        )
       }
     } catch (error) {
       warnNotificationFailure(serviceRequestId, error)
@@ -876,7 +998,12 @@ const processServiceRequestNotificationsWithFreshClient = async (
   const client = await getDatabasePool().connect()
 
   try {
-    await processImmediateServiceRequestNotifications(client, serviceRequestId, results, options)
+    await processImmediateServiceRequestNotifications(
+      client,
+      serviceRequestId,
+      results,
+      options,
+    )
   } finally {
     client.release()
   }
@@ -887,8 +1014,11 @@ const processServiceRequestNotificationsInBackground = (
   results: PromiseSettledResult<ServiceRequestNotificationQueueResult>[],
   options: ServiceRequestNotificationDispatchOptions = {},
 ) => {
-  const promise = processServiceRequestNotificationsWithFreshClient(serviceRequestId, results, options)
-    .catch((error) => warnNotificationFailure(serviceRequestId, error))
+  const promise = processServiceRequestNotificationsWithFreshClient(
+    serviceRequestId,
+    results,
+    options,
+  ).catch((error) => warnNotificationFailure(serviceRequestId, error))
 
   if (options.waitUntil) {
     options.waitUntil(promise)
@@ -979,7 +1109,10 @@ const markPushUnavailableWithoutSubscription = async (
   client: PoolClient,
   users: NotificationUser[],
 ) => {
-  const activePushSubscriberIds = await resolveActivePushSubscriberIds(client, users)
+  const activePushSubscriberIds = await resolveActivePushSubscriberIds(
+    client,
+    users,
+  )
 
   return users.map((user) => ({
     ...user,
@@ -1000,7 +1133,7 @@ const enqueueServiceRequestNotification = async (
     dbClient?: PoolClient
   },
 ) => {
-  const client = options?.dbClient ?? await getDatabasePool().connect()
+  const client = options?.dbClient ?? (await getDatabasePool().connect())
   const shouldReleaseClient = !options?.dbClient
 
   try {
@@ -1024,31 +1157,38 @@ const enqueueServiceRequestNotification = async (
     const ticket = result.rows[0]
 
     if (!ticket) {
-      console.warn(JSON.stringify({
-        level: 'warn',
-        message: 'Service request notification skipped because ticket was not found.',
-        serviceRequestId,
-        notificationScope: 'resident',
-      }))
+      console.warn(
+        JSON.stringify({
+          level: 'warn',
+          message:
+            'Service request notification skipped because ticket was not found.',
+          serviceRequestId,
+          notificationScope: 'resident',
+        }),
+      )
       return { eventId: null, audienceCount: 0, jobCount: 0 }
     }
 
     const users = await markPushUnavailableWithoutSubscription(
       client,
-      (await resolveServiceRequestResidentAudience(client, ticket))
-        .filter((user) => user.id !== input.triggeredByUserId),
+      (await resolveServiceRequestResidentAudience(client, ticket)).filter(
+        (user) => user.id !== input.triggeredByUserId,
+      ),
     )
 
     if (users.length === 0) {
-      console.warn(JSON.stringify({
-        level: 'warn',
-        message: 'Service request notification skipped because no resident recipients were resolved.',
-        serviceRequestId,
-        notificationScope: 'resident',
-        flatId: ticket.flat_id,
-        requesterUserId: ticket.requester_user_id,
-        triggeredByUserId: input.triggeredByUserId ?? null,
-      }))
+      console.warn(
+        JSON.stringify({
+          level: 'warn',
+          message:
+            'Service request notification skipped because no resident recipients were resolved.',
+          serviceRequestId,
+          notificationScope: 'resident',
+          flatId: ticket.flat_id,
+          requesterUserId: ticket.requester_user_id,
+          triggeredByUserId: input.triggeredByUserId ?? null,
+        }),
+      )
       return { eventId: null, audienceCount: 0, jobCount: 0 }
     }
 
@@ -1071,7 +1211,9 @@ const enqueueServiceRequestNotification = async (
       },
       idempotencyKey: input.idempotencyKey,
       idempotencyWindowSeconds: 31536000,
-      ...(input.triggeredByUserId ? { triggeredByUserId: input.triggeredByUserId } : {}),
+      ...(input.triggeredByUserId
+        ? { triggeredByUserId: input.triggeredByUserId }
+        : {}),
       ...(input.maxAttempts ? { maxAttempts: input.maxAttempts } : {}),
       users,
       channels: ['PUSH', 'EMAIL', 'IN_APP'],
@@ -1079,11 +1221,17 @@ const enqueueServiceRequestNotification = async (
       audienceSnapshot: {
         eventKey: 'service_request.updated',
         serviceRequestId: ticket.id,
-        recipientScope: ticket.flat_id ? 'FLAT_RESIDENTS_AND_REQUESTER' : 'REQUESTER',
+        recipientScope: ticket.flat_id
+          ? 'FLAT_RESIDENTS_AND_REQUESTER'
+          : 'REQUESTER',
       },
     })
 
-    logServiceRequestNotificationQueueResult(serviceRequestId, 'resident', queued)
+    logServiceRequestNotificationQueueResult(
+      serviceRequestId,
+      'resident',
+      queued,
+    )
     return queued
   } finally {
     if (shouldReleaseClient) {
@@ -1105,7 +1253,7 @@ const enqueueServiceRequestManagerNotification = async (
     dbClient?: PoolClient
   },
 ) => {
-  const client = options?.dbClient ?? await getDatabasePool().connect()
+  const client = options?.dbClient ?? (await getDatabasePool().connect())
   const shouldReleaseClient = !options?.dbClient
 
   try {
@@ -1134,12 +1282,15 @@ const enqueueServiceRequestManagerNotification = async (
     const ticket = result.rows[0]
 
     if (!ticket) {
-      console.warn(JSON.stringify({
-        level: 'warn',
-        message: 'Service request notification skipped because ticket was not found.',
-        serviceRequestId,
-        notificationScope: 'manager',
-      }))
+      console.warn(
+        JSON.stringify({
+          level: 'warn',
+          message:
+            'Service request notification skipped because ticket was not found.',
+          serviceRequestId,
+          notificationScope: 'manager',
+        }),
+      )
       return { eventId: null, audienceCount: 0, jobCount: 0 }
     }
 
@@ -1165,13 +1316,16 @@ const enqueueServiceRequestManagerNotification = async (
     const managerIds = managerResult.rows.map((row) => row.id)
 
     if (managerIds.length === 0) {
-      console.warn(JSON.stringify({
-        level: 'warn',
-        message: 'Service request notification skipped because no manager recipients were resolved.',
-        serviceRequestId,
-        notificationScope: 'manager',
-        triggeredByUserId: input?.triggeredByUserId ?? null,
-      }))
+      console.warn(
+        JSON.stringify({
+          level: 'warn',
+          message:
+            'Service request notification skipped because no manager recipients were resolved.',
+          serviceRequestId,
+          notificationScope: 'manager',
+          triggeredByUserId: input?.triggeredByUserId ?? null,
+        }),
+      )
       return { eventId: null, audienceCount: 0, jobCount: 0 }
     }
 
@@ -1207,9 +1361,12 @@ const enqueueServiceRequestManagerNotification = async (
         deepLinkUrl: `/admin/service-requests/${ticket.id}`,
         actionLabel: 'Open service request',
       },
-      idempotencyKey: input?.idempotencyKey ?? `service_request.manager.created:${ticket.id}`,
+      idempotencyKey:
+        input?.idempotencyKey ?? `service_request.manager.created:${ticket.id}`,
       idempotencyWindowSeconds: 31536000,
-      ...(input?.triggeredByUserId ? { triggeredByUserId: input.triggeredByUserId } : {}),
+      ...(input?.triggeredByUserId
+        ? { triggeredByUserId: input.triggeredByUserId }
+        : {}),
       ...(input?.maxAttempts ? { maxAttempts: input.maxAttempts } : {}),
       users,
       channels: ['PUSH', 'EMAIL', 'IN_APP'],
@@ -1221,7 +1378,11 @@ const enqueueServiceRequestManagerNotification = async (
       },
     })
 
-    logServiceRequestNotificationQueueResult(serviceRequestId, 'manager', queued)
+    logServiceRequestNotificationQueueResult(
+      serviceRequestId,
+      'manager',
+      queued,
+    )
     return queued
   } finally {
     if (shouldReleaseClient) {
@@ -1258,9 +1419,14 @@ const enqueueCreatedServiceRequestNotificationsWithFreshClient = async (
       ),
     ])
 
-    await processImmediateServiceRequestNotifications(client, serviceRequestId, notifications, {
-      channel: null,
-    })
+    await processImmediateServiceRequestNotifications(
+      client,
+      serviceRequestId,
+      notifications,
+      {
+        channel: null,
+      },
+    )
   } finally {
     client.release()
   }
@@ -1274,8 +1440,10 @@ const enqueueCreatedServiceRequestNotificationsInBackground = (
     waitUntil?: BackgroundWaitUntil
   },
 ) => {
-  const promise = enqueueCreatedServiceRequestNotificationsWithFreshClient(serviceRequestId, input)
-    .catch((error) => warnNotificationFailure(serviceRequestId, error))
+  const promise = enqueueCreatedServiceRequestNotificationsWithFreshClient(
+    serviceRequestId,
+    input,
+  ).catch((error) => warnNotificationFailure(serviceRequestId, error))
 
   if (input.waitUntil) {
     input.waitUntil(promise)
@@ -1295,7 +1463,12 @@ export const createServiceRequest = async (
     throw new AppError({
       code: 'VALIDATION_ERROR',
       statusCode: 400,
-      message: 'Emergency priority must be confirmed before creating the ticket.',
+      message: 'Confirm that this request is an emergency.',
+      details: {
+        fieldErrors: {
+          emergencyConfirmed: ['Confirm that this request is an emergency.'],
+        },
+      },
     })
   }
 
@@ -1305,12 +1478,29 @@ export const createServiceRequest = async (
   try {
     await client.query('begin')
 
+    const requesterUserId =
+      mode === 'resident'
+        ? authMe.user.id
+        : (input.requesterUserId ?? authMe.user.id)
+    const requestedDepartmentId =
+      mode === 'resident' ? null : input.departmentId
+    const requestedAssigneeUserId =
+      mode === 'resident' ? null : input.assigneeUserId
     const flatId = input.locationType === 'FLAT' ? input.flatId : null
+    const areaName =
+      input.locationType === 'COMMON_AREA' ? input.areaName : null
+    const assetReference =
+      input.locationType === 'SOCIETY_ASSET' ? input.assetReference : null
     if (input.locationType === 'FLAT' && !flatId) {
       throw new AppError({
         code: 'VALIDATION_ERROR',
         statusCode: 400,
-        message: 'Choose a flat for flat-linked tickets.',
+        message: 'Choose the flat where the problem is located.',
+        details: {
+          fieldErrors: {
+            flatId: ['Choose the flat where the problem is located.'],
+          },
+        },
       })
     }
 
@@ -1318,36 +1508,92 @@ export const createServiceRequest = async (
       await assertFlatAccessForResident(client, authMe, flatId)
     }
 
-    if (input.locationType !== 'FLAT' && !input.areaName && !input.assetReference) {
+    if (mode !== 'resident') {
+      if (flatId) {
+        await assertFlatBelongsToSociety(client, authMe.user.societyId, flatId)
+      }
+
+      if (requesterUserId !== authMe.user.id) {
+        await assertRequesterBelongsToSociety(
+          client,
+          authMe.user.societyId,
+          requesterUserId,
+        )
+      }
+    }
+
+    if (input.locationType === 'COMMON_AREA' && !areaName) {
       throw new AppError({
         code: 'VALIDATION_ERROR',
         statusCode: 400,
-        message: 'Add area or asset details for non-flat tickets.',
+        message: 'Choose or enter the common area.',
+        details: {
+          fieldErrors: {
+            areaName: ['Choose or enter the common area.'],
+          },
+        },
       })
     }
 
-    const route = await resolveRoute(client, authMe.user.societyId, input.category, input.locationType)
-    const departmentId = input.departmentId ?? route?.department_id ?? null
-    const priority = input.priority ?? route?.default_priority ?? 'MEDIUM'
-    await assertAssigneeInDepartment(client, authMe.user.societyId, departmentId ?? '', input.assigneeUserId)
+    if (input.locationType === 'SOCIETY_ASSET' && !assetReference) {
+      throw new AppError({
+        code: 'VALIDATION_ERROR',
+        statusCode: 400,
+        message: 'Enter the asset name or reference.',
+        details: {
+          fieldErrors: {
+            assetReference: ['Enter the asset name or reference.'],
+          },
+        },
+      })
+    }
 
-    const sla = await resolveSla(client, authMe.user.societyId, priority, departmentId)
+    const route = await resolveRoute(
+      client,
+      authMe.user.societyId,
+      input.category,
+      input.locationType,
+    )
+    const departmentId = requestedDepartmentId ?? route?.department_id ?? null
+    const priority = input.priority ?? route?.default_priority ?? 'MEDIUM'
+    await assertAssigneeInDepartment(
+      client,
+      authMe.user.societyId,
+      departmentId ?? '',
+      requestedAssigneeUserId,
+    )
+
+    const sla = await resolveSla(
+      client,
+      authMe.user.societyId,
+      priority,
+      departmentId,
+    )
     const year = new Date().getFullYear()
     const sequence = await client.query<{ value: string }>(
       `select next_yearly_sequence('SERVICE_REQUEST', $1)::text as value`,
       [year],
     )
     const requestNumber = `SR-${year}-${String(sequence.rows[0]?.value ?? '1').padStart(5, '0')}`
-    const status: ServiceRequestStatus = input.assigneeUserId ? 'ASSIGNED' : 'OPEN'
+    const status: ServiceRequestStatus = requestedAssigneeUserId
+      ? 'ASSIGNED'
+      : 'OPEN'
     const sourceType =
       mode === 'resident'
         ? 'RESIDENT_REQUEST'
         : mode === 'service'
           ? 'STAFF_REPORTED'
           : input.sourceType
-    const visibility = sourceType === 'ADMIN_CREATED' ? 'INTERNAL_ONLY' : 'RESIDENT_VISIBLE'
+    const visibility =
+      sourceType === 'ADMIN_CREATED' ? 'INTERNAL_ONLY' : 'RESIDENT_VISIBLE'
 
-    const ticket = await client.query<{ id: string; request_number: string; was_inserted: boolean }>(
+    const ticket = await client.query<{
+      id: string
+      society_id: string
+      requester_user_id: string | null
+      request_number: string
+      was_inserted: boolean
+    }>(
       `
         insert into service_requests (
           society_id,
@@ -1379,22 +1625,22 @@ export const createServiceRequest = async (
         )
         on conflict (idempotency_key) where idempotency_key is not null
         do update set idempotency_key = excluded.idempotency_key
-        returning id, request_number, (xmax = 0) as was_inserted
+        returning id, society_id, requester_user_id, request_number, (xmax = 0) as was_inserted
       `,
       [
         authMe.user.societyId,
         requestNumber,
-        input.requesterUserId ?? authMe.user.id,
+        requesterUserId,
         flatId,
         departmentId,
-        input.assigneeUserId ?? null,
+        requestedAssigneeUserId ?? null,
         input.category,
         input.title,
         input.description,
         sourceType,
         input.locationType,
-        input.areaName ?? null,
-        input.assetReference ?? null,
+        areaName ?? null,
+        assetReference ?? null,
         priority,
         status,
         visibility,
@@ -1416,6 +1662,18 @@ export const createServiceRequest = async (
     }
 
     if (!ticketRow.was_inserted) {
+      if (
+        ticketRow.society_id !== authMe.user.societyId ||
+        ticketRow.requester_user_id !== requesterUserId
+      ) {
+        throw new AppError({
+          code: 'CONFLICT',
+          statusCode: 409,
+          message:
+            'This ticket submission has already been used. Refresh the page and submit again.',
+        })
+      }
+
       await client.query('commit')
       return { id, requestNumber: persistedRequestNumber }
     }
@@ -1456,7 +1714,13 @@ export const createServiceRequest = async (
           )
           values ($1, $2, $3, $4, $5)
         `,
-        [id, departmentId, input.assigneeUserId ?? null, authMe.user.id, 'Initial routing'],
+        [
+          id,
+          departmentId,
+          requestedAssigneeUserId ?? null,
+          authMe.user.id,
+          'Initial routing',
+        ],
       )
     }
 
@@ -1483,7 +1747,9 @@ export const createServiceRequest = async (
           { dbClient: client },
         ),
         mode !== 'admin'
-          ? enqueueServiceRequestManagerNotification(id, undefined, { dbClient: client })
+          ? enqueueServiceRequestManagerNotification(id, undefined, {
+              dbClient: client,
+            })
           : Promise.resolve({ eventId: null, audienceCount: 0, jobCount: 0 }),
       ])
     } catch (notificationError) {
@@ -1491,14 +1757,31 @@ export const createServiceRequest = async (
     }
     return { id, requestNumber: persistedRequestNumber }
   } catch (error) {
-    await client.query('rollback')
+    try {
+      await client.query('rollback')
+    } catch (rollbackError) {
+      console.error(
+        JSON.stringify({
+          level: 'error',
+          message: 'Service request transaction rollback failed.',
+          error:
+            rollbackError instanceof Error
+              ? rollbackError.message
+              : String(rollbackError),
+        }),
+      )
+    }
     throw error
   } finally {
     client.release()
   }
 }
 
-export const listServiceRequests = async (event: H3Event, authMe: AuthMe, scope: TicketScope) => {
+export const listServiceRequests = async (
+  event: H3Event,
+  authMe: AuthMe,
+  scope: TicketScope,
+) => {
   const query = parseListQuery(event)
   const pool = getDatabasePool()
   const values: unknown[] = [authMe.user.societyId]
@@ -1523,7 +1806,11 @@ export const listServiceRequests = async (event: H3Event, authMe: AuthMe, scope:
   const whereSql = where.join(' and ')
   const orderBy = sortColumns[query.sortBy ?? 'createdAt'] ?? 'sr.created_at'
   const direction = query.sortDirection === 'asc' ? 'asc' : 'desc'
-  const listValues = [...values, query.pageSize, (query.page - 1) * query.pageSize]
+  const listValues = [
+    ...values,
+    query.pageSize,
+    (query.page - 1) * query.pageSize,
+  ]
 
   const [dataResult, countResult] = await Promise.all([
     pool.query<TicketRow>(
@@ -1559,7 +1846,11 @@ export const listServiceRequests = async (event: H3Event, authMe: AuthMe, scope:
   }
 }
 
-export const getServiceRequestDetail = async (authMe: AuthMe, id: string, scope: TicketScope): Promise<ServiceRequestDetail> => {
+export const getServiceRequestDetail = async (
+  authMe: AuthMe,
+  id: string,
+  scope: TicketScope,
+): Promise<ServiceRequestDetail> => {
   const pool = getDatabasePool()
   const values: unknown[] = [authMe.user.societyId]
   const where = scopeWhere(scope, authMe, values)
@@ -1688,7 +1979,12 @@ export const getServiceRequestDetail = async (authMe: AuthMe, id: string, scope:
   }
 }
 
-const loadTicketForAction = async (client: PoolClient, authMe: AuthMe, id: string, scope: TicketScope) => {
+const loadTicketForAction = async (
+  client: PoolClient,
+  authMe: AuthMe,
+  id: string,
+  scope: TicketScope,
+) => {
   const values: unknown[] = [authMe.user.societyId]
   const where = scopeWhere(scope, authMe, values)
   values.push(id)
@@ -1727,7 +2023,8 @@ export const assignServiceRequest = async (
     const ticket = await loadTicketForAction(client, authMe, id, 'admin')
     const nextAssigneeUserId = input.assigneeUserId ?? null
     const departmentChanged = ticket.department_id !== input.departmentId
-    const assigneeChanged = (ticket.assignee_user_id ?? null) !== nextAssigneeUserId
+    const assigneeChanged =
+      (ticket.assignee_user_id ?? null) !== nextAssigneeUserId
     const requiresReason =
       (departmentChanged && Boolean(ticket.department_id)) ||
       (assigneeChanged && Boolean(ticket.assignee_user_id))
@@ -1745,7 +2042,12 @@ export const assignServiceRequest = async (
       return
     }
 
-    await assertAssigneeInDepartment(client, authMe.user.societyId, input.departmentId, input.assigneeUserId)
+    await assertAssigneeInDepartment(
+      client,
+      authMe.user.societyId,
+      input.departmentId,
+      input.assigneeUserId,
+    )
 
     await client.query(
       `
@@ -1767,13 +2069,21 @@ export const assignServiceRequest = async (
         )
         values ($1, $2, $3, $4, $5)
       `,
-      [id, input.departmentId, nextAssigneeUserId, authMe.user.id, input.reason ?? 'Assignment updated'],
+      [
+        id,
+        input.departmentId,
+        nextAssigneeUserId,
+        authMe.user.id,
+        input.reason ?? 'Assignment updated',
+      ],
     )
 
     const nextStatus: ServiceRequestStatus =
-      ticket.status === 'OPEN' || ticket.status === 'REOPENED' || ticket.status === 'NEEDS_REASSIGNMENT'
+      ticket.status === 'OPEN' ||
+      ticket.status === 'REOPENED' ||
+      ticket.status === 'NEEDS_REASSIGNMENT'
         ? 'ASSIGNED'
-        : ticket.status as ServiceRequestStatus
+        : (ticket.status as ServiceRequestStatus)
 
     await client.query(
       `
@@ -1802,7 +2112,9 @@ export const assignServiceRequest = async (
       `,
       [
         id,
-        ticket.department_id || ticket.assignee_user_id ? 'REASSIGNED' : 'ASSIGNED',
+        ticket.department_id || ticket.assignee_user_id
+          ? 'REASSIGNED'
+          : 'ASSIGNED',
         authMe.user.id,
         ticket.status,
         nextStatus,
@@ -1855,7 +2167,10 @@ export const updateServiceRequestStatus = async (
   input: z.infer<typeof serviceRequestStatusSchema>,
   scope: TicketScope,
 ) => {
-  if (scope === 'service' && !allowedServiceStaffStatuses.includes(input.status)) {
+  if (
+    scope === 'service' &&
+    !allowedServiceStaffStatuses.includes(input.status)
+  ) {
     throw new AppError({
       code: 'FORBIDDEN',
       statusCode: 403,
@@ -1871,7 +2186,10 @@ export const updateServiceRequestStatus = async (
     const ticket = await loadTicketForAction(client, authMe, id, scope)
     const fromStatus = ticket.status as ServiceRequestStatus
 
-    if (['CLOSED', 'CANCELLED'].includes(fromStatus) && input.status !== 'REOPENED') {
+    if (
+      ['CLOSED', 'CANCELLED'].includes(fromStatus) &&
+      input.status !== 'REOPENED'
+    ) {
       throw new AppError({
         code: 'VALIDATION_ERROR',
         statusCode: 400,
@@ -1969,36 +2287,43 @@ export const updateServiceRequestStatus = async (
     await client.query('commit')
     try {
       const statusBody = `${ticket.request_number} moved from ${fromStatus.replaceAll('_', ' ').toLowerCase()} to ${input.status.replaceAll('_', ' ').toLowerCase()}.`
-      const [managerNotification, _residentNotification] = await Promise.allSettled([
-        scope === 'resident' || scope === 'service'
-          ? enqueueServiceRequestManagerNotification(
-              id,
-              {
-                title: 'Service request status updated',
-                body: `${authMe.user.fullName} updated ${statusBody}`,
-                idempotencyKey: `service_request.manager.status:${id}:${input.status}:${Date.now()}`,
-                triggeredByUserId: authMe.user.id,
-              },
-              { dbClient: client },
-            )
-          : Promise.resolve({ eventId: null, audienceCount: 0, jobCount: 0 }),
-        scope !== 'resident'
-          ? enqueueServiceRequestNotification(
-              id,
-              {
-                title: 'Service request status updated',
-                body: statusBody,
-                idempotencyKey: `service_request.status:${id}:${input.status}:${Date.now()}`,
-                triggeredByUserId: authMe.user.id,
-              },
-              { dbClient: client },
-            )
-          : Promise.resolve({ eventId: null, audienceCount: 0, jobCount: 0 }),
-      ])
+      const [managerNotification, _residentNotification] =
+        await Promise.allSettled([
+          scope === 'resident' || scope === 'service'
+            ? enqueueServiceRequestManagerNotification(
+                id,
+                {
+                  title: 'Service request status updated',
+                  body: `${authMe.user.fullName} updated ${statusBody}`,
+                  idempotencyKey: `service_request.manager.status:${id}:${input.status}:${Date.now()}`,
+                  triggeredByUserId: authMe.user.id,
+                },
+                { dbClient: client },
+              )
+            : Promise.resolve({ eventId: null, audienceCount: 0, jobCount: 0 }),
+          scope !== 'resident'
+            ? enqueueServiceRequestNotification(
+                id,
+                {
+                  title: 'Service request status updated',
+                  body: statusBody,
+                  idempotencyKey: `service_request.status:${id}:${input.status}:${Date.now()}`,
+                  triggeredByUserId: authMe.user.id,
+                },
+                { dbClient: client },
+              )
+            : Promise.resolve({ eventId: null, audienceCount: 0, jobCount: 0 }),
+        ])
 
       if (scope === 'resident') {
-        await processImmediateServiceRequestNotifications(client, id, [managerNotification])
-        processServiceRequestNotificationsInBackground(id, [managerNotification], { channel: null })
+        await processImmediateServiceRequestNotifications(client, id, [
+          managerNotification,
+        ])
+        processServiceRequestNotificationsInBackground(
+          id,
+          [managerNotification],
+          { channel: null },
+        )
       }
     } catch (notificationError) {
       warnNotificationFailure(id, notificationError)
@@ -2018,9 +2343,7 @@ export const addServiceRequestComment = async (
   scope: TicketScope,
 ) => {
   const visibility =
-    scope === 'resident'
-      ? 'RESIDENT_VISIBLE'
-      : input.visibility
+    scope === 'resident' ? 'RESIDENT_VISIBLE' : input.visibility
 
   const pool = getDatabasePool()
   const client = await pool.connect()
@@ -2095,8 +2418,14 @@ export const addServiceRequestComment = async (
       ])
 
       if (scope === 'resident') {
-        await processImmediateServiceRequestNotifications(client, id, notifications)
-        processServiceRequestNotificationsInBackground(id, notifications, { channel: null })
+        await processImmediateServiceRequestNotifications(
+          client,
+          id,
+          notifications,
+        )
+        processServiceRequestNotificationsInBackground(id, notifications, {
+          channel: null,
+        })
       }
     } catch (notificationError) {
       warnNotificationFailure(id, notificationError)
@@ -2138,7 +2467,15 @@ export const createServiceRequestAttachment = async (
         values ($1, $2, $3, $4, $5, $6, $7)
         returning id
       `,
-      [id, authMe.user.id, input.fileName, input.filePath, input.mimeType, input.sizeBytes, input.checksum ?? null],
+      [
+        id,
+        authMe.user.id,
+        input.fileName,
+        input.filePath,
+        input.mimeType,
+        input.sizeBytes,
+        input.checksum ?? null,
+      ],
     )
     const attachmentId = attachment.rows[0]?.id ?? null
 
@@ -2193,8 +2530,14 @@ export const createServiceRequestAttachment = async (
       ])
 
       if (scope === 'resident') {
-        await processImmediateServiceRequestNotifications(client, id, notifications)
-        processServiceRequestNotificationsInBackground(id, notifications, { channel: null })
+        await processImmediateServiceRequestNotifications(
+          client,
+          id,
+          notifications,
+        )
+        processServiceRequestNotificationsInBackground(id, notifications, {
+          channel: null,
+        })
       }
     } catch (notificationError) {
       warnNotificationFailure(id, notificationError)
@@ -2227,22 +2570,25 @@ export const uploadServiceRequestAttachment = async (
     await client.query('begin')
     const ticket = await loadTicketForAction(client, authMe, id, scope)
 
-    await uploadPrivateFile({
-      storageTargetKey: 'ticket_attachments',
-      storageObjectKey,
-      originalFileName: input.fileName,
-      mimeType: input.mimeType,
-      sizeBytes: input.sizeBytes,
-      body: input.body,
-      uploadedBy: authMe.user.id,
-      relation: {
-        recordType: 'service_requests',
-        recordId: id,
+    await uploadPrivateFile(
+      {
+        storageTargetKey: 'ticket_attachments',
+        storageObjectKey,
+        originalFileName: input.fileName,
+        mimeType: input.mimeType,
+        sizeBytes: input.sizeBytes,
+        body: input.body,
+        uploadedBy: authMe.user.id,
+        relation: {
+          recordType: 'service_requests',
+          recordId: id,
+        },
+        checksum,
       },
-      checksum,
-    }, {
-      dbClient: client,
-    })
+      {
+        dbClient: client,
+      },
+    )
 
     const attachment = await client.query<AttachmentRow>(
       `
@@ -2268,12 +2614,24 @@ export const uploadServiceRequestAttachment = async (
           checksum,
           created_at::text
       `,
-      [id, authMe.user.id, input.fileName, storageObjectKey, input.mimeType, input.sizeBytes, checksum],
+      [
+        id,
+        authMe.user.id,
+        input.fileName,
+        storageObjectKey,
+        input.mimeType,
+        input.sizeBytes,
+        checksum,
+      ],
     )
     const row = attachment.rows[0]
 
     if (!row) {
-      throw new AppError({ code: 'INTERNAL_ERROR', statusCode: 500, message: 'Attachment save failed.' })
+      throw new AppError({
+        code: 'INTERNAL_ERROR',
+        statusCode: 500,
+        message: 'Attachment save failed.',
+      })
     }
 
     await client.query(
@@ -2329,8 +2687,14 @@ export const uploadServiceRequestAttachment = async (
       ])
 
       if (scope === 'resident') {
-        await processImmediateServiceRequestNotifications(client, id, notifications)
-        processServiceRequestNotificationsInBackground(id, notifications, { channel: null })
+        await processImmediateServiceRequestNotifications(
+          client,
+          id,
+          notifications,
+        )
+        processServiceRequestNotificationsInBackground(id, notifications, {
+          channel: null,
+        })
       }
     } catch (notificationError) {
       warnNotificationFailure(id, notificationError)
@@ -2383,7 +2747,11 @@ export const downloadServiceRequestAttachment = async (
     )
     const attachment = result.rows[0]
     if (!attachment) {
-      throw new AppError({ code: 'NOT_FOUND', statusCode: 404, message: 'Attachment not found.' })
+      throw new AppError({
+        code: 'NOT_FOUND',
+        statusCode: 404,
+        message: 'Attachment not found.',
+      })
     }
 
     const blob = await downloadPrivateFile({
@@ -2401,7 +2769,10 @@ export const downloadServiceRequestAttachment = async (
   }
 }
 
-export const getServiceRequestQueueSummary = async (authMe: AuthMe, scope: TicketScope): Promise<ServiceRequestQueueSummary> => {
+export const getServiceRequestQueueSummary = async (
+  authMe: AuthMe,
+  scope: TicketScope,
+): Promise<ServiceRequestQueueSummary> => {
   const values: unknown[] = [authMe.user.societyId]
   const where = scopeWhere(scope, authMe, values)
   const whereSql = where.join(' and ')

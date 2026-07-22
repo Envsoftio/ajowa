@@ -67,7 +67,11 @@ export const activeTicketStatuses: ServiceRequestStatus[] = [
   'NEEDS_REASSIGNMENT',
 ]
 
-export const closedTicketStatuses: ServiceRequestStatus[] = ['RESOLVED', 'CLOSED', 'CANCELLED']
+export const closedTicketStatuses: ServiceRequestStatus[] = [
+  'RESOLVED',
+  'CLOSED',
+  'CANCELLED',
+]
 
 export const getPrioritySeverity = (priority: ServicePriority) => {
   switch (priority) {

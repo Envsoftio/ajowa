@@ -3,9 +3,9 @@ import type {
   ServiceCommentVisibility,
   ServiceLocationType,
   ServicePriority,
-  ServiceRequestSource,
   ServiceRequestStatus,
 } from '~/types/domain'
+import type { ServiceRequestCreateSource } from '~/shared/service-request-validation'
 
 export type ServiceRequestCreatePayload = {
   idempotencyKey?: string | null
@@ -16,7 +16,7 @@ export type ServiceRequestCreatePayload = {
   category: string
   title: string
   description: string
-  sourceType?: ServiceRequestSource
+  sourceType?: ServiceRequestCreateSource
   locationType: ServiceLocationType
   areaName?: string | null
   assetReference?: string | null
@@ -43,21 +43,40 @@ export const useServiceRequests = (scope: 'admin' | 'resident' | 'service') => {
     api<{ ok: true; data: { id: string; requestNumber: string } }>(basePath, {
       method: 'POST',
       body: payload,
+      errorFallback:
+        'We could not submit this service request. Check the form and try again.',
     })
 
-  const assignTicket = (id: string, payload: { departmentId: string; assigneeUserId?: string | null; reason?: string }) =>
+  const assignTicket = (
+    id: string,
+    payload: {
+      departmentId: string
+      assigneeUserId?: string | null
+      reason?: string
+    },
+  ) =>
     api(`${basePath}/${id}/assign`, {
       method: 'POST',
       body: payload,
     })
 
-  const addComment = (id: string, payload: { visibility: ServiceCommentVisibility; commentBody: string }) =>
+  const addComment = (
+    id: string,
+    payload: { visibility: ServiceCommentVisibility; commentBody: string },
+  ) =>
     api(`${basePath}/${id}/comments`, {
       method: 'POST',
       body: payload,
     })
 
-  const updateStatus = (id: string, payload: { status: ServiceRequestStatus; comment?: string | null; reason?: string | null }) =>
+  const updateStatus = (
+    id: string,
+    payload: {
+      status: ServiceRequestStatus
+      comment?: string | null
+      reason?: string | null
+    },
+  ) =>
     api(`${basePath}/${id}/status`, {
       method: 'POST',
       body: payload,
@@ -67,10 +86,13 @@ export const useServiceRequests = (scope: 'admin' | 'resident' | 'service') => {
     const formData = new FormData()
     formData.append('file', file)
 
-    return api<{ ok: true; data: ServiceRequestAttachment }>(`${basePath}/${id}/attachments`, {
-      method: 'POST',
-      body: formData,
-    })
+    return api<{ ok: true; data: ServiceRequestAttachment }>(
+      `${basePath}/${id}/attachments`,
+      {
+        method: 'POST',
+        body: formData,
+      },
+    )
   }
 
   return {

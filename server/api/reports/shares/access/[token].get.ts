@@ -6,7 +6,7 @@ import { setResponseStatus } from 'h3'
 
 const readRequestHeader = (event: H3Event, name: string) => {
   const lowerName = name.toLowerCase()
-  const webHeaders = event.req?.headers as Headers | undefined
+  const webHeaders = event.req?.headers as unknown as Headers | undefined
 
   if (typeof webHeaders?.get === 'function') {
     return webHeaders.get(lowerName) ?? undefined
@@ -25,7 +25,9 @@ export default defineEventHandler(async (event) => {
   const token = String(event.context.params?.token ?? '')
 
   const acceptHeader = String(readRequestHeader(event, 'accept') ?? '')
-  const fetchDestination = String(readRequestHeader(event, 'sec-fetch-dest') ?? '')
+  const fetchDestination = String(
+    readRequestHeader(event, 'sec-fetch-dest') ?? '',
+  )
   const fetchMode = String(readRequestHeader(event, 'sec-fetch-mode') ?? '')
   const isBrowserNavigation =
     fetchDestination === 'document' ||

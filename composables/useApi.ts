@@ -6,6 +6,32 @@ type FetchErrorPayload = ApiErrorPayload & {
 
 type ApiFetchOptions<T> = NonNullable<Parameters<typeof $fetch<T>>[1]> & {
   showErrorToast?: boolean
+  errorFallback?: string
+}
+
+const nonActionableErrorMessages = new Set([
+  'fetch failed',
+  'httperror',
+  'internal error',
+  'internal server error',
+  'internal_error',
+  'request failed',
+  'server error',
+  'something went wrong',
+  'something went wrong.',
+])
+
+const getActionableErrorMessage = (message: unknown) => {
+  if (typeof message !== 'string') {
+    return null
+  }
+
+  const normalized = message.trim()
+  if (!normalized || nonActionableErrorMessages.has(normalized.toLowerCase())) {
+    return null
+  }
+
+  return normalized
 }
 
 const humanizeFieldName = (field: string) =>
@@ -47,19 +73,11 @@ export const getApiErrorMessage = (
     data?: FetchErrorPayload
   }
   const errorPayload = fetchError.data?.data ?? fetchError.data
-  const details = (errorPayload?.details as Record<string, unknown> | undefined) ?? {}
-  const detailCause =
-    typeof details.cause === 'string'
-      ? details.cause
-      : typeof details.message === 'string'
-        ? details.message
-        : null
 
   return (
     formatFirstFieldError(errorPayload) ??
-    detailCause ??
-    errorPayload?.message ??
-    fetchError.data?.message ??
+    getActionableErrorMessage(errorPayload?.message) ??
+    getActionableErrorMessage(fetchError.data?.message) ??
     fallback
   )
 }
@@ -69,7 +87,11 @@ export const useApi = () => {
   const requestHeaders = useRequestHeaders(['cookie'])
 
   return async function apiFetch<T>(url: string, options?: ApiFetchOptions<T>) {
-    const { showErrorToast = true, ...fetchOptions } = (options ?? {}) as ApiFetchOptions<T>
+    const {
+      showErrorToast = true,
+      errorFallback = 'Something went wrong. Please try again.',
+      ...fetchOptions
+    } = (options ?? {}) as ApiFetchOptions<T>
 
     try {
       return await $fetch<T>(url, {
@@ -85,7 +107,7 @@ export const useApi = () => {
         data?: FetchErrorPayload
         statusCode?: number
       }
-      const detail = getApiErrorMessage(error)
+      const detail = getApiErrorMessage(error, errorFallback)
 
       if (fetchError.statusCode === 401) {
         const authStore = useAuthStore()

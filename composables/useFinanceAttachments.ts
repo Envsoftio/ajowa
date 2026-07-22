@@ -71,7 +71,7 @@ export const useFinanceAttachments = () => {
       formData.append('replacesAttachmentId', replacesAttachmentId)
     }
     const requestOptions = {
-      method: 'POST',
+      method: 'POST' as const,
       body: formData,
       ...(options?.showErrorToast === undefined
         ? {}

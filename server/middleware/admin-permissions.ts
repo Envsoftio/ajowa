@@ -1,6 +1,7 @@
 import { requirePermission } from '~/server/utils/auth'
 import { logAmenityApiError } from '~/server/utils/amenity-api'
 import { toApiError } from '~/server/utils/errors'
+import { throwServiceRequestCreateError } from '~/server/utils/service-request-api'
 import type { StaffPermission } from '~/shared/permissions'
 
 export default defineEventHandler(async (event) => {
@@ -21,6 +22,10 @@ export default defineEventHandler(async (event) => {
         throw toApiError(error)
       }
 
+      if (isServiceRequestCreatePath(path, event.method)) {
+        throwServiceRequestCreateError(event, error)
+      }
+
       throw error
     }
   }
@@ -31,7 +36,14 @@ const isAmenityAdminApiPath = (path: string) =>
   path.startsWith('/api/admin/amenity-blackouts') ||
   path.startsWith('/api/admin/amenities')
 
-const getAdminApiPermission = (path: string, method: string): StaffPermission | null => {
+const isServiceRequestCreatePath = (path: string, method: string) =>
+  method.toUpperCase() === 'POST' &&
+  path.replace(/\/$/, '') === '/api/admin/service-requests'
+
+const getAdminApiPermission = (
+  path: string,
+  method: string,
+): StaffPermission | null => {
   if (
     path.startsWith('/api/admin/staff') ||
     path.startsWith('/api/admin/auth/invites') ||
@@ -63,7 +75,10 @@ const getAdminApiPermission = (path: string, method: string): StaffPermission | 
   if (path.startsWith('/api/admin/residents')) {
     return 'residents.manage'
   }
-  if (path.startsWith('/api/admin/gate-log') || path.startsWith('/api/admin/qr')) {
+  if (
+    path.startsWith('/api/admin/gate-log') ||
+    path.startsWith('/api/admin/qr')
+  ) {
     return 'residents.manage'
   }
   if (
@@ -82,7 +97,10 @@ const getAdminApiPermission = (path: string, method: string): StaffPermission | 
   if (path.startsWith('/api/admin/settings/notifications')) {
     return 'notifications.manage'
   }
-  if (path.startsWith('/api/admin/notifications') || path.startsWith('/api/admin/notices')) {
+  if (
+    path.startsWith('/api/admin/notifications') ||
+    path.startsWith('/api/admin/notices')
+  ) {
     return method === 'GET' ? 'notifications.view' : 'notifications.manage'
   }
   if (path.startsWith('/api/admin/billing/dues/preview')) {

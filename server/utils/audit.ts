@@ -1,6 +1,10 @@
 import type { H3Event } from 'h3'
 import type { PoolClient } from 'pg'
-import type { AuditAction, AuditEventContract, AuditSeverity } from '~/shared/audit'
+import type {
+  AuditAction,
+  AuditEventContract,
+  AuditSeverity,
+} from '~/shared/audit'
 import { getDatabasePool } from './database'
 import { getRequestLogger } from './logging'
 
@@ -12,7 +16,7 @@ type AuditQueueContext = {
 
 const getHeaderValue = (event: H3Event, name: string) => {
   const lowerName = name.toLowerCase()
-  const headers = event.req?.headers as Headers | undefined
+  const headers = event.req?.headers as unknown as Headers | undefined
 
   if (typeof headers?.get === 'function') {
     return headers.get(lowerName) ?? null
@@ -29,7 +33,8 @@ const getHeaderValue = (event: H3Event, name: string) => {
 
 const normalizeMetadata = (value: AuditEventContract['metadata']) => value ?? {}
 
-const normalizeJsonState = (value: AuditEventContract['beforeState']) => value ?? null
+const normalizeJsonState = (value: AuditEventContract['beforeState']) =>
+  value ?? null
 
 export const writeAuditEvent = async (
   client: PoolClient,
@@ -62,7 +67,9 @@ export const writeAuditEvent = async (
       returning id
     `,
     [
-      payload.relatedEntities?.[0]?.entityTable === 'society_profile' ? payload.relatedEntities[0].entityId : null,
+      payload.relatedEntities?.[0]?.entityTable === 'society_profile'
+        ? payload.relatedEntities[0].entityId
+        : null,
       payload.module,
       payload.eventKey,
       payload.action,
@@ -98,7 +105,12 @@ export const writeAuditEvent = async (
         )
         values ($1, $2, $3, $4)
       `,
-      [auditEventId, entity.entityTable, entity.entityId, entity.entityLabel ?? null],
+      [
+        auditEventId,
+        entity.entityTable,
+        entity.entityId,
+        entity.entityLabel ?? null,
+      ],
     )
   }
 }
@@ -106,11 +118,13 @@ export const writeAuditEvent = async (
 const enqueue = (task: () => Promise<void>) => {
   const run = () => {
     task().catch((error) => {
-      console.error(JSON.stringify({
-        level: 'error',
-        message: 'Async audit event failed.',
-        error: error instanceof Error ? error.message : String(error),
-      }))
+      console.error(
+        JSON.stringify({
+          level: 'error',
+          message: 'Async audit event failed.',
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      )
     })
   }
 
@@ -134,7 +148,9 @@ const writeAuditFailureEvent = async (
     action: 'CREATED',
     severity: 'HIGH',
     ...(payload.actorUserId ? { actorUserId: payload.actorUserId } : {}),
-    ...(payload.actorAuthUserId ? { actorAuthUserId: payload.actorAuthUserId } : {}),
+    ...(payload.actorAuthUserId
+      ? { actorAuthUserId: payload.actorAuthUserId }
+      : {}),
     ...(payload.requestId ? { requestId: payload.requestId } : {}),
     ...(payload.ipAddress ? { ipAddress: payload.ipAddress } : {}),
     ...(payload.userAgent ? { userAgent: payload.userAgent } : {}),
@@ -153,7 +169,8 @@ export const writeAuditEventAsync = (
 ) => {
   const logger = getRequestLogger(event)
   const requestId = payload.requestId ?? logger.requestId
-  const ipAddress = payload.ipAddress ?? getHeaderValue(event, 'x-forwarded-for')
+  const ipAddress =
+    payload.ipAddress ?? getHeaderValue(event, 'x-forwarded-for')
   const userAgent = payload.userAgent ?? getHeaderValue(event, 'user-agent')
 
   enqueue(async () => {
@@ -167,19 +184,30 @@ export const writeAuditEventAsync = (
       })
     } catch (error) {
       try {
-        await writeAuditFailureEvent(client, event, {
-          ...payload,
-          requestId,
-          ...(ipAddress ? { ipAddress } : {}),
-          ...(userAgent ? { userAgent } : {}),
-        }, error)
+        await writeAuditFailureEvent(
+          client,
+          event,
+          {
+            ...payload,
+            requestId,
+            ...(ipAddress ? { ipAddress } : {}),
+            ...(userAgent ? { userAgent } : {}),
+          },
+          error,
+        )
       } catch (failureError) {
-        console.error(JSON.stringify({
-          level: 'error',
-          message: 'Async audit failure event could not be saved.',
-          error: failureError instanceof Error ? failureError.message : String(failureError),
-          originalError: error instanceof Error ? error.message : String(error),
-        }))
+        console.error(
+          JSON.stringify({
+            level: 'error',
+            message: 'Async audit failure event could not be saved.',
+            error:
+              failureError instanceof Error
+                ? failureError.message
+                : String(failureError),
+            originalError:
+              error instanceof Error ? error.message : String(error),
+          }),
+        )
       }
     } finally {
       client.release()
@@ -206,12 +234,16 @@ export const flushQueuedAuditEvents = (event: H3Event) => {
   }
 }
 
-export const resolveAuditModuleFromPath = (path: string): AuditEventContract['module'] => {
+export const resolveAuditModuleFromPath = (
+  path: string,
+): AuditEventContract['module'] => {
   if (path.includes('/finance')) return 'FINANCE'
   if (path.includes('/billing') || path.includes('/dues')) return 'BILLING'
-  if (path.includes('/payments') || path.includes('/razorpay')) return 'PAYMENTS'
+  if (path.includes('/payments') || path.includes('/razorpay'))
+    return 'PAYMENTS'
   if (path.includes('/qr') || path.includes('/gate-log')) return 'ACCESS'
-  if (path.includes('/service-requests') || path.includes('/service/')) return 'SERVICE'
+  if (path.includes('/service-requests') || path.includes('/service/'))
+    return 'SERVICE'
   if (path.includes('/notices')) return 'NOTICE'
   if (path.includes('/notifications')) return 'NOTIFICATION'
   if (path.includes('/reports')) return 'REPORT'

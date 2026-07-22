@@ -11,7 +11,7 @@ const REQUEST_LOGGER_KEY = 'ajowa:request-logger'
 
 const getRequestHeaderValue = (event: H3Event, name: string) => {
   const lowerName = name.toLowerCase()
-  const webHeaders = event.req?.headers as Headers | undefined
+  const webHeaders = event.req?.headers as unknown as Headers | undefined
 
   if (typeof webHeaders?.get === 'function') {
     return webHeaders.get(lowerName) ?? undefined
@@ -39,18 +39,27 @@ export const getRequestLogger = (event: H3Event): RequestLogger => {
   const logger: RequestLogger = {
     requestId,
     info(message, extra = {}) {
-      console.info(JSON.stringify({ level: 'info', requestId, message, ...extra }))
+      console.info(
+        JSON.stringify({ level: 'info', requestId, message, ...extra }),
+      )
     },
     error(message, extra = {}) {
-      console.error(JSON.stringify({ level: 'error', requestId, message, ...extra }))
+      console.error(
+        JSON.stringify({ level: 'error', requestId, message, ...extra }),
+      )
     },
   }
 
-  const webResponseHeaders = (event as H3Event & { res?: { headers?: Headers } }).res?.headers
+  const webResponseHeaders = (
+    event as H3Event & { res?: { headers?: Headers } }
+  ).res?.headers
 
   if (typeof webResponseHeaders?.set === 'function') {
     webResponseHeaders.set('x-request-id', requestId)
-  } else if (typeof event.node?.res?.setHeader === 'function' && !event.node.res.headersSent) {
+  } else if (
+    typeof event.node?.res?.setHeader === 'function' &&
+    !event.node.res.headersSent
+  ) {
     event.node.res.setHeader('x-request-id', requestId)
   }
 

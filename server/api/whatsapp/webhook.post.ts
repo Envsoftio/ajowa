@@ -33,14 +33,20 @@ export default defineEventHandler(async (event) => {
     throw new AppError({
       code: 'INTERNAL_ERROR',
       statusCode: 500,
-      message: webhook.reason,
+      message: 'WhatsApp webhook is unavailable.',
     })
   }
 
   const rawBody = await readRawBody(event)
   const signature = getEventHeader(event, 'x-hub-signature-256') ?? ''
 
-  if (!verifyWhatsAppWebhookSignature(rawBody, signature, webhook.config.appSecret)) {
+  if (
+    !verifyWhatsAppWebhookSignature(
+      rawBody,
+      signature,
+      webhook.config.appSecret,
+    )
+  ) {
     throw new AppError({
       code: 'FORBIDDEN',
       statusCode: 401,

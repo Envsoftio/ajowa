@@ -21,6 +21,13 @@ type EventWithRouterParams = H3Event & {
   }
 }
 
+type EventWithRequestUrl = {
+  url?: string | URL
+  req?: {
+    url?: string | URL
+  }
+}
+
 type EventErrorInput = {
   statusCode: number
   statusMessage?: string
@@ -36,7 +43,10 @@ const normalizeHeaderValue = (value: string | string[] | undefined) => {
   return value
 }
 
-const readHeaderValue = (headers: Headers | HeaderRecord | undefined, name: string) => {
+const readHeaderValue = (
+  headers: Headers | HeaderRecord | undefined,
+  name: string,
+) => {
   if (!headers) {
     return undefined
   }
@@ -64,9 +74,14 @@ export const getEventHeader = (event: H3Event, name: string) =>
   readHeaderValue((event as EventWithRequestHeaders).req?.headers, name) ??
   readHeaderValue(event.node?.req.headers, name)
 
-export const getEventQuery = (event: H3Event): Record<string, string | string[]> => {
-  const rawUrl = event.url ?? event.node?.req?.url ?? event.req?.url ?? '/'
-  const url = rawUrl instanceof URL ? rawUrl : new URL(rawUrl, 'http://localhost')
+export const getEventQuery = (
+  event: H3Event,
+): Record<string, string | string[]> => {
+  const requestEvent = event as unknown as EventWithRequestUrl
+  const rawUrl =
+    requestEvent.url ?? event.node?.req?.url ?? requestEvent.req?.url ?? '/'
+  const url =
+    rawUrl instanceof URL ? rawUrl : new URL(rawUrl, 'http://localhost')
   const query: Record<string, string | string[]> = {}
 
   for (const [key, value] of url.searchParams.entries()) {

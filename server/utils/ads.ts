@@ -379,7 +379,7 @@ const firstHeaderValue = (value: string | string[] | undefined | null) => {
 
 const getHeaderValue = (event: H3Event, name: string) => {
   const lowerName = name.toLowerCase()
-  const webHeaders = event.req?.headers as Headers | undefined
+  const webHeaders = event.req?.headers as unknown as Headers | undefined
 
   if (typeof webHeaders?.get === 'function') {
     return webHeaders.get(lowerName)

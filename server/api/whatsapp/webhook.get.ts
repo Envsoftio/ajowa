@@ -12,7 +12,7 @@ export default defineEventHandler((event) => {
     throw new AppError({
       code: 'INTERNAL_ERROR',
       statusCode: 500,
-      message: 'WhatsApp webhook verification is not configured. Configure WHATSAPP_WEBHOOK_VERIFY_TOKEN.',
+      message: 'WhatsApp webhook verification is unavailable.',
     })
   }
 
@@ -21,7 +21,11 @@ export default defineEventHandler((event) => {
   const challenge = firstQueryValue(query['hub.challenge'])
   const verifyToken = firstQueryValue(query['hub.verify_token'])
 
-  if (mode === 'subscribe' && challenge && verifyToken === runtimeConfig.whatsappWebhookVerifyToken) {
+  if (
+    mode === 'subscribe' &&
+    challenge &&
+    verifyToken === runtimeConfig.whatsappWebhookVerifyToken
+  ) {
     setEventHeader(event, 'content-type', 'text/plain; charset=utf-8')
     return challenge
   }

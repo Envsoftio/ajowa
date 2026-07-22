@@ -1,7 +1,4 @@
-import {
-  readMultipartFormData,
-  type H3Event,
-} from 'h3'
+import { readMultipartFormData, type H3Event } from 'h3'
 import { AppError } from './errors'
 
 export type MultipartFormPart = {
@@ -13,7 +10,10 @@ export type MultipartFormPart = {
 
 type BodyChunk = ArrayBuffer | Buffer | Uint8Array | string
 type BodyStreamSource = {
-  on?: (event: string, listener: (...args: unknown[]) => void) => BodyStreamSource
+  on?: (
+    event: string,
+    listener: (...args: unknown[]) => void,
+  ) => BodyStreamSource
 }
 type WebBodySource = {
   arrayBuffer?: () => Promise<ArrayBuffer>
@@ -39,7 +39,7 @@ const getMultipartBoundary = (contentType: string | null | undefined) => {
 
 const getRequestHeaderValue = (event: H3Event, name: string) => {
   const lowerName = name.toLowerCase()
-  const webHeaders = event.req?.headers as Headers | undefined
+  const webHeaders = event.req?.headers as unknown as Headers | undefined
 
   if (typeof webHeaders?.get === 'function') {
     return webHeaders.get(lowerName) ?? undefined
@@ -134,8 +134,12 @@ const readRequestBodyBuffer = async (event: H3Event) => {
   const rawEvent = event as EventWithBody
   const rawBody =
     normalizeBodyValue(rawEvent._requestBody) ??
-    normalizeBodyValue((event.node?.req as { rawBody?: unknown } | undefined)?.rawBody) ??
-    normalizeBodyValue((event.node?.req as { body?: unknown } | undefined)?.body)
+    normalizeBodyValue(
+      (event.node?.req as { rawBody?: unknown } | undefined)?.rawBody,
+    ) ??
+    normalizeBodyValue(
+      (event.node?.req as { body?: unknown } | undefined)?.body,
+    )
   const body =
     rawBody ??
     (await readWebBodyBuffer(rawEvent.web?.request ?? rawEvent.req ?? {})) ??
@@ -176,11 +180,13 @@ const readNativeMultipartFormParts = async (event: H3Event) => {
   try {
     return toMultipartFormParts(await readMultipartFormData(event))
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown multipart parser error.'
+    const message =
+      error instanceof Error ? error.message : 'Unknown multipart parser error.'
     console.warn(
       JSON.stringify({
         level: 'warn',
-        message: 'Native multipart parser failed; falling back to raw multipart parser.',
+        message:
+          'Native multipart parser failed; falling back to raw multipart parser.',
         cause: message,
       }),
     )
@@ -226,14 +232,18 @@ const parseMultipartHeaderParams = (value: string) => {
   return params
 }
 
-export const readMultipartFormParts = async (event: H3Event): Promise<MultipartFormPart[]> => {
+export const readMultipartFormParts = async (
+  event: H3Event,
+): Promise<MultipartFormPart[]> => {
   const nativeParts = await readNativeMultipartFormParts(event)
 
   if (nativeParts) {
     return nativeParts
   }
 
-  const boundary = getMultipartBoundary(getRequestHeaderValue(event, 'content-type'))
+  const boundary = getMultipartBoundary(
+    getRequestHeaderValue(event, 'content-type'),
+  )
 
   if (!boundary) {
     throw new AppError({
@@ -257,7 +267,10 @@ export const readMultipartFormParts = async (event: H3Event): Promise<MultipartF
       statusCode: 400,
       message: 'Unable to parse the multipart upload request.',
       details: {
-        cause: error instanceof Error ? error.message : 'Unknown multipart request error.',
+        cause:
+          error instanceof Error
+            ? error.message
+            : 'Unknown multipart request error.',
       },
     })
   }

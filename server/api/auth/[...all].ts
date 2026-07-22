@@ -16,7 +16,10 @@ type BodyStreamLike = {
 }
 type NodeRequestLike = {
   body?: unknown
-  on?: (event: string, listener: (...args: unknown[]) => void) => NodeRequestLike
+  on?: (
+    event: string,
+    listener: (...args: unknown[]) => void,
+  ) => NodeRequestLike
   setEncoding?: (encoding: BufferEncoding) => NodeRequestLike
 }
 type WebRequestLike = {
@@ -112,7 +115,8 @@ const readNodeRequestBody = async (request: NodeRequestLike) => {
   })
 }
 
-const getRequestMethod = (event: AuthEvent) => event.node?.req.method ?? event.req.method
+const getRequestMethod = (event: AuthEvent) =>
+  event.node?.req.method ?? event.req.method ?? 'GET'
 
 const getRequestUrl = (event: AuthEvent, baseUrl: string) => {
   const rawUrl = event.node?.req.url ?? event.req.url ?? '/'
@@ -124,7 +128,7 @@ const getRequestHeaders = (event: AuthEvent) => {
     return fromNodeHeaders(event.node.req.headers)
   }
 
-  return new Headers((event.req as WebRequestLike).headers)
+  return new Headers((event.req as unknown as WebRequestLike).headers)
 }
 
 const readRequestBody = async (event: AuthEvent) => {
@@ -140,7 +144,7 @@ const readRequestBody = async (event: AuthEvent) => {
     return readBodySource(nodeRequest.body)
   }
 
-  const webRequest = event.req as WebRequestLike
+  const webRequest = event.req as unknown as WebRequestLike
 
   if (typeof webRequest.arrayBuffer === 'function') {
     return webRequest.arrayBuffer()
@@ -186,7 +190,10 @@ export default defineEventHandler(async (event) => {
       requestInit.body = rawBody
     }
 
-    const request = new Request(getRequestUrl(event, runtimeConfig.betterAuthUrl), requestInit)
+    const request = new Request(
+      getRequestUrl(event, runtimeConfig.betterAuthUrl),
+      requestInit,
+    )
 
     return getAuth().handler(request)
   } catch (error) {
