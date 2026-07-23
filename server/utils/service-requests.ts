@@ -39,8 +39,7 @@ import {
 import type { serviceRequestCreateSchema } from '~/shared/service-request-validation'
 
 const commentVisibilities = ['INTERNAL_NOTE', 'RESIDENT_VISIBLE'] as const
-const immediateServiceRequestNotificationChannel: NotificationChannel = 'IN_APP'
-const immediateServiceRequestNotificationLimit = 25
+const immediateServiceRequestNotificationLimit = 250
 
 type TicketScope = 'admin' | 'resident' | 'service'
 type BackgroundWaitUntil = (promise: Promise<unknown>) => void
@@ -879,12 +878,19 @@ const warnNotificationFailure = (serviceRequestId: string, error: unknown) => {
   console.warn(JSON.stringify({ level: 'warn', message, serviceRequestId }))
 }
 
+type ServiceRequestNotificationQueueResult = {
+  eventId: string | null
+  eventIds?: string[]
+  audienceCount: number
+  jobCount: number
+}
+
 const logServiceRequestNotificationQueueResult = (
   serviceRequestId: string,
   scope: 'resident' | 'manager',
-  result: { eventId: string | null; audienceCount: number; jobCount: number },
+  result: ServiceRequestNotificationQueueResult,
 ) => {
-  if (result.eventId && result.jobCount > 0) {
+  if ((result.eventId || result.eventIds?.length) && result.jobCount > 0) {
     return
   }
 
@@ -895,21 +901,15 @@ const logServiceRequestNotificationQueueResult = (
       serviceRequestId,
       notificationScope: scope,
       eventId: result.eventId,
+      eventIds: result.eventIds ?? [],
       audienceCount: result.audienceCount,
       jobCount: result.jobCount,
     }),
   )
 }
 
-type ServiceRequestNotificationQueueResult = {
-  eventId: string | null
-  audienceCount: number
-  jobCount: number
-}
-
 type ServiceRequestNotificationDispatchOptions = {
   channel?: NotificationChannel | null
-  waitUntil?: BackgroundWaitUntil
 }
 
 const processImmediateServiceRequestNotifications = async (
@@ -919,10 +919,7 @@ const processImmediateServiceRequestNotifications = async (
   options: ServiceRequestNotificationDispatchOptions = {},
 ) => {
   const eventIds = new Set<string>()
-  const channel =
-    options.channel === undefined
-      ? immediateServiceRequestNotificationChannel
-      : options.channel
+  const channel = options.channel === undefined ? null : options.channel
 
   for (const result of results) {
     if (result.status === 'rejected') {
@@ -930,8 +927,12 @@ const processImmediateServiceRequestNotifications = async (
       continue
     }
 
-    if (result.value.eventId && result.value.jobCount > 0) {
-      eventIds.add(result.value.eventId)
+    if (result.value.jobCount > 0) {
+      for (const eventId of result.value.eventIds ?? [result.value.eventId]) {
+        if (eventId) {
+          eventIds.add(eventId)
+        }
+      }
     }
   }
 
@@ -967,26 +968,39 @@ const processImmediateServiceRequestNotifications = async (
     }
 
     try {
-      const dispatchResult = await dispatchNotificationJobs(client, {
-        eventId,
-        limit: immediateServiceRequestNotificationLimit,
-        ...(channel ? { channel } : {}),
-        lockTimeoutMinutes: 1,
-      })
+      let claimed = 0
+      let sent = 0
+      let failed = 0
+      let retried = 0
+      let skipped = 0
 
-      if (
-        dispatchResult.failed > 0 ||
-        dispatchResult.retried > 0 ||
-        dispatchResult.claimed === 0
-      ) {
+      do {
+        const dispatchResult = await dispatchNotificationJobs(client, {
+          eventId,
+          limit: immediateServiceRequestNotificationLimit,
+          ...(channel ? { channel } : {}),
+          lockTimeoutMinutes: 1,
+        })
+
+        claimed = dispatchResult.claimed
+        sent += dispatchResult.sent
+        failed += dispatchResult.failed
+        retried += dispatchResult.retried
+        skipped += dispatchResult.skipped
+      } while (claimed === immediateServiceRequestNotificationLimit)
+
+      if (failed > 0 || retried > 0) {
         console.warn(
           JSON.stringify({
             level: 'warn',
             message:
-              'Service request notification dispatch completed with pending or failed jobs.',
+              'Service request notification dispatch completed with failed jobs.',
             serviceRequestId,
             eventId,
-            ...dispatchResult,
+            sent,
+            failed,
+            retried,
+            skipped,
           }),
         )
       }
@@ -996,38 +1010,40 @@ const processImmediateServiceRequestNotifications = async (
   }
 }
 
-const processServiceRequestNotificationsWithFreshClient = async (
+type ServiceRequestNotificationFactory = (
+  client: PoolClient,
+) => Promise<PromiseSettledResult<ServiceRequestNotificationQueueResult>[]>
+
+const enqueueAndDispatchServiceRequestNotificationsWithFreshClient = async (
   serviceRequestId: string,
-  results: PromiseSettledResult<ServiceRequestNotificationQueueResult>[],
-  options: ServiceRequestNotificationDispatchOptions = {},
+  factory: ServiceRequestNotificationFactory,
 ) => {
   const client = await getDatabasePool().connect()
 
   try {
+    const notifications = await factory(client)
     await processImmediateServiceRequestNotifications(
       client,
       serviceRequestId,
-      results,
-      options,
+      notifications,
     )
   } finally {
     client.release()
   }
 }
 
-const processServiceRequestNotificationsInBackground = (
+const enqueueAndDispatchServiceRequestNotificationsInBackground = (
   serviceRequestId: string,
-  results: PromiseSettledResult<ServiceRequestNotificationQueueResult>[],
-  options: ServiceRequestNotificationDispatchOptions = {},
+  factory: ServiceRequestNotificationFactory,
+  waitUntil?: BackgroundWaitUntil,
 ) => {
-  const promise = processServiceRequestNotificationsWithFreshClient(
+  const promise = enqueueAndDispatchServiceRequestNotificationsWithFreshClient(
     serviceRequestId,
-    results,
-    options,
+    factory,
   ).catch((error) => warnNotificationFailure(serviceRequestId, error))
 
-  if (options.waitUntil) {
-    options.waitUntil(promise)
+  if (waitUntil) {
+    waitUntil(promise)
     return
   }
 
@@ -1072,7 +1088,7 @@ const resolveServiceRequestResidentAudience = async (
   if (ticket.flat_id) {
     audienceGroups.push(
       await resolveNotificationAudience(client, ticket.society_id, {
-        scope: 'FLATS',
+        scope: 'OWNER_OF_FLAT',
         flatIds: [ticket.flat_id],
       }),
     )
@@ -1228,7 +1244,7 @@ const enqueueServiceRequestNotification = async (
         eventKey: 'service_request.updated',
         serviceRequestId: ticket.id,
         recipientScope: ticket.flat_id
-          ? 'FLAT_RESIDENTS_AND_REQUESTER'
+          ? 'FLAT_OWNERS_AND_REQUESTER'
           : 'REQUESTER',
       },
     })
@@ -1300,9 +1316,12 @@ const enqueueServiceRequestManagerNotification = async (
       return { eventId: null, audienceCount: 0, jobCount: 0 }
     }
 
-    const managerResult = await client.query<{ id: string }>(
+    const recipientResult = await client.query<{
+      id: string
+      role: 'ADMIN' | 'MANAGER' | 'SERVICE_STAFF'
+    }>(
       `
-        select id
+        select id, role::text
         from users
         where society_id = $1
           and role in ('ADMIN', 'MANAGER', 'SERVICE_STAFF')
@@ -1311,6 +1330,7 @@ const enqueueServiceRequestManagerNotification = async (
           and deleted_at is null
           and (
             role = 'ADMIN'
+            or role = 'SERVICE_STAFF'
             or cardinality(staff_permissions) = 0
             or 'service-requests.manage' = any(staff_permissions)
           )
@@ -1319,9 +1339,8 @@ const enqueueServiceRequestManagerNotification = async (
       `,
       [ticket.society_id, input?.triggeredByUserId ?? null],
     )
-    const managerIds = managerResult.rows.map((row) => row.id)
 
-    if (managerIds.length === 0) {
+    if (recipientResult.rows.length === 0) {
       console.warn(
         JSON.stringify({
           level: 'warn',
@@ -1335,54 +1354,95 @@ const enqueueServiceRequestManagerNotification = async (
       return { eventId: null, audienceCount: 0, jobCount: 0 }
     }
 
-    const users = await markPushUnavailableWithoutSubscription(
-      client,
-      await resolveNotificationAudience(client, ticket.society_id, {
-        scope: 'USERS',
-        userIds: managerIds,
-      }),
-    )
     const requesterLabel = ticket.requester_name ?? 'A resident'
     const locationLabel = ticket.flat_label ? ` for ${ticket.flat_label}` : ''
     const title = input?.title ?? 'New service request'
     const body =
       input?.body ??
       `${requesterLabel} raised ${ticket.request_number}${locationLabel}: ${ticket.title}.`
-
-    const queued = await enqueueNotificationForUsers(client, {
-      societyId: ticket.society_id,
-      eventKey: 'service_request.updated',
-      category: 'SERVICE_REQUESTS',
-      sourceTable: 'service_requests',
-      sourceId: ticket.id,
-      priority: ticket.priority === 'EMERGENCY' ? 'HIGH' : 'MEDIUM',
-      title,
-      body,
-      payload: {
-        serviceRequestId: ticket.id,
-        requestNumber: ticket.request_number,
-        ticketNumber: ticket.request_number,
-        status: ticket.status,
-        ticketTitle: ticket.title,
+    const baseIdempotencyKey =
+      input?.idempotencyKey ?? `service_request.manager.created:${ticket.id}`
+    const recipientGroups = [
+      {
+        key: 'admin-manager',
+        userIds: recipientResult.rows
+          .filter((row) => row.role !== 'SERVICE_STAFF')
+          .map((row) => row.id),
         deepLinkUrl: `/admin/service-requests/${ticket.id}`,
-        actionLabel: 'Open service request',
-      },
-      idempotencyKey:
-        input?.idempotencyKey ?? `service_request.manager.created:${ticket.id}`,
-      idempotencyWindowSeconds: 31536000,
-      ...(input?.triggeredByUserId
-        ? { triggeredByUserId: input.triggeredByUserId }
-        : {}),
-      ...(input?.maxAttempts ? { maxAttempts: input.maxAttempts } : {}),
-      users,
-      channels: ['PUSH', 'EMAIL', 'IN_APP'],
-      audienceLabel: 'Service request managers',
-      audienceSnapshot: {
-        eventKey: 'service_request.updated',
-        serviceRequestId: ticket.id,
+        audienceLabel: 'Service request admins and managers',
         recipientScope: 'ADMIN_AND_MANAGER',
       },
-    })
+      {
+        key: 'service-staff',
+        userIds: recipientResult.rows
+          .filter((row) => row.role === 'SERVICE_STAFF')
+          .map((row) => row.id),
+        deepLinkUrl: `/service/tickets/${ticket.id}`,
+        audienceLabel: 'Service request staff',
+        recipientScope: 'SERVICE_STAFF',
+      },
+    ].filter((group) => group.userIds.length > 0)
+    const queuedResults: ServiceRequestNotificationQueueResult[] = []
+
+    for (const group of recipientGroups) {
+      const users = await markPushUnavailableWithoutSubscription(
+        client,
+        await resolveNotificationAudience(client, ticket.society_id, {
+          scope: 'USERS',
+          userIds: group.userIds,
+        }),
+      )
+      const queued = await enqueueNotificationForUsers(client, {
+        societyId: ticket.society_id,
+        eventKey: 'service_request.updated',
+        category: 'SERVICE_REQUESTS',
+        sourceTable: 'service_requests',
+        sourceId: ticket.id,
+        priority: ticket.priority === 'EMERGENCY' ? 'HIGH' : 'MEDIUM',
+        title,
+        body,
+        payload: {
+          serviceRequestId: ticket.id,
+          requestNumber: ticket.request_number,
+          ticketNumber: ticket.request_number,
+          status: ticket.status,
+          ticketTitle: ticket.title,
+          deepLinkUrl: group.deepLinkUrl,
+          actionLabel: 'Open service request',
+        },
+        idempotencyKey: `${baseIdempotencyKey}:${group.key}`,
+        idempotencyWindowSeconds: 31536000,
+        ...(input?.triggeredByUserId
+          ? { triggeredByUserId: input.triggeredByUserId }
+          : {}),
+        ...(input?.maxAttempts ? { maxAttempts: input.maxAttempts } : {}),
+        users,
+        channels: ['PUSH', 'EMAIL', 'IN_APP'],
+        audienceLabel: group.audienceLabel,
+        audienceSnapshot: {
+          eventKey: 'service_request.updated',
+          serviceRequestId: ticket.id,
+          recipientScope: group.recipientScope,
+        },
+      })
+      queuedResults.push(queued)
+    }
+
+    const eventIds = queuedResults.flatMap((queued) =>
+      queued.eventId ? [queued.eventId] : [],
+    )
+    const queued: ServiceRequestNotificationQueueResult = {
+      eventId: eventIds[0] ?? null,
+      eventIds,
+      audienceCount: queuedResults.reduce(
+        (total, result) => total + result.audienceCount,
+        0,
+      ),
+      jobCount: queuedResults.reduce(
+        (total, result) => total + result.jobCount,
+        0,
+      ),
+    }
 
     logServiceRequestNotificationQueueResult(
       serviceRequestId,
@@ -1397,66 +1457,45 @@ const enqueueServiceRequestManagerNotification = async (
   }
 }
 
-const enqueueCreatedServiceRequestNotificationsWithFreshClient = async (
-  serviceRequestId: string,
-  input: {
-    requestNumber: string
-    status: ServiceRequestStatus
-  },
-) => {
-  const client = await getDatabasePool().connect()
-
-  try {
-    const notifications = await Promise.allSettled([
-      enqueueServiceRequestNotification(
-        serviceRequestId,
-        {
-          title: 'Service request created',
-          body: `${input.requestNumber} has been created and is currently ${input.status.replaceAll('_', ' ').toLowerCase()}.`,
-          idempotencyKey: `service_request.created:${serviceRequestId}`,
-          maxAttempts: 1,
-        },
-        { dbClient: client },
-      ),
-      enqueueServiceRequestManagerNotification(
-        serviceRequestId,
-        { maxAttempts: 1 },
-        { dbClient: client },
-      ),
-    ])
-
-    await processImmediateServiceRequestNotifications(
-      client,
-      serviceRequestId,
-      notifications,
-      {
-        channel: null,
-      },
-    )
-  } finally {
-    client.release()
-  }
-}
-
 const enqueueCreatedServiceRequestNotificationsInBackground = (
   serviceRequestId: string,
   input: {
     requestNumber: string
     status: ServiceRequestStatus
+    triggeredByUserId?: string
     waitUntil?: BackgroundWaitUntil
   },
 ) => {
-  const promise = enqueueCreatedServiceRequestNotificationsWithFreshClient(
+  enqueueAndDispatchServiceRequestNotificationsInBackground(
     serviceRequestId,
-    input,
-  ).catch((error) => warnNotificationFailure(serviceRequestId, error))
-
-  if (input.waitUntil) {
-    input.waitUntil(promise)
-    return
-  }
-
-  void promise
+    async (client) =>
+      Promise.allSettled([
+        enqueueServiceRequestNotification(
+          serviceRequestId,
+          {
+            title: 'Service request created',
+            body: `${input.requestNumber} has been created and is currently ${input.status.replaceAll('_', ' ').toLowerCase()}.`,
+            idempotencyKey: `service_request.created:${serviceRequestId}`,
+            ...(input.triggeredByUserId
+              ? { triggeredByUserId: input.triggeredByUserId }
+              : {}),
+            maxAttempts: 1,
+          },
+          { dbClient: client },
+        ),
+        enqueueServiceRequestManagerNotification(
+          serviceRequestId,
+          {
+            ...(input.triggeredByUserId
+              ? { triggeredByUserId: input.triggeredByUserId }
+              : {}),
+            maxAttempts: 1,
+          },
+          { dbClient: client },
+        ),
+      ]),
+    input.waitUntil,
+  )
 }
 
 export const createServiceRequest = async (
@@ -1731,36 +1770,13 @@ export const createServiceRequest = async (
     }
 
     await client.query('commit')
-    if (mode === 'resident') {
-      enqueueCreatedServiceRequestNotificationsInBackground(id, {
-        requestNumber: persistedRequestNumber,
-        status,
-        ...(options.waitUntil ? { waitUntil: options.waitUntil } : {}),
-      })
+    enqueueCreatedServiceRequestNotificationsInBackground(id, {
+      requestNumber: persistedRequestNumber,
+      status,
+      ...(mode !== 'resident' ? { triggeredByUserId: authMe.user.id } : {}),
+      ...(options.waitUntil ? { waitUntil: options.waitUntil } : {}),
+    })
 
-      return { id, requestNumber: persistedRequestNumber }
-    }
-
-    try {
-      await Promise.allSettled([
-        enqueueServiceRequestNotification(
-          id,
-          {
-            title: 'Service request created',
-            body: `${persistedRequestNumber} has been created and is currently ${status.replaceAll('_', ' ').toLowerCase()}.`,
-            idempotencyKey: `service_request.created:${id}`,
-          },
-          { dbClient: client },
-        ),
-        mode !== 'admin'
-          ? enqueueServiceRequestManagerNotification(id, undefined, {
-              dbClient: client,
-            })
-          : Promise.resolve({ eventId: null, audienceCount: 0, jobCount: 0 }),
-      ])
-    } catch (notificationError) {
-      warnNotificationFailure(id, notificationError)
-    }
     return { id, requestNumber: persistedRequestNumber }
   } catch (error) {
     try {
@@ -2020,6 +2036,7 @@ export const assignServiceRequest = async (
   authMe: AuthMe,
   id: string,
   input: z.infer<typeof serviceRequestAssignSchema>,
+  options: { waitUntil?: BackgroundWaitUntil } = {},
 ) => {
   const pool = getDatabasePool()
   const client = await pool.connect()
@@ -2135,22 +2152,35 @@ export const assignServiceRequest = async (
     )
 
     await client.query('commit')
-    try {
-      await Promise.allSettled([
-        enqueueServiceRequestNotification(
-          id,
-          {
-            title: 'Service request assigned',
-            body: `${ticket.request_number} has been assigned for service.`,
-            idempotencyKey: `service_request.assigned:${id}:${Date.now()}`,
-            triggeredByUserId: authMe.user.id,
-          },
-          { dbClient: client },
-        ),
-      ])
-    } catch (notificationError) {
-      warnNotificationFailure(id, notificationError)
-    }
+    enqueueAndDispatchServiceRequestNotificationsInBackground(
+      id,
+      async (notificationClient) =>
+        Promise.allSettled([
+          enqueueServiceRequestNotification(
+            id,
+            {
+              title: 'Service request assigned',
+              body: `${ticket.request_number} has been assigned for service.`,
+              idempotencyKey: `service_request.assigned:${id}:${Date.now()}`,
+              triggeredByUserId: authMe.user.id,
+              maxAttempts: 1,
+            },
+            { dbClient: notificationClient },
+          ),
+          enqueueServiceRequestManagerNotification(
+            id,
+            {
+              title: 'Service request assignment updated',
+              body: `${authMe.user.fullName} updated the assignment for ${ticket.request_number}: ${ticket.title}.`,
+              idempotencyKey: `service_request.manager.assigned:${id}:${Date.now()}`,
+              triggeredByUserId: authMe.user.id,
+              maxAttempts: 1,
+            },
+            { dbClient: notificationClient },
+          ),
+        ]),
+      options.waitUntil,
+    )
   } catch (error) {
     await client.query('rollback')
     throw error
@@ -2172,6 +2202,7 @@ export const updateServiceRequestStatus = async (
   id: string,
   input: z.infer<typeof serviceRequestStatusSchema>,
   scope: TicketScope,
+  options: { waitUntil?: BackgroundWaitUntil } = {},
 ) => {
   if (
     scope === 'service' &&
@@ -2291,22 +2322,22 @@ export const updateServiceRequestStatus = async (
     }
 
     await client.query('commit')
-    try {
-      const statusBody = `${ticket.request_number} moved from ${fromStatus.replaceAll('_', ' ').toLowerCase()} to ${input.status.replaceAll('_', ' ').toLowerCase()}.`
-      const [managerNotification, _residentNotification] =
-        await Promise.allSettled([
-          scope === 'resident' || scope === 'service'
-            ? enqueueServiceRequestManagerNotification(
-                id,
-                {
-                  title: 'Service request status updated',
-                  body: `${authMe.user.fullName} updated ${statusBody}`,
-                  idempotencyKey: `service_request.manager.status:${id}:${input.status}:${Date.now()}`,
-                  triggeredByUserId: authMe.user.id,
-                },
-                { dbClient: client },
-              )
-            : Promise.resolve({ eventId: null, audienceCount: 0, jobCount: 0 }),
+    const statusBody = `${ticket.request_number} moved from ${fromStatus.replaceAll('_', ' ').toLowerCase()} to ${input.status.replaceAll('_', ' ').toLowerCase()}.`
+    enqueueAndDispatchServiceRequestNotificationsInBackground(
+      id,
+      async (notificationClient) =>
+        Promise.allSettled([
+          enqueueServiceRequestManagerNotification(
+            id,
+            {
+              title: 'Service request status updated',
+              body: `${authMe.user.fullName} updated ${statusBody}`,
+              idempotencyKey: `service_request.manager.status:${id}:${input.status}:${Date.now()}`,
+              triggeredByUserId: authMe.user.id,
+              maxAttempts: 1,
+            },
+            { dbClient: notificationClient },
+          ),
           scope !== 'resident'
             ? enqueueServiceRequestNotification(
                 id,
@@ -2315,25 +2346,18 @@ export const updateServiceRequestStatus = async (
                   body: statusBody,
                   idempotencyKey: `service_request.status:${id}:${input.status}:${Date.now()}`,
                   triggeredByUserId: authMe.user.id,
+                  maxAttempts: 1,
                 },
-                { dbClient: client },
+                { dbClient: notificationClient },
               )
-            : Promise.resolve({ eventId: null, audienceCount: 0, jobCount: 0 }),
-        ])
-
-      if (scope === 'resident') {
-        await processImmediateServiceRequestNotifications(client, id, [
-          managerNotification,
-        ])
-        processServiceRequestNotificationsInBackground(
-          id,
-          [managerNotification],
-          { channel: null },
-        )
-      }
-    } catch (notificationError) {
-      warnNotificationFailure(id, notificationError)
-    }
+            : Promise.resolve({
+                eventId: null,
+                audienceCount: 0,
+                jobCount: 0,
+              }),
+        ]),
+      options.waitUntil,
+    )
   } catch (error) {
     await client.query('rollback')
     throw error
@@ -2347,6 +2371,7 @@ export const addServiceRequestComment = async (
   id: string,
   input: z.infer<typeof serviceRequestCommentSchema>,
   scope: TicketScope,
+  options: { waitUntil?: BackgroundWaitUntil } = {},
 ) => {
   const visibility =
     scope === 'resident' ? 'RESIDENT_VISIBLE' : input.visibility
@@ -2395,47 +2420,41 @@ export const addServiceRequestComment = async (
     )
 
     await client.query('commit')
-    try {
-      const notifications = await Promise.allSettled([
-        scope === 'resident' || scope === 'service'
-          ? enqueueServiceRequestManagerNotification(
-              id,
-              {
-                title: 'Service request note added',
-                body: `${authMe.user.fullName} added a note to ${ticket.request_number}: ${ticket.title}.`,
-                idempotencyKey: `service_request.manager.comment:${comment.rows[0]?.id ?? Date.now()}`,
-                triggeredByUserId: authMe.user.id,
-              },
-              { dbClient: client },
-            )
-          : Promise.resolve({ eventId: null, audienceCount: 0, jobCount: 0 }),
-        visibility === 'RESIDENT_VISIBLE' && scope !== 'resident'
-          ? enqueueServiceRequestNotification(
-              id,
-              {
-                title: 'Service request note added',
-                body: `A new update was added to ${ticket.request_number}.`,
-                idempotencyKey: `service_request.comment:${comment.rows[0]?.id ?? Date.now()}`,
-                triggeredByUserId: authMe.user.id,
-              },
-              { dbClient: client },
-            )
-          : Promise.resolve({ eventId: null, audienceCount: 0, jobCount: 0 }),
-      ])
-
-      if (scope === 'resident') {
-        await processImmediateServiceRequestNotifications(
-          client,
-          id,
-          notifications,
-        )
-        processServiceRequestNotificationsInBackground(id, notifications, {
-          channel: null,
-        })
-      }
-    } catch (notificationError) {
-      warnNotificationFailure(id, notificationError)
-    }
+    enqueueAndDispatchServiceRequestNotificationsInBackground(
+      id,
+      async (notificationClient) =>
+        Promise.allSettled([
+          enqueueServiceRequestManagerNotification(
+            id,
+            {
+              title: 'Service request note added',
+              body: `${authMe.user.fullName} added a note to ${ticket.request_number}: ${ticket.title}.`,
+              idempotencyKey: `service_request.manager.comment:${comment.rows[0]?.id ?? Date.now()}`,
+              triggeredByUserId: authMe.user.id,
+              maxAttempts: 1,
+            },
+            { dbClient: notificationClient },
+          ),
+          visibility === 'RESIDENT_VISIBLE' && scope !== 'resident'
+            ? enqueueServiceRequestNotification(
+                id,
+                {
+                  title: 'Service request note added',
+                  body: `A new update was added to ${ticket.request_number}.`,
+                  idempotencyKey: `service_request.comment:${comment.rows[0]?.id ?? Date.now()}`,
+                  triggeredByUserId: authMe.user.id,
+                  maxAttempts: 1,
+                },
+                { dbClient: notificationClient },
+              )
+            : Promise.resolve({
+                eventId: null,
+                audienceCount: 0,
+                jobCount: 0,
+              }),
+        ]),
+      options.waitUntil,
+    )
 
     return comment.rows[0]?.id
   } catch (error) {
@@ -2451,6 +2470,7 @@ export const createServiceRequestAttachment = async (
   id: string,
   input: z.infer<typeof serviceRequestAttachmentSchema>,
   scope: TicketScope,
+  options: { waitUntil?: BackgroundWaitUntil } = {},
 ) => {
   const pool = getDatabasePool()
   const client = await pool.connect()
@@ -2507,47 +2527,41 @@ export const createServiceRequestAttachment = async (
     )
 
     await client.query('commit')
-    try {
-      const notifications = await Promise.allSettled([
-        scope === 'resident' || scope === 'service'
-          ? enqueueServiceRequestManagerNotification(
-              id,
-              {
-                title: 'Service request attachment added',
-                body: `${authMe.user.fullName} attached ${input.fileName} to ${ticket.request_number}: ${ticket.title}.`,
-                idempotencyKey: `service_request.manager.attachment:${attachmentId ?? Date.now()}`,
-                triggeredByUserId: authMe.user.id,
-              },
-              { dbClient: client },
-            )
-          : Promise.resolve({ eventId: null, audienceCount: 0, jobCount: 0 }),
-        scope !== 'resident'
-          ? enqueueServiceRequestNotification(
-              id,
-              {
-                title: 'Service request attachment added',
-                body: `A new attachment was added to ${ticket.request_number}.`,
-                idempotencyKey: `service_request.attachment:${attachmentId ?? Date.now()}`,
-                triggeredByUserId: authMe.user.id,
-              },
-              { dbClient: client },
-            )
-          : Promise.resolve({ eventId: null, audienceCount: 0, jobCount: 0 }),
-      ])
-
-      if (scope === 'resident') {
-        await processImmediateServiceRequestNotifications(
-          client,
-          id,
-          notifications,
-        )
-        processServiceRequestNotificationsInBackground(id, notifications, {
-          channel: null,
-        })
-      }
-    } catch (notificationError) {
-      warnNotificationFailure(id, notificationError)
-    }
+    enqueueAndDispatchServiceRequestNotificationsInBackground(
+      id,
+      async (notificationClient) =>
+        Promise.allSettled([
+          enqueueServiceRequestManagerNotification(
+            id,
+            {
+              title: 'Service request attachment added',
+              body: `${authMe.user.fullName} attached ${input.fileName} to ${ticket.request_number}: ${ticket.title}.`,
+              idempotencyKey: `service_request.manager.attachment:${attachmentId ?? Date.now()}`,
+              triggeredByUserId: authMe.user.id,
+              maxAttempts: 1,
+            },
+            { dbClient: notificationClient },
+          ),
+          scope !== 'resident'
+            ? enqueueServiceRequestNotification(
+                id,
+                {
+                  title: 'Service request attachment added',
+                  body: `A new attachment was added to ${ticket.request_number}.`,
+                  idempotencyKey: `service_request.attachment:${attachmentId ?? Date.now()}`,
+                  triggeredByUserId: authMe.user.id,
+                  maxAttempts: 1,
+                },
+                { dbClient: notificationClient },
+              )
+            : Promise.resolve({
+                eventId: null,
+                audienceCount: 0,
+                jobCount: 0,
+              }),
+        ]),
+      options.waitUntil,
+    )
     return attachmentId
   } catch (error) {
     await client.query('rollback')
@@ -2562,6 +2576,7 @@ export const uploadServiceRequestAttachment = async (
   id: string,
   input: ServiceAttachmentUploadInput,
   scope: TicketScope,
+  options: { waitUntil?: BackgroundWaitUntil } = {},
 ): Promise<ServiceRequestAttachment> => {
   const pool = getDatabasePool()
   const client = await pool.connect()
@@ -2663,48 +2678,41 @@ export const uploadServiceRequestAttachment = async (
     )
 
     await client.query('commit')
-
-    try {
-      const notifications = await Promise.allSettled([
-        scope === 'resident' || scope === 'service'
-          ? enqueueServiceRequestManagerNotification(
-              id,
-              {
-                title: 'Service request attachment added',
-                body: `${authMe.user.fullName} attached ${input.fileName} to ${ticket.request_number}: ${ticket.title}.`,
-                idempotencyKey: `service_request.manager.attachment:${row.id}`,
-                triggeredByUserId: authMe.user.id,
-              },
-              { dbClient: client },
-            )
-          : Promise.resolve({ eventId: null, audienceCount: 0, jobCount: 0 }),
-        scope !== 'resident'
-          ? enqueueServiceRequestNotification(
-              id,
-              {
-                title: 'Service request attachment added',
-                body: `A new attachment was added to ${ticket.request_number}.`,
-                idempotencyKey: `service_request.attachment:${row.id}`,
-                triggeredByUserId: authMe.user.id,
-              },
-              { dbClient: client },
-            )
-          : Promise.resolve({ eventId: null, audienceCount: 0, jobCount: 0 }),
-      ])
-
-      if (scope === 'resident') {
-        await processImmediateServiceRequestNotifications(
-          client,
-          id,
-          notifications,
-        )
-        processServiceRequestNotificationsInBackground(id, notifications, {
-          channel: null,
-        })
-      }
-    } catch (notificationError) {
-      warnNotificationFailure(id, notificationError)
-    }
+    enqueueAndDispatchServiceRequestNotificationsInBackground(
+      id,
+      async (notificationClient) =>
+        Promise.allSettled([
+          enqueueServiceRequestManagerNotification(
+            id,
+            {
+              title: 'Service request attachment added',
+              body: `${authMe.user.fullName} attached ${input.fileName} to ${ticket.request_number}: ${ticket.title}.`,
+              idempotencyKey: `service_request.manager.attachment:${row.id}`,
+              triggeredByUserId: authMe.user.id,
+              maxAttempts: 1,
+            },
+            { dbClient: notificationClient },
+          ),
+          scope !== 'resident'
+            ? enqueueServiceRequestNotification(
+                id,
+                {
+                  title: 'Service request attachment added',
+                  body: `A new attachment was added to ${ticket.request_number}.`,
+                  idempotencyKey: `service_request.attachment:${row.id}`,
+                  triggeredByUserId: authMe.user.id,
+                  maxAttempts: 1,
+                },
+                { dbClient: notificationClient },
+              )
+            : Promise.resolve({
+                eventId: null,
+                audienceCount: 0,
+                jobCount: 0,
+              }),
+        ]),
+      options.waitUntil,
+    )
 
     return {
       id: row.id,

@@ -16,7 +16,9 @@ export default defineServiceRequestCreateHandler(async (event) => {
     serviceRequestCreateSchema,
     await readJsonBody(event),
   )
-  const ticket = await createServiceRequest(authMe, body, 'admin')
+  const ticket = await createServiceRequest(authMe, body, 'admin', {
+    waitUntil: event.waitUntil.bind(event),
+  })
 
   return createApiSuccess(event, ticket)
 })

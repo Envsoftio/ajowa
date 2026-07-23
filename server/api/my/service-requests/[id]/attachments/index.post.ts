@@ -15,19 +15,25 @@ export default defineEventHandler(async (event) => {
     : 'application/octet-stream'
 
   if (!filePart?.filename || !filePart.data?.byteLength) {
-    throw createError({ statusCode: 400, statusMessage: 'A service request attachment is required.' })
+    throw createError({
+      statusCode: 400,
+      statusMessage: 'A service request attachment is required.',
+    })
   }
 
   const attachment = await uploadServiceRequestAttachment(
     authMe,
     id,
-      {
-        fileName: filePart.filename,
-        mimeType: fileMimeType,
-        sizeBytes: filePart.data.byteLength,
-        body: Buffer.from(filePart.data),
-      },
+    {
+      fileName: filePart.filename,
+      mimeType: fileMimeType,
+      sizeBytes: filePart.data.byteLength,
+      body: Buffer.from(filePart.data),
+    },
     'resident',
+    {
+      waitUntil: event.waitUntil.bind(event),
+    },
   )
 
   return createApiSuccess(event, attachment)

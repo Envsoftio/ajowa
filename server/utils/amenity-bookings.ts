@@ -30,8 +30,12 @@ import type { AuthMe } from '~/types/auth'
 type BookingScope = 'admin' | 'resident'
 type BackgroundWaitUntil = (promise: Promise<unknown>) => void
 
-const immediateAmenityBookingNotificationLimit = 50
-const residentInitiatedManagerNotificationChannels: NotificationChannel[] = ['PUSH', 'EMAIL', 'IN_APP']
+const immediateAmenityBookingNotificationLimit = 250
+const residentInitiatedManagerNotificationChannels: NotificationChannel[] = [
+  'PUSH',
+  'EMAIL',
+  'IN_APP',
+]
 
 type AmenityRow = {
   id: string
@@ -172,13 +176,28 @@ const bookingRulesSchema = z.object({
   minDurationMinutes: z.coerce.number().int().positive().max(1440).optional(),
   maxDurationMinutes: z.coerce.number().int().positive().max(1440).optional(),
   slotIntervalMinutes: z.coerce.number().int().positive().max(240).optional(),
-  minimumLeadHours: z.coerce.number().int().min(0).max(24 * 365).optional(),
+  minimumLeadHours: z.coerce
+    .number()
+    .int()
+    .min(0)
+    .max(24 * 365)
+    .optional(),
   maximumAdvanceDays: z.coerce.number().int().positive().max(365).optional(),
-  cancellationCutoffHours: z.coerce.number().int().min(0).max(24 * 365).optional(),
+  cancellationCutoffHours: z.coerce
+    .number()
+    .int()
+    .min(0)
+    .max(24 * 365)
+    .optional(),
 })
 
 export const amenityUpsertSchema = z.object({
-  code: z.string().trim().min(2).max(40).transform((value) => value.toUpperCase().replace(/\s+/g, '_')),
+  code: z
+    .string()
+    .trim()
+    .min(2)
+    .max(40)
+    .transform((value) => value.toUpperCase().replace(/\s+/g, '_')),
   name: z.string().trim().min(2).max(120),
   description: z.string().trim().max(600).nullable().optional(),
   location: z.string().trim().max(160).nullable().optional(),
@@ -192,21 +211,48 @@ export const amenityUpsertSchema = z.object({
 })
 
 const requiredUuidSchema = (requiredMessage: string, invalidMessage: string) =>
-  z.string().trim().min(1, requiredMessage).pipe(z.string().uuid(invalidMessage))
+  z
+    .string()
+    .trim()
+    .min(1, requiredMessage)
+    .pipe(z.string().uuid(invalidMessage))
 
-const requiredDateTimeSchema = (requiredMessage: string, invalidMessage: string) =>
-  z.string().trim().min(1, requiredMessage).pipe(z.string().datetime({ offset: true, message: invalidMessage }))
+const requiredDateTimeSchema = (
+  requiredMessage: string,
+  invalidMessage: string,
+) =>
+  z
+    .string()
+    .trim()
+    .min(1, requiredMessage)
+    .pipe(z.string().datetime({ offset: true, message: invalidMessage }))
 
 export const amenityBookingCreateSchema = z.object({
-  amenityId: requiredUuidSchema('Select an amenity.', 'Select a valid amenity.'),
+  amenityId: requiredUuidSchema(
+    'Select an amenity.',
+    'Select a valid amenity.',
+  ),
   flatId: requiredUuidSchema('Select a flat.', 'Select a valid flat.'),
-  startsAt: requiredDateTimeSchema('Select a booking date and start time.', 'Select a valid booking start time.'),
-  endsAt: requiredDateTimeSchema('Select a booking date and end time.', 'Select a valid booking end time.'),
+  startsAt: requiredDateTimeSchema(
+    'Select a booking date and start time.',
+    'Select a valid booking start time.',
+  ),
+  endsAt: requiredDateTimeSchema(
+    'Select a booking date and end time.',
+    'Select a valid booking end time.',
+  ),
   guestCount: z.coerce.number().int().positive().nullable().optional(),
-  purpose: z.string().trim().min(1, 'Enter a purpose.').min(3, 'Purpose must be at least 3 characters.').max(500),
+  purpose: z
+    .string()
+    .trim()
+    .min(1, 'Enter a purpose.')
+    .min(3, 'Purpose must be at least 3 characters.')
+    .max(500),
   residentNotes: z.string().trim().max(2000).nullable().optional(),
   rulesAccepted: z.literal(true, {
-    errorMap: () => ({ message: 'Accept the society rules before submitting.' }),
+    errorMap: () => ({
+      message: 'Accept the society rules before submitting.',
+    }),
   }),
 })
 
@@ -383,7 +429,9 @@ const bookingSelectSql = `
   left join users completer on completer.id = booking.completed_by_user_id
 `
 
-const normalizeRules = (rules: AmenityBookingRules | null | undefined): Required<AmenityBookingRules> => ({
+const normalizeRules = (
+  rules: AmenityBookingRules | null | undefined,
+): Required<AmenityBookingRules> => ({
   ...defaultRules,
   ...(rules ?? {}),
 })
@@ -391,11 +439,15 @@ const normalizeRules = (rules: AmenityBookingRules | null | undefined): Required
 const normalizeOperatingHours = (
   hours: Record<string, AmenityOperatingHourWindow[]> | null | undefined,
 ) => {
-  const normalized = hours && Object.keys(hours).length > 0 ? hours : defaultOperatingHours
-  return weekdays.reduce<Record<string, AmenityOperatingHourWindow[]>>((acc, day) => {
-    acc[day] = normalized[day] ?? []
-    return acc
-  }, {})
+  const normalized =
+    hours && Object.keys(hours).length > 0 ? hours : defaultOperatingHours
+  return weekdays.reduce<Record<string, AmenityOperatingHourWindow[]>>(
+    (acc, day) => {
+      acc[day] = normalized[day] ?? []
+      return acc
+    },
+    {},
+  )
 }
 
 const toDate = (value: string, field: string) => {
@@ -428,7 +480,8 @@ const getLocalParts = (date: Date, timeZone: string) => {
     second: '2-digit',
     hourCycle: 'h23',
   }).formatToParts(date)
-  const read = (type: string) => parts.find((part) => part.type === type)?.value ?? ''
+  const read = (type: string) =>
+    parts.find((part) => part.type === type)?.value ?? ''
 
   return {
     weekday: read('weekday').toLowerCase(),
@@ -448,7 +501,14 @@ const getLocalMinutes = (date: Date, timeZone: string) => {
 
 const getTimeZoneOffsetMinutes = (date: Date, timeZone: string) => {
   const parts = getLocalParts(date, timeZone)
-  const localAsUtc = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second)
+  const localAsUtc = Date.UTC(
+    parts.year,
+    parts.month - 1,
+    parts.day,
+    parts.hour,
+    parts.minute,
+    parts.second,
+  )
   return (localAsUtc - date.getTime()) / 60000
 }
 
@@ -459,7 +519,9 @@ const localDateTimeToUtc = (date: string, time: string, timeZone: string) => {
 
   for (let index = 0; index < 2; index += 1) {
     const offset = getTimeZoneOffsetMinutes(utc, timeZone)
-    utc = new Date(Date.UTC(year, month - 1, day, hour, minute, 0) - offset * 60000)
+    utc = new Date(
+      Date.UTC(year, month - 1, day, hour, minute, 0) - offset * 60000,
+    )
   }
 
   return utc
@@ -493,7 +555,11 @@ const getSocietyTimezone = async (client: PoolClient, societyId: string) => {
   return result.rows[0]?.timezone || 'Asia/Kolkata'
 }
 
-const assertResidentFlatAccess = async (client: PoolClient, authMe: AuthMe, flatId: string) => {
+const assertResidentFlatAccess = async (
+  client: PoolClient,
+  authMe: AuthMe,
+  flatId: string,
+) => {
   if (authMe.flatAccess.some((flat) => flat.flatId === flatId)) {
     return
   }
@@ -578,7 +644,12 @@ const listConflictWindows = async (
         and tstzrange(starts_at, ends_at, '[)') && tstzrange($2::timestamptz, $3::timestamptz, '[)')
       order by starts_at asc
     `,
-    [amenityId, startsAt.toISOString(), endsAt.toISOString(), excludeBookingId ?? null],
+    [
+      amenityId,
+      startsAt.toISOString(),
+      endsAt.toISOString(),
+      excludeBookingId ?? null,
+    ],
   )
 
   return result.rows
@@ -591,7 +662,13 @@ const assertNoConflicts = async (
   endsAt: Date,
   excludeBookingId?: string,
 ) => {
-  const conflicts = await listConflictWindows(client, amenityId, startsAt, endsAt, excludeBookingId)
+  const conflicts = await listConflictWindows(
+    client,
+    amenityId,
+    startsAt,
+    endsAt,
+    excludeBookingId,
+  )
 
   if (conflicts.length > 0) {
     throw new AppError({
@@ -624,7 +701,8 @@ const validateBookingRules = async (
   const timezone = await getSocietyTimezone(client, amenity.society_id)
   const rules = normalizeRules(amenity.booking_rules)
   const operatingHours = normalizeOperatingHours(amenity.operating_hours)
-  const durationMinutes = (input.endsAt.getTime() - input.startsAt.getTime()) / 60000
+  const durationMinutes =
+    (input.endsAt.getTime() - input.startsAt.getTime()) / 60000
 
   if (durationMinutes <= 0) {
     throw new AppError({
@@ -634,7 +712,10 @@ const validateBookingRules = async (
     })
   }
 
-  if (durationMinutes < rules.minDurationMinutes || durationMinutes > rules.maxDurationMinutes) {
+  if (
+    durationMinutes < rules.minDurationMinutes ||
+    durationMinutes > rules.maxDurationMinutes
+  ) {
     throw new AppError({
       code: 'VALIDATION_ERROR',
       statusCode: 400,
@@ -644,7 +725,10 @@ const validateBookingRules = async (
 
   const startMinutes = getLocalMinutes(input.startsAt, timezone)
   const endMinutes = getLocalMinutes(input.endsAt, timezone)
-  if (startMinutes % rules.slotIntervalMinutes !== 0 || endMinutes % rules.slotIntervalMinutes !== 0) {
+  if (
+    startMinutes % rules.slotIntervalMinutes !== 0 ||
+    endMinutes % rules.slotIntervalMinutes !== 0
+  ) {
     throw new AppError({
       code: 'VALIDATION_ERROR',
       statusCode: 400,
@@ -657,7 +741,9 @@ const validateBookingRules = async (
   const insideHours = dayWindows.some((window) => {
     const start = timeToMinutes(window.start)
     const end = timeToMinutes(window.end)
-    return start != null && end != null && startMinutes >= start && endMinutes <= end
+    return (
+      start != null && end != null && startMinutes >= start && endMinutes <= end
+    )
   })
 
   if (!insideHours) {
@@ -669,17 +755,24 @@ const validateBookingRules = async (
   }
 
   const now = Date.now()
-  if (input.startsAt.getTime() < now + rules.minimumLeadHours * 60 * 60 * 1000) {
+  if (
+    input.startsAt.getTime() <
+    now + rules.minimumLeadHours * 60 * 60 * 1000
+  ) {
     throw new AppError({
       code: 'VALIDATION_ERROR',
       statusCode: 400,
-      message: rules.minimumLeadHours === 0
-        ? 'Booking start time must be current time or later.'
-        : `Bookings require at least ${rules.minimumLeadHours} hours of lead time.`,
+      message:
+        rules.minimumLeadHours === 0
+          ? 'Booking start time must be current time or later.'
+          : `Bookings require at least ${rules.minimumLeadHours} hours of lead time.`,
     })
   }
 
-  if (input.startsAt.getTime() > now + rules.maximumAdvanceDays * 24 * 60 * 60 * 1000) {
+  if (
+    input.startsAt.getTime() >
+    now + rules.maximumAdvanceDays * 24 * 60 * 60 * 1000
+  ) {
     throw new AppError({
       code: 'VALIDATION_ERROR',
       statusCode: 400,
@@ -687,7 +780,11 @@ const validateBookingRules = async (
     })
   }
 
-  if (amenity.capacity != null && input.guestCount != null && input.guestCount > amenity.capacity) {
+  if (
+    amenity.capacity != null &&
+    input.guestCount != null &&
+    input.guestCount > amenity.capacity
+  ) {
     throw new AppError({
       code: 'VALIDATION_ERROR',
       statusCode: 400,
@@ -749,26 +846,6 @@ const mergeNotificationUsers = (groups: NotificationUser[][]) => {
   return [...byId.values()]
 }
 
-const dispatchImmediateInApp = async (client: PoolClient, eventId: string | null) => {
-  if (!eventId) return
-
-  try {
-    await dispatchNotificationJobs(client, {
-      eventId,
-      channel: 'IN_APP',
-      limit: 25,
-      lockTimeoutMinutes: 1,
-    })
-  } catch (error) {
-    console.warn(JSON.stringify({
-      level: 'warn',
-      message: 'Amenity booking in-app notification dispatch failed.',
-      eventId,
-      error: error instanceof Error ? error.message : String(error),
-    }))
-  }
-}
-
 const dispatchImmediateBookingNotifications = async (
   client: PoolClient,
   bookingId: string,
@@ -778,30 +855,53 @@ const dispatchImmediateBookingNotifications = async (
   if (!eventId) return
 
   try {
-    const dispatchResult = await dispatchNotificationJobs(client, {
-      eventId,
-      limit: options.limit ?? immediateAmenityBookingNotificationLimit,
-      ...(options.channel ? { channel: options.channel } : {}),
-      lockTimeoutMinutes: 1,
-    })
+    const limit = options.limit ?? immediateAmenityBookingNotificationLimit
+    let claimed = 0
+    let sent = 0
+    let failed = 0
+    let retried = 0
+    let skipped = 0
 
-    if (dispatchResult.failed > 0 || dispatchResult.retried > 0 || dispatchResult.claimed === 0) {
-      console.warn(JSON.stringify({
-        level: 'warn',
-        message: 'Amenity booking notification dispatch completed with pending or failed jobs.',
-        bookingId,
+    do {
+      const dispatchResult = await dispatchNotificationJobs(client, {
         eventId,
-        ...dispatchResult,
-      }))
+        limit,
+        ...(options.channel ? { channel: options.channel } : {}),
+        lockTimeoutMinutes: 1,
+      })
+
+      claimed = dispatchResult.claimed
+      sent += dispatchResult.sent
+      failed += dispatchResult.failed
+      retried += dispatchResult.retried
+      skipped += dispatchResult.skipped
+    } while (claimed === limit)
+
+    if (failed > 0 || retried > 0) {
+      console.warn(
+        JSON.stringify({
+          level: 'warn',
+          message:
+            'Amenity booking notification dispatch completed with failed jobs.',
+          bookingId,
+          eventId,
+          sent,
+          failed,
+          retried,
+          skipped,
+        }),
+      )
     }
   } catch (error) {
-    console.warn(JSON.stringify({
-      level: 'warn',
-      message: 'Amenity booking notification dispatch failed.',
-      bookingId,
-      eventId,
-      error: error instanceof Error ? error.message : String(error),
-    }))
+    console.warn(
+      JSON.stringify({
+        level: 'warn',
+        message: 'Amenity booking notification dispatch failed.',
+        bookingId,
+        eventId,
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    )
   }
 }
 
@@ -810,12 +910,14 @@ const warnBookingNotificationFailure = (
   message: string,
   error: unknown,
 ) => {
-  console.warn(JSON.stringify({
-    level: 'warn',
-    message,
-    bookingId,
-    error: error instanceof Error ? error.message : String(error),
-  }))
+  console.warn(
+    JSON.stringify({
+      level: 'warn',
+      message,
+      bookingId,
+      error: error instanceof Error ? error.message : String(error),
+    }),
+  )
 }
 
 const enqueueAndDispatchManagerNotification = async (
@@ -824,26 +926,33 @@ const enqueueAndDispatchManagerNotification = async (
   input: Parameters<typeof enqueueBookingManagerNotification>[2] = {},
 ) => {
   try {
-    const managerNotification = await enqueueBookingManagerNotification(client, bookingId, {
-      ...input,
-      dispatchInApp: false,
-    })
+    const managerNotification = await enqueueBookingManagerNotification(
+      client,
+      bookingId,
+      {
+        ...input,
+        dispatchImmediately: false,
+      },
+    )
 
     if (managerNotification?.eventId && managerNotification.jobCount === 0) {
-      console.warn(JSON.stringify({
-        level: 'warn',
-        message: 'Amenity booking manager notification queued zero jobs.',
-        bookingId,
-        eventId: managerNotification.eventId,
-        audienceCount: managerNotification.audienceCount,
-        jobCount: managerNotification.jobCount,
-      }))
+      console.warn(
+        JSON.stringify({
+          level: 'warn',
+          message: 'Amenity booking manager notification queued zero jobs.',
+          bookingId,
+          eventId: managerNotification.eventId,
+          audienceCount: managerNotification.audienceCount,
+          jobCount: managerNotification.jobCount,
+        }),
+      )
     }
 
-    await dispatchImmediateBookingNotifications(client, bookingId, managerNotification?.eventId, {
-      channel: 'IN_APP',
-      limit: 25,
-    })
+    await dispatchImmediateBookingNotifications(
+      client,
+      bookingId,
+      managerNotification?.eventId,
+    )
 
     return managerNotification
   } catch (error) {
@@ -862,8 +971,7 @@ const enqueueAndDispatchManagerNotificationWithFreshClient = async (
   const client = await getDatabasePool().connect()
 
   try {
-    const managerNotification = await enqueueAndDispatchManagerNotification(client, bookingId, input)
-    await dispatchImmediateBookingNotifications(client, bookingId, managerNotification?.eventId)
+    await enqueueAndDispatchManagerNotification(client, bookingId, input)
   } finally {
     client.release()
   }
@@ -874,14 +982,16 @@ const enqueueAndDispatchManagerNotificationInBackground = (
   input: Parameters<typeof enqueueBookingManagerNotification>[2] = {},
   waitUntil?: BackgroundWaitUntil,
 ) => {
-  const promise = enqueueAndDispatchManagerNotificationWithFreshClient(bookingId, input)
-    .catch((error) => {
-      warnBookingNotificationFailure(
-        bookingId,
-        'Amenity booking background notification processing failed.',
-        error,
-      )
-    })
+  const promise = enqueueAndDispatchManagerNotificationWithFreshClient(
+    bookingId,
+    input,
+  ).catch((error) => {
+    warnBookingNotificationFailure(
+      bookingId,
+      'Amenity booking background notification processing failed.',
+      error,
+    )
+  })
 
   if (waitUntil) {
     waitUntil(promise)
@@ -891,7 +1001,10 @@ const enqueueAndDispatchManagerNotificationInBackground = (
   void promise
 }
 
-const getBookingNotificationRow = async (client: PoolClient, bookingId: string) => {
+const getBookingNotificationRow = async (
+  client: PoolClient,
+  bookingId: string,
+) => {
   const result = await client.query<BookingRow>(
     `
       ${bookingSelectSql}
@@ -911,7 +1024,7 @@ const enqueueBookingResidentNotification = async (
     body: string
     idempotencyKey: string
     triggeredByUserId?: string
-    dispatchInApp?: boolean
+    dispatchImmediately?: boolean
   },
 ) => {
   const booking = await getBookingNotificationRow(client, bookingId)
@@ -919,7 +1032,7 @@ const enqueueBookingResidentNotification = async (
 
   const users = mergeNotificationUsers([
     await resolveNotificationAudience(client, booking.society_id, {
-      scope: 'FLATS',
+      scope: 'OWNER_OF_FLAT',
       flatIds: [booking.flat_id],
     }),
     await resolveNotificationAudience(client, booking.society_id, {
@@ -951,19 +1064,26 @@ const enqueueBookingResidentNotification = async (
     },
     idempotencyKey: input.idempotencyKey,
     idempotencyWindowSeconds: 31536000,
-    ...(input.triggeredByUserId ? { triggeredByUserId: input.triggeredByUserId } : {}),
+    ...(input.triggeredByUserId
+      ? { triggeredByUserId: input.triggeredByUserId }
+      : {}),
+    maxAttempts: 1,
     users,
     channels: ['PUSH', 'EMAIL', 'IN_APP'],
     audienceLabel: 'Booking resident recipients',
     audienceSnapshot: {
       eventKey: 'amenity_booking.updated',
       bookingId: booking.id,
-      recipientScope: 'FLAT_RESIDENTS_AND_REQUESTER',
+      recipientScope: 'FLAT_OWNERS_AND_REQUESTER',
     },
   })
 
-  if (input.dispatchInApp !== false) {
-    await dispatchImmediateInApp(client, queued.eventId)
+  if (input.dispatchImmediately !== false) {
+    await dispatchImmediateBookingNotifications(
+      client,
+      bookingId,
+      queued.eventId,
+    )
   }
 
   return queued
@@ -977,9 +1097,10 @@ const enqueueBookingManagerNotification = async (
     body?: string
     idempotencyKey?: string
     triggeredByUserId?: string
-    dispatchInApp?: boolean
+    dispatchImmediately?: boolean
     channels?: NotificationChannel[]
     maxAttempts?: number
+    eventKey?: 'amenity_booking.created' | 'amenity_booking.updated'
   } = {},
 ) => {
   const booking = await getBookingNotificationRow(client, bookingId)
@@ -1011,16 +1132,19 @@ const enqueueBookingManagerNotification = async (
     scope: 'USERS',
     userIds: managerIds,
   })
+  const eventKey = input.eventKey ?? 'amenity_booking.created'
 
   const queued = await enqueueNotificationForUsers(client, {
     societyId: booking.society_id,
-    eventKey: 'amenity_booking.created',
+    eventKey,
     category: 'AMENITY_BOOKINGS',
     sourceTable: 'amenity_bookings',
     sourceId: booking.id,
     priority: 'MEDIUM',
     title: input.title ?? 'New amenity booking request',
-    body: input.body ?? `${booking.requester_name} requested ${booking.amenity_name} for ${booking.flat_label}.`,
+    body:
+      input.body ??
+      `${booking.requester_name} requested ${booking.amenity_name} for ${booking.flat_label}.`,
     payload: {
       bookingId: booking.id,
       bookingNumber: booking.booking_number,
@@ -1032,25 +1156,105 @@ const enqueueBookingManagerNotification = async (
       deepLinkUrl: `/admin/amenity-bookings/${booking.id}`,
       actionLabel: 'Review booking',
     },
-    idempotencyKey: input.idempotencyKey ?? `amenity_booking.manager:${booking.id}:${booking.status}`,
+    idempotencyKey:
+      input.idempotencyKey ??
+      `amenity_booking.manager:${booking.id}:${booking.status}`,
     idempotencyWindowSeconds: 31536000,
-    ...(input.triggeredByUserId ? { triggeredByUserId: input.triggeredByUserId } : {}),
-    ...(input.maxAttempts ? { maxAttempts: input.maxAttempts } : {}),
+    ...(input.triggeredByUserId
+      ? { triggeredByUserId: input.triggeredByUserId }
+      : {}),
+    maxAttempts: input.maxAttempts ?? 1,
     users,
     channels: input.channels ?? ['PUSH', 'EMAIL', 'IN_APP'],
-    audienceLabel: 'Amenity booking managers',
+    audienceLabel: 'Amenity booking admins and managers',
     audienceSnapshot: {
-      eventKey: 'amenity_booking.created',
+      eventKey,
       bookingId: booking.id,
       recipientScope: 'ADMIN_AND_MANAGER',
     },
   })
 
-  if (input.dispatchInApp !== false) {
-    await dispatchImmediateInApp(client, queued.eventId)
+  if (input.dispatchImmediately !== false) {
+    await dispatchImmediateBookingNotifications(
+      client,
+      bookingId,
+      queued.eventId,
+    )
   }
 
   return queued
+}
+
+type BookingNotificationBackgroundInput = {
+  resident?: Parameters<typeof enqueueBookingResidentNotification>[2]
+  manager?: Parameters<typeof enqueueBookingManagerNotification>[2]
+}
+
+const enqueueAndDispatchBookingUpdateNotificationsWithFreshClient = async (
+  bookingId: string,
+  input: BookingNotificationBackgroundInput,
+) => {
+  const client = await getDatabasePool().connect()
+
+  try {
+    const results = await Promise.allSettled([
+      input.resident
+        ? enqueueBookingResidentNotification(client, bookingId, {
+            ...input.resident,
+            dispatchImmediately: false,
+          })
+        : Promise.resolve(undefined),
+      input.manager
+        ? enqueueBookingManagerNotification(client, bookingId, {
+            ...input.manager,
+            dispatchImmediately: false,
+          })
+        : Promise.resolve(undefined),
+    ])
+
+    for (const result of results) {
+      if (result.status === 'rejected') {
+        warnBookingNotificationFailure(
+          bookingId,
+          'Amenity booking notification enqueue failed after booking update.',
+          result.reason,
+        )
+        continue
+      }
+
+      await dispatchImmediateBookingNotifications(
+        client,
+        bookingId,
+        result.value?.eventId,
+      )
+    }
+  } finally {
+    client.release()
+  }
+}
+
+const enqueueAndDispatchBookingUpdateNotificationsInBackground = (
+  bookingId: string,
+  input: BookingNotificationBackgroundInput,
+  waitUntil?: BackgroundWaitUntil,
+) => {
+  const promise = enqueueAndDispatchBookingUpdateNotificationsWithFreshClient(
+    bookingId,
+    input,
+  ).catch((error) => {
+    warnBookingNotificationFailure(
+      bookingId,
+      'Amenity booking background notification processing failed.',
+      error,
+    )
+  })
+
+  if (waitUntil) {
+    waitUntil(promise)
+    return
+  }
+
+  void promise
 }
 
 const queueBookingAudit = (
@@ -1072,7 +1276,11 @@ const queueBookingAudit = (
     metadata,
     relatedEntities: [
       { entityTable: 'society_profile', entityId: authMe.user.societyId },
-      { entityTable: 'amenity_bookings', entityId: booking.id, entityLabel: booking.bookingNumber },
+      {
+        entityTable: 'amenity_bookings',
+        entityId: booking.id,
+        entityLabel: booking.bookingNumber,
+      },
     ],
   })
 }
@@ -1248,7 +1456,9 @@ export const listAmenityBookings = async (
 
     if (flatIds.length > 0) {
       values.push(flatIds)
-      where.push(`(booking.requester_user_id = $${requesterParam} or booking.flat_id = any($${values.length}::uuid[]))`)
+      where.push(
+        `(booking.requester_user_id = $${requesterParam} or booking.flat_id = any($${values.length}::uuid[]))`,
+      )
     } else {
       where.push(`booking.requester_user_id = $${requesterParam}`)
     }
@@ -1348,13 +1558,15 @@ export const getAmenityBookingDetail = async (
 
     if (flatIds.length > 0) {
       values.push(flatIds)
-      where.push(`(booking.requester_user_id = $${requesterParam} or booking.flat_id = any($${values.length}::uuid[]))`)
+      where.push(
+        `(booking.requester_user_id = $${requesterParam} or booking.flat_id = any($${values.length}::uuid[]))`,
+      )
     } else {
       where.push(`booking.requester_user_id = $${requesterParam}`)
     }
   }
 
-  const client = options.dbClient ?? await getDatabasePool().connect()
+  const client = options.dbClient ?? (await getDatabasePool().connect())
   const shouldReleaseClient = !options.dbClient
   try {
     const bookingResult = await client.query<BookingRow>(
@@ -1441,9 +1653,14 @@ export const createAmenityBooking = async (
     await client.query('begin')
     await assertResidentFlatAccess(client, authMe, input.flatId)
 
-    const amenity = await getAmenityById(client, authMe.user.societyId, input.amenityId, {
-      requireBookable: true,
-    })
+    const amenity = await getAmenityById(
+      client,
+      authMe.user.societyId,
+      input.amenityId,
+      {
+        requireBookable: true,
+      },
+    )
     const startsAt = toDate(input.startsAt, 'Start time')
     const endsAt = toDate(input.endsAt, 'End time')
 
@@ -1510,14 +1727,37 @@ export const createAmenityBooking = async (
     await client.query('commit')
     committed = true
 
-    const booking = await getAmenityBookingDetail(authMe, bookingId, 'resident', { dbClient: client })
-    queueBookingAudit(event, authMe, booking, 'CREATED', 'amenity_booking.created')
-    enqueueAndDispatchManagerNotificationInBackground(bookingId, {
-      triggeredByUserId: authMe.user.id,
-      idempotencyKey: `amenity_booking.manager.created:${bookingId}`,
-      channels: residentInitiatedManagerNotificationChannels,
-      maxAttempts: 1,
-    }, event.waitUntil?.bind(event))
+    const booking = await getAmenityBookingDetail(
+      authMe,
+      bookingId,
+      'resident',
+      { dbClient: client },
+    )
+    queueBookingAudit(
+      event,
+      authMe,
+      booking,
+      'CREATED',
+      'amenity_booking.created',
+    )
+    enqueueAndDispatchBookingUpdateNotificationsInBackground(
+      bookingId,
+      {
+        resident: {
+          title: 'Amenity booking submitted',
+          body: `${booking.bookingNumber} for ${booking.amenityName} has been submitted.`,
+          idempotencyKey: `amenity_booking.resident.created:${bookingId}`,
+          triggeredByUserId: authMe.user.id,
+        },
+        manager: {
+          triggeredByUserId: authMe.user.id,
+          idempotencyKey: `amenity_booking.manager.created:${bookingId}`,
+          channels: residentInitiatedManagerNotificationChannels,
+          maxAttempts: 1,
+        },
+      },
+      event.waitUntil?.bind(event),
+    )
 
     return booking
   } catch (error) {
@@ -1531,7 +1771,11 @@ export const createAmenityBooking = async (
   }
 }
 
-const getBookingForUpdate = async (client: PoolClient, authMe: AuthMe, bookingId: string) => {
+const getBookingForUpdate = async (
+  client: PoolClient,
+  authMe: AuthMe,
+  bookingId: string,
+) => {
   const result = await client.query<BookingRow>(
     `
       ${bookingSelectSql}
@@ -1553,7 +1797,9 @@ const getBookingForUpdate = async (client: PoolClient, authMe: AuthMe, bookingId
   return booking
 }
 
-const isPgError = (error: unknown): error is { code?: string; constraint?: string; message?: string } =>
+const isPgError = (
+  error: unknown,
+): error is { code?: string; constraint?: string; message?: string } =>
   Boolean(error && typeof error === 'object')
 
 const translateConflictError = (error: unknown) => {
@@ -1602,7 +1848,8 @@ const translateAmenityBookingWriteError = (error: unknown) => {
     throw new AppError({
       code: 'VALIDATION_ERROR',
       statusCode: 400,
-      message: 'Selected amenity or flat is no longer available. Refresh and try again.',
+      message:
+        'Selected amenity or flat is no longer available. Refresh and try again.',
     })
   }
 
@@ -1610,11 +1857,15 @@ const translateAmenityBookingWriteError = (error: unknown) => {
     throw new AppError({
       code: 'VALIDATION_ERROR',
       statusCode: 400,
-      message: 'Booking details failed validation. Check the time and guest count, then try again.',
+      message:
+        'Booking details failed validation. Check the time and guest count, then try again.',
     })
   }
 
-  if (pgError.code === '23505' && pgError.constraint?.includes('booking_number')) {
+  if (
+    pgError.code === '23505' &&
+    pgError.constraint?.includes('booking_number')
+  ) {
     throw new AppError({
       code: 'CONFLICT',
       statusCode: 409,
@@ -1645,7 +1896,11 @@ export const approveAmenityBooking = async (
       })
     }
 
-    const amenity = await getAmenityById(client, authMe.user.societyId, booking.amenity_id)
+    const amenity = await getAmenityById(
+      client,
+      authMe.user.societyId,
+      booking.amenity_id,
+    )
     const startsAt = toDate(booking.starts_at, 'Start time')
     const endsAt = toDate(booking.ends_at, 'End time')
 
@@ -1681,20 +1936,41 @@ export const approveAmenityBooking = async (
       toStatus: 'APPROVED',
       message: input.adminNotes || 'Booking approved.',
     })
-    await enqueueBookingResidentNotification(client, booking.id, {
-      title: 'Amenity booking approved',
-      body: `${booking.booking_number} for ${booking.amenity_name} has been approved.`,
-      idempotencyKey: `amenity_booking.resident.approved:${booking.id}`,
-      triggeredByUserId: authMe.user.id,
-      dispatchInApp: false,
-    })
     await client.query('commit')
+    enqueueAndDispatchBookingUpdateNotificationsInBackground(
+      booking.id,
+      {
+        resident: {
+          title: 'Amenity booking approved',
+          body: `${booking.booking_number} for ${booking.amenity_name} has been approved.`,
+          idempotencyKey: `amenity_booking.resident.approved:${booking.id}`,
+          triggeredByUserId: authMe.user.id,
+        },
+        manager: {
+          title: 'Amenity booking approved',
+          body: `${authMe.user.fullName} approved ${booking.booking_number} for ${booking.amenity_name}.`,
+          idempotencyKey: `amenity_booking.manager.approved:${booking.id}`,
+          triggeredByUserId: authMe.user.id,
+          eventKey: 'amenity_booking.updated',
+        },
+      },
+      event.waitUntil?.bind(event),
+    )
 
-    const updated = await getAmenityBookingDetail(authMe, booking.id, 'admin', { dbClient: client })
-    queueBookingAudit(event, authMe, updated, 'STATE_CHANGED', 'amenity_booking.approved', {
-      fromStatus: booking.status,
-      toStatus: 'APPROVED',
+    const updated = await getAmenityBookingDetail(authMe, booking.id, 'admin', {
+      dbClient: client,
     })
+    queueBookingAudit(
+      event,
+      authMe,
+      updated,
+      'STATE_CHANGED',
+      'amenity_booking.approved',
+      {
+        fromStatus: booking.status,
+        toStatus: 'APPROVED',
+      },
+    )
 
     return updated
   } catch (error) {
@@ -1747,20 +2023,41 @@ export const rejectAmenityBooking = async (
       toStatus: 'REJECTED',
       message: input.reason,
     })
-    await enqueueBookingResidentNotification(client, booking.id, {
-      title: 'Amenity booking rejected',
-      body: `${booking.booking_number} for ${booking.amenity_name} was rejected: ${input.reason}`,
-      idempotencyKey: `amenity_booking.resident.rejected:${booking.id}`,
-      triggeredByUserId: authMe.user.id,
-      dispatchInApp: false,
-    })
     await client.query('commit')
+    enqueueAndDispatchBookingUpdateNotificationsInBackground(
+      booking.id,
+      {
+        resident: {
+          title: 'Amenity booking rejected',
+          body: `${booking.booking_number} for ${booking.amenity_name} was rejected: ${input.reason}`,
+          idempotencyKey: `amenity_booking.resident.rejected:${booking.id}`,
+          triggeredByUserId: authMe.user.id,
+        },
+        manager: {
+          title: 'Amenity booking rejected',
+          body: `${authMe.user.fullName} rejected ${booking.booking_number} for ${booking.amenity_name}.`,
+          idempotencyKey: `amenity_booking.manager.rejected:${booking.id}`,
+          triggeredByUserId: authMe.user.id,
+          eventKey: 'amenity_booking.updated',
+        },
+      },
+      event.waitUntil?.bind(event),
+    )
 
-    const updated = await getAmenityBookingDetail(authMe, booking.id, 'admin', { dbClient: client })
-    queueBookingAudit(event, authMe, updated, 'STATE_CHANGED', 'amenity_booking.rejected', {
-      fromStatus: booking.status,
-      toStatus: 'REJECTED',
+    const updated = await getAmenityBookingDetail(authMe, booking.id, 'admin', {
+      dbClient: client,
     })
+    queueBookingAudit(
+      event,
+      authMe,
+      updated,
+      'STATE_CHANGED',
+      'amenity_booking.rejected',
+      {
+        fromStatus: booking.status,
+        toStatus: 'REJECTED',
+      },
+    )
 
     return updated
   } catch (error) {
@@ -1797,11 +2094,18 @@ export const cancelAmenityBooking = async (
     }
 
     if (scope === 'resident') {
-      const amenity = await getAmenityById(client, authMe.user.societyId, booking.amenity_id)
+      const amenity = await getAmenityById(
+        client,
+        authMe.user.societyId,
+        booking.amenity_id,
+      )
       const rules = normalizeRules(amenity.booking_rules)
       const startsAt = toDate(booking.starts_at, 'Start time')
 
-      if (startsAt.getTime() < Date.now() + rules.cancellationCutoffHours * 60 * 60 * 1000) {
+      if (
+        startsAt.getTime() <
+        Date.now() + rules.cancellationCutoffHours * 60 * 60 * 1000
+      ) {
         throw new AppError({
           code: 'VALIDATION_ERROR',
           statusCode: 400,
@@ -1810,7 +2114,9 @@ export const cancelAmenityBooking = async (
       }
     }
 
-    const reason = input.reason?.trim() || (scope === 'resident' ? 'Cancelled by resident.' : 'Cancelled by admin.')
+    const reason =
+      input.reason?.trim() ||
+      (scope === 'resident' ? 'Cancelled by resident.' : 'Cancelled by admin.')
     await client.query(
       `
         update amenity_bookings
@@ -1831,43 +2137,65 @@ export const cancelAmenityBooking = async (
       message: reason,
     })
 
-    const managerNotificationInput = scope === 'resident'
-      ? {
-          title: 'Amenity booking cancelled',
-          body: `${booking.booking_number} for ${booking.amenity_name} was cancelled by ${authMe.user.fullName}.`,
-          idempotencyKey: `amenity_booking.manager.cancelled:${booking.id}`,
-          triggeredByUserId: authMe.user.id,
-          dispatchInApp: false,
-          channels: residentInitiatedManagerNotificationChannels,
-          maxAttempts: 1,
-        } satisfies Parameters<typeof enqueueBookingManagerNotification>[2]
-      : null
-
-    if (scope !== 'resident') {
-      await enqueueBookingResidentNotification(client, booking.id, {
-        title: 'Amenity booking cancelled',
-        body: `${booking.booking_number} for ${booking.amenity_name} was cancelled: ${reason}`,
-        idempotencyKey: `amenity_booking.resident.cancelled:${booking.id}`,
-        triggeredByUserId: authMe.user.id,
-        dispatchInApp: false,
-      })
-    }
+    const managerNotificationInput =
+      scope === 'resident'
+        ? ({
+            title: 'Amenity booking cancelled',
+            body: `${booking.booking_number} for ${booking.amenity_name} was cancelled by ${authMe.user.fullName}.`,
+            idempotencyKey: `amenity_booking.manager.cancelled:${booking.id}`,
+            triggeredByUserId: authMe.user.id,
+            dispatchImmediately: false,
+            channels: residentInitiatedManagerNotificationChannels,
+            maxAttempts: 1,
+            eventKey: 'amenity_booking.updated',
+          } satisfies Parameters<typeof enqueueBookingManagerNotification>[2])
+        : ({
+            title: 'Amenity booking cancelled',
+            body: `${authMe.user.fullName} cancelled ${booking.booking_number} for ${booking.amenity_name}.`,
+            idempotencyKey: `amenity_booking.manager.cancelled:${booking.id}`,
+            triggeredByUserId: authMe.user.id,
+            dispatchImmediately: false,
+            eventKey: 'amenity_booking.updated',
+          } satisfies Parameters<typeof enqueueBookingManagerNotification>[2])
 
     await client.query('commit')
-    if (managerNotificationInput) {
+    if (scope === 'resident') {
       enqueueAndDispatchManagerNotificationInBackground(
         booking.id,
         managerNotificationInput,
         event.waitUntil?.bind(event),
       )
+    } else {
+      enqueueAndDispatchBookingUpdateNotificationsInBackground(
+        booking.id,
+        {
+          resident: {
+            title: 'Amenity booking cancelled',
+            body: `${booking.booking_number} for ${booking.amenity_name} was cancelled: ${reason}`,
+            idempotencyKey: `amenity_booking.resident.cancelled:${booking.id}`,
+            triggeredByUserId: authMe.user.id,
+          },
+          manager: managerNotificationInput,
+        },
+        event.waitUntil?.bind(event),
+      )
     }
 
-    const updated = await getAmenityBookingDetail(authMe, booking.id, scope, { dbClient: client })
-    queueBookingAudit(event, authMe, updated, 'STATE_CHANGED', 'amenity_booking.cancelled', {
-      fromStatus: booking.status,
-      toStatus: 'CANCELLED',
-      scope,
+    const updated = await getAmenityBookingDetail(authMe, booking.id, scope, {
+      dbClient: client,
     })
+    queueBookingAudit(
+      event,
+      authMe,
+      updated,
+      'STATE_CHANGED',
+      'amenity_booking.cancelled',
+      {
+        fromStatus: booking.status,
+        toStatus: 'CANCELLED',
+        scope,
+      },
+    )
 
     return updated
   } catch (error) {
@@ -1915,20 +2243,41 @@ export const completeAmenityBooking = async (
       toStatus: 'COMPLETED',
       message: 'Booking marked completed.',
     })
-    await enqueueBookingResidentNotification(client, booking.id, {
-      title: 'Amenity booking completed',
-      body: `${booking.booking_number} for ${booking.amenity_name} was marked completed.`,
-      idempotencyKey: `amenity_booking.resident.completed:${booking.id}`,
-      triggeredByUserId: authMe.user.id,
-      dispatchInApp: false,
-    })
     await client.query('commit')
+    enqueueAndDispatchBookingUpdateNotificationsInBackground(
+      booking.id,
+      {
+        resident: {
+          title: 'Amenity booking completed',
+          body: `${booking.booking_number} for ${booking.amenity_name} was marked completed.`,
+          idempotencyKey: `amenity_booking.resident.completed:${booking.id}`,
+          triggeredByUserId: authMe.user.id,
+        },
+        manager: {
+          title: 'Amenity booking completed',
+          body: `${authMe.user.fullName} marked ${booking.booking_number} for ${booking.amenity_name} completed.`,
+          idempotencyKey: `amenity_booking.manager.completed:${booking.id}`,
+          triggeredByUserId: authMe.user.id,
+          eventKey: 'amenity_booking.updated',
+        },
+      },
+      event.waitUntil?.bind(event),
+    )
 
-    const updated = await getAmenityBookingDetail(authMe, booking.id, 'admin', { dbClient: client })
-    queueBookingAudit(event, authMe, updated, 'STATE_CHANGED', 'amenity_booking.completed', {
-      fromStatus: booking.status,
-      toStatus: 'COMPLETED',
+    const updated = await getAmenityBookingDetail(authMe, booking.id, 'admin', {
+      dbClient: client,
     })
+    queueBookingAudit(
+      event,
+      authMe,
+      updated,
+      'STATE_CHANGED',
+      'amenity_booking.completed',
+      {
+        fromStatus: booking.status,
+        toStatus: 'COMPLETED',
+      },
+    )
 
     return updated
   } catch (error) {
@@ -1948,13 +2297,22 @@ export const getAmenityAvailability = async (
   const client = await getDatabasePool().connect()
 
   try {
-    const amenity = await getAmenityById(client, authMe.user.societyId, amenityId, {
-      requireBookable: authMe.user.role === 'RESIDENT',
-    })
+    const amenity = await getAmenityById(
+      client,
+      authMe.user.societyId,
+      amenityId,
+      {
+        requireBookable: authMe.user.role === 'RESIDENT',
+      },
+    )
     const timezone = await getSocietyTimezone(client, authMe.user.societyId)
     const operatingHours = normalizeOperatingHours(amenity.operating_hours)
     const dayStart = localDateTimeToUtc(date, '00:00', timezone)
-    const dayEnd = localDateTimeToUtc(addDaysToDateKey(date, 1), '00:00', timezone)
+    const dayEnd = localDateTimeToUtc(
+      addDaysToDateKey(date, 1),
+      '00:00',
+      timezone,
+    )
 
     const windowsResult = await client.query<ConflictWindowRow>(
       `
@@ -1973,8 +2331,8 @@ export const getAmenityAvailability = async (
       [amenityId, dayStart.toISOString(), dayEnd.toISOString()],
     )
 
-    const unavailableWindows: AmenityAvailabilityWindow[] = windowsResult.rows
-      .map((window) => ({
+    const unavailableWindows: AmenityAvailabilityWindow[] =
+      windowsResult.rows.map((window) => ({
         id: window.id,
         type: window.type,
         title: window.title,
@@ -1984,10 +2342,12 @@ export const getAmenityAvailability = async (
       }))
 
     const rules = normalizeRules(amenity.booking_rules)
-    const weekday = weekdays[localDateTimeToUtc(date, '12:00', timezone).getDay()] ?? 'sunday'
+    const weekday =
+      weekdays[localDateTimeToUtc(date, '12:00', timezone).getDay()] ?? 'sunday'
     const suggestions: AmenityAvailability['availableSlotSuggestions'] = []
     const earliestStart = Date.now() + rules.minimumLeadHours * 60 * 60 * 1000
-    const latestStart = Date.now() + rules.maximumAdvanceDays * 24 * 60 * 60 * 1000
+    const latestStart =
+      Date.now() + rules.maximumAdvanceDays * 24 * 60 * 60 * 1000
 
     for (const window of operatingHours[weekday] ?? []) {
       const start = timeToMinutes(window.start)
@@ -1995,18 +2355,30 @@ export const getAmenityAvailability = async (
 
       if (start == null || end == null) continue
 
-      for (let minutes = start; minutes + rules.minDurationMinutes <= end; minutes += rules.slotIntervalMinutes) {
+      for (
+        let minutes = start;
+        minutes + rules.minDurationMinutes <= end;
+        minutes += rules.slotIntervalMinutes
+      ) {
         const startsAt = localDateTimeToUtc(
           date,
           `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`,
           timezone,
         )
-        const endsAt = new Date(startsAt.getTime() + rules.minDurationMinutes * 60 * 1000)
-        const overlaps = unavailableWindows.some((unavailable) =>
-          startsAt < new Date(unavailable.endsAt) && endsAt > new Date(unavailable.startsAt),
+        const endsAt = new Date(
+          startsAt.getTime() + rules.minDurationMinutes * 60 * 1000,
+        )
+        const overlaps = unavailableWindows.some(
+          (unavailable) =>
+            startsAt < new Date(unavailable.endsAt) &&
+            endsAt > new Date(unavailable.startsAt),
         )
 
-        if (!overlaps && startsAt.getTime() >= earliestStart && startsAt.getTime() <= latestStart) {
+        if (
+          !overlaps &&
+          startsAt.getTime() >= earliestStart &&
+          startsAt.getTime() <= latestStart
+        ) {
           suggestions.push({
             startsAt: startsAt.toISOString(),
             endsAt: endsAt.toISOString(),
@@ -2060,40 +2432,68 @@ export const getAmenityBlockedDates = async (
   const client = await getDatabasePool().connect()
 
   try {
-    const amenity = await getAmenityById(client, authMe.user.societyId, amenityId, {
-      requireBookable: authMe.user.role === 'RESIDENT',
-    })
+    const amenity = await getAmenityById(
+      client,
+      authMe.user.societyId,
+      amenityId,
+      {
+        requireBookable: authMe.user.role === 'RESIDENT',
+      },
+    )
     const timezone = await getSocietyTimezone(client, authMe.user.societyId)
     const operatingHours = normalizeOperatingHours(amenity.operating_hours)
     const rules = normalizeRules(amenity.booking_rules)
     const rangeStart = localDateTimeToUtc(startDate, '00:00', timezone)
-    const rangeEnd = localDateTimeToUtc(addDaysToDateKey(endDate, 1), '00:00', timezone)
-    const windows = await listConflictWindows(client, amenityId, rangeStart, rangeEnd)
+    const rangeEnd = localDateTimeToUtc(
+      addDaysToDateKey(endDate, 1),
+      '00:00',
+      timezone,
+    )
+    const windows = await listConflictWindows(
+      client,
+      amenityId,
+      rangeStart,
+      rangeEnd,
+    )
     const earliestStart = Date.now() + rules.minimumLeadHours * 60 * 60 * 1000
-    const latestStart = Date.now() + rules.maximumAdvanceDays * 24 * 60 * 60 * 1000
+    const latestStart =
+      Date.now() + rules.maximumAdvanceDays * 24 * 60 * 60 * 1000
 
     const hasAvailableSlot = (date: string) => {
-      const weekday = weekdays[localDateTimeToUtc(date, '12:00', timezone).getDay()] ?? 'sunday'
+      const weekday =
+        weekdays[localDateTimeToUtc(date, '12:00', timezone).getDay()] ??
+        'sunday'
 
       for (const window of operatingHours[weekday] ?? []) {
         const start = timeToMinutes(window.start)
         const end = timeToMinutes(window.end)
         if (start == null || end == null) continue
 
-        for (let minutes = start; minutes + rules.minDurationMinutes <= end; minutes += rules.slotIntervalMinutes) {
+        for (
+          let minutes = start;
+          minutes + rules.minDurationMinutes <= end;
+          minutes += rules.slotIntervalMinutes
+        ) {
           const startsAt = localDateTimeToUtc(
             date,
             `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`,
             timezone,
           )
-          const endsAt = new Date(startsAt.getTime() + rules.minDurationMinutes * 60 * 1000)
+          const endsAt = new Date(
+            startsAt.getTime() + rules.minDurationMinutes * 60 * 1000,
+          )
 
-          if (startsAt.getTime() < earliestStart || startsAt.getTime() > latestStart) {
+          if (
+            startsAt.getTime() < earliestStart ||
+            startsAt.getTime() > latestStart
+          ) {
             continue
           }
 
-          const overlaps = windows.some((unavailable) =>
-            startsAt < new Date(unavailable.ends_at) && endsAt > new Date(unavailable.starts_at),
+          const overlaps = windows.some(
+            (unavailable) =>
+              startsAt < new Date(unavailable.ends_at) &&
+              endsAt > new Date(unavailable.starts_at),
           )
 
           if (!overlaps) {
@@ -2201,7 +2601,11 @@ export const createAmenityBlackout = async (
       },
       relatedEntities: [
         { entityTable: 'society_profile', entityId: authMe.user.societyId },
-        { entityTable: 'amenity_blackouts', entityId: blackout.id, entityLabel: blackout.title },
+        {
+          entityTable: 'amenity_blackouts',
+          entityId: blackout.id,
+          entityLabel: blackout.title,
+        },
       ],
     })
 
@@ -2214,7 +2618,11 @@ export const createAmenityBlackout = async (
   }
 }
 
-export const clearAmenityBlackout = async (event: H3Event, authMe: AuthMe, blackoutId: string) => {
+export const clearAmenityBlackout = async (
+  event: H3Event,
+  authMe: AuthMe,
+  blackoutId: string,
+) => {
   const client = await getDatabasePool().connect()
 
   try {
@@ -2283,7 +2691,11 @@ export const clearAmenityBlackout = async (event: H3Event, authMe: AuthMe, black
       },
       relatedEntities: [
         { entityTable: 'society_profile', entityId: authMe.user.societyId },
-        { entityTable: 'amenity_blackouts', entityId: blackout.id, entityLabel: blackout.title },
+        {
+          entityTable: 'amenity_blackouts',
+          entityId: blackout.id,
+          entityLabel: blackout.title,
+        },
       ],
     })
 
