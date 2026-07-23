@@ -83,6 +83,8 @@ type TicketRow = {
   requester_user_id: string | null
   requester_name: string | null
   requester_mobile_number: string | null
+  requester_has_profile_image: boolean
+  requester_profile_updated_at: string | null
   flat_id: string | null
   flat_label: string | null
   block_name: string | null
@@ -265,6 +267,8 @@ const mapTicket = (row: TicketRow): ServiceRequestSummary => ({
   requesterUserId: row.requester_user_id,
   requesterName: row.requester_name,
   requesterMobileNumber: row.requester_mobile_number,
+  requesterHasProfileImage: row.requester_has_profile_image,
+  requesterProfileUpdatedAt: row.requester_profile_updated_at,
   flatId: row.flat_id,
   flatLabel: row.flat_label,
   blockName: row.block_name,
@@ -305,6 +309,8 @@ const ticketSelectSql = `
     sr.requester_user_id,
     requester.full_name as requester_name,
     requester.mobile_number as requester_mobile_number,
+    (requester.profile_image_path is not null) as requester_has_profile_image,
+    requester.updated_at::text as requester_profile_updated_at,
     sr.flat_id,
     case when f.id is not null then concat(b.name, ' ', f.flat_number) else null end as flat_label,
     b.name as block_name,

@@ -9,6 +9,7 @@ import type {
   MaintenanceDue,
   ResidentSummary,
 } from '~/types/domain'
+import ResidentAvatar from '~/components/residents/ResidentAvatar.vue'
 
 definePageMeta({
   layout: 'admin',
@@ -42,6 +43,8 @@ type PaymentSummary = {
   flatNumber: string | null
   blockName: string | null
   payerName: string | null
+  payerProfileImagePath: string | null
+  payerProfileUpdatedAt: string | null
   camAdvanceCoverageId?: string | null
   coveredFrom?: string | null
   coveredUntil?: string | null
@@ -1042,10 +1045,22 @@ const onProofFileChange = async (event: Event) => {
         </Column>
         <Column field="flatNumber" header="Flat">
           <template #body="{ data: row }">
-            <strong>{{ flatLabel(row) }}</strong>
-            <p class="table-muted">
-              {{ row.payerName || '-' }}<template v-if="isCamAdvancePayment(row)"> · CAM advance</template>
-            </p>
+            <div class="payment-payer">
+              <ResidentAvatar
+                :name="row.payerName"
+                :resident-id="row.payerUserId"
+                :profile-image-path="row.payerProfileImagePath"
+                :updated-at="row.payerProfileUpdatedAt"
+                :size="40"
+                previewable
+              />
+              <div>
+                <strong>{{ flatLabel(row) }}</strong>
+                <p class="table-muted">
+                  {{ row.payerName || '-' }}<template v-if="isCamAdvancePayment(row)"> · CAM advance</template>
+                </p>
+              </div>
+            </div>
           </template>
         </Column>
         <Column field="amount" header="Amount">
@@ -1165,7 +1180,17 @@ const onProofFileChange = async (event: Event) => {
           </div>
           <div class="list-card__row">
             <span>Payer</span>
-            <strong>{{ payment.payerName || '-' }}<template v-if="isCamAdvancePayment(payment)"> · CAM advance</template></strong>
+            <div class="payment-payer">
+              <ResidentAvatar
+                :name="payment.payerName"
+                :resident-id="payment.payerUserId"
+                :profile-image-path="payment.payerProfileImagePath"
+                :updated-at="payment.payerProfileUpdatedAt"
+                :size="36"
+                previewable
+              />
+              <strong>{{ payment.payerName || '-' }}<template v-if="isCamAdvancePayment(payment)"> · CAM advance</template></strong>
+            </div>
           </div>
           <div class="list-card__row">
             <span>Reference</span>
@@ -1619,3 +1644,12 @@ const onProofFileChange = async (event: Event) => {
     </Dialog>
   </div>
 </template>
+
+<style scoped>
+.payment-payer {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-width: 0;
+}
+</style>

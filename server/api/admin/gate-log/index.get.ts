@@ -11,7 +11,10 @@ type GateLogRow = {
   id: string
   scanned_at: string
   guard_name: string | null
+  resident_id: string | null
   resident_name: string | null
+  resident_profile_image_path: string | null
+  resident_profile_updated_at: string | null
   flat_label: string | null
   scan_result: string
   denial_reason: string | null
@@ -174,7 +177,10 @@ export default defineEventHandler(async (event) => {
         gsl.id,
         gsl.scanned_at::text,
         guard.full_name as guard_name,
+        resident.id as resident_id,
         resident.full_name as resident_name,
+        resident.profile_image_path as resident_profile_image_path,
+        resident.updated_at::text as resident_profile_updated_at,
         string_agg(distinct nullif(concat_ws(' ', b.name, f.flat_number), ''), ', ') as flat_label,
         gsl.scan_result::text,
         gsl.denial_reason,
@@ -186,7 +192,7 @@ export default defineEventHandler(async (event) => {
       left join flats f on f.id = coalesce(gsl.flat_id, fr.flat_id)
       left join blocks b on b.id = f.block_id
       where ${filters.join(' and ')}
-      group by gsl.id, guard.full_name, resident.full_name
+      group by gsl.id, guard.full_name, resident.id
       order by gsl.scanned_at desc
       limit 500
     `,
@@ -222,7 +228,10 @@ export default defineEventHandler(async (event) => {
       id: row.id,
       scannedAt: row.scanned_at,
       guardName: row.guard_name,
+      residentId: row.resident_id,
       residentName: row.resident_name,
+      residentProfileImagePath: row.resident_profile_image_path,
+      residentProfileUpdatedAt: row.resident_profile_updated_at,
       flatLabel: row.flat_label,
       result: row.scan_result,
       reason: row.denial_reason,

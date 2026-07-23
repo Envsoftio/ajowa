@@ -1,27 +1,26 @@
 <script setup lang="ts">
 import { getApiErrorMessage } from '~/composables/useApi'
+import ResidentAvatar from '~/components/residents/ResidentAvatar.vue'
 
-definePageMeta({
-  layout: 'resident',
-  middleware: ['protected'],
-  title: 'My Profile',
-})
+const props = defineProps<{
+  name: string
+  userId?: string | null
+  profileImagePath?: string | null
+  updatedAt?: string | null
+  uploadUrl?: string | null
+  imageUrl?: string | null
+}>()
 
-type ResidentProfileResponse = {
-  ok: true
-  data: {
-    id: string
-    fullName: string
-    email: string | null
-    mobileNumber: string | null
-    whatsappNumber: string | null
-    profileImagePath: string | null
-    profileImageUrl: string | null
+const emit = defineEmits<{
+  uploaded: [payload: {
+    profileImagePath: string
+    profileImageUrl: string
     updatedAt: string
-  }
-}
+  }]
+  selected: [file: File]
+}>()
 
-type ResidentPhotoUploadResponse = {
+type PhotoUploadResponse = {
   ok: true
   data: {
     profileImagePath: string
@@ -31,24 +30,23 @@ type ResidentPhotoUploadResponse = {
 }
 
 const ONE_MEGABYTE = 1024 * 1024
+const MAX_SOURCE_SIZE = 12 * 1024 * 1024
 const AVATAR_SIZE = 512
 const DEFAULT_CROP_FRAME_SIZE = 320
 const acceptedImageTypes = new Set(['image/jpeg', 'image/png', 'image/webp'])
 
 const api = useApi()
 const toast = useToast()
-const authStore = useAuthStore()
 const fileInput = ref<HTMLInputElement | null>(null)
 const cropFrame = ref<HTMLElement | null>(null)
 const cropImage = ref<HTMLImageElement | null>(null)
 const processing = ref(false)
 const uploadError = ref('')
-const selectedFileName = ref('')
-const photoRefreshToken = ref('')
 const cropDialogVisible = ref(false)
 const cropImageUrl = ref('')
 const cropZoom = ref(1)
 const cropFrameSize = ref(DEFAULT_CROP_FRAME_SIZE)
+const currentImageUrl = ref('')
 const cropOffset = reactive({ x: 0, y: 0 })
 const cropImageSize = reactive({ width: 0, height: 0 })
 const dragState = reactive({
@@ -60,43 +58,7 @@ const dragState = reactive({
   offsetY: 0,
 })
 
-const { data, pending, refresh } = await useAsyncData(
-  'my-profile',
-  () => api<ResidentProfileResponse>('/api/my/profile'),
-)
-
-const profile = computed(() => data.value?.data ?? null)
-const photoUrl = computed(() => {
-  if (authStore.profilePhotoPreviewUrl) {
-    return authStore.profilePhotoPreviewUrl
-  }
-
-  const baseUrl = profile.value?.profileImageUrl
-
-  if (!baseUrl) {
-    return ''
-  }
-
-  if (!photoRefreshToken.value) {
-    return baseUrl
-  }
-
-  const separator = baseUrl.includes('?') ? '&' : '?'
-  return `${baseUrl}${separator}r=${encodeURIComponent(photoRefreshToken.value)}`
-})
-const initials = computed(() =>
-  (profile.value?.fullName ?? 'Resident')
-    .split(/[\s/]+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase())
-    .join('') || 'R',
-)
-const contactItems = computed(() => [
-  { label: 'Email', value: profile.value?.email },
-  { label: 'Mobile', value: profile.value?.mobileNumber },
-  { label: 'WhatsApp', value: profile.value?.whatsappNumber },
-])
+const displayedImageUrl = computed(() => currentImageUrl.value || props.imageUrl || '')
 const imageAspectRatio = computed(() =>
   cropImageSize.height > 0 ? cropImageSize.width / cropImageSize.height : 1,
 )
@@ -122,8 +84,6 @@ const cropImageStyle = computed(() => ({
   height: `${cropBaseSize.value.height}px`,
   transform: `translate(calc(-50% + ${cropOffset.x}px), calc(-50% + ${cropOffset.y}px)) scale(${cropZoom.value})`,
 }))
-
-const displayValue = (value: string | null | undefined) => value || '-'
 
 const blobFromCanvas = (
   canvas: HTMLCanvasElement,
@@ -254,30 +214,37 @@ const uploadPhoto = async () => {
 
   try {
     const roundedFile = await createRoundedProfileImage()
+
+    if (!props.uploadUrl) {
+      if (currentImageUrl.value.startsWith('blob:')) {
+        URL.revokeObjectURL(currentImageUrl.value)
+      }
+
+      currentImageUrl.value = URL.createObjectURL(roundedFile)
+      emit('selected', roundedFile)
+      toast.add({
+        severity: 'info',
+        summary: 'Photo ready',
+        detail: 'Save the staff member to upload this profile photo.',
+        life: 5000,
+      })
+      closeCropDialog()
+      return
+    }
+
     const formData = new FormData()
     formData.append('file', roundedFile)
-
-    const response = await api<ResidentPhotoUploadResponse>('/api/my/profile/photo', {
+    const response = await api<PhotoUploadResponse>(props.uploadUrl, {
       method: 'POST',
       body: formData,
     })
 
-    if (data.value?.data) {
-      data.value.data.profileImagePath = response.data.profileImagePath
-      data.value.data.profileImageUrl = response.data.profileImageUrl
-      data.value.data.updatedAt = response.data.updatedAt
-    }
-    photoRefreshToken.value = String(Date.now())
-    authStore.updateProfilePhoto({
-      profileImagePath: response.data.profileImagePath,
-      updatedAt: response.data.updatedAt,
-      previewUrl: URL.createObjectURL(roundedFile),
-    })
-
+    currentImageUrl.value = `${response.data.profileImageUrl}&r=${Date.now()}`
+    emit('uploaded', response.data)
     toast.add({
       severity: 'success',
       summary: 'Photo updated',
-      detail: 'Your rounded profile photo is ready.',
+      detail: `${props.name}'s profile photo is ready.`,
       life: 5000,
     })
     closeCropDialog()
@@ -297,10 +264,15 @@ const onPhotoSelected = (event: Event) => {
   }
 
   uploadError.value = ''
-  selectedFileName.value = file.name
 
   if (!acceptedImageTypes.has(file.type)) {
     uploadError.value = 'Upload a PNG, JPG, JPEG, or WebP profile photo.'
+    input.value = ''
+    return
+  }
+
+  if (file.size <= 0 || file.size > MAX_SOURCE_SIZE) {
+    uploadError.value = 'Choose an image that is 12 MB or smaller before cropping.'
     input.value = ''
     return
   }
@@ -312,7 +284,6 @@ const onPhotoSelected = (event: Event) => {
   resetCropState()
   cropImageUrl.value = URL.createObjectURL(file)
   cropDialogVisible.value = true
-
   void nextTick(syncCropFrameSize)
 }
 
@@ -349,14 +320,19 @@ const moveCropDrag = (event: PointerEvent) => {
 }
 
 const endCropDrag = (event: PointerEvent) => {
-  if (event.pointerId !== dragState.pointerId) {
-    return
+  if (event.pointerId === dragState.pointerId) {
+    dragState.active = false
   }
-
-  dragState.active = false
 }
 
 watch(cropZoom, clampCropOffset)
+watch(() => props.imageUrl, () => {
+  if (currentImageUrl.value.startsWith('blob:')) {
+    URL.revokeObjectURL(currentImageUrl.value)
+  }
+
+  currentImageUrl.value = ''
+})
 watch(cropDialogVisible, (visible) => {
   if (visible) {
     void nextTick(syncCropFrameSize)
@@ -366,12 +342,11 @@ watch(cropDialogVisible, (visible) => {
 let cropResizeObserver: ResizeObserver | null = null
 
 onMounted(() => {
-  if (!import.meta.client || typeof ResizeObserver === 'undefined') {
+  if (typeof ResizeObserver === 'undefined') {
     return
   }
 
   cropResizeObserver = new ResizeObserver(syncCropFrameSize)
-
   watch(
     cropFrame,
     (element, previousElement) => {
@@ -393,102 +368,62 @@ onBeforeUnmount(() => {
     URL.revokeObjectURL(cropImageUrl.value)
   }
 
+  if (currentImageUrl.value.startsWith('blob:')) {
+    URL.revokeObjectURL(currentImageUrl.value)
+  }
+
   cropResizeObserver?.disconnect()
 })
 </script>
 
 <template>
-  <div class="landing-page">
-    <section class="surface-card resident-profile-panel">
-      <header class="list-page__header">
-        <div>
-          <p class="eyebrow">Account</p>
-          <h1>My Profile</h1>
-          <p>Keep your gate profile photo current for QR verification.</p>
-        </div>
-        <Button label="Refresh" icon="pi pi-refresh" severity="secondary" outlined @click="() => refresh()" />
-      </header>
-
-      <AppSkeletonState v-if="pending" />
-
-      <div v-else-if="profile" class="resident-profile-grid">
-        <section class="resident-photo-panel">
-          <div class="resident-photo-preview">
-            <img
-              v-if="photoUrl"
-              :src="photoUrl"
-              :alt="profile.fullName"
-              loading="lazy"
-              decoding="async"
-              fetchpriority="low"
-            >
-            <span v-else>{{ initials }}</span>
-          </div>
-
-          <input
-            ref="fileInput"
-            class="resident-photo-input"
-            type="file"
-            accept="image/png,image/jpeg,image/webp"
-            @change="onPhotoSelected"
-          >
-
-          <div class="resident-photo-actions">
-            <Button
-              :label="photoUrl ? 'Replace Photo' : 'Upload Photo'"
-              icon="pi pi-upload"
-              :loading="processing"
-              :disabled="processing"
-              @click="openPhotoPicker"
-            />
-            <span v-if="selectedFileName">{{ selectedFileName }}</span>
-          </div>
-
-          <Message v-if="uploadError && !cropDialogVisible" severity="error" :closable="false">
-            {{ uploadError }}
-          </Message>
-          <p class="resident-photo-note">PNG, JPG, or WebP. Crop your photo before upload. The saved profile photo is round, 512px, and must stay under 1 MB.</p>
-        </section>
-
-        <section class="resident-profile-details">
-          <div class="admin-form-section__header">
-            <div>
-              <p class="eyebrow">Profile</p>
-              <h2>{{ profile.fullName }}</h2>
-            </div>
-            <Tag value="Resident" severity="success" rounded />
-          </div>
-
-          <div class="resident-contact-grid">
-            <div v-for="item in contactItems" :key="item.label" class="resident-contact-item">
-              <span>{{ item.label }}</span>
-              <strong>{{ displayValue(item.value) }}</strong>
-            </div>
-          </div>
-        </section>
-      </div>
-
-      <AppState
-        v-else
-        variant="error"
-        title="Profile unavailable"
-        message="Your resident profile could not be loaded."
+  <div class="profile-photo-uploader">
+    <ResidentAvatar
+      :name="name"
+      :resident-id="userId ?? null"
+      :profile-image-path="profileImagePath ?? null"
+      :updated-at="updatedAt ?? null"
+      :src="displayedImageUrl"
+      :size="112"
+      previewable
+    />
+    <input
+      ref="fileInput"
+      class="profile-photo-uploader__input"
+      type="file"
+      accept="image/png,image/jpeg,image/webp"
+      @change="onPhotoSelected"
+    >
+    <div class="profile-photo-uploader__actions">
+      <Button
+        type="button"
+        :label="displayedImageUrl ? 'Replace photo' : 'Upload photo'"
+        icon="pi pi-upload"
+        :loading="processing"
+        :disabled="processing"
+        @click="openPhotoPicker"
       />
-    </section>
+      <p>PNG, JPG, or WebP. The cropped 512px photo must be under 1 MB.</p>
+    </div>
+    <Message v-if="uploadError && !cropDialogVisible" severity="error" :closable="false">
+      {{ uploadError }}
+    </Message>
 
     <Dialog
       v-model:visible="cropDialogVisible"
       modal
       header="Crop Profile Photo"
-      class="p-dialog-custom resident-crop-dialog"
+      class="p-dialog-custom profile-photo-crop-dialog"
+      :closable="!processing"
+      :dismissable-mask="!processing"
       :style="{ width: 'min(94vw, 32rem)' }"
       @hide="closeCropDialog"
     >
-      <div class="resident-cropper">
+      <div class="profile-photo-cropper">
         <div
           ref="cropFrame"
-          class="resident-crop-frame"
-          :class="{ 'resident-crop-frame--dragging': dragState.active }"
+          class="profile-photo-cropper__frame"
+          :class="{ 'profile-photo-cropper__frame--dragging': dragState.active }"
           @pointerdown="startCropDrag"
           @pointermove="moveCropDrag"
           @pointerup="endCropDrag"
@@ -499,15 +434,15 @@ onBeforeUnmount(() => {
             ref="cropImage"
             :src="cropImageUrl"
             alt="Selected profile photo"
-            class="resident-crop-image"
+            class="profile-photo-cropper__image"
             :style="cropImageStyle"
             draggable="false"
             @load="onCropImageLoaded"
           >
-          <div class="resident-crop-mask" aria-hidden="true" />
+          <div class="profile-photo-cropper__mask" aria-hidden="true" />
         </div>
 
-        <label class="resident-crop-control">
+        <label class="profile-photo-cropper__control">
           <span>Zoom</span>
           <input v-model.number="cropZoom" type="range" min="1" max="3" step="0.01">
         </label>
@@ -516,8 +451,9 @@ onBeforeUnmount(() => {
           {{ uploadError }}
         </Message>
 
-        <div class="resident-crop-actions">
+        <div class="profile-photo-cropper__actions">
           <Button
+            type="button"
             label="Cancel"
             severity="secondary"
             outlined
@@ -525,7 +461,8 @@ onBeforeUnmount(() => {
             @click="closeCropDialog"
           />
           <Button
-            label="Save Photo"
+            type="button"
+            label="Save photo"
             icon="pi pi-check"
             :loading="processing"
             :disabled="processing || !cropImageUrl"
@@ -538,186 +475,111 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.resident-profile-panel {
-  display: grid;
-  gap: 1.5rem;
-}
-
-.resident-profile-grid {
-  display: grid;
-  grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
-  gap: 1.5rem;
-  align-items: start;
-}
-
-.resident-photo-panel,
-.resident-profile-details {
-  display: grid;
+.profile-photo-uploader {
+  display: flex;
+  align-items: center;
   gap: 1rem;
+  flex-wrap: wrap;
 }
 
-.resident-photo-preview {
-  width: min(100%, 280px);
-  aspect-ratio: 1;
-  display: grid;
-  place-items: center;
-  overflow: hidden;
-  border: 1px solid var(--surface-border);
-  border-radius: 50%;
-  background: var(--surface-ground);
-  color: var(--text-color-secondary);
-  font-size: 4rem;
-  font-weight: 700;
-}
-
-.resident-photo-preview img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.resident-photo-input {
+.profile-photo-uploader__input {
   display: none;
 }
 
-.resident-photo-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.75rem;
-  align-items: center;
-}
-
-.resident-photo-actions span,
-.resident-photo-note {
-  color: var(--text-color-secondary);
-  font-size: 0.9rem;
-}
-
-.resident-photo-note {
-  margin: 0;
-}
-
-.resident-contact-grid {
+.profile-photo-uploader__actions {
   display: grid;
-  gap: 0.75rem;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.resident-contact-item {
-  display: grid;
-  gap: 0.35rem;
+  justify-items: start;
+  gap: 0.45rem;
   min-width: 0;
-  padding: 0.85rem;
-  border: 1px solid var(--surface-border);
-  border-radius: var(--radius-md, 8px);
-  background: var(--surface-ground);
 }
 
-.resident-contact-item span {
-  color: var(--text-color-secondary);
+.profile-photo-uploader__actions p {
+  max-width: 28rem;
+  margin: 0;
+  color: var(--color-text-muted);
   font-size: 0.82rem;
-  font-weight: 600;
-  text-transform: uppercase;
 }
 
-.resident-contact-item strong {
-  overflow-wrap: anywhere;
-  color: var(--text-color);
-  font-size: 1rem;
-  line-height: 1.35;
+.profile-photo-uploader :deep(.p-message) {
+  flex-basis: 100%;
 }
 
-.resident-cropper {
+.profile-photo-cropper {
   display: grid;
-  gap: 1rem;
-  max-height: min(76vh, 38rem);
-  overflow: auto;
-  padding-bottom: env(safe-area-inset-bottom, 0);
+  gap: 1.25rem;
+  padding-top: 0.5rem;
 }
 
-.resident-crop-frame {
+.profile-photo-cropper__frame {
   position: relative;
-  width: min(100%, 320px, calc(100vw - 4rem));
+  width: min(100%, 320px);
   aspect-ratio: 1;
   margin: 0 auto;
   overflow: hidden;
-  border-radius: var(--radius-md, 8px);
-  background: var(--surface-ground);
+  border-radius: 4px;
+  background: #111827;
   cursor: grab;
   touch-action: none;
   user-select: none;
 }
 
-.resident-crop-frame--dragging {
+.profile-photo-cropper__frame--dragging {
   cursor: grabbing;
 }
 
-.resident-crop-image {
+.profile-photo-cropper__image {
   position: absolute;
   top: 50%;
   left: 50%;
   max-width: none;
-  object-fit: cover;
   transform-origin: center;
-  will-change: transform;
-}
-
-.resident-crop-mask {
-  position: absolute;
-  inset: 0;
-  border: 999px solid color-mix(in srgb, var(--surface-card) 68%, transparent);
-  border-radius: 50%;
-  box-shadow:
-    inset 0 0 0 2px var(--primary-color),
-    0 0 0 1px var(--surface-border);
   pointer-events: none;
 }
 
-.resident-crop-control {
+.profile-photo-cropper__mask {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  box-shadow: 0 0 0 999px rgb(0 0 0 / 58%);
+  pointer-events: none;
+}
+
+.profile-photo-cropper__control {
   display: grid;
-  gap: 0.4rem;
+  gap: 0.55rem;
 }
 
-.resident-crop-control span {
-  color: var(--text-color-secondary);
+.profile-photo-cropper__control span {
+  color: var(--color-text-muted);
   font-size: 0.85rem;
-  font-weight: 600;
+  font-weight: 700;
 }
 
-.resident-crop-control input {
+.profile-photo-cropper__control input {
   width: 100%;
 }
 
-.resident-crop-actions {
+.profile-photo-cropper__actions {
   display: flex;
-  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 0.75rem;
 }
 
-@media (max-width: 768px) {
-  .resident-profile-grid {
-    grid-template-columns: 1fr;
+@media (max-width: 520px) {
+  .profile-photo-uploader {
+    align-items: flex-start;
   }
 
-  .resident-photo-preview {
-    max-width: 220px;
+  .profile-photo-cropper {
+    gap: 1rem;
   }
 
-  .resident-contact-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .resident-cropper {
-    max-height: min(72vh, 34rem);
-  }
-
-  .resident-crop-actions {
+  .profile-photo-cropper__actions {
     display: grid;
-    grid-template-columns: 1fr;
+    grid-template-columns: 1fr 1fr;
   }
 
-  .resident-crop-actions :deep(.p-button) {
+  .profile-photo-cropper__actions :deep(.p-button) {
     width: 100%;
   }
 }

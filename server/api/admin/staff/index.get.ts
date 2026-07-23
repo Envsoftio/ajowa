@@ -14,6 +14,7 @@ type StaffRow = {
   email: string
   mobile_number: string
   whatsapp_number: string | null
+  profile_image_path: string | null
   can_login: boolean
   email_verified: boolean
   is_active: boolean
@@ -89,6 +90,7 @@ export default defineEventHandler(async (event) => {
           u.email::text,
           u.mobile_number,
           u.whatsapp_number,
+          u.profile_image_path,
           u.can_login,
           u.email_verified,
           u.is_active,
@@ -154,9 +156,11 @@ export default defineEventHandler(async (event) => {
       email: row.email,
       mobileNumber: row.mobile_number,
       whatsappNumber: row.whatsapp_number,
+      profileImagePath: row.profile_image_path,
       canLogin: row.can_login,
       emailVerified: row.email_verified,
       isActive: row.is_active,
+      profileImageUpdatedAt: row.profile_image_path ? row.updated_at : null,
       permissions: normalizeRolePermissions(row.role, row.staff_permissions),
       departments: departments.map((department) => ({
         id: department.department_id,

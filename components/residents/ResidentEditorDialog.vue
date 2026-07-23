@@ -159,6 +159,7 @@ const emit = defineEmits<{
 const api = useApi()
 const toast = useToast()
 const { formatBytes } = useFinanceFormatters()
+const { openResidentPhotoPreview } = useResidentPhotoPreview()
 
 const residentProfileFileConfig: ResidentFileConfig = {
   field: 'profileImagePath',
@@ -597,6 +598,17 @@ const isResidentFileImage = (config: ResidentFileConfig) => {
   }
 
   return config.field === 'profileImagePath'
+}
+
+const previewResidentProfilePhoto = (config: ResidentFileConfig) => {
+  const src = getResidentFilePreviewUrl(config)
+
+  if (config.field === 'profileImagePath' && src) {
+    openResidentPhotoPreview({
+      src,
+      name: form.fullName,
+    })
+  }
 }
 
 const pickResidentFile = (field: ResidentFileField) => {
@@ -1258,16 +1270,27 @@ onBeforeUnmount(() => {
             :key="config.field"
             class="admin-form-grid__full resident-file-upload"
           >
-            <div class="resident-file-upload__preview">
+            <button
+              v-if="
+                isResidentFileImage(config) &&
+                getResidentFilePreviewUrl(config)
+              "
+              type="button"
+              class="resident-file-upload__preview resident-file-upload__preview--button"
+              :aria-label="`Preview ${form.fullName || 'resident'} profile photo`"
+              title="Preview profile photo"
+              @click="previewResidentProfilePhoto(config)"
+            >
               <img
-                v-if="
-                  isResidentFileImage(config) &&
-                  getResidentFilePreviewUrl(config)
-                "
                 :src="getResidentFilePreviewUrl(config)"
                 :alt="`${form.fullName || 'Resident'} ${config.label}`"
+                loading="lazy"
+                decoding="async"
+                fetchpriority="low"
               >
-              <i v-else :class="config.icon" aria-hidden="true" />
+            </button>
+            <div v-else class="resident-file-upload__preview">
+              <i :class="config.icon" aria-hidden="true" />
             </div>
             <div class="resident-file-upload__body">
               <div class="resident-file-upload__header">

@@ -18,6 +18,8 @@ type DefaulterRow = {
   resident_name: string
   resident_email: string | null
   resident_mobile_number: string | null
+  resident_profile_image_path: string | null
+  resident_profile_updated_at: string | null
   flat_id: string
   flat_number: string
   block_id: string
@@ -283,6 +285,8 @@ export const listDefaulters = async ({
         owner.full_name as resident_name,
         owner.email as resident_email,
         owner.mobile_number as resident_mobile_number,
+        owner.profile_image_path as resident_profile_image_path,
+        owner.profile_updated_at as resident_profile_updated_at,
         f.id as flat_id,
         f.flat_number,
         f.block_id,
@@ -331,6 +335,8 @@ export const listDefaulters = async ({
             end
           ) as email,
           u.mobile_number,
+          u.profile_image_path,
+          u.updated_at::text as profile_updated_at,
           fr.relationship_type
         from flat_residents fr
         inner join users u on u.id = fr.user_id
@@ -435,6 +441,8 @@ export const listDefaulters = async ({
         residentName: row.resident_name,
         residentEmail: row.resident_email,
         residentMobileNumber: row.resident_mobile_number,
+        residentProfileImagePath: row.resident_profile_image_path,
+        residentProfileUpdatedAt: row.resident_profile_updated_at,
         flatCount: 1,
         flats: [flatInfo],
         totalDue: flatInfo.totalAmount,

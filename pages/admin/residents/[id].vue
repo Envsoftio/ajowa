@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { ResidentDetail } from '~/types/domain'
 import ResidentEditorDialog from '~/components/residents/ResidentEditorDialog.vue'
+import ResidentAvatar from '~/components/residents/ResidentAvatar.vue'
 
 definePageMeta({
   layout: 'admin',
@@ -114,15 +115,6 @@ const statusSeverity = (status: string | null | undefined) => {
   return 'secondary'
 }
 
-const initials = computed(() =>
-  (resident.value?.fullName ?? 'Resident')
-    .split(/[\s/]+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase())
-    .join(''),
-)
-
 const fileUrl = (field: DocumentField) => {
   const value = resident.value?.[field]
 
@@ -147,7 +139,6 @@ const professionProofUrl = (field: ProfessionProofField) => {
   return `/api/admin/residents/${residentId.value}/profession-profile/files/${field}`
 }
 
-const profileImageSrc = computed(() => fileUrl('profileImagePath'))
 const displayEmail = computed(
   () => resident.value?.email ?? resident.value?.sourceEmail ?? null,
 )
@@ -413,14 +404,14 @@ const saveResidentNotes = async () => {
     <template v-else>
       <section class="hero-panel resident-detail-hero">
         <div class="resident-detail-identity">
-          <div class="resident-avatar resident-avatar--large">
-            <img
-              v-if="profileImageSrc"
-              :src="profileImageSrc"
-              :alt="resident.fullName"
-            >
-            <span v-else>{{ initials }}</span>
-          </div>
+          <ResidentAvatar
+            :name="resident.fullName"
+            :resident-id="resident.id"
+            :profile-image-path="resident.profileImagePath"
+            :updated-at="resident.updatedAt"
+            :size="80"
+            previewable
+          />
           <div>
             <div class="resident-detail-tags">
               <Tag
@@ -879,12 +870,22 @@ const saveResidentNotes = async () => {
         >
           <Column header="Resident">
             <template #body="{ data: row }">
-              <NuxtLink
-                :to="`/admin/residents/${row.userId}`"
-                class="table-link-button"
-              >
-                {{ row.residentName }}
-              </NuxtLink>
+              <div class="resident-household-identity">
+                <ResidentAvatar
+                  :name="row.residentName"
+                  :resident-id="row.userId"
+                  :profile-image-path="row.residentProfileImagePath"
+                  :updated-at="row.residentProfileUpdatedAt"
+                  :size="36"
+                  previewable
+                />
+                <NuxtLink
+                  :to="`/admin/residents/${row.userId}`"
+                  class="table-link-button"
+                >
+                  {{ row.residentName }}
+                </NuxtLink>
+              </div>
             </template>
           </Column>
           <Column header="Type">
@@ -1189,28 +1190,11 @@ const saveResidentNotes = async () => {
   gap: 0.5rem;
 }
 
-.resident-avatar {
-  display: grid;
-  place-items: center;
-  flex: 0 0 auto;
-  overflow: hidden;
-  border-radius: 50%;
-  border: 1px solid var(--color-border);
-  background: var(--color-surface-strong);
-  color: var(--color-brand-strong);
-  font-weight: 800;
-}
-
-.resident-avatar--large {
-  width: 5rem;
-  height: 5rem;
-  font-size: 1.35rem;
-}
-
-.resident-avatar img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
+.resident-household-identity {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-width: 12rem;
 }
 
 .resident-detail-columns {

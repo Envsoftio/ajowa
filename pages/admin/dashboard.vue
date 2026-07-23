@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { BlockSummary, DefaulterSummary, FlatSummary, MaintenanceDue, ResidentSummary } from '~/types/domain'
+import ResidentAvatar from '~/components/residents/ResidentAvatar.vue'
 
 definePageMeta({
   layout: 'admin',
@@ -242,17 +243,27 @@ const hasWelcomeName = computed(() => authStore.me?.user?.fullName || authStore.
         </div>
         <article v-else class="dashboard-priority">
           <section v-for="person in topDefaulters" :key="person.userId" class="dashboard-priority-item">
-            <div class="dashboard-priority-item__copy">
-              <h3>
-                <NuxtLink :to="`/admin/residents/${person.userId}`" class="table-link-button">
-                  {{ person.residentName }}
-                </NuxtLink>
-              </h3>
-              <p>{{ formatContact(person.residentEmail) }} · {{ person.residentMobileNumber || 'No phone' }}</p>
-              <div class="dashboard-priority-item__meta">
-                <Tag severity="info" :value="`${person.flatCount} flat${person.flatCount === 1 ? '' : 's'}`" rounded />
-                <Tag :severity="urgencyBadge(person.maxDaysOverdue)" :value="overdueLabel(person.maxDaysOverdue)" rounded />
-                <AppStatusBadge :status="person.totalBalance > 0 ? 'open' : 'paid'" />
+            <div class="dashboard-person">
+              <ResidentAvatar
+                :name="person.residentName"
+                :resident-id="person.userId"
+                :profile-image-path="person.residentProfileImagePath"
+                :updated-at="person.residentProfileUpdatedAt"
+                :size="44"
+                previewable
+              />
+              <div class="dashboard-priority-item__copy">
+                <h3>
+                  <NuxtLink :to="`/admin/residents/${person.userId}`" class="table-link-button">
+                    {{ person.residentName }}
+                  </NuxtLink>
+                </h3>
+                <p>{{ formatContact(person.residentEmail) }} · {{ person.residentMobileNumber || 'No phone' }}</p>
+                <div class="dashboard-priority-item__meta">
+                  <Tag severity="info" :value="`${person.flatCount} flat${person.flatCount === 1 ? '' : 's'}`" rounded />
+                  <Tag :severity="urgencyBadge(person.maxDaysOverdue)" :value="overdueLabel(person.maxDaysOverdue)" rounded />
+                  <AppStatusBadge :status="person.totalBalance > 0 ? 'open' : 'paid'" />
+                </div>
               </div>
             </div>
             <strong>{{ formatMoney(person.totalBalance) }}</strong>
@@ -343,20 +354,33 @@ const hasWelcomeName = computed(() => authStore.me?.user?.fullName || authStore.
           <Button label="Open residents" as="a" href="/admin/residents" severity="secondary" outlined size="small" />
         </div>
         <div class="dashboard-mini-list">
-          <NuxtLink
+          <article
             v-for="resident in recentResidents"
             :key="resident.id"
-            :to="`/admin/residents/${resident.id}`"
             class="dashboard-mini-list-item dashboard-mini-list-item--link"
-            :aria-label="`View ${resident.fullName}`"
           >
-            <div class="dashboard-mini-list-item__copy">
-              <h3>{{ resident.fullName }}</h3>
-              <p>{{ formatContact(resident.email) }} · {{ resident.role }}</p>
-              <p>{{ formatContact(resident.mobileNumber) }}</p>
+            <NuxtLink
+              :to="`/admin/residents/${resident.id}`"
+              class="dashboard-mini-list-item__link-overlay"
+              :aria-label="`View ${resident.fullName}`"
+            />
+            <div class="dashboard-person">
+              <ResidentAvatar
+                :name="resident.fullName"
+                :resident-id="resident.id"
+                :profile-image-path="resident.profileImagePath"
+                :updated-at="resident.updatedAt"
+                :size="44"
+                previewable
+              />
+              <div class="dashboard-mini-list-item__copy">
+                <h3>{{ resident.fullName }}</h3>
+                <p>{{ formatContact(resident.email) }} · {{ resident.role }}</p>
+                <p>{{ formatContact(resident.mobileNumber) }}</p>
+              </div>
             </div>
             <Tag :severity="statusBadge(resident.isActive)" :value="resident.isActive ? 'Active' : 'Disabled'" />
-          </NuxtLink>
+          </article>
           <AppState
             v-if="recentResidents.length === 0 && !pending"
             variant="empty"
@@ -451,6 +475,13 @@ const hasWelcomeName = computed(() => authStore.me?.user?.fullName || authStore.
   min-width: 0;
 }
 
+.dashboard-person {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
 .dashboard-priority-item strong {
   color: var(--color-brand-strong);
 }
@@ -492,13 +523,21 @@ const hasWelcomeName = computed(() => authStore.me?.user?.fullName || authStore.
 }
 
 .dashboard-mini-list-item--link {
+  position: relative;
   color: inherit;
   text-decoration: none;
   transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
 }
 
+.dashboard-mini-list-item__link-overlay {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  border-radius: inherit;
+}
+
 .dashboard-mini-list-item--link:hover,
-.dashboard-mini-list-item--link:focus-visible {
+.dashboard-mini-list-item--link:focus-within {
   border-color: color-mix(in srgb, var(--color-brand) 45%, var(--color-border));
   box-shadow: var(--shadow-md);
   transform: translateY(-1px);

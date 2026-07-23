@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { ServiceRequestSummary } from '~/types/domain'
 import { closedTicketStatuses } from '~/shared/service-requests'
+import ResidentAvatar from '~/components/residents/ResidentAvatar.vue'
 
 defineProps<{
   tickets: ServiceRequestSummary[]
@@ -40,9 +41,19 @@ const isClosedTicket = (status: ServiceRequestSummary['status']) => closedTicket
     </Column>
     <Column header="Requester / Location">
       <template #body="{ data: row }">
-        <div class="ticket-table-stack">
-          <strong>{{ row.requesterName || row.sourceType.replace('_', ' ') }}</strong>
-          <span>{{ locationLabel(row) }}</span>
+        <div class="ticket-requester">
+          <ResidentAvatar
+            :name="row.requesterName"
+            :resident-id="row.requesterUserId"
+            :has-image="row.requesterHasProfileImage"
+            :updated-at="row.requesterProfileUpdatedAt"
+            :size="38"
+            previewable
+          />
+          <div class="ticket-table-stack">
+            <strong>{{ row.requesterName || row.sourceType.replace('_', ' ') }}</strong>
+            <span>{{ locationLabel(row) }}</span>
+          </div>
         </div>
       </template>
     </Column>
@@ -93,6 +104,13 @@ const isClosedTicket = (status: ServiceRequestSummary['status']) => closedTicket
 .ticket-table-stack {
   display: grid;
   gap: 0.15rem;
+}
+
+.ticket-requester {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-width: 12rem;
 }
 
 :deep(.ticket-data-table__row > td:first-child) {

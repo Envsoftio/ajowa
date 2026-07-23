@@ -7,6 +7,7 @@ import type {
   ResidentSummary,
 } from '~/types/domain'
 import ResidentEditorDialog from '~/components/residents/ResidentEditorDialog.vue'
+import ResidentAvatar from '~/components/residents/ResidentAvatar.vue'
 
 definePageMeta({
   layout: 'admin',
@@ -541,7 +542,26 @@ const relationshipSeverity = (type: string) => {
           @page="onPage"
           @sort="onSort"
         >
-          <Column field="fullName" header="Resident" sortable />
+          <Column field="fullName" header="Resident" sortable>
+            <template #body="{ data: row }">
+              <div class="resident-table-identity">
+                <ResidentAvatar
+                  :name="row.fullName"
+                  :resident-id="row.id"
+                  :profile-image-path="row.profileImagePath"
+                  :updated-at="row.updatedAt"
+                  :size="40"
+                  previewable
+                />
+                <NuxtLink
+                  :to="`/admin/residents/${row.id}`"
+                  class="table-link-button"
+                >
+                  {{ row.fullName }}
+                </NuxtLink>
+              </div>
+            </template>
+          </Column>
           <Column header="Type">
             <template #body="{ data: row }">
               <div class="resident-table-tags">
@@ -648,6 +668,13 @@ const relationshipSeverity = (type: string) => {
   flex-wrap: wrap;
   gap: 0.4rem;
   align-items: center;
+}
+
+.resident-table-identity {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-width: 12rem;
 }
 
 .resident-table-flats span {

@@ -109,6 +109,8 @@ export type FlatResidentRelationship = AuditFields & {
   residentName: string
   residentEmail: string | null
   residentMobileNumber: string | null
+  residentProfileImagePath: string | null
+  residentProfileUpdatedAt: string | null
   relationshipType: string
   isPrimaryContact: boolean
   isBillingContact: boolean
@@ -324,9 +326,11 @@ export type StaffSummary = AuditFields & {
   email: string
   mobileNumber: string
   whatsappNumber: string | null
+  profileImagePath: string | null
   canLogin: boolean
   emailVerified: boolean
   isActive: boolean
+  profileImageUpdatedAt: string | null
   permissions: string[]
   departments: StaffDepartmentSummary[]
 }
@@ -562,6 +566,8 @@ export type ServiceRequestSummary = AuditFields & {
   requesterUserId: string | null
   requesterName: string | null
   requesterMobileNumber: string | null
+  requesterHasProfileImage: boolean
+  requesterProfileUpdatedAt: string | null
   flatId: string | null
   flatLabel: string | null
   blockName: string | null
@@ -875,6 +881,8 @@ export type DefaulterSummary = {
   residentName: string
   residentEmail: string | null
   residentMobileNumber: string | null
+  residentProfileImagePath: string | null
+  residentProfileUpdatedAt: string | null
   flatCount: number
   flats: {
     flatId: string

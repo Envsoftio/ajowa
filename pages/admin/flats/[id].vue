@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { FlatDetail } from '~/types/domain'
+import ResidentAvatar from '~/components/residents/ResidentAvatar.vue'
 
 definePageMeta({
   layout: 'admin',
@@ -201,13 +202,23 @@ const displayRelationshipNote = (note: string | null | undefined) => {
             class="admin-detail-card flat-relationship-card"
           >
             <div class="admin-detail-card__header">
-              <div>
-                <h3>
-                  <NuxtLink :to="`/admin/residents/${relationship.userId}`" class="table-link-button">
-                    {{ relationship.residentName }}
-                  </NuxtLink>
-                </h3>
-                <p>{{ relationship.relationshipType }} · {{ displayValue(relationship.residentEmail) }}</p>
+              <div class="flat-resident-identity">
+                <ResidentAvatar
+                  :name="relationship.residentName"
+                  :resident-id="relationship.userId"
+                  :profile-image-path="relationship.residentProfileImagePath"
+                  :updated-at="relationship.residentProfileUpdatedAt"
+                  :size="44"
+                  previewable
+                />
+                <div>
+                  <h3>
+                    <NuxtLink :to="`/admin/residents/${relationship.userId}`" class="table-link-button">
+                      {{ relationship.residentName }}
+                    </NuxtLink>
+                  </h3>
+                  <p>{{ relationship.relationshipType }} · {{ displayValue(relationship.residentEmail) }}</p>
+                </div>
               </div>
               <div class="admin-inline-actions">
                 <Tag
@@ -261,6 +272,13 @@ const displayRelationshipNote = (note: string | null | undefined) => {
 .flat-relationship-card {
   display: grid;
   gap: 1rem;
+}
+
+.flat-resident-identity {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
 }
 
 .flat-fact-grid {

@@ -153,6 +153,11 @@ type DownloadStoredFileInput = {
   storageObjectKey: string
 }
 
+type DownloadPrivateFileInput = DownloadStoredFileInput & {
+  cacheNonce?: string
+  cache?: RequestCache
+}
+
 type SignedUrlInput = DownloadStoredFileInput & {
   expiresInSeconds?: number
   download?: string | boolean
@@ -167,7 +172,7 @@ type CleanupFailedUploadsResult = {
   deletedStorageObjects: number
 }
 
-type CleanupResidentProfilePhotosResult = {
+type CleanupProfilePhotosResult = {
   deletedFileRecords: number
   deletedStorageObjects: number
 }
@@ -897,14 +902,18 @@ export const replacePrivateFile = async (input: ReplaceStoredFileInput) => {
   }
 }
 
-export const downloadPrivateFile = async (input: DownloadStoredFileInput) => {
+export const downloadPrivateFile = async (input: DownloadPrivateFileInput) => {
   const storageTargetKey = assertStorageTargetKey(input.storageTargetKey)
   const storageObjectKey = normalizeStorageObjectKey(input.storageObjectKey)
   const storageTarget = getStorageTarget(storageTargetKey)
   const supabaseAdmin = getSupabaseAdminClient()
+  const downloadOptions = input.cacheNonce
+    ? { cacheNonce: input.cacheNonce }
+    : undefined
+  const fetchOptions = input.cache ? { cache: input.cache } : undefined
   const { data, error } = await supabaseAdmin.storage
     .from(storageTarget.providerContainer)
-    .download(storageObjectKey)
+    .download(storageObjectKey, downloadOptions, fetchOptions)
 
   if (error || !data) {
     throw new AppError({
@@ -1033,7 +1042,7 @@ export const cleanupFailedUploads = async (olderThanHours = 24): Promise<Cleanup
   }
 }
 
-export const cleanupUnreferencedResidentProfilePhotos = async (): Promise<CleanupResidentProfilePhotosResult> => {
+export const cleanupUnreferencedProfilePhotos = async (): Promise<CleanupProfilePhotosResult> => {
   const supabaseAdmin = getSupabaseAdminClient()
   let rows: StorageFileRecordRow[]
 
@@ -1043,7 +1052,10 @@ export const cleanupUnreferencedResidentProfilePhotos = async (): Promise<Cleanu
         select ${fileRecordColumns}
         from public.file_objects fo
         where fo.storage_target_key = $1
-          and fo.storage_object_key like 'resident-profile-photo/%'
+          and (
+            fo.storage_object_key like 'resident-profile-photo/%'
+            or fo.storage_object_key like 'staff-profile-photo/%'
+          )
           and fo.updated_at <= now() - interval '1 hour'
           and not exists (
             select 1
@@ -1055,8 +1067,8 @@ export const cleanupUnreferencedResidentProfilePhotos = async (): Promise<Cleanu
     )
     rows = result.rows
   } catch (error) {
-    throw toStorageError('Unable to query unreferenced resident profile photos for cleanup.', {
-      cause: unknownErrorMessage(error, 'Unknown resident profile photo cleanup query error.'),
+    throw toStorageError('Unable to query unreferenced profile photos for cleanup.', {
+      cause: unknownErrorMessage(error, 'Unknown profile photo cleanup query error.'),
     })
   }
 
@@ -1078,8 +1090,8 @@ export const cleanupUnreferencedResidentProfilePhotos = async (): Promise<Cleanu
       await getDatabasePool().query('delete from public.file_objects where id = $1', [row.id])
       deletedFileRecords += 1
     } catch (error) {
-      throw toStorageError('Unable to delete resident profile photo metadata during cleanup.', {
-        cause: unknownErrorMessage(error, 'Unknown resident profile photo metadata delete error.'),
+      throw toStorageError('Unable to delete profile photo metadata during cleanup.', {
+        cause: unknownErrorMessage(error, 'Unknown profile photo metadata delete error.'),
         fileId: row.id,
       })
     }

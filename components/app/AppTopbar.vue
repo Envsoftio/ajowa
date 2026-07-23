@@ -2,6 +2,7 @@
 import { getApiErrorMessage } from '~/composables/useApi'
 import type { MenuItem } from 'primevue/menuitem'
 import type { AppShellType } from '~/shared/shell'
+import ResidentAvatar from '~/components/residents/ResidentAvatar.vue'
 
 defineProps<{
   shell: AppShellType
@@ -15,9 +16,6 @@ const route = useRoute()
 const toast = useToast()
 const menu = ref()
 const loggingOut = ref(false)
-const avatarImageFailed = ref(false)
-
-const firstCharacter = (value: string | null | undefined) => value?.trim().charAt(0).toUpperCase() || ''
 
 const pageTitle = computed(() => String(route.meta.title ?? 'AJOWA'))
 const userDisplayName = computed(() =>
@@ -26,13 +24,16 @@ const userDisplayName = computed(() =>
   || authStore.me?.user.email?.trim()
   || 'User',
 )
-const userInitial = computed(() => firstCharacter(userDisplayName.value) || 'U')
 const userEmail = computed(() => authStore.me?.user.email?.trim() || '')
 const userProfilePhotoUrl = computed(() => {
   const user = authStore.me?.user
 
-  if (user?.role !== 'RESIDENT' || !user.profileImagePath) {
+  if (!user?.profileImagePath) {
     return ''
+  }
+
+  if (authStore.profilePhotoPreviewUrl) {
+    return authStore.profilePhotoPreviewUrl
   }
 
   const version = user.profileImageUpdatedAt || user.profileImagePath
@@ -127,10 +128,6 @@ const toggleMenu = (event: Event) => {
   menu.value?.toggle(event)
 }
 
-watch(userProfilePhotoUrl, () => {
-  avatarImageFailed.value = false
-})
-
 const isDesktopViewport = () => import.meta.client && window.matchMedia('(min-width: 769px)').matches
 
 const toggleNavigation = () => {
@@ -196,13 +193,11 @@ onMounted(() => {
         @click="theme.toggle()"
       />
       <Button class="avatar-trigger" text rounded :aria-label="avatarLabel" :title="userDisplayName" @click="toggleMenu">
-        <Avatar
-          v-if="userProfilePhotoUrl && !avatarImageFailed"
-          :image="userProfilePhotoUrl"
-          shape="circle"
-          @error="avatarImageFailed = true"
+        <ResidentAvatar
+          :name="userDisplayName"
+          :src="userProfilePhotoUrl"
+          :size="32"
         />
-        <Avatar v-else :label="userInitial" shape="circle" />
       </Button>
       <Menu ref="menu" :model="avatarItems" popup />
     </div>

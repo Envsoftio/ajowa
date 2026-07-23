@@ -495,6 +495,9 @@ onBeforeUnmount(async () => {
                 v-if="result.resident?.profilePhotoUrl"
                 :src="result.resident.profilePhotoUrl"
                 :alt="result.resident.name || 'Resident photo'"
+                loading="lazy"
+                decoding="async"
+                fetchpriority="low"
               >
               <span v-else>{{ getInitials(result.residentName) }}</span>
             </div>
@@ -576,6 +579,9 @@ onBeforeUnmount(async () => {
                     v-if="member.profilePhotoUrl"
                     :src="member.profilePhotoUrl"
                     :alt="member.name"
+                    loading="lazy"
+                    decoding="async"
+                    fetchpriority="low"
                   >
                   <span v-else>{{ getInitials(member.name) }}</span>
                 </div>

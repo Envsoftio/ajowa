@@ -65,6 +65,7 @@ watch(
   >
     <Toast />
     <ConfirmDialog />
+    <ResidentPhotoPreviewDialog />
     <AppNotificationListener />
     <Transition name="app-loading-fade">
       <div v-if="isLoading" class="app-loading-overlay" role="status" aria-live="polite" aria-label="Loading">

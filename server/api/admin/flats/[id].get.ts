@@ -38,6 +38,8 @@ type RelationshipRow = {
   resident_name: string
   resident_email: string | null
   resident_mobile_number: string | null
+  resident_profile_image_path: string | null
+  resident_profile_updated_at: string | null
   relationship_type: string
   is_primary_contact: boolean
   is_billing_contact: boolean
@@ -62,6 +64,8 @@ const mapRelationship = (row: RelationshipRow): FlatResidentRelationship => ({
   residentName: row.resident_name,
   residentEmail: row.resident_email,
   residentMobileNumber: row.resident_mobile_number,
+  residentProfileImagePath: row.resident_profile_image_path,
+  residentProfileUpdatedAt: row.resident_profile_updated_at,
   relationshipType: row.relationship_type,
   isPrimaryContact: row.is_primary_contact,
   isBillingContact: row.is_billing_contact,
@@ -139,6 +143,8 @@ export default defineEventHandler(async (event) => {
           u.full_name as resident_name,
           u.email as resident_email,
           u.mobile_number as resident_mobile_number,
+          u.profile_image_path as resident_profile_image_path,
+          u.updated_at::text as resident_profile_updated_at,
           fr.relationship_type::text,
           fr.is_primary_contact,
           fr.is_billing_contact,

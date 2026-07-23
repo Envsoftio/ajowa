@@ -134,6 +134,7 @@ export default defineEventHandler(async (event) => {
             email = null,
             mobile_number = null,
             whatsapp_number = null,
+            profile_image_path = null,
             can_login = false,
             must_change_password = false,
             email_verified = false,

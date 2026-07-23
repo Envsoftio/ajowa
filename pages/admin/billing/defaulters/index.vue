@@ -5,6 +5,7 @@ import type {
   BlockSummary,
   DefaulterSummary,
 } from '~/types/domain'
+import ResidentAvatar from '~/components/residents/ResidentAvatar.vue'
 
 definePageMeta({
   layout: 'admin',
@@ -699,18 +700,30 @@ watch(filteredDefaulters, (rows) => {
         <Column selection-mode="multiple" header-style="width: 3rem" />
         <Column field="residentName" header="Flat owner">
           <template #body="{ data: row }">
-            <strong>
-              <NuxtLink
-                :to="`/admin/residents/${row.userId}`"
-                class="table-link-button"
-              >
-                {{ row.residentName }}
-              </NuxtLink>
-            </strong>
-            <p class="table-muted">
-              {{ formatContact(row.residentEmail) }} ·
-              {{ formatContact(row.residentMobileNumber) }}
-            </p>
+            <div class="defaulter-owner">
+              <ResidentAvatar
+                :name="row.residentName"
+                :resident-id="row.userId"
+                :profile-image-path="row.residentProfileImagePath"
+                :updated-at="row.residentProfileUpdatedAt"
+                :size="40"
+                previewable
+              />
+              <div>
+                <strong>
+                  <NuxtLink
+                    :to="`/admin/residents/${row.userId}`"
+                    class="table-link-button"
+                  >
+                    {{ row.residentName }}
+                  </NuxtLink>
+                </strong>
+                <p class="table-muted">
+                  {{ formatContact(row.residentEmail) }} ·
+                  {{ formatContact(row.residentMobileNumber) }}
+                </p>
+              </div>
+            </div>
           </template>
         </Column>
         <Column field="maxDaysOverdue" header="Priority">
@@ -802,12 +815,22 @@ watch(filteredDefaulters, (rows) => {
           class="list-card"
         >
           <div class="list-card__header">
-            <div>
-              <h3>{{ row.residentName }}</h3>
-              <p>
-                {{ formatContact(row.residentEmail) }} ·
-                {{ formatContact(row.residentMobileNumber) }}
-              </p>
+            <div class="defaulter-owner">
+              <ResidentAvatar
+                :name="row.residentName"
+                :resident-id="row.userId"
+                :profile-image-path="row.residentProfileImagePath"
+                :updated-at="row.residentProfileUpdatedAt"
+                :size="44"
+                previewable
+              />
+              <div>
+                <h3>{{ row.residentName }}</h3>
+                <p>
+                  {{ formatContact(row.residentEmail) }} ·
+                  {{ formatContact(row.residentMobileNumber) }}
+                </p>
+              </div>
             </div>
             <Tag
               :severity="overdueSeverity(row.maxDaysOverdue)"
@@ -874,3 +897,12 @@ watch(filteredDefaulters, (rows) => {
     </section>
   </div>
 </template>
+
+<style scoped>
+.defaulter-owner {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-width: 0;
+}
+</style>

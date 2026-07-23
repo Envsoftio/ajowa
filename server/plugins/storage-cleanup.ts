@@ -1,4 +1,4 @@
-import { cleanupFailedUploads, cleanupUnreferencedResidentProfilePhotos } from '../utils/storage'
+import { cleanupFailedUploads, cleanupUnreferencedProfilePhotos } from '../utils/storage'
 import { cleanupExpiredBillPdfExports } from '../utils/bill-pdf-export-jobs'
 
 type StorageCleanupState = {
@@ -40,7 +40,7 @@ export default defineNitroPlugin((nitroApp) => {
 
     try {
       const uploadResult = await cleanupFailedUploads(olderThanHours)
-      const profilePhotoResult = await cleanupUnreferencedResidentProfilePhotos()
+      const profilePhotoResult = await cleanupUnreferencedProfilePhotos()
       const exportResult = await cleanupExpiredBillPdfExports()
       if (
         uploadResult.deletedFileRecords > 0 ||
@@ -54,8 +54,8 @@ export default defineNitroPlugin((nitroApp) => {
           level: 'info',
           message: 'Storage cleanup processed.',
           ...uploadResult,
-          residentProfilePhotoDeletedFileRecords: profilePhotoResult.deletedFileRecords,
-          residentProfilePhotoDeletedStorageObjects: profilePhotoResult.deletedStorageObjects,
+          profilePhotoDeletedFileRecords: profilePhotoResult.deletedFileRecords,
+          profilePhotoDeletedStorageObjects: profilePhotoResult.deletedStorageObjects,
           ...exportResult,
         }))
       }

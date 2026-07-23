@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { ServiceDepartment, ServiceRequestDetail, ServiceRequestStatus } from '~/types/domain'
+import ResidentAvatar from '~/components/residents/ResidentAvatar.vue'
 
 definePageMeta({
   layout: 'admin',
@@ -141,7 +142,17 @@ const timelineCount = computed(() =>
           <div class="ticket-detail-facts">
             <div>
               <span>Requester</span>
-              <strong>{{ ticket.requesterName || ticket.sourceType }}</strong>
+              <div class="ticket-requester">
+                <ResidentAvatar
+                  :name="ticket.requesterName"
+                  :resident-id="ticket.requesterUserId"
+                  :has-image="ticket.requesterHasProfileImage"
+                  :updated-at="ticket.requesterProfileUpdatedAt"
+                  :size="40"
+                  previewable
+                />
+                <strong>{{ ticket.requesterName || ticket.sourceType }}</strong>
+              </div>
             </div>
             <div>
               <span>Contact</span>
@@ -204,8 +215,8 @@ const timelineCount = computed(() =>
               severity="secondary"
               text
               size="small"
-              @click="showTimeline = !showTimeline"
               :aria-expanded="showTimeline"
+              @click="showTimeline = !showTimeline"
             />
           </div>
           <p v-if="!showTimeline && timelineCount > 0" class="service-request-detail__timeline-hint">
@@ -235,6 +246,13 @@ const timelineCount = computed(() =>
 </template>
 
 <style scoped>
+.ticket-requester {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-width: 0;
+}
+
 .service-panel__header {
   align-items: flex-start;
   justify-content: space-between;

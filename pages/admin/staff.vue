@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import type { DataTablePageEvent, DataTableSortEvent } from 'primevue/datatable'
+import ProfilePhotoUploader from '~/components/profile/ProfilePhotoUploader.vue'
+import ResidentAvatar from '~/components/residents/ResidentAvatar.vue'
 import type { ListQueryParams } from '~/types/api'
 import type { ServiceDepartment, StaffSummary } from '~/types/domain'
 import { requiresTemporaryPasswordChangeForRole } from '~/shared/auth'
@@ -20,6 +22,7 @@ definePageMeta({
 const api = useApi()
 const toast = useToast()
 const confirmAction = useAppConfirm()
+const authStore = useAuthStore()
 
 const query = ref<ListQueryParams>({
   page: 1,
@@ -38,8 +41,11 @@ const removingStaffId = ref<string | null>(null)
 const globalSearch = ref('')
 const loginDetails = ref<StaffLoginDetails | null>(null)
 const loginDialogVisible = ref(false)
+const pendingStaffPhoto = ref<File | null>(null)
+const photoEditorVersion = ref(0)
 
 type StaffLoginDetails = {
+  id: string
   email: string
   temporaryPassword: string
   requiresPasswordChange: boolean
@@ -117,6 +123,8 @@ const resetForm = () => {
   form.isActive = true
   form.permissions = [...managerDefaultPermissions]
   form.departmentIds = []
+  pendingStaffPhoto.value = null
+  photoEditorVersion.value += 1
 }
 
 const openCreateDialog = () => {
@@ -140,6 +148,8 @@ const editStaff = (staff: StaffSummary) => {
   form.departmentIds = staff.role === 'SERVICE_STAFF'
     ? staff.departments?.map((department) => department.id) ?? []
     : []
+  pendingStaffPhoto.value = null
+  photoEditorVersion.value += 1
   displayDialog.value = true
 }
 
@@ -169,6 +179,8 @@ const submit = async () => {
           }),
     }
 
+    let savedStaffId = selectedStaff.value?.id ?? ''
+
     if (selectedStaff.value) {
       await api(`/api/admin/staff/${selectedStaff.value.id}`, {
         method: 'PATCH',
@@ -179,14 +191,33 @@ const submit = async () => {
         method: 'POST',
         body: payload,
       })
+      savedStaffId = response.data.id
       loginDetails.value = response.data
       loginDialogVisible.value = true
     }
 
+    let photoUploadFailed = false
+
+    if (pendingStaffPhoto.value && savedStaffId) {
+      const photoBody = new FormData()
+      photoBody.append('file', pendingStaffPhoto.value)
+
+      try {
+        await api(`/api/admin/staff/${savedStaffId}/photo`, {
+          method: 'POST',
+          body: photoBody,
+        })
+      } catch {
+        photoUploadFailed = true
+      }
+    }
+
     toast.add({
-      severity: 'success',
-      summary: 'Saved',
-      detail: selectedStaff.value ? 'Staff member updated.' : 'Staff member created.',
+      severity: photoUploadFailed ? 'warn' : 'success',
+      summary: photoUploadFailed ? 'Staff saved' : 'Saved',
+      detail: photoUploadFailed
+        ? 'The staff member was saved, but the profile photo could not be uploaded. Edit the staff member to retry.'
+        : selectedStaff.value ? 'Staff member updated.' : 'Staff member created.',
       life: 10000,
     })
     closeDialog()
@@ -381,6 +412,45 @@ const permissionChipSeverity = (index: number) =>
   permissionChipSeverities[index % permissionChipSeverities.length]
 
 const roleAccessLabel = (role: StaffSummary['role']) => staffRoleAccessDescriptions[role].accessLabel
+
+const staffPhotoUrl = (staff: StaffSummary) => {
+  if (!staff.profileImagePath) {
+    return ''
+  }
+
+  const version = staff.profileImageUpdatedAt || staff.profileImagePath
+  return `/api/admin/staff/${staff.id}/photo?v=${encodeURIComponent(version)}`
+}
+
+const onStaffPhotoUploaded = (payload: {
+  profileImagePath: string
+  profileImageUrl: string
+  updatedAt: string
+}) => {
+  if (!selectedStaff.value) {
+    return
+  }
+
+  selectedStaff.value.profileImagePath = payload.profileImagePath
+  selectedStaff.value.profileImageUpdatedAt = payload.updatedAt
+  selectedStaff.value.updatedAt = payload.updatedAt
+
+  const item = data.value?.data.items.find((staff) => staff.id === selectedStaff.value?.id)
+
+  if (item) {
+    item.profileImagePath = payload.profileImagePath
+    item.profileImageUpdatedAt = payload.updatedAt
+    item.updatedAt = payload.updatedAt
+  }
+
+  if (authStore.me?.user.id === selectedStaff.value.id) {
+    authStore.updateProfilePhoto({
+      profileImagePath: payload.profileImagePath,
+      updatedAt: payload.updatedAt,
+      previewUrl: payload.profileImageUrl,
+    })
+  }
+}
 </script>
 
 <template>
@@ -455,7 +525,22 @@ const roleAccessLabel = (role: StaffSummary['role']) => staffRoleAccessDescripti
         @page="onPage"
         @sort="onSort"
       >
-        <Column field="fullName" header="Staff member" sortable />
+        <Column field="fullName" header="Staff member" sortable>
+          <template #body="{ data: row }">
+            <div class="admin-person-cell">
+              <ResidentAvatar
+                :name="row.fullName"
+                :resident-id="row.id"
+                :profile-image-path="row.profileImagePath"
+                :updated-at="row.profileImageUpdatedAt"
+                :src="staffPhotoUrl(row)"
+                :size="42"
+                previewable
+              />
+              <strong>{{ row.fullName }}</strong>
+            </div>
+          </template>
+        </Column>
         <Column field="role" header="Role" sortable />
         <Column header="Departments">
           <template #body="{ data: row }">
@@ -544,6 +629,21 @@ const roleAccessLabel = (role: StaffSummary['role']) => staffRoleAccessDescripti
       :style="{ width: '760px', maxWidth: '95vw' }"
     >
       <form class="admin-form-layout" style="padding: 1.5rem 0.5rem 0;" @submit.prevent="submit">
+        <section class="admin-form-subsection">
+          <h3>Profile photo</h3>
+          <ProfilePhotoUploader
+            :key="`${selectedStaff?.id ?? 'new'}-${photoEditorVersion}`"
+            :name="form.fullName || 'New staff member'"
+            :user-id="selectedStaff?.id ?? null"
+            :profile-image-path="selectedStaff?.profileImagePath ?? null"
+            :updated-at="selectedStaff?.profileImageUpdatedAt ?? null"
+            :upload-url="selectedStaff ? `/api/admin/staff/${selectedStaff.id}/photo` : null"
+            :image-url="selectedStaff ? staffPhotoUrl(selectedStaff) : ''"
+            @uploaded="onStaffPhotoUploaded"
+            @selected="pendingStaffPhoto = $event"
+          />
+        </section>
+
         <section class="admin-form-subsection">
           <h3>Account</h3>
           <div class="admin-form-grid">
@@ -666,3 +766,17 @@ const roleAccessLabel = (role: StaffSummary['role']) => staffRoleAccessDescripti
     </Dialog>
   </div>
 </template>
+
+<style scoped>
+.admin-person-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 12rem;
+}
+
+.admin-person-cell strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+</style>

@@ -26,6 +26,8 @@ export default defineEventHandler(async (event) => {
   const authMe = await requireRole(event, ['ADMIN', 'MANAGER'])
   const id = readUuidParam(event)
   const field = String(event.context.params?.field ?? '')
+  const query = getQuery(event)
+  const cacheNonce = String(query.v ?? '').trim()
 
   if (!isResidentFileField(field)) {
     throw createError({ statusCode: 400, statusMessage: 'Unsupported resident file field.' })
@@ -58,6 +60,12 @@ export default defineEventHandler(async (event) => {
   const blob = await downloadPrivateFile({
     storageTargetKey: 'resident_documents',
     storageObjectKey: residentFile.file_path,
+    ...(field === 'profileImagePath'
+      ? {
+          cacheNonce: cacheNonce || residentFile.file_path,
+          cache: 'no-store' as const,
+        }
+      : {}),
   })
   const buffer = Buffer.from(await blob.arrayBuffer())
   const fileName = (residentFile.original_file_name ?? field).replace(/"/g, '')

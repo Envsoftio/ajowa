@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import ResidentAvatar from '~/components/residents/ResidentAvatar.vue'
+
 definePageMeta({
   layout: 'admin',
   middleware: ['protected'],
@@ -12,7 +14,10 @@ type GateLogResponse = {
       id: string
       scannedAt: string
       guardName: string | null
+      residentId: string | null
       residentName: string | null
+      residentProfileImagePath: string | null
+      residentProfileUpdatedAt: string | null
       flatLabel: string | null
       result: string
       reason: string | null
@@ -115,7 +120,28 @@ const exportUrl = (format: 'csv' | 'excel' | 'pdf') =>
           <template #body="{ data: row }">{{ new Date(row.scannedAt).toLocaleString('en-IN') }}</template>
         </Column>
         <Column field="guardName" header="Guard" />
-        <Column field="residentName" header="Resident" />
+        <Column field="residentName" header="Resident">
+          <template #body="{ data: row }">
+            <div class="gate-resident">
+              <ResidentAvatar
+                :name="row.residentName"
+                :resident-id="row.residentId"
+                :profile-image-path="row.residentProfileImagePath"
+                :updated-at="row.residentProfileUpdatedAt"
+                :size="36"
+                previewable
+              />
+              <NuxtLink
+                v-if="row.residentId"
+                :to="`/admin/residents/${row.residentId}`"
+                class="table-link-button"
+              >
+                {{ row.residentName || 'Resident' }}
+              </NuxtLink>
+              <span v-else>{{ row.residentName || '-' }}</span>
+            </div>
+          </template>
+        </Column>
         <Column field="flatLabel" header="Flat" />
         <Column field="result" header="Result">
           <template #body="{ data: row }">
@@ -127,3 +153,12 @@ const exportUrl = (format: 'csv' | 'excel' | 'pdf') =>
     </section>
   </div>
 </template>
+
+<style scoped>
+.gate-resident {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-width: 0;
+}
+</style>

@@ -8,6 +8,7 @@ export const useAuthStore = defineStore('auth', {
     me: null as AuthMe | null,
     loading: false,
     loaded: false,
+    profilePhotoPreviewUrl: '',
   }),
   getters: {
     isAuthenticated: (state) => state.me != null,
@@ -74,6 +75,33 @@ export const useAuthStore = defineStore('auth', {
 
       return this.fetchMe(true)
     },
+    updateProfilePhoto(payload: {
+      profileImagePath: string
+      updatedAt: string
+      previewUrl: string
+    }) {
+      if (
+        import.meta.client
+        && this.profilePhotoPreviewUrl
+        && this.profilePhotoPreviewUrl !== payload.previewUrl
+      ) {
+        URL.revokeObjectURL(this.profilePhotoPreviewUrl)
+      }
+
+      this.profilePhotoPreviewUrl = payload.previewUrl
+
+      if (this.me?.user) {
+        this.me.user.profileImagePath = payload.profileImagePath
+        this.me.user.profileImageUpdatedAt = payload.updatedAt
+      }
+    },
+    clearProfilePhotoPreview() {
+      if (import.meta.client && this.profilePhotoPreviewUrl) {
+        URL.revokeObjectURL(this.profilePhotoPreviewUrl)
+      }
+
+      this.profilePhotoPreviewUrl = ''
+    },
     async logout() {
       await $fetch('/api/auth/sign-out', {
         method: 'POST',
@@ -82,12 +110,14 @@ export const useAuthStore = defineStore('auth', {
       })
 
       fetchMeRequests.delete(this)
+      this.clearProfilePhotoPreview()
       this.me = null
       this.loaded = true
       this.loading = false
     },
     reset() {
       fetchMeRequests.delete(this)
+      this.clearProfilePhotoPreview()
       this.me = null
       this.loaded = false
       this.loading = false

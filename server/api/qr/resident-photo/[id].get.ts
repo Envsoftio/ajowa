@@ -9,6 +9,8 @@ import { QR_SCAN_ROLES } from '~/shared/auth'
 export default defineEventHandler(async (event) => {
   const authMe = await requireRole(event, QR_SCAN_ROLES)
   const id = readUuidParam(event)
+  const query = getQuery(event)
+  const cacheNonce = String(query.v ?? '').trim()
 
   const result = await getDatabasePool().query<{
     profile_image_path: string | null
@@ -46,6 +48,8 @@ export default defineEventHandler(async (event) => {
   const blob = await downloadPrivateFile({
     storageTargetKey: 'resident_documents',
     storageObjectKey: resident.profile_image_path,
+    cacheNonce: cacheNonce || resident.profile_image_path,
+    cache: 'no-store',
   })
   const buffer = Buffer.from(await blob.arrayBuffer())
   const fileName = (resident.original_file_name ?? 'resident-photo').replace(/"/g, '')

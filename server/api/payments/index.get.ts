@@ -37,6 +37,8 @@ type PaymentSummaryRow = {
   flatNumber: string | null
   blockName: string | null
   payerName: string | null
+  payerProfileImagePath: string | null
+  payerProfileUpdatedAt: string | null
   camAdvanceCoverageId: null
   coveredFrom: null
   coveredUntil: null
@@ -61,6 +63,8 @@ type PaymentListRow = PaymentSummaryRow | {
   flatNumber: string
   blockName: string
   payerName: string | null
+  payerProfileImagePath: null
+  payerProfileUpdatedAt: null
   camAdvanceCoverageId: string
   coveredFrom: string
   coveredUntil: string
@@ -85,6 +89,8 @@ const mapCamAdvanceMatchToPaymentRow = (row: PaymentCamAdvanceMatchRow): Payment
   flatNumber: row.flatNumber,
   blockName: row.blockName,
   payerName: row.primaryResidentName,
+  payerProfileImagePath: null,
+  payerProfileUpdatedAt: null,
   camAdvanceCoverageId: row.id,
   coveredFrom: row.coveredFrom,
   coveredUntil: row.coveredUntil,
@@ -340,6 +346,8 @@ export default defineEventHandler(async (event) => {
         f.flat_number as "flatNumber",
         b.name as "blockName",
         u.full_name as "payerName",
+        u.profile_image_path as "payerProfileImagePath",
+        u.updated_at::text as "payerProfileUpdatedAt",
         null::text as "camAdvanceCoverageId",
         null::text as "coveredFrom",
         null::text as "coveredUntil"
