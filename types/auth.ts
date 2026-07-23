@@ -50,6 +50,8 @@ export type AppUserSummary = {
   email: string
   mobileNumber: string
   whatsappNumber: string | null
+  profileImagePath: string | null
+  profileImageUpdatedAt: string | null
   canLogin: boolean
   mustChangePassword: boolean
   emailVerified: boolean

@@ -45,6 +45,8 @@ type AppUserRow = {
   email: string
   mobile_number: string
   whatsapp_number: string | null
+  profile_image_path: string | null
+  updated_at: string
   can_login: boolean
   must_change_password: boolean
   email_verified: boolean
@@ -263,6 +265,8 @@ const loadAppUserByAuthUserId = async (authUserId: string) => {
           email,
           mobile_number,
           whatsapp_number,
+          profile_image_path,
+          updated_at::text,
           can_login,
           must_change_password,
           email_verified,
@@ -375,6 +379,8 @@ const buildAuthMe = (
       email: appState.user.email,
       mobileNumber: appState.user.mobile_number,
       whatsappNumber: appState.user.whatsapp_number,
+      profileImagePath: appState.user.profile_image_path,
+      profileImageUpdatedAt: appState.user.profile_image_path ? appState.user.updated_at : null,
       canLogin: appState.user.can_login,
       mustChangePassword: requiresPasswordChange,
       emailVerified: appState.user.email_verified,

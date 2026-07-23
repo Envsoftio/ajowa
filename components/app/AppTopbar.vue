@@ -15,6 +15,7 @@ const route = useRoute()
 const toast = useToast()
 const menu = ref()
 const loggingOut = ref(false)
+const avatarImageFailed = ref(false)
 
 const firstCharacter = (value: string | null | undefined) => value?.trim().charAt(0).toUpperCase() || ''
 
@@ -27,6 +28,16 @@ const userDisplayName = computed(() =>
 )
 const userInitial = computed(() => firstCharacter(userDisplayName.value) || 'U')
 const userEmail = computed(() => authStore.me?.user.email?.trim() || '')
+const userProfilePhotoUrl = computed(() => {
+  const user = authStore.me?.user
+
+  if (user?.role !== 'RESIDENT' || !user.profileImagePath) {
+    return ''
+  }
+
+  const version = user.profileImageUpdatedAt || user.profileImagePath
+  return `/api/my/profile/photo?v=${encodeURIComponent(version)}`
+})
 const avatarLabel = computed(() => `Open account menu for ${userDisplayName.value}`)
 const notificationRoute = computed(() => {
   const role = authStore.me?.user.role
@@ -116,6 +127,10 @@ const toggleMenu = (event: Event) => {
   menu.value?.toggle(event)
 }
 
+watch(userProfilePhotoUrl, () => {
+  avatarImageFailed.value = false
+})
+
 const isDesktopViewport = () => import.meta.client && window.matchMedia('(min-width: 769px)').matches
 
 const toggleNavigation = () => {
@@ -181,7 +196,13 @@ onMounted(() => {
         @click="theme.toggle()"
       />
       <Button class="avatar-trigger" text rounded :aria-label="avatarLabel" :title="userDisplayName" @click="toggleMenu">
-        <Avatar :label="userInitial" shape="circle" />
+        <Avatar
+          v-if="userProfilePhotoUrl && !avatarImageFailed"
+          :image="userProfilePhotoUrl"
+          shape="circle"
+          @error="avatarImageFailed = true"
+        />
+        <Avatar v-else :label="userInitial" shape="circle" />
       </Button>
       <Menu ref="menu" :model="avatarItems" popup />
     </div>

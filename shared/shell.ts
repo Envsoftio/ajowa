@@ -102,6 +102,7 @@ export const shellNavigation: Record<AppShellType, AppNavGroup[]> = {
       label: 'Account',
       icon: 'pi pi-user',
       items: [
+        { label: 'My Profile', to: '/my/profile', icon: 'pi pi-user-edit' },
         {
           label: 'Notification Settings',
           to: '/my/settings/notifications',

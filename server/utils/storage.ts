@@ -167,6 +167,11 @@ type CleanupFailedUploadsResult = {
   deletedStorageObjects: number
 }
 
+type CleanupResidentProfilePhotosResult = {
+  deletedFileRecords: number
+  deletedStorageObjects: number
+}
+
 const isStorageTargetKey = (value: string): value is StorageTargetKey =>
   STORAGE_TARGET_KEYS.includes(value as StorageTargetKey)
 
@@ -1020,6 +1025,64 @@ export const cleanupFailedUploads = async (olderThanHours = 24): Promise<Cleanup
     }
 
     deletedFileRecords += 1
+  }
+
+  return {
+    deletedFileRecords,
+    deletedStorageObjects,
+  }
+}
+
+export const cleanupUnreferencedResidentProfilePhotos = async (): Promise<CleanupResidentProfilePhotosResult> => {
+  const supabaseAdmin = getSupabaseAdminClient()
+  let rows: StorageFileRecordRow[]
+
+  try {
+    const result = await getDatabasePool().query<StorageFileRecordRow>(
+      `
+        select ${fileRecordColumns}
+        from public.file_objects fo
+        where fo.storage_target_key = $1
+          and fo.storage_object_key like 'resident-profile-photo/%'
+          and fo.updated_at <= now() - interval '1 hour'
+          and not exists (
+            select 1
+            from public.users u
+            where u.profile_image_path = fo.storage_object_key
+          )
+      `,
+      [STORAGE_TARGETS.residentDocuments.key],
+    )
+    rows = result.rows
+  } catch (error) {
+    throw toStorageError('Unable to query unreferenced resident profile photos for cleanup.', {
+      cause: unknownErrorMessage(error, 'Unknown resident profile photo cleanup query error.'),
+    })
+  }
+
+  let deletedStorageObjects = 0
+  let deletedFileRecords = 0
+
+  for (const row of rows) {
+    const storageObjectDeleted = await removeStorageObjectQuietly(
+      supabaseAdmin,
+      row.storage_target_key,
+      row.storage_object_key,
+    )
+
+    if (storageObjectDeleted) {
+      deletedStorageObjects += 1
+    }
+
+    try {
+      await getDatabasePool().query('delete from public.file_objects where id = $1', [row.id])
+      deletedFileRecords += 1
+    } catch (error) {
+      throw toStorageError('Unable to delete resident profile photo metadata during cleanup.', {
+        cause: unknownErrorMessage(error, 'Unknown resident profile photo metadata delete error.'),
+        fileId: row.id,
+      })
+    }
   }
 
   return {

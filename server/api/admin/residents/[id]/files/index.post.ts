@@ -7,10 +7,11 @@ import { readUuidParam, writeMasterAudit } from '~/server/utils/master-data'
 import { readMultipartFormParts } from '~/server/utils/multipart'
 import {
   createStorageObjectKey,
+  replacePrivateFile,
   uploadPrivateFile,
 } from '~/server/utils/storage'
 
-const TWO_MEGABYTES = 2 * 1024 * 1024
+const ONE_MEGABYTE = 1024 * 1024
 const TEN_MEGABYTES = 10 * 1024 * 1024
 
 const imageMimeTypes = new Set(['image/jpeg', 'image/png', 'image/webp'])
@@ -27,9 +28,9 @@ const residentFileFields = {
     label: 'Profile photo',
     recordType: 'resident-profile-photo',
     allowedMimeTypes: imageMimeTypes,
-    maxSizeBytes: TWO_MEGABYTES,
+    maxSizeBytes: ONE_MEGABYTE,
     invalidTypeMessage: 'Upload a PNG, JPG, JPEG, or WebP profile photo.',
-    invalidSizeMessage: 'Profile photos must be 2 MB or smaller.',
+    invalidSizeMessage: 'Profile photos must be 1 MB or smaller.',
   },
   governmentIdDocumentPath: {
     column: 'government_id_document_path',
@@ -65,6 +66,11 @@ type ResidentFileField = keyof typeof residentFileFields
 const isResidentFileField = (value: string): value is ResidentFileField =>
   value in residentFileFields
 
+const getProfilePhotoStorageObjectKey = (userId: string, fileName: string) => {
+  const extension = fileName.includes('.') ? fileName.split('.').pop()?.toLowerCase() ?? 'webp' : 'webp'
+  return `resident-profile-photo/${userId}/profile.${extension}`
+}
+
 export default defineEventHandler(async (event) => {
   const authMe = await requireRole(event, ['ADMIN', 'MANAGER'])
   const id = readUuidParam(event)
@@ -96,11 +102,18 @@ export default defineEventHandler(async (event) => {
   const residentResult = await pool.query<{
     full_name: string
     file_path: string | null
+    file_id: string | null
   }>(
     `
-      select full_name, ${config.column} as file_path
-      from users
-      where id = $1 and society_id = $2 and role = 'RESIDENT'
+      select
+        u.full_name,
+        u.${config.column} as file_path,
+        fo.id as file_id
+      from users u
+      left join file_objects fo
+        on fo.storage_object_key = u.${config.column}
+        and fo.storage_target_key = 'resident_documents'
+      where u.id = $1 and u.society_id = $2 and u.role = 'RESIDENT'
       limit 1
     `,
     [id, authMe.user.societyId],
@@ -115,14 +128,15 @@ export default defineEventHandler(async (event) => {
     })
   }
 
-  const storageObjectKey = createStorageObjectKey({
-    recordType: config.recordType,
-    recordId: id,
-    fileName: filePart.filename,
-  })
+  const storageObjectKey = field === 'profileImagePath'
+    ? getProfilePhotoStorageObjectKey(id, filePart.filename)
+    : createStorageObjectKey({
+        recordType: config.recordType,
+        recordId: id,
+        fileName: filePart.filename,
+      })
   const checksum = createHash('sha256').update(filePart.data).digest('hex')
-
-  await uploadPrivateFile({
+  const fileInput = {
     storageTargetKey: 'resident_documents',
     storageObjectKey,
     originalFileName: filePart.filename,
@@ -135,7 +149,16 @@ export default defineEventHandler(async (event) => {
       recordId: id,
     },
     checksum,
-  })
+  } as const
+
+  if (field === 'profileImagePath' && resident.file_id) {
+    await replacePrivateFile({
+      ...fileInput,
+      fileId: resident.file_id,
+    })
+  } else {
+    await uploadPrivateFile(fileInput)
+  }
 
   const client = await pool.connect()
 
