@@ -383,14 +383,14 @@ const mapDueRows = (
   paymentEventsByDueId: ReadonlyMap<string, DuePaymentEvent[]>,
 ): MaintenanceDue[] =>
   rows.map((row) => {
-    const isCoverageRow = row.is_cam_advance_covered
+    const isAdvanceCoverageRow = row.row_kind === 'CAM_ADVANCE_COVERAGE'
     const baseAmount = Number(row.base_amount)
     const waivedAmount = Number(row.waived_amount)
     const paidAmount = Number(row.paid_amount)
     const chargeBreakdown = Array.isArray(row.charge_breakdown)
       ? row.charge_breakdown as MaintenanceDue['chargeBreakdown']
       : []
-    const computed = isCoverageRow
+    const computed = isAdvanceCoverageRow
       ? {
           lateFeeAmount: Number(row.late_fee_amount),
           totalAmount: Number(row.total_amount),
@@ -463,8 +463,8 @@ const mapDueRows = (
       chargeBreakdown,
       generatedAt: row.generated_at,
       primaryResidentName: row.primary_resident_name,
-      isCamAdvanceCovered: isCoverageRow,
-      isAdvanceCoverageRow: row.row_kind === 'CAM_ADVANCE_COVERAGE',
+      isCamAdvanceCovered: row.is_cam_advance_covered,
+      isAdvanceCoverageRow,
       camAdvanceCoverageId: row.cam_advance_coverage_id,
       camAdvanceCoveredFrom: row.cam_advance_covered_from,
       camAdvancePaidUntil: row.cam_advance_paid_until,

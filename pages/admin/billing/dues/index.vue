@@ -289,7 +289,7 @@ const canCorrectLateFee = (due: MaintenanceDue) =>
   canManageDues.value &&
   due.billingPeriodChargeType === 'CAM' &&
   !due.isAdvanceCoverageRow &&
-  !due.isCamAdvanceCovered &&
+  (due.baseAmount > 0 || due.paidAmount > 0) &&
   !['WAIVED', 'CANCELLED'].includes(due.status)
 
 const isLateFeeOnlyDue = (due: MaintenanceDue) =>
