@@ -58,6 +58,21 @@ type BulkDueDateUpdateResponse = {
     skippedPaymentConflict: number
   }
 }
+type LateFeeCorrectionAction =
+  | 'RECALCULATE_INSTALLMENTS'
+  | 'DEFER'
+  | 'CLEAR_DEFERMENT'
+  | 'WAIVE_AND_CLOSE'
+  | 'REVERSE_LATE_FEE_WAIVER'
+type LateFeeCorrectionResponse = {
+  ok: true
+  data: {
+    action: LateFeeCorrectionAction
+    requested: number
+    updated: number
+    unchanged: number
+  }
+}
 type DueFilterPayload = {
   search?: string
   billingPeriodId?: string
@@ -270,6 +285,19 @@ const canRecordPayment = (due: MaintenanceDue) =>
 const canWaiveDue = (due: MaintenanceDue) =>
   canManageDues.value && !due.isAdvanceCoverageRow && !due.isCamAdvanceCovered && !['PAID', 'CANCELLED'].includes(due.status)
 
+const canCorrectLateFee = (due: MaintenanceDue) =>
+  canManageDues.value &&
+  due.billingPeriodChargeType === 'CAM' &&
+  !due.isAdvanceCoverageRow &&
+  !due.isCamAdvanceCovered &&
+  !['WAIVED', 'CANCELLED'].includes(due.status)
+
+const isLateFeeOnlyDue = (due: MaintenanceDue) =>
+  canCorrectLateFee(due) &&
+  !hasCamAdvanceAdjustment(due) &&
+  due.balanceAmount > 0 &&
+  due.paidAmount >= due.baseAmount
+
 const canEditDue = (due: MaintenanceDue) =>
   canManageDues.value &&
   !due.isAdvanceCoverageRow &&
@@ -301,11 +329,22 @@ const camAdvanceAdjustmentAmount = (due: MaintenanceDue) =>
       : sum
   }, 0)
 const hasCamAdvanceAdjustment = (due: MaintenanceDue) =>
-  camAdvanceAdjustmentAmount(due) > 0
+  camAdvanceAdjustmentAmount(due) > 0 ||
+  due.chargeBreakdown.some(
+    (item) => Number(item.camAdvanceCoveredMonths ?? 0) > 0,
+  )
 const camAdvanceAdjustmentNote = (due: MaintenanceDue) =>
   due.chargeBreakdown.find((item) => item.camAdvanceNote)?.camAdvanceNote ?? null
 const paymentProgressLabel = (due: MaintenanceDue) => {
   if (due.isCamAdvanceCovered) return 'Covered'
+  if (due.installmentPlanApplied) {
+    const covered = Number(due.coveredInstallmentCount ?? 0)
+    const total = Number(due.installmentCount ?? 0)
+    const next = due.nextInstallmentDueDate
+      ? `; next by ${formatDate(due.nextInstallmentDueDate)}`
+      : ''
+    return `${covered}/${total} monthly installments covered${next}`
+  }
 
   const advanceAdjustment = camAdvanceAdjustmentAmount(due)
 
@@ -449,6 +488,12 @@ const waiverDialogVisible = ref(false)
 const waiverTarget = ref<MaintenanceDue | null>(null)
 const waiverReason = ref('')
 const savingWaiver = ref(false)
+const lateFeeDialogVisible = ref(false)
+const lateFeeTargets = ref<MaintenanceDue[]>([])
+const lateFeeAction = ref<LateFeeCorrectionAction>('DEFER')
+const lateFeePenaltyFreeUntil = ref('')
+const lateFeeReason = ref('')
+const savingLateFeeCorrection = ref(false)
 const editDialogVisible = ref(false)
 const editTarget = ref<MaintenanceDue | null>(null)
 const savingDueEdit = ref(false)
@@ -524,9 +569,15 @@ const selectedPdfDues = computed(() =>
 const selectedEditableDues = computed(() =>
   notificationSelectedDues.value.filter(canEditDue),
 )
+const selectedCorrectableCamDues = computed(() =>
+  notificationSelectedDues.value.filter(canCorrectLateFee),
+)
 const selectedDueCount = computed(() => notificationSelectedDues.value.length)
 const selectedPdfCount = computed(() => selectedPdfDues.value.length)
 const selectedEditableDueCount = computed(() => selectedEditableDues.value.length)
+const selectedCorrectableCamDueCount = computed(
+  () => selectedCorrectableCamDues.value.length,
+)
 const selectedBulkDueDateExcludedCount = computed(() =>
   Math.max(0, notificationSelectedDues.value.length - selectedEditableDueCount.value),
 )
@@ -598,6 +649,60 @@ const billChannelOptions = [
   { label: 'Push', value: 'PUSH' },
   { label: 'In-app', value: 'IN_APP' },
 ]
+
+const lateFeeActionOptions = computed(() => {
+  const targets = lateFeeTargets.value
+  const options: Array<{
+    label: string
+    value: LateFeeCorrectionAction
+  }> = [
+    {
+      label: 'Recalculate monthly installments',
+      value: 'RECALCULATE_INSTALLMENTS',
+    },
+    { label: 'Approve installments / defer late fee', value: 'DEFER' },
+  ]
+
+  if (targets.every((due) => Boolean(due.manualLateFeeStartsOn))) {
+    options.push({
+      label: 'Remove installment deferment',
+      value: 'CLEAR_DEFERMENT',
+    })
+  }
+  if (targets.every(isLateFeeOnlyDue)) {
+    options.push({
+      label: 'Waive outstanding late fee and close',
+      value: 'WAIVE_AND_CLOSE',
+    })
+  }
+  if (targets.every((due) => Number(due.lateFeeWaivedAmount ?? 0) > 0)) {
+    options.push({
+      label: 'Reverse late-fee waiver',
+      value: 'REVERSE_LATE_FEE_WAIVER',
+    })
+  }
+
+  return options
+})
+
+const lateFeeCorrectionSummary = computed(() => {
+  const targets = lateFeeTargets.value
+  return {
+    principal: targets.reduce((sum, due) => sum + due.baseAmount, 0),
+    paid: targets.reduce((sum, due) => sum + due.paidAmount, 0),
+    balance: targets.reduce((sum, due) => sum + due.balanceAmount, 0),
+    lateFeeWaived: targets.reduce(
+      (sum, due) => sum + Number(due.lateFeeWaivedAmount ?? 0),
+      0,
+    ),
+  }
+})
+const lateFeePenaltyMinDate = computed(() =>
+  lateFeeTargets.value.reduce(
+    (latest, due) => due.dueDate > latest ? due.dueDate : latest,
+    '',
+  ),
+)
 
 const chunkDueIds = (dueIds: string[]) => {
   const chunks: string[][] = []
@@ -902,6 +1007,84 @@ const submitWaiver = async () => {
   }
 }
 
+const openLateFeeCorrection = (
+  targets: MaintenanceDue[],
+  preferredAction?: LateFeeCorrectionAction,
+) => {
+  const eligibleTargets = targets.filter(canCorrectLateFee)
+  if (eligibleTargets.length === 0) return
+
+  lateFeeTargets.value = eligibleTargets
+  const defaultAction = preferredAction ??
+    'RECALCULATE_INSTALLMENTS'
+  lateFeeAction.value = lateFeeActionOptions.value.some(
+    (option) => option.value === defaultAction,
+  )
+    ? defaultAction
+    : lateFeeActionOptions.value[0]?.value ?? 'DEFER'
+  lateFeePenaltyFreeUntil.value =
+    eligibleTargets.length === 1
+      ? eligibleTargets[0]?.penaltyFreeUntilDate ?? ''
+      : ''
+  lateFeeReason.value = ''
+  lateFeeDialogVisible.value = true
+}
+
+const submitLateFeeCorrection = async () => {
+  if (lateFeeTargets.value.length === 0) return
+  if (lateFeeAction.value === 'DEFER' && !lateFeePenaltyFreeUntil.value) {
+    toast.add({
+      severity: 'warn',
+      summary: 'Choose a date',
+      detail: 'Select the final penalty-free date for the approved installments.',
+      life: 8000,
+    })
+    return
+  }
+
+  savingLateFeeCorrection.value = true
+
+  try {
+    let updated = 0
+    let unchanged = 0
+    const dueIdChunks = chunkDueIds(
+      lateFeeTargets.value.map((due) => due.id),
+    )
+
+    for (const dueIds of dueIdChunks) {
+      const response = await api<LateFeeCorrectionResponse>(
+        '/api/admin/billing/dues/late-fee-corrections',
+        {
+          method: 'POST',
+          body: {
+            dueIds,
+            action: lateFeeAction.value,
+            penaltyFreeUntil:
+              lateFeeAction.value === 'DEFER'
+                ? lateFeePenaltyFreeUntil.value
+                : undefined,
+            reason: lateFeeReason.value,
+          },
+        },
+      )
+      updated += response.data.updated
+      unchanged += response.data.unchanged
+    }
+
+    toast.add({
+      severity: 'success',
+      summary: 'Late-fee correction completed',
+      detail: `${updated} updated, ${unchanged} unchanged. Payments and allocations were preserved.`,
+      life: 10000,
+    })
+    lateFeeDialogVisible.value = false
+    clearNotificationSelection()
+    await refresh()
+  } finally {
+    savingLateFeeCorrection.value = false
+  }
+}
+
 const sendReminders = async (dueIds: string[]) => {
   if (!canManageDues.value || dueIds.length === 0) return
   const bulkReminderIds = new Set(selectedReminderDues.value.map((due) => due.id))
@@ -1187,6 +1370,24 @@ watch(
             :loading="savingBulkDueDate"
             :disabled="!canOpenBulkDueDate"
             @click="openBulkDueDate"
+          />
+          <Button
+            v-if="canManageDues"
+            :label="
+              selectedCorrectableCamDueCount > 0
+                ? `Recalculate installments (${selectedCorrectableCamDueCount})`
+                : 'Recalculate installments'
+            "
+            icon="pi pi-check-circle"
+            severity="secondary"
+            outlined
+            :disabled="selectedCorrectableCamDueCount === 0"
+            @click="
+              openLateFeeCorrection(
+                selectedCorrectableCamDues,
+                'RECALCULATE_INSTALLMENTS',
+              )
+            "
           />
           <Button
             v-if="canManageDues"
@@ -1553,6 +1754,17 @@ watch(
               />
               <Button
                 v-if="canManageDues"
+                icon="pi pi-clock"
+                severity="secondary"
+                text
+                rounded
+                aria-label="Correct late fee"
+                title="Approve installments or correct a late-fee-only balance"
+                :disabled="!canCorrectLateFee(row)"
+                @click="openLateFeeCorrection([row])"
+              />
+              <Button
+                v-if="canManageDues"
                 :icon="row.status === 'WAIVED' ? 'pi pi-undo' : 'pi pi-ban'"
                 severity="secondary"
                 text
@@ -1690,6 +1902,16 @@ watch(
               :title="getReminderTitle(due)"
               :disabled="!isReminderEligible(due)"
               @click="sendReminders([due.id])"
+            />
+            <Button
+              v-if="canManageDues"
+              label="Late fee"
+              icon="pi pi-clock"
+              size="small"
+              severity="secondary"
+              outlined
+              :disabled="!canCorrectLateFee(due)"
+              @click="openLateFeeCorrection([due])"
             />
             <Button
               v-if="canManageDues"
@@ -1953,6 +2175,127 @@ watch(
             icon="pi pi-send"
             :loading="sendingBills"
             :disabled="billSendTargets.length === 0 || billChannels.length === 0"
+          />
+        </div>
+      </form>
+    </Dialog>
+
+    <Dialog
+      v-model:visible="lateFeeDialogVisible"
+      header="Late-fee correction"
+      modal
+      :style="{ width: '560px' }"
+    >
+      <form class="admin-form-layout" @submit.prevent="submitLateFeeCorrection">
+        <div class="admin-page-guide">
+          <h2>
+            {{ lateFeeTargets.length }}
+            CAM due{{ lateFeeTargets.length === 1 ? '' : 's' }}
+          </h2>
+          <p>
+            This action changes only the late-fee timing or late-fee waiver.
+            Verified payments, allocations, receipts, UTRs, and principal stay
+            unchanged.
+          </p>
+        </div>
+
+        <div class="billing-generation-summary">
+          <div>
+            <span>Principal</span>
+            <strong>{{ formatMoney(lateFeeCorrectionSummary.principal) }}</strong>
+          </div>
+          <div>
+            <span>Verified paid</span>
+            <strong>{{ formatMoney(lateFeeCorrectionSummary.paid) }}</strong>
+          </div>
+          <div>
+            <span>Current balance</span>
+            <strong>{{ formatMoney(lateFeeCorrectionSummary.balance) }}</strong>
+          </div>
+          <div>
+            <span>Late fee already waived</span>
+            <strong>{{ formatMoney(lateFeeCorrectionSummary.lateFeeWaived) }}</strong>
+          </div>
+        </div>
+
+        <label>
+          <span class="field-label">
+            Action
+            <AppHelpIcon text="Closing is available only when verified payments cover the complete principal and no advance-adjusted CAM charge is present." />
+          </span>
+          <Select
+            v-model="lateFeeAction"
+            :options="lateFeeActionOptions"
+            option-label="label"
+            option-value="value"
+            fluid
+          />
+        </label>
+
+        <label v-if="lateFeeAction === 'DEFER'">
+          <span class="field-label">
+            No late fee through
+            <AppHelpIcon text="Late fees begin on the following day if an outstanding balance remains." />
+          </span>
+          <InputText
+            v-model="lateFeePenaltyFreeUntil"
+            type="date"
+            :min="lateFeePenaltyMinDate"
+            required
+          />
+        </label>
+
+        <Message
+          v-if="lateFeeAction === 'RECALCULATE_INSTALLMENTS'"
+          severity="info"
+        >
+          The quarterly CAM principal is evaluated as equal monthly
+          installments due by the 10th. Verified payment dates determine
+          covered months, and the payment date itself is excluded from late
+          fees.
+        </Message>
+
+        <Message
+          v-if="lateFeeAction === 'WAIVE_AND_CLOSE'"
+          severity="warn"
+        >
+          The server will recheck verified allocations under a database lock.
+          Any due with principal outstanding or an advance adjustment will be
+          rejected.
+        </Message>
+
+        <label>
+          <span class="field-label">
+            Reason
+            <AppHelpIcon text="Required for the audit trail. Explain the approved installment plan or late-fee correction." />
+          </span>
+          <Textarea
+            v-model="lateFeeReason"
+            rows="3"
+            auto-resize
+            required
+          />
+        </label>
+
+        <div class="admin-inline-actions dialog-actions">
+          <Button
+            type="button"
+            label="Cancel"
+            severity="secondary"
+            outlined
+            :disabled="savingLateFeeCorrection"
+            @click="lateFeeDialogVisible = false"
+          />
+          <Button
+            type="submit"
+            label="Apply correction"
+            icon="pi pi-check"
+            :loading="savingLateFeeCorrection"
+            :disabled="
+              lateFeeTargets.length === 0 ||
+              !lateFeeReason.trim() ||
+              (lateFeeAction === 'DEFER' && !lateFeePenaltyFreeUntil)
+            "
           />
         </div>
       </form>

@@ -1,6 +1,6 @@
 import * as QRCode from 'qrcode'
 import { z } from 'zod'
-import type { PoolClient } from 'pg'
+import type { Pool, PoolClient } from 'pg'
 import type { ChargeBreakdownItem } from '~/types/domain'
 import { AppError } from './errors'
 import { camAdvanceCoverageLateralSql } from './cam-advance'
@@ -111,6 +111,27 @@ export const dueWaiveSchema = z.object({
   reason: z.string().trim().min(2).max(500),
 })
 
+export const dueLateFeeCorrectionSchema = z.object({
+  dueIds: z.array(z.string().uuid()).min(1).max(500),
+  action: z.enum([
+    'RECALCULATE_INSTALLMENTS',
+    'DEFER',
+    'CLEAR_DEFERMENT',
+    'WAIVE_AND_CLOSE',
+    'REVERSE_LATE_FEE_WAIVER',
+  ]),
+  penaltyFreeUntil: z.string().date().optional(),
+  reason: z.string().trim().min(2).max(500),
+}).superRefine((value, ctx) => {
+  if (value.action === 'DEFER' && !value.penaltyFreeUntil) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['penaltyFreeUntil'],
+      message: 'Choose the date through which late fees are deferred.',
+    })
+  }
+})
+
 export const dueUpdateSchema = z.object({
   dueDate: z.string().date().optional(),
   baseAmount: z.coerce.number().positive().optional(),
@@ -170,12 +191,29 @@ export type ChargeConfigInput = z.infer<typeof chargeConfigSchema>
 export type DueGenerationInput = z.infer<typeof dueGenerationSchema>
 export type CamDueRecomputeInput = z.infer<typeof camDueRecomputeSchema>
 export type DueWaiveInput = z.infer<typeof dueWaiveSchema>
+export type DueLateFeeCorrectionInput = z.infer<typeof dueLateFeeCorrectionSchema>
 export type DueUpdateInput = z.infer<typeof dueUpdateSchema>
 export type DueBulkDueDateUpdateInput = z.infer<typeof dueBulkDueDateUpdateSchema>
 export type DueReminderInput = z.infer<typeof dueReminderSchema>
 export type DueBillSendInput = z.infer<typeof dueBillSendSchema>
 
-export const todayDate = () => new Date().toISOString().slice(0, 10)
+export const todayDate = (timeZone = 'Asia/Kolkata') => {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date())
+  const year = parts.find((part) => part.type === 'year')?.value
+  const month = parts.find((part) => part.type === 'month')?.value
+  const day = parts.find((part) => part.type === 'day')?.value
+
+  if (!year || !month || !day) {
+    return new Date().toISOString().slice(0, 10)
+  }
+
+  return `${year}-${month}-${day}`
+}
 
 const billingFrequencyMonthMultipliers: Record<string, number> = {
   MONTHLY: 1,
@@ -253,6 +291,37 @@ export type StoredDueAmountInput = DueAmountInput & {
   lateFeeAmount: number
   totalAmount: number
   balanceAmount: number
+}
+
+export type DuePaymentEvent = {
+  paymentDate: string
+  amount: number
+}
+
+export type BillingDueAmountInput = DueAmountInput & {
+  billingPeriodChargeType?: string | null
+  billingPeriodStartDate?: string | null
+  billingPeriodEndDate?: string | null
+  chargeBreakdown?: readonly ChargeBreakdownItem[]
+  manualLateFeeStartsOn?: string | null
+  paymentEvents?: readonly DuePaymentEvent[]
+}
+
+export type StoredBillingDueAmountInput = BillingDueAmountInput & {
+  lateFeeAmount: number
+  totalAmount: number
+  balanceAmount: number
+}
+
+export type BillingDueComputation = ComputedDueAmounts & {
+  installmentPlanApplied: boolean
+  installmentCount: number
+  coveredInstallmentCount: number
+  installmentAmount: number
+  nextInstallmentDueDate: string | null
+  effectiveLateFeeStartsOn: string | null
+  penaltyFreeUntilDate: string | null
+  lateFeeDays: number
 }
 
 const formatBillingDateInput = (date: Date) => date.toISOString().slice(0, 10)
@@ -389,6 +458,51 @@ export const getCamAdvanceAdjustedDueDate = (
   }
 
   return maxBillingDate(input.dueDate, firstBillableSegment.startDate)
+}
+
+export const getEffectiveLateFeeTiming = (
+  input: {
+    dueDate: string
+    billingPeriodChargeType?: string | null | undefined
+    billingPeriodStartDate?: string | null | undefined
+    billingPeriodEndDate?: string | null | undefined
+    chargeBreakdown?: readonly ChargeBreakdownItem[]
+    lateFeeStartsOn?: string | null | undefined
+    manualLateFeeStartsOn?: string | null | undefined
+  },
+  graceDays: number,
+) => {
+  const effectiveDueDate = getCamAdvanceAdjustedDueDate({
+    dueDate: input.dueDate,
+    billingPeriodChargeType: input.billingPeriodChargeType,
+    billingPeriodStartDate: input.billingPeriodStartDate,
+    billingPeriodEndDate: input.billingPeriodEndDate,
+    chargeBreakdown: input.chargeBreakdown ?? [],
+  })
+  const defaultLateFeeStartsOn = getLateFeeStartDate(effectiveDueDate, graceDays)
+  const configuredStarts = [
+    input.lateFeeStartsOn,
+    input.manualLateFeeStartsOn,
+  ].filter((value): value is string => Boolean(value))
+  const effectiveLateFeeStartsOn = configuredStarts.reduce<string | null>(
+    (latest, value) => {
+      const bounded = value >= defaultLateFeeStartsOn
+        ? value
+        : defaultLateFeeStartsOn
+      return latest == null || bounded > latest ? bounded : latest
+    },
+    null,
+  )
+
+  return {
+    effectiveDueDate,
+    effectiveLateFeeStartsOn,
+    penaltyFreeUntilDate: getPenaltyFreeUntilDate(
+      effectiveDueDate,
+      graceDays,
+      effectiveLateFeeStartsOn,
+    ),
+  }
 }
 
 export const getDaysOverdue = (
@@ -642,6 +756,344 @@ export const getBillingPeriodMonthSegments = (
   return segments
 }
 
+const getCamAdvanceCoveredMonthCount = (
+  chargeBreakdown: readonly ChargeBreakdownItem[],
+) =>
+  Math.max(
+    0,
+    ...chargeBreakdown.map((charge) => {
+      const coveredMonths = Number(charge.camAdvanceCoveredMonths ?? 0)
+      return Number.isFinite(coveredMonths) ? Math.floor(coveredMonths) : 0
+    }),
+  )
+
+const getInstallmentCheckpointDate = (
+  segment: BillingMonthSegment,
+  dueDate: string,
+  graceDays: number,
+) => {
+  const segmentDate = parseBillingDate(segment.startDate)
+  const originalDueDate = parseBillingDate(dueDate)
+  const lastDay = new Date(
+    Date.UTC(segmentDate.getUTCFullYear(), segmentDate.getUTCMonth() + 1, 0),
+  ).getUTCDate()
+  const checkpoint = new Date(
+    Date.UTC(
+      segmentDate.getUTCFullYear(),
+      segmentDate.getUTCMonth(),
+      Math.min(originalDueDate.getUTCDate(), lastDay),
+    ),
+  )
+
+  return addBillingDays(
+    formatBillingDate(checkpoint),
+    Math.max(0, Math.trunc(graceDays)),
+  )
+}
+
+const getBillingDateDifference = (startDate: string, endDate: string) =>
+  Math.max(
+    0,
+    Math.floor(
+      (parseBillingDate(endDate).getTime() - parseBillingDate(startDate).getTime()) /
+      (1000 * 60 * 60 * 24),
+    ),
+  )
+
+const normalizeDuePaymentEvents = (
+  events: readonly DuePaymentEvent[],
+  asOfDate: string,
+) => {
+  const amountByDate = new Map<string, number>()
+
+  for (const event of events) {
+    const amount = Number(event.amount)
+    if (
+      !event.paymentDate ||
+      event.paymentDate > asOfDate ||
+      !Number.isFinite(amount) ||
+      amount <= 0
+    ) {
+      continue
+    }
+    amountByDate.set(
+      event.paymentDate,
+      Math.round(((amountByDate.get(event.paymentDate) ?? 0) + amount) * 100) /
+        100,
+    )
+  }
+
+  return [...amountByDate.entries()]
+    .map(([paymentDate, amount]) => ({ paymentDate, amount }))
+    .sort((a, b) => a.paymentDate.localeCompare(b.paymentDate))
+}
+
+const computeAmountsFromLateFee = (
+  due: DueAmountInput,
+  lateFeeAmount: number,
+): ComputedDueAmounts => {
+  const totalAmount = Math.max(
+    0,
+    Math.round((due.baseAmount + lateFeeAmount - due.waivedAmount) * 100) / 100,
+  )
+  const balanceAmount = Math.max(
+    0,
+    Math.round((totalAmount - due.paidAmount) * 100) / 100,
+  )
+  let status = due.storedStatus as import('~/types/domain').DueStatus
+
+  if (!['WAIVED', 'CANCELLED'].includes(status)) {
+    if (balanceAmount <= 0) {
+      status = 'PAID'
+    } else if (due.paidAmount > 0) {
+      status = 'PARTIALLY_PAID'
+    } else if (lateFeeAmount > 0) {
+      status = 'OVERDUE'
+    } else {
+      status = 'OPEN'
+    }
+  }
+
+  return {
+    lateFeeAmount,
+    totalAmount,
+    balanceAmount,
+    status,
+  }
+}
+
+export const computeBillingDueAmounts = (
+  due: BillingDueAmountInput,
+  today: string,
+  graceDays: number,
+  lateFeePerDay: number,
+): BillingDueComputation => {
+  const chargeBreakdown = due.chargeBreakdown ?? []
+  const allSegments =
+    due.billingPeriodStartDate && due.billingPeriodEndDate
+      ? getBillingPeriodMonthSegments(
+          due.billingPeriodStartDate,
+          due.billingPeriodEndDate,
+        )
+      : []
+  const advanceCoveredMonths = getCamAdvanceCoveredMonthCount(chargeBreakdown)
+  const billableSegments = allSegments.slice(
+    Math.min(advanceCoveredMonths, allSegments.length),
+  )
+  const appliesInstallmentPlan =
+    due.billingPeriodChargeType === 'CAM' &&
+    allSegments.length > 1 &&
+    billableSegments.length > 0 &&
+    due.paymentEvents !== undefined
+
+  if (!appliesInstallmentPlan) {
+    const timing = getEffectiveLateFeeTiming(
+      {
+        dueDate: due.dueDate,
+        billingPeriodChargeType: due.billingPeriodChargeType,
+        billingPeriodStartDate: due.billingPeriodStartDate,
+        billingPeriodEndDate: due.billingPeriodEndDate,
+        chargeBreakdown,
+        lateFeeStartsOn: due.lateFeeStartsOn,
+        manualLateFeeStartsOn: due.manualLateFeeStartsOn,
+      },
+      graceDays,
+    )
+    const computed = computeDueAmounts(
+      {
+        dueDate: timing.effectiveDueDate,
+        lateFeeStartsOn: timing.effectiveLateFeeStartsOn,
+        baseAmount: due.baseAmount,
+        paidAmount: due.paidAmount,
+        waivedAmount: due.waivedAmount,
+        storedStatus: due.storedStatus,
+      },
+      today,
+      graceDays,
+      lateFeePerDay,
+    )
+
+    return {
+      ...computed,
+      installmentPlanApplied: false,
+      installmentCount: 1,
+      coveredInstallmentCount: computed.balanceAmount <= 0 ? 1 : 0,
+      installmentAmount: due.baseAmount,
+      nextInstallmentDueDate:
+        computed.balanceAmount > 0 ? timing.penaltyFreeUntilDate : null,
+      effectiveLateFeeStartsOn: timing.effectiveLateFeeStartsOn,
+      penaltyFreeUntilDate: timing.penaltyFreeUntilDate,
+      lateFeeDays: getDaysOverdue(
+        timing.effectiveDueDate,
+        today,
+        graceDays,
+        timing.effectiveLateFeeStartsOn,
+      ),
+    }
+  }
+
+  const installmentCount = billableSegments.length
+  const thresholds = billableSegments.map((segment, index) => ({
+    checkpointDate: getInstallmentCheckpointDate(
+      segment,
+      due.dueDate,
+      graceDays,
+    ),
+    principalThreshold:
+      index === installmentCount - 1
+        ? Math.round(due.baseAmount * 100) / 100
+        : Math.round(
+            (due.baseAmount * (index + 1) / installmentCount) * 100,
+          ) / 100,
+  }))
+  const paymentEvents = normalizeDuePaymentEvents(due.paymentEvents ?? [], today)
+  const coverageDates: Array<string | null> = Array(installmentCount).fill(null)
+  let cumulativePaid = 0
+  let nextThresholdIndex = 0
+
+  for (const event of paymentEvents) {
+    cumulativePaid = Math.round((cumulativePaid + event.amount) * 100) / 100
+    while (
+      nextThresholdIndex < thresholds.length &&
+      cumulativePaid + 0.001 >= thresholds[nextThresholdIndex]!.principalThreshold
+    ) {
+      coverageDates[nextThresholdIndex] = event.paymentDate
+      nextThresholdIndex += 1
+    }
+  }
+
+  const configuredStartFloor = [
+    due.lateFeeStartsOn,
+    due.manualLateFeeStartsOn,
+  ].filter((value): value is string => Boolean(value))
+    .sort()
+    .at(-1) ?? null
+  const intervals = thresholds.flatMap((threshold, index) => {
+    const scheduledStart = addBillingDays(threshold.checkpointDate, 1)
+    const startDate = configuredStartFloor
+      ? maxBillingDate(scheduledStart, configuredStartFloor)
+      : scheduledStart
+    const coverageDate = coverageDates[index]
+    const endDate = coverageDate
+      ? minBillingDate(addBillingDays(coverageDate, -1), today)
+      : today
+
+    return startDate <= endDate ? [{ startDate, endDate }] : []
+  }).sort((a, b) => a.startDate.localeCompare(b.startDate))
+  const mergedIntervals: Array<{ startDate: string; endDate: string }> = []
+
+  for (const interval of intervals) {
+    const previous = mergedIntervals.at(-1)
+    if (
+      previous &&
+      interval.startDate <= addBillingDays(previous.endDate, 1)
+    ) {
+      previous.endDate = maxBillingDate(previous.endDate, interval.endDate)
+    } else {
+      mergedIntervals.push({ ...interval })
+    }
+  }
+
+  const lateFeeDays = mergedIntervals.reduce(
+    (sum, interval) =>
+      sum + getBillingDateDifference(interval.startDate, interval.endDate) + 1,
+    0,
+  )
+  const lateFeeAmount =
+    Math.round(lateFeeDays * Math.max(0, lateFeePerDay) * 100) / 100
+  const computed = computeAmountsFromLateFee(due, lateFeeAmount)
+  const coveredInstallmentCount = coverageDates.filter(Boolean).length
+  const nextInstallment = thresholds[coveredInstallmentCount] ?? null
+  const nextScheduledLateFeeStart = nextInstallment
+    ? addBillingDays(nextInstallment.checkpointDate, 1)
+    : null
+  const effectiveLateFeeStartsOn =
+    nextScheduledLateFeeStart && configuredStartFloor
+      ? maxBillingDate(nextScheduledLateFeeStart, configuredStartFloor)
+      : nextScheduledLateFeeStart
+
+  return {
+    ...computed,
+    installmentPlanApplied: true,
+    installmentCount,
+    coveredInstallmentCount,
+    installmentAmount:
+      Math.round((due.baseAmount / installmentCount) * 100) / 100,
+    nextInstallmentDueDate: nextInstallment?.checkpointDate ?? null,
+    effectiveLateFeeStartsOn,
+    penaltyFreeUntilDate: effectiveLateFeeStartsOn
+      ? addBillingDays(effectiveLateFeeStartsOn, -1)
+      : null,
+    lateFeeDays,
+  }
+}
+
+export const resolveBillingDueAmountsForDisplay = (
+  due: StoredBillingDueAmountInput,
+  today: string,
+  graceDays: number,
+  lateFeePerDay: number,
+): BillingDueComputation => {
+  const computed = computeBillingDueAmounts(
+    due,
+    today,
+    graceDays,
+    lateFeePerDay,
+  )
+
+  if (!['PAID', 'WAIVED', 'CANCELLED'].includes(due.storedStatus)) {
+    return computed
+  }
+
+  return {
+    ...computed,
+    lateFeeAmount: due.lateFeeAmount,
+    totalAmount: due.totalAmount,
+    balanceAmount: due.balanceAmount,
+    status: due.storedStatus as import('~/types/domain').DueStatus,
+  }
+}
+
+export const getVerifiedDuePaymentEvents = async (
+  queryable: Pool | PoolClient,
+  dueIds: readonly string[],
+) => {
+  const uniqueDueIds = [...new Set(dueIds)].filter(Boolean)
+  const eventsByDueId = new Map<string, DuePaymentEvent[]>()
+  if (uniqueDueIds.length === 0) return eventsByDueId
+
+  const result = await queryable.query<{
+    maintenance_due_id: string
+    payment_date: string
+    amount: string
+  }>(
+    `
+      select
+        pa.maintenance_due_id,
+        p.payment_date::text,
+        sum(pa.allocated_amount)::text as amount
+      from payment_allocations pa
+      inner join payments p on p.id = pa.payment_id
+      where pa.maintenance_due_id = any($1::uuid[])
+        and p.status = 'VERIFIED'
+      group by pa.maintenance_due_id, p.payment_date
+      order by pa.maintenance_due_id, p.payment_date
+    `,
+    [uniqueDueIds],
+  )
+
+  for (const row of result.rows) {
+    const events = eventsByDueId.get(row.maintenance_due_id) ?? []
+    events.push({
+      paymentDate: row.payment_date,
+      amount: Number(row.amount),
+    })
+    eventsByDueId.set(row.maintenance_due_id, events)
+  }
+
+  return eventsByDueId
+}
+
 export const summarizeCamAdvanceCoverage = (
   periodStartDate: string,
   periodEndDate: string,
@@ -832,6 +1284,7 @@ type MaintenanceBillDueRow = {
   period_end_date: string
   due_date: string
   late_fee_starts_on: string | null
+  manual_late_fee_starts_on: string | null
   cam_payment_arrangement_id: string | null
   flat_id: string
   flat_number: string
@@ -866,8 +1319,14 @@ type MaintenanceBillDueRow = {
 }
 
 type PreviousDueRow = {
+  id: string
   due_date: string
   late_fee_starts_on: string | null
+  manual_late_fee_starts_on: string | null
+  billing_period_charge_type: string
+  billing_period_start_date: string
+  billing_period_end_date: string
+  charge_breakdown: unknown
   base_amount: string
   waived_amount: string
   paid_amount: string
@@ -1375,6 +1834,7 @@ export const getMaintenanceBillData = async (
         bp.end_date::text as period_end_date,
         md.due_date::text,
         md.late_fee_starts_on::text,
+        md.manual_late_fee_starts_on::text,
         md.cam_payment_arrangement_id::text,
         md.flat_id,
         f.flat_number,
@@ -1481,13 +1941,24 @@ export const getMaintenanceBillData = async (
   }
 
   const settings = normalizeSocietySettings(due.settings)
+  const currentChargeBreakdown = Array.isArray(due.charge_breakdown)
+    ? due.charge_breakdown as ChargeBreakdownItem[]
+    : []
+  const currentPaymentEvents = await getVerifiedDuePaymentEvents(queryable, [
+    due.id,
+  ])
   const hasFullCamAdvanceCoverage =
     due.billing_period_charge_type === 'CAM' &&
     Boolean(due.cam_advance_coverage_id)
-  const computedCurrentAmounts = resolveDueAmountsForDisplay(
+  const computedCurrentAmounts = resolveBillingDueAmountsForDisplay(
     {
       dueDate: due.due_date,
+      billingPeriodChargeType: due.billing_period_charge_type,
+      billingPeriodStartDate: due.period_start_date,
+      billingPeriodEndDate: due.period_end_date,
+      chargeBreakdown: currentChargeBreakdown,
       lateFeeStartsOn: due.late_fee_starts_on,
+      manualLateFeeStartsOn: due.manual_late_fee_starts_on,
       baseAmount: Number(due.base_amount),
       lateFeeAmount: Number(due.late_fee_amount),
       paidAmount: Number(due.paid_amount),
@@ -1495,6 +1966,7 @@ export const getMaintenanceBillData = async (
       totalAmount: Number(due.total_amount),
       balanceAmount: Number(due.balance_amount),
       storedStatus: due.status,
+      paymentEvents: currentPaymentEvents.get(due.id) ?? [],
     },
     todayDate(),
     settings.graceDays,
@@ -1506,14 +1978,33 @@ export const getMaintenanceBillData = async (
         totalAmount: 0,
         balanceAmount: 0,
         status: 'PAID' as import('~/types/domain').DueStatus,
+        installmentPlanApplied: false,
+        installmentCount: 0,
+        coveredInstallmentCount: 0,
+        installmentAmount: 0,
+        nextInstallmentDueDate: null,
+        effectiveLateFeeStartsOn: null,
+        penaltyFreeUntilDate: null,
+        lateFeeDays: 0,
       }
     : computedCurrentAmounts
+  const currentTiming = {
+    effectiveLateFeeStartsOn:
+      computedCurrentAmounts.effectiveLateFeeStartsOn,
+    penaltyFreeUntilDate: computedCurrentAmounts.penaltyFreeUntilDate,
+  }
 
   const previousResult = await queryable.query<PreviousDueRow>(
     `
       select
+        md.id,
         md.due_date::text,
         md.late_fee_starts_on::text,
+        md.manual_late_fee_starts_on::text,
+        bp.charge_type::text as billing_period_charge_type,
+        bp.start_date::text as billing_period_start_date,
+        bp.end_date::text as billing_period_end_date,
+        md.charge_breakdown,
         md.base_amount::text,
         md.waived_amount::text,
         md.paid_amount::text,
@@ -1529,17 +2020,30 @@ export const getMaintenanceBillData = async (
     `,
     [due.society_id, due.flat_id, due.id, due.period_start_date],
   )
+  const previousPaymentEvents = await getVerifiedDuePaymentEvents(
+    queryable,
+    previousResult.rows.map((previousDue) => previousDue.id),
+  )
 
   const previousOutstanding = roundBillMoney(
     previousResult.rows.reduce((sum, previousDue) => {
-      const computed = computeDueAmounts(
+      const previousChargeBreakdown = Array.isArray(previousDue.charge_breakdown)
+        ? previousDue.charge_breakdown as ChargeBreakdownItem[]
+        : []
+      const computed = computeBillingDueAmounts(
         {
           dueDate: previousDue.due_date,
+          billingPeriodChargeType: previousDue.billing_period_charge_type,
+          billingPeriodStartDate: previousDue.billing_period_start_date,
+          billingPeriodEndDate: previousDue.billing_period_end_date,
+          chargeBreakdown: previousChargeBreakdown,
           lateFeeStartsOn: previousDue.late_fee_starts_on,
+          manualLateFeeStartsOn: previousDue.manual_late_fee_starts_on,
           baseAmount: Number(previousDue.base_amount),
           paidAmount: Number(previousDue.paid_amount),
           waivedAmount: Number(previousDue.waived_amount),
           storedStatus: previousDue.status,
+          paymentEvents: previousPaymentEvents.get(previousDue.id) ?? [],
         },
         todayDate(),
         settings.graceDays,
@@ -1587,6 +2091,7 @@ export const getMaintenanceBillData = async (
     chargeBreakdown,
     previousOutstanding,
     currentAmounts,
+    currentTiming,
     currentBalance,
     netPayable,
   }
@@ -1601,6 +2106,7 @@ export const generateMaintenanceBillPdf = async (
     due,
     chargeBreakdown,
     currentAmounts,
+    currentTiming,
     previousOutstanding,
     netPayable,
     fileName,
@@ -1714,8 +2220,15 @@ export const generateMaintenanceBillPdf = async (
           ? `${formatBillPlainNumber(areaSqFt)} Sq Feet`
           : '',
       invoiceFlatNumber,
-      ...(due.late_fee_starts_on
-        ? [`Approved payment arrangement: no late fee through ${formatInvoiceDate(addBillingDays(due.late_fee_starts_on, -1))}`]
+      ...(currentAmounts.installmentPlanApplied &&
+      currentAmounts.nextInstallmentDueDate
+        ? [
+            `Quarterly CAM monthly installment checkpoint: ${formatInvoiceDate(currentAmounts.nextInstallmentDueDate)}`,
+          ]
+        : []),
+      ...((due.late_fee_starts_on || due.manual_late_fee_starts_on) &&
+      currentTiming.effectiveLateFeeStartsOn
+        ? [`Approved payment arrangement: no late fee through ${formatInvoiceDate(addBillingDays(currentTiming.effectiveLateFeeStartsOn, -1))}`]
         : []),
       ...(camAdvanceAdjustmentAmount > 0
         ? [

@@ -300,6 +300,33 @@ const applyRouteDuePrefill = () => {
 
 const selectedFlat = computed(() => flatOptions.value.find((flat) => flat.value === form.flatId)?.label ?? '-')
 const amountNumber = computed(() => Number(form.amount || 0))
+const getDueMonthSpan = (due: MaintenanceDue) => {
+  if (!due.billingPeriodStartDate || !due.billingPeriodEndDate) return 1
+  const start = new Date(`${due.billingPeriodStartDate}T00:00:00Z`)
+  const end = new Date(`${due.billingPeriodEndDate}T00:00:00Z`)
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return 1
+  return Math.max(
+    1,
+    (end.getUTCFullYear() - start.getUTCFullYear()) * 12 +
+      end.getUTCMonth() -
+      start.getUTCMonth() +
+      1,
+  )
+}
+const multiMonthPartialDue = computed(() => {
+  const selectedIds = new Set(form.selectedDueIds)
+  const candidates = form.allocationMode === 'SELECTED_PERIODS'
+    ? openDues.value.filter((due) => selectedIds.has(due.id))
+    : openDues.value
+
+  return candidates.find(
+    (due) =>
+      due.billingPeriodChargeType === 'CAM' &&
+      getDueMonthSpan(due) > 1 &&
+      amountNumber.value > 0 &&
+      amountNumber.value < Math.max(0, due.baseAmount - due.paidAmount),
+  ) ?? null
+})
 const needsReference = computed(() => ['UPI', 'BANK_TRANSFER'].includes(form.mode))
 const needsCheque = computed(() => form.mode === 'CHEQUE')
 const referenceValue = computed(() => form.utrReference.trim() || form.bankReference.trim())
@@ -721,6 +748,13 @@ const resetForm = () => {
               <small v-if="fieldError('account')" class="field-error">{{ fieldError('account') }}</small>
             </label>
           </div>
+          <Message v-if="multiMonthPartialDue" severity="info">
+            {{ multiMonthPartialDue.billingPeriodLabel }} is a
+            {{ getDueMonthSpan(multiMonthPartialDue) }}-month CAM bill.
+            Verified payments cover its monthly installments in order. A late
+            fee begins only when the cumulative amount required by a monthly
+            checkpoint remains unpaid after the 10th.
+          </Message>
         </section>
 
         <section class="admin-form-section">

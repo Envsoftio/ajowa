@@ -808,7 +808,15 @@ export type MaintenanceDue = AuditFields & {
   unitType: string
   dueDate: string
   lateFeeStartsOn?: string | null
+  manualLateFeeStartsOn?: string | null
+  lateFeeWaivedAmount?: number
   penaltyFreeUntilDate?: string | null
+  installmentPlanApplied?: boolean
+  installmentCount?: number
+  coveredInstallmentCount?: number
+  installmentAmount?: number
+  nextInstallmentDueDate?: string | null
+  lateFeeDays?: number
   camPaymentArrangementId?: string | null
   baseAmount: number
   lateFeeAmount: number

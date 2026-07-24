@@ -2,10 +2,12 @@ import type { PoolClient } from 'pg'
 import { z } from 'zod'
 import {
   addBillingDays,
-  computeDueAmounts,
+  computeBillingDueAmounts,
+  getVerifiedDuePaymentEvents,
   getPenaltyFreeUntilDate,
   todayDate,
 } from './billing'
+import type { ChargeBreakdownItem } from '~/types/domain'
 
 export const camPaymentArrangementSchema = z.object({
   flatId: z.string().uuid(),
@@ -40,6 +42,10 @@ type DueArrangementSyncRow = {
   billing_period_id: string
   flat_id: string
   due_date: string
+  billing_period_start_date: string
+  billing_period_end_date: string
+  charge_breakdown: unknown
+  manual_late_fee_starts_on: string | null
   base_amount: string
   paid_amount: string
   waived_amount: string
@@ -144,6 +150,10 @@ export const syncCamPaymentArrangementDues = async (
         md.billing_period_id,
         md.flat_id,
         md.due_date::text,
+        bp.start_date::text as billing_period_start_date,
+        bp.end_date::text as billing_period_end_date,
+        md.charge_breakdown,
+        md.manual_late_fee_starts_on::text,
         md.base_amount::text,
         md.paid_amount::text,
         md.waived_amount::text,
@@ -175,18 +185,31 @@ export const syncCamPaymentArrangementDues = async (
   )
 
   const asOfDate = input.asOfDate ?? todayDate()
+  const paymentEventsByDueId = await getVerifiedDuePaymentEvents(
+    client,
+    result.rows.map((due) => due.id),
+  )
   const updatePayload: DueArrangementSyncPayload[] = result.rows.map((due) => {
     const lateFeeStartsOn = due.arrangement_id && due.penalty_free_until_day
       ? getArrangementLateFeeStartsOn(due.due_date, due.penalty_free_until_day)
       : null
-    const computed = computeDueAmounts(
+    const chargeBreakdown = Array.isArray(due.charge_breakdown)
+      ? due.charge_breakdown as ChargeBreakdownItem[]
+      : []
+    const computed = computeBillingDueAmounts(
       {
         dueDate: due.due_date,
+        billingPeriodChargeType: 'CAM',
+        billingPeriodStartDate: due.billing_period_start_date,
+        billingPeriodEndDate: due.billing_period_end_date,
+        chargeBreakdown,
         lateFeeStartsOn,
+        manualLateFeeStartsOn: due.manual_late_fee_starts_on,
         baseAmount: Number(due.base_amount),
         paidAmount: Number(due.paid_amount),
         waivedAmount: Number(due.waived_amount),
         storedStatus: due.status,
+        paymentEvents: paymentEventsByDueId.get(due.id) ?? [],
       },
       asOfDate,
       input.graceDays,

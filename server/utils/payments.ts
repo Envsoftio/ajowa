@@ -3,7 +3,12 @@ import type { PoolClient } from 'pg'
 import { z } from 'zod'
 import { AppError } from './errors'
 import { getDatabasePool, queryRows } from './database'
-import { computeDueAmounts, todayDate } from './billing'
+import {
+  computeBillingDueAmounts,
+  getVerifiedDuePaymentEvents,
+  todayDate,
+  type DuePaymentEvent,
+} from './billing'
 import { getValidatedRuntimeConfig } from './env'
 import {
   enqueueNotificationForUsers,
@@ -110,9 +115,13 @@ type DueRow = {
   society_id: string
   billing_period_id: string
   billing_period_label: string
+  billing_period_charge_type: string
+  billing_period_start_date: string
+  billing_period_end_date: string
   flat_id: string
   due_date: string
   late_fee_starts_on: string | null
+  manual_late_fee_starts_on: string | null
   base_amount: string
   late_fee_amount: string
   waived_amount: string
@@ -120,6 +129,11 @@ type DueRow = {
   total_amount: string
   balance_amount: string
   status: string
+  charge_breakdown: unknown
+}
+
+type DueRowWithPaymentEvents = DueRow & {
+  paymentEvents: DuePaymentEvent[]
 }
 
 type PaymentRow = {
@@ -231,20 +245,31 @@ const getPaymentCreditedBalance = (due: DueRow & { computedBalance?: number }) =
 }
 
 const buildAllocationLineAmounts = (
-  due: DueRow,
+  due: DueRowWithPaymentEvents,
   allocatedAmount: number,
   asOfDate: string,
   graceDays: number,
   lateFeePerDay: number,
 ) => {
-  const computed = computeDueAmounts(
+  const computed = computeBillingDueAmounts(
     {
       dueDate: due.due_date,
+      billingPeriodChargeType: due.billing_period_charge_type,
+      billingPeriodStartDate: due.billing_period_start_date,
+      billingPeriodEndDate: due.billing_period_end_date,
+      chargeBreakdown: Array.isArray(due.charge_breakdown)
+        ? due.charge_breakdown
+        : [],
       lateFeeStartsOn: due.late_fee_starts_on,
+      manualLateFeeStartsOn: due.manual_late_fee_starts_on,
       baseAmount: Number(due.base_amount),
       paidAmount: roundMoney(Number(due.paid_amount) + allocatedAmount),
       waivedAmount: Number(due.waived_amount),
       storedStatus: due.status,
+      paymentEvents: [
+        ...due.paymentEvents,
+        { paymentDate: asOfDate, amount: allocatedAmount },
+      ],
     },
     asOfDate,
     graceDays,
@@ -362,16 +387,21 @@ const selectAllocatableDues = async (
         md.society_id,
         md.billing_period_id,
         bp.label as billing_period_label,
+        bp.charge_type::text as billing_period_charge_type,
+        bp.start_date::text as billing_period_start_date,
+        bp.end_date::text as billing_period_end_date,
         md.flat_id,
         md.due_date::text,
         md.late_fee_starts_on::text,
+        md.manual_late_fee_starts_on::text,
         md.base_amount::text,
         md.late_fee_amount::text,
         md.waived_amount::text,
         md.paid_amount::text,
         md.total_amount::text,
         md.balance_amount::text,
-        md.status
+        md.status,
+        md.charge_breakdown
       from maintenance_dues md
       inner join billing_periods bp on bp.id = md.billing_period_id
       where ${filters.join(' and ')}
@@ -383,16 +413,29 @@ const selectAllocatableDues = async (
   )
 
   const asOfDate = input.asOfDate ?? todayDate()
+  const paymentEventsByDueId = await getVerifiedDuePaymentEvents(
+    client,
+    result.rows.map((due) => due.id),
+  )
 
   return result.rows.map((due) => {
-    const computed = computeDueAmounts(
+    const paymentEvents = paymentEventsByDueId.get(due.id) ?? []
+    const computed = computeBillingDueAmounts(
       {
         dueDate: due.due_date,
+        billingPeriodChargeType: due.billing_period_charge_type,
+        billingPeriodStartDate: due.billing_period_start_date,
+        billingPeriodEndDate: due.billing_period_end_date,
+        chargeBreakdown: Array.isArray(due.charge_breakdown)
+          ? due.charge_breakdown
+          : [],
         lateFeeStartsOn: due.late_fee_starts_on,
+        manualLateFeeStartsOn: due.manual_late_fee_starts_on,
         baseAmount: Number(due.base_amount),
         paidAmount: Number(due.paid_amount),
         waivedAmount: Number(due.waived_amount),
         storedStatus: due.status,
+        paymentEvents,
       },
       asOfDate,
       input.graceDays,
@@ -401,6 +444,7 @@ const selectAllocatableDues = async (
 
     return {
       ...due,
+      paymentEvents,
       computedTotal: computed.totalAmount,
       computedLateFee: computed.lateFeeAmount,
       computedBalance: computed.balanceAmount,
@@ -507,16 +551,21 @@ const refreshDueTotals = async (
         md.society_id,
         md.billing_period_id,
         bp.label as billing_period_label,
+        bp.charge_type::text as billing_period_charge_type,
+        bp.start_date::text as billing_period_start_date,
+        bp.end_date::text as billing_period_end_date,
         md.flat_id,
         md.due_date::text,
         md.late_fee_starts_on::text,
+        md.manual_late_fee_starts_on::text,
         md.base_amount::text,
         md.late_fee_amount::text,
         md.waived_amount::text,
         md.paid_amount::text,
         md.total_amount::text,
         md.balance_amount::text,
-        md.status
+        md.status,
+        md.charge_breakdown
       from maintenance_dues md
       inner join billing_periods bp on bp.id = md.billing_period_id
       where md.id = $1
@@ -536,14 +585,23 @@ const refreshDueTotals = async (
     [dueId],
   )
   const paidAmount = Number(paidResult.rows[0]?.paid_amount ?? 0)
-  const computed = computeDueAmounts(
+  const paymentEventsByDueId = await getVerifiedDuePaymentEvents(client, [dueId])
+  const computed = computeBillingDueAmounts(
     {
       dueDate: due.due_date,
+      billingPeriodChargeType: due.billing_period_charge_type,
+      billingPeriodStartDate: due.billing_period_start_date,
+      billingPeriodEndDate: due.billing_period_end_date,
+      chargeBreakdown: Array.isArray(due.charge_breakdown)
+        ? due.charge_breakdown
+        : [],
       lateFeeStartsOn: due.late_fee_starts_on,
+      manualLateFeeStartsOn: due.manual_late_fee_starts_on,
       baseAmount: Number(due.base_amount),
       paidAmount,
       waivedAmount: Number(due.waived_amount),
       storedStatus: due.status,
+      paymentEvents: paymentEventsByDueId.get(dueId) ?? [],
     },
     asOfDate,
     graceDays,
@@ -1634,15 +1692,21 @@ export const consumeAdvanceCreditsForDueWithClient = async (
         md.society_id,
         md.billing_period_id,
         bp.label as billing_period_label,
+        bp.charge_type::text as billing_period_charge_type,
+        bp.start_date::text as billing_period_start_date,
+        bp.end_date::text as billing_period_end_date,
         md.flat_id,
         md.due_date::text,
+        md.late_fee_starts_on::text,
+        md.manual_late_fee_starts_on::text,
         md.base_amount::text,
         md.late_fee_amount::text,
         md.waived_amount::text,
         md.paid_amount::text,
         md.total_amount::text,
         md.balance_amount::text,
-        md.status
+        md.status,
+        md.charge_breakdown
       from maintenance_dues md
       inner join billing_periods bp on bp.id = md.billing_period_id
       where md.id = $1
@@ -1660,7 +1724,33 @@ export const consumeAdvanceCreditsForDueWithClient = async (
   }
   const policy = await getPaymentPolicy(client, due.society_id)
   const settlementDate = todayDate()
-  let remaining = getPaymentCreditedBalance(due)
+  const paymentEventsByDueId = await getVerifiedDuePaymentEvents(client, [dueId])
+  const dueWithPaymentEvents: DueRowWithPaymentEvents = {
+    ...due,
+    paymentEvents: paymentEventsByDueId.get(dueId) ?? [],
+  }
+  const currentComputed = computeBillingDueAmounts(
+    {
+      dueDate: due.due_date,
+      billingPeriodChargeType: due.billing_period_charge_type,
+      billingPeriodStartDate: due.billing_period_start_date,
+      billingPeriodEndDate: due.billing_period_end_date,
+      chargeBreakdown: Array.isArray(due.charge_breakdown)
+        ? due.charge_breakdown
+        : [],
+      lateFeeStartsOn: due.late_fee_starts_on,
+      manualLateFeeStartsOn: due.manual_late_fee_starts_on,
+      baseAmount: Number(due.base_amount),
+      paidAmount: Number(due.paid_amount),
+      waivedAmount: Number(due.waived_amount),
+      storedStatus: due.status,
+      paymentEvents: dueWithPaymentEvents.paymentEvents,
+    },
+    settlementDate,
+    policy.graceDays,
+    policy.lateFeePerDay,
+  )
+  let remaining = currentComputed.balanceAmount
   let consumedAmount = 0
   let consumedCreditCount = 0
   const credits = await client.query<{
@@ -1684,7 +1774,7 @@ export const consumeAdvanceCreditsForDueWithClient = async (
       Math.min(remaining, Number(credit.current_balance)),
     )
     const allocationAmounts = buildAllocationLineAmounts(
-      due,
+      dueWithPaymentEvents,
       roundMoney(consumedAmount + amount),
       settlementDate,
       policy.graceDays,

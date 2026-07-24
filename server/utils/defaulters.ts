@@ -1,9 +1,7 @@
 import * as XLSX from 'xlsx/xlsx.mjs'
 import {
-  computeDueAmounts,
-  getCamAdvanceAdjustedDueDate,
-  getDaysOverdue,
-  getLateFeeStartDate,
+  computeBillingDueAmounts,
+  getVerifiedDuePaymentEvents,
   todayDate,
 } from '~/server/utils/billing'
 import { getDatabasePool } from '~/server/utils/database'
@@ -37,6 +35,7 @@ type DefaulterRow = {
   paid_amount: string
   due_date: string
   late_fee_starts_on: string | null
+  manual_late_fee_starts_on: string | null
   charge_breakdown: ChargeBreakdownItem[] | null
   cam_advance_note: string | null
 }
@@ -304,6 +303,7 @@ export const listDefaulters = async ({
         md.paid_amount::text,
         md.due_date::text,
         md.late_fee_starts_on::text,
+        md.manual_late_fee_starts_on::text,
         md.charge_breakdown,
         (
           select item->>'camAdvanceNote'
@@ -357,45 +357,37 @@ export const listDefaulters = async ({
     `,
     [societyId],
   )
+  const paymentEventsByDueId = await getVerifiedDuePaymentEvents(
+    pool,
+    result.rows.map((row) => row.due_id),
+  )
 
   const userMap = new Map<string, DefaulterSummary>()
 
   for (const row of result.rows) {
     const existing = userMap.get(row.user_id)
     const chargeBreakdown = Array.isArray(row.charge_breakdown) ? row.charge_breakdown : []
-    const effectiveDueDate = getCamAdvanceAdjustedDueDate({
-      dueDate: row.due_date,
-      billingPeriodChargeType: row.billing_period_charge_type,
-      billingPeriodStartDate: row.billing_period_start_date,
-      billingPeriodEndDate: row.billing_period_end_date,
-      chargeBreakdown,
-    })
-    const defaultLateFeeStartsOn = getLateFeeStartDate(effectiveDueDate, settings.graceDays)
-    const effectiveLateFeeStartsOn = row.late_fee_starts_on
-      ? row.late_fee_starts_on >= defaultLateFeeStartsOn
-        ? row.late_fee_starts_on
-        : defaultLateFeeStartsOn
-      : null
-    const computed = computeDueAmounts(
+    const computed = computeBillingDueAmounts(
       {
-        dueDate: effectiveDueDate,
-        lateFeeStartsOn: effectiveLateFeeStartsOn,
+        dueDate: row.due_date,
+        billingPeriodChargeType: row.billing_period_charge_type,
+        billingPeriodStartDate: row.billing_period_start_date,
+        billingPeriodEndDate: row.billing_period_end_date,
+        chargeBreakdown,
+        lateFeeStartsOn: row.late_fee_starts_on,
+        manualLateFeeStartsOn: row.manual_late_fee_starts_on,
         baseAmount: Number(row.base_amount),
         waivedAmount: Number(row.waived_amount),
         paidAmount: Number(row.paid_amount),
         storedStatus: row.due_status,
+        paymentEvents: paymentEventsByDueId.get(row.due_id) ?? [],
       },
       today,
       settings.graceDays,
       settings.lateFeePerDay,
     )
 
-    const daysOverdue = getDaysOverdue(
-      effectiveDueDate,
-      today,
-      settings.graceDays,
-      effectiveLateFeeStartsOn,
-    )
+    const daysOverdue = computed.lateFeeDays
     if (
       computed.balanceAmount <= 0 ||
       ['PAID', 'WAIVED', 'CANCELLED'].includes(computed.status)

@@ -11,7 +11,7 @@ definePageMeta({
     mode="CAM"
     title="CAM charges"
     eyebrow="CAM billing"
-    description="Generate CAM invoices from a start month. Quarterly is applied by default, and monthly or yearly advance flats can be changed per row. Manage prepaid CAM coverage in the CAM Advance screen."
+    description="Generate one quarterly CAM invoice per flat. Owners may pay monthly installments or keep advance credit for future quarterly invoices. Manage prepaid CAM coverage in the CAM Advance screen."
     charge-name="CAM Charges"
     charge-label="CAM Charges"
     charge-type="CAM"
@@ -26,7 +26,6 @@ definePageMeta({
     amount-summary-label="CAM total"
     units-summary-label="sq ft"
     show-area-rate
-    show-per-flat-cycle
     cam-run-flow
   />
 </template>

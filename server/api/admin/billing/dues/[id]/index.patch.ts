@@ -13,8 +13,9 @@ import {
   writeMasterAudit,
 } from '~/server/utils/master-data'
 import {
-  computeDueAmounts,
+  computeBillingDueAmounts,
   dueUpdateSchema,
+  getVerifiedDuePaymentEvents,
   todayDate,
   type DueUpdateInput,
 } from '~/server/utils/billing'
@@ -28,11 +29,13 @@ type DueEditRow = {
   billing_period_label: string
   billing_period_charge_type: string
   billing_period_start_date: string
+  billing_period_end_date: string
   flat_id: string
   flat_number: string
   block_name: string
   due_date: string
   late_fee_starts_on: string | null
+  manual_late_fee_starts_on: string | null
   cam_payment_arrangement_id: string | null
   base_amount: string
   late_fee_amount: string
@@ -89,11 +92,13 @@ export default defineEventHandler(async (event) => {
           bp.label as billing_period_label,
           bp.charge_type::text as billing_period_charge_type,
           bp.start_date::text as billing_period_start_date,
+          bp.end_date::text as billing_period_end_date,
           md.flat_id,
           f.flat_number,
           b.name as block_name,
           md.due_date::text,
           md.late_fee_starts_on::text,
+          md.manual_late_fee_starts_on::text,
           md.cam_payment_arrangement_id::text,
           md.base_amount::text,
           md.late_fee_amount::text,
@@ -152,6 +157,10 @@ export default defineEventHandler(async (event) => {
     const nextBaseAmount = roundMoney(body.baseAmount ?? previousBaseAmount)
     const paidAmount = Number(due.paid_amount)
     const waivedAmount = Number(due.waived_amount)
+    const baseAmountChanged = nextBaseAmount !== previousBaseAmount
+    const nextChargeBreakdown = baseAmountChanged
+      ? buildEditedChargeBreakdown(nextBaseAmount, due.billing_period_charge_type)
+      : due.charge_breakdown
     const arrangementsByFlatId = due.billing_period_charge_type === 'CAM'
       ? await getActiveCamPaymentArrangementsForDueDate(client, {
           societyId: authMe.user.societyId,
@@ -163,14 +172,25 @@ export default defineEventHandler(async (event) => {
     const nextLateFeeStartsOn = arrangement
       ? getArrangementLateFeeStartsOn(nextDueDate, arrangement.penalty_free_until_day)
       : null
-    const nextComputed = computeDueAmounts(
+    const paymentEventsByDueId = await getVerifiedDuePaymentEvents(client, [
+      due.id,
+    ])
+    const nextComputed = computeBillingDueAmounts(
       {
         dueDate: nextDueDate,
+        billingPeriodChargeType: due.billing_period_charge_type,
+        billingPeriodStartDate: due.billing_period_start_date,
+        billingPeriodEndDate: due.billing_period_end_date,
+        chargeBreakdown: Array.isArray(nextChargeBreakdown)
+          ? nextChargeBreakdown
+          : [],
         lateFeeStartsOn: nextLateFeeStartsOn,
+        manualLateFeeStartsOn: due.manual_late_fee_starts_on,
         baseAmount: nextBaseAmount,
         paidAmount,
         waivedAmount,
         storedStatus: due.status,
+        paymentEvents: paymentEventsByDueId.get(due.id) ?? [],
       },
       todayDate(),
       settings.graceDays,
@@ -184,11 +204,6 @@ export default defineEventHandler(async (event) => {
         message: 'Edited bill total cannot be lower than payments already allocated to this due.',
       })
     }
-
-    const baseAmountChanged = nextBaseAmount !== previousBaseAmount
-    const nextChargeBreakdown = baseAmountChanged
-      ? buildEditedChargeBreakdown(nextBaseAmount, due.billing_period_charge_type)
-      : due.charge_breakdown
 
     await client.query(
       `

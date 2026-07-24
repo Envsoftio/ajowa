@@ -8,11 +8,10 @@ import {
   parseListQuery,
 } from '~/server/utils/master-data'
 import {
-  getCamAdvanceAdjustedDueDate,
-  getLateFeeStartDate,
-  getPenaltyFreeUntilDate,
-  resolveDueAmountsForDisplay,
+  getVerifiedDuePaymentEvents,
+  resolveBillingDueAmountsForDisplay,
   todayDate,
+  type DuePaymentEvent,
 } from '~/server/utils/billing'
 import { camAdvanceCoverageLateralSql } from '~/server/utils/cam-advance'
 import { setEventHeader } from '~/server/utils/http-event'
@@ -39,10 +38,12 @@ type DueRow = {
   cam_advance_paid_until: string | null
   due_date: string
   late_fee_starts_on: string | null
+  manual_late_fee_starts_on: string | null
   cam_payment_arrangement_id: string | null
   base_amount: string
   late_fee_amount: string
   waived_amount: string
+  late_fee_waived_amount: string
   paid_amount: string
   total_amount: string
   balance_amount: string
@@ -92,10 +93,12 @@ const combinedDuesSql = `
       coverage.covered_until::text as cam_advance_paid_until,
       md.due_date::text as due_date,
       md.late_fee_starts_on::text as late_fee_starts_on,
+      md.manual_late_fee_starts_on::text as manual_late_fee_starts_on,
       md.cam_payment_arrangement_id::text as cam_payment_arrangement_id,
       md.base_amount::text as base_amount,
       md.late_fee_amount::text as late_fee_amount,
       md.waived_amount::text as waived_amount,
+      md.late_fee_waived_amount::text as late_fee_waived_amount,
       md.paid_amount::text as paid_amount,
       md.total_amount::text as total_amount,
       case
@@ -153,10 +156,12 @@ const combinedDuesSql = `
       coverage.covered_until::text as cam_advance_paid_until,
       bp.due_date::text as due_date,
       null::text as late_fee_starts_on,
+      null::text as manual_late_fee_starts_on,
       null::text as cam_payment_arrangement_id,
       '0' as base_amount,
       '0' as late_fee_amount,
       '0' as waived_amount,
+      '0' as late_fee_waived_amount,
       '0' as paid_amount,
       '0' as total_amount,
       '0' as balance_amount,
@@ -229,8 +234,9 @@ const buildDueWhere = (
   const values: unknown[] = [societyId]
   const defaultLateFeeStartOffset = Math.max(0, Math.trunc(graceDays)) + 1
   const lateFeeStartSql = `
-    coalesce(
+    greatest(
       c.late_fee_starts_on::date,
+      c.manual_late_fee_starts_on::date,
       (c.due_date::date + (${defaultLateFeeStartOffset} * interval '1 day'))::date
     )
   `
@@ -374,6 +380,7 @@ const mapDueRows = (
   rows: DueRow[],
   settings: SocietyPolicySettings,
   today: string,
+  paymentEventsByDueId: ReadonlyMap<string, DuePaymentEvent[]>,
 ): MaintenanceDue[] =>
   rows.map((row) => {
     const isCoverageRow = row.is_cam_advance_covered
@@ -383,30 +390,30 @@ const mapDueRows = (
     const chargeBreakdown = Array.isArray(row.charge_breakdown)
       ? row.charge_breakdown as MaintenanceDue['chargeBreakdown']
       : []
-    const effectiveDueDate = getCamAdvanceAdjustedDueDate({
-      dueDate: row.due_date,
-      billingPeriodChargeType: row.billing_period_charge_type,
-      billingPeriodStartDate: row.billing_period_start_date,
-      billingPeriodEndDate: row.billing_period_end_date,
-      chargeBreakdown,
-    })
-    const defaultLateFeeStartsOn = getLateFeeStartDate(effectiveDueDate, settings.graceDays)
-    const effectiveLateFeeStartsOn = row.late_fee_starts_on
-      ? row.late_fee_starts_on >= defaultLateFeeStartsOn
-        ? row.late_fee_starts_on
-        : defaultLateFeeStartsOn
-      : null
     const computed = isCoverageRow
       ? {
           lateFeeAmount: Number(row.late_fee_amount),
           totalAmount: Number(row.total_amount),
           balanceAmount: Number(row.balance_amount),
           status: row.status as MaintenanceDue['status'],
+          effectiveLateFeeStartsOn: null,
+          penaltyFreeUntilDate: null,
+          installmentPlanApplied: false,
+          installmentCount: 0,
+          coveredInstallmentCount: 0,
+          installmentAmount: 0,
+          nextInstallmentDueDate: null,
+          lateFeeDays: 0,
         }
-      : resolveDueAmountsForDisplay(
+      : resolveBillingDueAmountsForDisplay(
           {
-            dueDate: effectiveDueDate,
-            lateFeeStartsOn: effectiveLateFeeStartsOn,
+            dueDate: row.due_date,
+            billingPeriodChargeType: row.billing_period_charge_type,
+            billingPeriodStartDate: row.billing_period_start_date,
+            billingPeriodEndDate: row.billing_period_end_date,
+            chargeBreakdown,
+            lateFeeStartsOn: row.late_fee_starts_on,
+            manualLateFeeStartsOn: row.manual_late_fee_starts_on,
             baseAmount,
             lateFeeAmount: Number(row.late_fee_amount),
             waivedAmount,
@@ -414,6 +421,7 @@ const mapDueRows = (
             totalAmount: Number(row.total_amount),
             balanceAmount: Number(row.balance_amount),
             storedStatus: row.status,
+            paymentEvents: paymentEventsByDueId.get(row.id) ?? [],
           },
           today,
           settings.graceDays,
@@ -434,10 +442,16 @@ const mapDueRows = (
       blockName: row.block_name,
       unitType: row.unit_type,
       dueDate: row.due_date,
-      lateFeeStartsOn: effectiveLateFeeStartsOn,
-      penaltyFreeUntilDate: isCoverageRow
-        ? null
-        : getPenaltyFreeUntilDate(effectiveDueDate, settings.graceDays, effectiveLateFeeStartsOn),
+      lateFeeStartsOn: computed.effectiveLateFeeStartsOn,
+      manualLateFeeStartsOn: row.manual_late_fee_starts_on,
+      lateFeeWaivedAmount: Number(row.late_fee_waived_amount),
+      penaltyFreeUntilDate: computed.penaltyFreeUntilDate,
+      installmentPlanApplied: computed.installmentPlanApplied,
+      installmentCount: computed.installmentCount,
+      coveredInstallmentCount: computed.coveredInstallmentCount,
+      installmentAmount: computed.installmentAmount,
+      nextInstallmentDueDate: computed.nextInstallmentDueDate,
+      lateFeeDays: computed.lateFeeDays,
       camPaymentArrangementId: row.cam_payment_arrangement_id,
       baseAmount,
       lateFeeAmount: computed.lateFeeAmount,
@@ -667,7 +681,18 @@ export default defineEventHandler(async (event) => {
       ),
       countPromise,
     ])
-    const items = mapDueRows(dataResult.rows, settings, today)
+    const paymentEventsByDueId = await getVerifiedDuePaymentEvents(
+      pool,
+      dataResult.rows
+        .filter((row) => row.row_kind === 'DUE')
+        .map((row) => row.id),
+    )
+    const items = mapDueRows(
+      dataResult.rows,
+      settings,
+      today,
+      paymentEventsByDueId,
+    )
     const total = Number(countResult.rows[0]?.count ?? 0)
 
     setEventHeader(
@@ -700,7 +725,18 @@ export default defineEventHandler(async (event) => {
     ),
     countPromise,
   ])
-  const items = mapDueRows(dataResult.rows, settings, today)
+  const paymentEventsByDueId = await getVerifiedDuePaymentEvents(
+    pool,
+    dataResult.rows
+      .filter((row) => row.row_kind === 'DUE')
+      .map((row) => row.id),
+  )
+  const items = mapDueRows(
+    dataResult.rows,
+    settings,
+    today,
+    paymentEventsByDueId,
+  )
 
   return createPaginatedSuccess(event, items, Number(countResult.rows[0]?.count ?? 0), query)
 })

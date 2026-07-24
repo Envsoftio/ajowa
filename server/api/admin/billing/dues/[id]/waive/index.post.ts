@@ -3,7 +3,13 @@ import { requireRole } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
 import { AppError } from '~/server/utils/errors'
 import { normalizeSocietySettings, readUuidParam, validatePayload, writeMasterAudit } from '~/server/utils/master-data'
-import { computeDueAmounts, dueWaiveSchema, todayDate, type DueWaiveInput } from '~/server/utils/billing'
+import {
+  computeBillingDueAmounts,
+  dueWaiveSchema,
+  getVerifiedDuePaymentEvents,
+  todayDate,
+  type DueWaiveInput,
+} from '~/server/utils/billing'
 import { recomputeUserAccess } from '~/server/utils/qr-access'
 
 type DueWaiveRow = {
@@ -11,16 +17,21 @@ type DueWaiveRow = {
   society_id: string
   billing_period_id: string
   billing_period_label: string
+  billing_period_charge_type: string
+  billing_period_start_date: string
+  billing_period_end_date: string
   flat_id: string
   flat_number: string
   block_name: string
   due_date: string
   late_fee_starts_on: string | null
+  manual_late_fee_starts_on: string | null
   base_amount: string
   paid_amount: string
   waived_amount: string
   status: string
   is_locked: boolean
+  charge_breakdown: unknown
 }
 
 export default defineEventHandler(async (event) => {
@@ -46,15 +57,20 @@ export default defineEventHandler(async (event) => {
           md.society_id,
           md.billing_period_id,
           bp.label as billing_period_label,
+          bp.charge_type::text as billing_period_charge_type,
+          bp.start_date::text as billing_period_start_date,
+          bp.end_date::text as billing_period_end_date,
           md.flat_id,
           f.flat_number,
           b.name as block_name,
           md.due_date::text,
           md.late_fee_starts_on::text,
+          md.manual_late_fee_starts_on::text,
           md.base_amount::text,
           md.paid_amount::text,
           md.waived_amount::text,
           md.status::text,
+          md.charge_breakdown,
           bp.is_locked
         from maintenance_dues md
         inner join billing_periods bp on bp.id = md.billing_period_id
@@ -86,14 +102,25 @@ export default defineEventHandler(async (event) => {
     const baseAmount = Number(due.base_amount)
     const paidAmount = Number(due.paid_amount)
     const previousWaivedAmount = Number(due.waived_amount)
-    const currentComputed = computeDueAmounts(
+    const paymentEventsByDueId = await getVerifiedDuePaymentEvents(client, [
+      due.id,
+    ])
+    const currentComputed = computeBillingDueAmounts(
       {
         dueDate: due.due_date,
+        billingPeriodChargeType: due.billing_period_charge_type,
+        billingPeriodStartDate: due.billing_period_start_date,
+        billingPeriodEndDate: due.billing_period_end_date,
+        chargeBreakdown: Array.isArray(due.charge_breakdown)
+          ? due.charge_breakdown
+          : [],
         lateFeeStartsOn: due.late_fee_starts_on,
+        manualLateFeeStartsOn: due.manual_late_fee_starts_on,
         baseAmount,
         paidAmount,
         waivedAmount: previousWaivedAmount,
         storedStatus: due.status,
+        paymentEvents: paymentEventsByDueId.get(due.id) ?? [],
       },
       todayDate(),
       settings.graceDays,

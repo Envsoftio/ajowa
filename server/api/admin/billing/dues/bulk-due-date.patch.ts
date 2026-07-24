@@ -2,8 +2,9 @@ import type { PoolClient } from 'pg'
 import { createApiSuccess, readJsonBody } from '~/server/utils/api'
 import { requireRole } from '~/server/utils/auth'
 import {
-  computeDueAmounts,
+  computeBillingDueAmounts,
   dueBulkDueDateUpdateSchema,
+  getVerifiedDuePaymentEvents,
   todayDate,
   type DueBulkDueDateUpdateInput,
 } from '~/server/utils/billing'
@@ -25,11 +26,13 @@ type BulkDueDateRow = {
   billing_period_id: string
   billing_period_label: string
   billing_period_start_date: string
+  billing_period_end_date: string
   billing_period_charge_type: string
   flat_id: string
   flat_number: string
   block_name: string
   due_date: string
+  manual_late_fee_starts_on: string | null
   base_amount: string
   late_fee_amount: string
   paid_amount: string
@@ -37,6 +40,7 @@ type BulkDueDateRow = {
   total_amount: string
   balance_amount: string
   status: string
+  charge_breakdown: unknown
   is_locked: boolean
   is_cam_advance_covered: boolean
 }
@@ -70,11 +74,13 @@ const bulkDueDateRowsSql = (whereSql: string) => `
     md.billing_period_id,
     bp.label as billing_period_label,
     bp.start_date::text as billing_period_start_date,
+    bp.end_date::text as billing_period_end_date,
     bp.charge_type::text as billing_period_charge_type,
     md.flat_id,
     f.flat_number,
     b.name as block_name,
     md.due_date::text,
+    md.manual_late_fee_starts_on::text,
     md.base_amount::text,
     md.late_fee_amount::text,
     md.paid_amount::text,
@@ -82,6 +88,7 @@ const bulkDueDateRowsSql = (whereSql: string) => `
     md.total_amount::text,
     md.balance_amount::text,
     md.status::text,
+    md.charge_breakdown,
     bp.is_locked,
     ${camAdvanceCoveredSql} as is_cam_advance_covered
   from maintenance_dues md
@@ -111,8 +118,9 @@ const buildFilterWhere = (
   const values: unknown[] = [societyId]
   const defaultLateFeeStartOffset = Math.max(0, Math.trunc(graceDays)) + 1
   const lateFeeStartSql = `
-    coalesce(
+    greatest(
       md.late_fee_starts_on,
+      md.manual_late_fee_starts_on,
       (md.due_date + (${defaultLateFeeStartOffset} * interval '1 day'))::date
     )
   `
@@ -276,6 +284,10 @@ export default defineEventHandler(async (event) => {
           dueDate: body.dueDate,
         })
       : new Map()
+    const paymentEventsByDueId = await getVerifiedDuePaymentEvents(
+      client,
+      dueResult.rows.map((due) => due.id),
+    )
 
     for (const due of dueResult.rows) {
       incrementCount(previousDueDateCounts, due.due_date)
@@ -312,14 +324,22 @@ export default defineEventHandler(async (event) => {
       const lateFeeStartsOn = arrangement
         ? getArrangementLateFeeStartsOn(body.dueDate, arrangement.penalty_free_until_day)
         : null
-      const computed = computeDueAmounts(
+      const computed = computeBillingDueAmounts(
         {
           dueDate: body.dueDate,
+          billingPeriodChargeType: due.billing_period_charge_type,
+          billingPeriodStartDate: due.billing_period_start_date,
+          billingPeriodEndDate: due.billing_period_end_date,
+          chargeBreakdown: Array.isArray(due.charge_breakdown)
+            ? due.charge_breakdown
+            : [],
           lateFeeStartsOn,
+          manualLateFeeStartsOn: due.manual_late_fee_starts_on,
           baseAmount: Number(due.base_amount),
           paidAmount,
           waivedAmount: Number(due.waived_amount),
           storedStatus: due.status,
+          paymentEvents: paymentEventsByDueId.get(due.id) ?? [],
         },
         today,
         settings.graceDays,

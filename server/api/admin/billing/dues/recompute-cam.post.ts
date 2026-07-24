@@ -8,8 +8,9 @@ import {
   applyCamAdvanceCoverageToChargeBreakdown,
   appendChargeLookup,
   camDueRecomputeSchema,
-  computeDueAmounts,
+  computeBillingDueAmounts,
   getBillingCycleMultiplier,
+  getVerifiedDuePaymentEvents,
   hasUnresolvedAreaRateCharge,
   removeChargesOverriddenByPeriod,
   resolveChargeBreakdown,
@@ -43,6 +44,7 @@ type DueRow = {
   paid_amount: string
   waived_amount: string
   status: string
+  manual_late_fee_starts_on: string | null
   arrangement_id: string | null
   penalty_free_until_day: number | null
 }
@@ -265,6 +267,7 @@ export default defineEventHandler(async (event) => {
           md.paid_amount::text,
           md.waived_amount::text,
           md.status::text,
+          md.manual_late_fee_starts_on::text,
           arrangement.id as arrangement_id,
           arrangement.penalty_free_until_day
         from maintenance_dues md
@@ -371,6 +374,10 @@ export default defineEventHandler(async (event) => {
 
     const today = todayDate()
     const updatePayload: DueUpdatePayload[] = []
+    const paymentEventsByDueId = await getVerifiedDuePaymentEvents(
+      client,
+      dueRows.map((due) => due.id),
+    )
 
     for (const due of dueRows) {
       const coverageSummary = coverageSummaryByFlatId.get(due.flat_id)
@@ -396,16 +403,22 @@ export default defineEventHandler(async (event) => {
       const lateFeeStartsOn = due.arrangement_id && due.penalty_free_until_day
         ? getArrangementLateFeeStartsOn(due.due_date, due.penalty_free_until_day)
         : null
-      const computed = computeDueAmounts(
+      const computed = computeBillingDueAmounts(
         {
           dueDate: due.due_date,
+          billingPeriodChargeType: period.charge_type,
+          billingPeriodStartDate: period.start_date,
+          billingPeriodEndDate: period.end_date,
+          chargeBreakdown: breakdownResult.breakdown,
           lateFeeStartsOn,
+          manualLateFeeStartsOn: due.manual_late_fee_starts_on,
           baseAmount: nextBaseAmount,
           paidAmount,
           waivedAmount,
           storedStatus: ['PAID', 'PARTIALLY_PAID', 'OPEN', 'OVERDUE'].includes(due.status)
             ? 'OPEN'
             : due.status,
+          paymentEvents: paymentEventsByDueId.get(due.id) ?? [],
         },
         today,
         settings.graceDays,
