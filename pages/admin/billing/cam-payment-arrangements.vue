@@ -64,6 +64,10 @@ const query = reactive({
   sortDirection: 'desc',
 })
 
+usePersistentReactiveState('admin-billing-cam-payment-arrangements-filters', query, {
+  omit: ['page'],
+})
+
 const buildArrangementQuery = () => ({
   page: query.page,
   pageSize: query.pageSize,

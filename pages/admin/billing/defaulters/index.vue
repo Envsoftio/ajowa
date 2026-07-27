@@ -48,13 +48,25 @@ const formatPlural = (
 const formatContact = (value: string | null | undefined) =>
   value || 'Not provided'
 
-const search = ref('')
-const billingPeriodFilter = ref('')
-const blockFilter = ref('')
-const chargeTypeFilter = ref('')
-const overdueFilter = ref('')
-const balanceFilter = ref('')
-const contactFilter = ref('')
+const persistedFilters = reactive({
+  search: '',
+  billingPeriodFilter: '',
+  blockFilter: '',
+  chargeTypeFilter: '',
+  overdueFilter: '',
+  balanceFilter: '',
+  contactFilter: '',
+})
+
+usePersistentReactiveState('admin-billing-defaulters-filters', persistedFilters)
+
+const search = toRef(persistedFilters, 'search')
+const billingPeriodFilter = toRef(persistedFilters, 'billingPeriodFilter')
+const blockFilter = toRef(persistedFilters, 'blockFilter')
+const chargeTypeFilter = toRef(persistedFilters, 'chargeTypeFilter')
+const overdueFilter = toRef(persistedFilters, 'overdueFilter')
+const balanceFilter = toRef(persistedFilters, 'balanceFilter')
+const contactFilter = toRef(persistedFilters, 'contactFilter')
 const sendingReminder = ref(false)
 const selectedDefaulters = ref<DefaulterSummary[]>([])
 

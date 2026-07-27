@@ -69,6 +69,29 @@ const queryNumber = (value: unknown) => {
   return Number.isFinite(number) ? number : null
 }
 
+const routeFilterKeys = [
+  'source',
+  'search',
+  'transactionType',
+  'status',
+  'categoryId',
+  'bankAccountId',
+  'billingPeriodId',
+  'dateFrom',
+  'dateTo',
+  'minAmount',
+  'maxAmount',
+  'counterparty',
+  'attachment',
+  'mode',
+  'voucherNumber',
+  'highValueOnly',
+  'pageSize',
+]
+
+const hasRouteFilters = (routeQuery: Record<string, unknown>) =>
+  routeFilterKeys.some((key) => routeQuery[key] !== undefined)
+
 const applyRouteFilters = (routeQuery: Record<string, unknown>) => {
   const transactionType = queryText(routeQuery.transactionType).toUpperCase()
   const status = queryText(routeQuery.status).toUpperCase()
@@ -102,7 +125,9 @@ const applyRouteFilters = (routeQuery: Record<string, unknown>) => {
   }
 }
 
-applyRouteFilters(route.query)
+if (hasRouteFilters(route.query)) {
+  applyRouteFilters(route.query)
+}
 
 const [
   categoriesAsyncData,
@@ -254,6 +279,8 @@ watch(query, () => {
 watch(
   () => route.query,
   (routeQuery) => {
+    if (!hasRouteFilters(routeQuery)) return
+
     applyRouteFilters(routeQuery)
     page.value = 1
   },

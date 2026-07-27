@@ -61,6 +61,10 @@ const query = reactive({
   sortDirection: 'desc',
 })
 
+usePersistentReactiveState('admin-billing-cam-advance-filters', query, {
+  omit: ['page'],
+})
+
 const buildCoverageQuery = (overrides: Partial<typeof query> = {}) => ({
   page: overrides.page ?? query.page,
   pageSize: overrides.pageSize ?? query.pageSize,

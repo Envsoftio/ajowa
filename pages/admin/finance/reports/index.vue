@@ -77,6 +77,8 @@ const filters = reactive<{
   search: '',
 })
 
+usePersistentReactiveState('admin-finance-reports-filters', filters)
+
 const setRangeByPeriodMode = (periodMode: CalendarPeriodMode) => {
   const currentMonthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1)
   const targets: Record<CalendarPeriodMode, [Date, Date]> = {

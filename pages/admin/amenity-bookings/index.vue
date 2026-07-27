@@ -38,6 +38,11 @@ const query = reactive({
   amenityId: '',
 })
 
+usePersistentReactiveState('admin-amenity-bookings-filters', query, {
+  omit: ['page'],
+})
+search.value = query.search
+
 const blackoutForm = reactive({
   amenityId: '',
   title: '',

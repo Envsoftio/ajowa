@@ -171,6 +171,10 @@ const query = reactive({
   maxAmount: '',
 })
 
+usePersistentReactiveState('admin-payments-filters', query, {
+  omit: ['page'],
+})
+
 const paymentModes = [
   { label: 'All modes', value: '' },
   { label: 'Cash', value: 'CASH' },

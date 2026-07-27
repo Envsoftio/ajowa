@@ -61,6 +61,10 @@ const query = reactive({
   dateTo: '',
 })
 
+usePersistentReactiveState('admin-audit-filters', query, {
+  omit: ['page'],
+})
+
 const moduleOptions = [
   '',
   'AUTH',

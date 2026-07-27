@@ -39,6 +39,10 @@ export const useFinanceTransactionFilters = () => {
     highValueOnly: false,
   })
 
+  usePersistentReactiveState('admin-finance-transactions-filters', filters, {
+    omit: ['source'],
+  })
+
   const resetFilters = () => {
     filters.search = ''
     filters.source = ''
