@@ -154,6 +154,7 @@ type QrVerifyHouseholdMemberRow = {
   is_billing_contact: boolean
   occupancy_status: string | null
   lease_end_date: string | null
+  is_access_granted: boolean | null
 }
 
 export const qrVerifySchema = z.object({
@@ -1488,12 +1489,19 @@ const mapQrVerifyHouseholdMember = (row: QrVerifyHouseholdMemberRow) => ({
   isBillingContact: row.is_billing_contact,
   occupancyStatus: row.occupancy_status,
   leaseEndDate: row.lease_end_date,
+  accessStatus:
+    row.is_access_granted === true
+      ? 'GRANTED'
+      : row.is_access_granted === false
+        ? 'BLOCKED'
+        : 'UNKNOWN',
 })
 
 const loadQrScanResidentDetails = async (
   client: PoolClient,
   userId: string,
   societyId: string,
+  billingPeriodId: string,
 ) => {
   const flatRows = await client.query<QrVerifyFlatRow>(
     `
@@ -1560,11 +1568,15 @@ const loadQrScanResidentDetails = async (
             fr.is_primary_contact,
             fr.is_billing_contact,
             fr.occupancy_status::text,
-            fr.lease_end_date::text
+            fr.lease_end_date::text,
+            uas.is_access_granted
           from flat_residents fr
           inner join users u on u.id = fr.user_id and u.is_active = true
           inner join flats f on f.id = fr.flat_id
           inner join blocks b on b.id = f.block_id
+          left join user_access_status uas
+            on uas.user_id = fr.user_id
+            and uas.billing_period_id = $3
           where fr.flat_id = any($1::uuid[])
             and f.society_id = $2
             and fr.is_active = true
@@ -1583,7 +1595,7 @@ const loadQrScanResidentDetails = async (
             fr.is_primary_contact desc,
             u.full_name
         `,
-        [flatIds, societyId],
+        [flatIds, societyId, billingPeriodId],
       )
     : { rows: [] as QrVerifyHouseholdMemberRow[] }
 
@@ -1702,7 +1714,12 @@ export const verifyQrToken = async (
           totalBalance: Number(row.total_balance_all_flats ?? 0),
         }
 
-        const detail = await loadQrScanResidentDetails(client, row.user_id, societyId)
+        const detail = await loadQrScanResidentDetails(
+          client,
+          row.user_id,
+          societyId,
+          row.billing_period_id,
+        )
         flats = detail.flats
         flatLabels = detail.flatLabels
         primaryFlatId = detail.primaryFlatId

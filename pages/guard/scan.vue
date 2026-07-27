@@ -49,6 +49,7 @@ type VerifyResponse = {
       isBillingContact: boolean
       occupancyStatus: string | null
       leaseEndDate: string | null
+      accessStatus: 'GRANTED' | 'BLOCKED' | 'UNKNOWN'
     }[]
     access: {
       basis: string | null
@@ -590,17 +591,34 @@ onBeforeUnmount(async () => {
                   <span>{{ getMemberDetail(member) }}</span>
                   <small v-if="member.mobileNumber">{{ member.mobileNumber }}</small>
                 </div>
-                <Tag
-                  :severity="
-                    member.relationshipType === 'OWNER'
-                      ? 'success'
-                      : member.relationshipType === 'TENANT'
-                        ? 'info'
-                        : 'secondary'
-                  "
-                  :value="formatLabel(member.relationshipType)"
-                  rounded
-                />
+                <div class="scan-chip-row">
+                  <Tag
+                    :severity="
+                      member.relationshipType === 'OWNER'
+                        ? 'success'
+                        : member.relationshipType === 'TENANT'
+                          ? 'info'
+                          : 'secondary'
+                    "
+                    :value="formatLabel(member.relationshipType)"
+                    rounded
+                  />
+                  <Tag
+                    :severity="
+                      member.accessStatus === 'GRANTED'
+                        ? 'success'
+                        : member.accessStatus === 'BLOCKED'
+                          ? 'danger'
+                          : 'warn'
+                    "
+                    :value="
+                      member.accessStatus === 'UNKNOWN'
+                        ? 'STATUS UNKNOWN'
+                        : `ACCESS ${member.accessStatus}`
+                    "
+                    rounded
+                  />
+                </div>
               </article>
             </div>
           </section>
