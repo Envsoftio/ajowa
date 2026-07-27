@@ -143,6 +143,8 @@ export const dueUpdateSchema = z.object({
 const dueFilterSchema = z.object({
   search: z.string().trim().max(200).optional(),
   billingPeriodId: z.string().uuid().optional(),
+  fromDate: z.string().date().optional(),
+  toDate: z.string().date().optional(),
   chargeType: z.enum(['GENERAL', 'CAM', 'DG_SET']).optional(),
   status: z.enum(['OPEN', 'PARTIALLY_PAID', 'PAID', 'OVERDUE', 'WAIVED', 'CANCELLED']).optional(),
   balance: z.enum(['outstanding', 'paid', 'unpaid']).optional(),

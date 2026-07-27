@@ -300,6 +300,18 @@ const buildDueWhere = (
     where.push(`c.billing_period_id = $${values.length}`)
   }
 
+  const fromDateFilter = query.filters.fromDate?.[0]
+  if (fromDateFilter) {
+    values.push(fromDateFilter)
+    where.push(`c.due_date::date >= $${values.length}::date`)
+  }
+
+  const toDateFilter = query.filters.toDate?.[0]
+  if (toDateFilter) {
+    values.push(toDateFilter)
+    where.push(`c.due_date::date <= $${values.length}::date`)
+  }
+
   const chargeTypeFilter = query.filters.chargeType?.[0]
   if (chargeTypeFilter && ['GENERAL', 'CAM', 'DG_SET'].includes(chargeTypeFilter)) {
     values.push(chargeTypeFilter)
@@ -487,6 +499,10 @@ const filterDescription = (query: ListQueryParams) => {
     query.search && `Search: ${query.search}`,
     filterValue(query, 'billingPeriodId') &&
       `Billing period ID: ${filterValue(query, 'billingPeriodId')}`,
+    filterValue(query, 'fromDate') &&
+      `Due date from: ${filterValue(query, 'fromDate')}`,
+    filterValue(query, 'toDate') &&
+      `Due date to: ${filterValue(query, 'toDate')}`,
     filterValue(query, 'chargeType') &&
       `Bill type: ${billTypeLabel(filterValue(query, 'chargeType') as MaintenanceDue['billingPeriodChargeType'])}`,
     filterValue(query, 'status') && `Status: ${filterValue(query, 'status')}`,

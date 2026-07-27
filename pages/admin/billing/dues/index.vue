@@ -76,6 +76,8 @@ type LateFeeCorrectionResponse = {
 type DueFilterPayload = {
   search?: string
   billingPeriodId?: string
+  fromDate?: string
+  toDate?: string
   chargeType?: 'GENERAL' | 'CAM' | 'DG_SET'
   chargeTypes?: Array<'GENERAL' | 'CAM' | 'DG_SET'>
   status?: MaintenanceDue['status']
@@ -124,6 +126,8 @@ const query = reactive({
   pageSize: 50,
   search: '',
   billingPeriodId: '',
+  fromDate: '',
+  toDate: '',
   chargeType: '',
   status: '',
   balance: '',
@@ -138,6 +142,8 @@ const buildDueQuery = (overrides: Partial<typeof query> = {}) => ({
   pageSize: overrides.pageSize ?? query.pageSize,
   search: (overrides.search ?? query.search) || undefined,
   billingPeriodId: (overrides.billingPeriodId ?? query.billingPeriodId) || undefined,
+  fromDate: (overrides.fromDate ?? query.fromDate) || undefined,
+  toDate: (overrides.toDate ?? query.toDate) || undefined,
   chargeType: (overrides.chargeType ?? query.chargeType) || undefined,
   status: (overrides.status ?? query.status) || undefined,
   balance: (overrides.balance ?? query.balance) || undefined,
@@ -150,6 +156,8 @@ const buildDueQuery = (overrides: Partial<typeof query> = {}) => ({
 const buildDueExportQuery = (): Record<string, string | undefined> => ({
   search: query.search || undefined,
   billingPeriodId: query.billingPeriodId || undefined,
+  fromDate: query.fromDate || undefined,
+  toDate: query.toDate || undefined,
   chargeType: query.chargeType || undefined,
   status: query.status || undefined,
   balance: query.balance || undefined,
@@ -177,6 +185,8 @@ const buildDueFilters = (): DueFilterPayload => {
 
   if (query.search) filters.search = query.search
   if (query.billingPeriodId) filters.billingPeriodId = query.billingPeriodId
+  if (query.fromDate) filters.fromDate = query.fromDate
+  if (query.toDate) filters.toDate = query.toDate
   if (query.chargeType) filters.chargeType = query.chargeType as DueFilterChargeType
   if (query.status) filters.status = query.status as DueFilterStatus
   if (query.balance) filters.balance = query.balance as DueFilterBalance
@@ -442,6 +452,8 @@ const hasActiveFilters = computed(
   () =>
     Boolean(query.search) ||
     Boolean(query.billingPeriodId) ||
+    Boolean(query.fromDate) ||
+    Boolean(query.toDate) ||
     Boolean(query.chargeType) ||
     Boolean(query.status) ||
     Boolean(query.balance) ||
@@ -1222,6 +1234,8 @@ const resetFilters = () => {
   query.page = 1
   query.search = ''
   query.billingPeriodId = ''
+  query.fromDate = ''
+  query.toDate = ''
   query.chargeType = ''
   query.status = ''
   query.balance = ''
@@ -1233,6 +1247,8 @@ watch(
   () => [
     query.search,
     query.billingPeriodId,
+    query.fromDate,
+    query.toDate,
     query.chargeType,
     query.status,
     query.balance,
@@ -1514,6 +1530,20 @@ watch(
               option-value="value"
               placeholder="Period"
             />
+          </label>
+          <label>
+            <span class="field-label">
+              From due date
+              <AppHelpIcon text="Show dues with due dates on or after this date." />
+            </span>
+            <InputText v-model="query.fromDate" type="date" />
+          </label>
+          <label>
+            <span class="field-label">
+              To due date
+              <AppHelpIcon text="Show dues with due dates on or before this date." />
+            </span>
+            <InputText v-model="query.toDate" type="date" />
           </label>
           <label>
             <span class="field-label">

@@ -157,6 +157,16 @@ const buildFilterWhere = (
     where.push(`md.billing_period_id = $${values.length}`)
   }
 
+  if (filters.fromDate) {
+    values.push(filters.fromDate)
+    where.push(`md.due_date >= $${values.length}::date`)
+  }
+
+  if (filters.toDate) {
+    values.push(filters.toDate)
+    where.push(`md.due_date <= $${values.length}::date`)
+  }
+
   if (filters.chargeType) {
     values.push(filters.chargeType)
     where.push(`bp.charge_type::text = $${values.length}`)

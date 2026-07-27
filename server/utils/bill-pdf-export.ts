@@ -11,6 +11,8 @@ export const billingChargeTypeSchema = z.enum(['GENERAL', 'CAM', 'DG_SET'])
 export const billPdfExportFiltersSchema = z.object({
   search: z.string().trim().max(200).optional(),
   billingPeriodId: z.string().uuid().optional(),
+  fromDate: z.string().date().optional(),
+  toDate: z.string().date().optional(),
   chargeType: billingChargeTypeSchema.optional(),
   chargeTypes: z.array(billingChargeTypeSchema).max(3).optional(),
   status: z.enum(['OPEN', 'PARTIALLY_PAID', 'PAID', 'OVERDUE', 'WAIVED', 'CANCELLED']).optional(),
@@ -107,6 +109,16 @@ const buildFilteredDueQuery = (
   if (filters.billingPeriodId) {
     values.push(filters.billingPeriodId)
     where.push(`md.billing_period_id = $${values.length}`)
+  }
+
+  if (filters.fromDate) {
+    values.push(filters.fromDate)
+    where.push(`md.due_date >= $${values.length}::date`)
+  }
+
+  if (filters.toDate) {
+    values.push(filters.toDate)
+    where.push(`md.due_date <= $${values.length}::date`)
   }
 
   const chargeTypes = Array.from(new Set([

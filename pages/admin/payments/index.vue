@@ -975,11 +975,11 @@ const onProofFileChange = async (event: Event) => {
         </label>
         <div class="list-page__filters">
           <label>
-            <span class="field-label">From</span>
+            <span class="field-label">From payment date</span>
             <InputText v-model="query.fromDate" type="date" />
           </label>
           <label>
-            <span class="field-label">To</span>
+            <span class="field-label">To payment date</span>
             <InputText v-model="query.toDate" type="date" />
           </label>
           <label>
