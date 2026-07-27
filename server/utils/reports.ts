@@ -489,9 +489,6 @@ const buildMonthlyTransactionSummaryReport = async (
     params.push(filters.categoryId)
     where.push(`t.category_id = $${params.length}`)
   }
-  if (transactionType === 'INCOME') {
-    where.push("tc.code <> 'INC-MNT-001'")
-  }
   addSearch(params, where, ['tc.name', 'tc.category_group', 't.title', 't.counterparty_name', 't.voucher_number'], filters.search)
 
   const result = await getDatabasePool().query<MonthlySummaryRow>(
@@ -586,9 +583,6 @@ const buildFinanceTransactionReport = async ({ societyId, filters, exportMode }:
   if (filters.categoryId) {
     params.push(filters.categoryId)
     where.push(`t.category_id = $${params.length}`)
-  }
-  if (reportMode === 'income-only' || reportMode === 'income-expense') {
-    where.push("not (t.transaction_type = 'INCOME' and tc.code = 'INC-MNT-001')")
   }
   addSearch(params, where, ['t.title', 't.counterparty_name', 't.voucher_number', 'tc.name'], filters.search)
 

@@ -38,11 +38,14 @@ const DEFAULT_POLICY = {
 const route = useRoute()
 const api = useApi()
 const toast = useToast()
+const authStore = useAuthStore()
 const { formatMoney, formatDate, formatDateTime } = useFinanceFormatters()
 const { buildTransactionCreateLink } = useFinanceSharedReportLinks()
+const { reasonDialog, requestReason, acceptReason, cancelReason } = useAppReasonDialog()
 const editing = ref(false)
 const paymentDialogVisible = ref(false)
 const recordingPayment = ref(false)
+const reversing = ref(false)
 
 const paymentModes: Array<{ label: string; value: FinancePaymentMode }> = [
   { label: 'Cash', value: 'CASH' },
@@ -142,6 +145,9 @@ const canRecordExpensePayment = computed(
     transaction.value.status === 'POSTED' &&
     expensePayments.value.length === 0,
 )
+const canReverseTransaction = computed(
+  () => authStore.me?.user.role === 'ADMIN' && transaction.value?.status === 'POSTED',
+)
 
 const onUpdated = async (payload: { attachmentUploaded: boolean }) => {
   toast.add({
@@ -215,6 +221,43 @@ const recordExpensePayment = async () => {
     recordingPayment.value = false
   }
 }
+
+const reverseTransaction = async () => {
+  if (!transaction.value) return
+
+  const reason = await requestReason({
+    header: 'Reverse transaction?',
+    message: `Add a reason for reversing ${transaction.value.title}. A counter-entry journal will be posted.`,
+    acceptLabel: 'Reverse',
+    acceptSeverity: 'danger',
+    placeholder: 'Example: Duplicate entry created while correcting June CAM income.',
+  })
+
+  if (!reason) return
+  reversing.value = true
+  try {
+    await api(`/api/admin/finance/transactions/${transaction.value.id}/reverse`, {
+      method: 'POST',
+      body: { reason },
+    })
+    toast.add({
+      severity: 'success',
+      summary: 'Reversed',
+      detail: 'Counter-entry journal posted.',
+      life: 10000,
+    })
+    await refreshDetail()
+  } catch (error) {
+    toast.add({
+      severity: 'error',
+      summary: 'Transaction not reversed',
+      detail: getApiErrorMessage(error, 'The transaction could not be reversed.'),
+      life: 12000,
+    })
+  } finally {
+    reversing.value = false
+  }
+}
 </script>
 
 <template>
@@ -260,6 +303,15 @@ const recordExpensePayment = async () => {
               severity="secondary"
               outlined
               @click="openPaymentDialog"
+            />
+            <Button
+              v-if="!editing && canReverseTransaction"
+              label="Reverse"
+              icon="pi pi-undo"
+              severity="danger"
+              outlined
+              :loading="reversing"
+              @click="reverseTransaction"
             />
             <Button
               as="router-link"
@@ -525,5 +577,16 @@ const recordExpensePayment = async () => {
         </div>
       </form>
     </Dialog>
+    <AppReasonDialog
+      v-model:visible="reasonDialog.visible"
+      v-model:reason="reasonDialog.reason"
+      :header="reasonDialog.header"
+      :message="reasonDialog.message"
+      :accept-label="reasonDialog.acceptLabel"
+      :accept-severity="reasonDialog.acceptSeverity"
+      :placeholder="reasonDialog.placeholder"
+      @accept="acceptReason"
+      @cancel="cancelReason"
+    />
   </div>
 </template>

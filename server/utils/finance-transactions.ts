@@ -636,7 +636,6 @@ export const getIncomeReportDrilldownTransactions = async (
     't.society_id = $1',
     "t.transaction_type = 'INCOME'",
     "t.status = 'POSTED'",
-    "tc.code <> 'INC-MNT-001'",
   ]
 
   if (search) {
