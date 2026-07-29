@@ -3,6 +3,7 @@ import { requirePermission } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
 import { AppError } from '~/server/utils/errors'
 import { readUuidParam, writeMasterAudit } from '~/server/utils/master-data'
+import { deprovisionStaffMember } from '~/server/utils/staff-deprovision'
 
 type StaffRow = {
   id: string
@@ -65,41 +66,21 @@ export default defineEventHandler(async (event) => {
       })
     }
 
-    await client.query(
-      `
-        update service_staff_assignments
-        set is_active = false,
-            ended_at = coalesce(ended_at, now()),
-            updated_at = now()
-        where user_id = $1
-          and is_active = true
-      `,
-      [id],
-    )
-
-    if (staff.email) {
-      await client.query(
-        `
-          update auth_invites
-          set revoked_at = now(),
-              revoked_by_user_id = $2,
-              updated_at = now()
-          where society_id = $3
-            and email = $1
-            and accepted_at is null
-            and revoked_at is null
-        `,
-        [staff.email, authMe.user.id, authMe.user.societyId],
-      )
-    }
+    const { openTicketsRequeued } = await deprovisionStaffMember(client, {
+      userId: staff.id,
+      societyId: authMe.user.societyId,
+      actorUserId: authMe.user.id,
+      authUserId: staff.auth_user_id,
+      email: staff.email,
+    })
 
     await writeMasterAudit({
       client,
       event,
       actorUserId: authMe.user.id,
       actorAuthUserId: authMe.authUser.id,
-      action: 'DELETED',
-      eventKey: 'staff.removed',
+      action: 'STATE_CHANGED',
+      eventKey: 'staff.archived',
       beforeState: {
         id: staff.id,
         authUserId: staff.auth_user_id,
@@ -114,46 +95,36 @@ export default defineEventHandler(async (event) => {
       },
       afterState: {
         id: staff.id,
-        authUserId: null,
+        authUserId: staff.auth_user_id,
         email: null,
         mobileNumber: null,
         whatsappNumber: null,
         canLogin: false,
         isActive: false,
         permissions: [],
+        authIdentityArchived: Boolean(staff.auth_user_id),
+        openTicketsRequeued,
         deletedAt: new Date().toISOString(),
       },
-      relatedEntities: [{ entityTable: 'users', entityId: id, entityLabel: staff.full_name }],
+      metadata: {
+        loginSessionsRevoked: Boolean(staff.auth_user_id),
+        loginAccountsRemoved: Boolean(staff.auth_user_id),
+        openTicketsRequeued,
+      },
+      relatedEntities: [
+        { entityTable: 'users', entityId: id, entityLabel: staff.full_name },
+      ],
       targetUserId: id,
     })
 
-    await client.query(
-      `
-        update users
-        set auth_user_id = null,
-            email = null,
-            mobile_number = null,
-            whatsapp_number = null,
-            profile_image_path = null,
-            can_login = false,
-            must_change_password = false,
-            email_verified = false,
-            is_active = false,
-            staff_permissions = '{}'::text[],
-            deleted_at = now(),
-            updated_at = now()
-        where id = $1
-      `,
-      [id],
-    )
-
-    if (staff.auth_user_id) {
-      await client.query('delete from auth_users where id = $1', [staff.auth_user_id])
-    }
-
     await client.query('commit')
 
-    return createApiSuccess(event, { id, removed: true })
+    return createApiSuccess(event, {
+      id,
+      removed: true,
+      archived: true,
+      openTicketsRequeued,
+    })
   } catch (error) {
     await client.query('rollback')
     throw error

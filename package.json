@@ -12,6 +12,7 @@
     "dev": "nuxt dev",
     "build": "nuxt build",
     "preview": "nuxt preview",
+    "test": "node --experimental-strip-types --test tests/*.test.mjs",
     "netlify:dev": "netlify dev --context production --no-open",
     "netlify:serve": "netlify serve --context production",
     "lint": "eslint .",
