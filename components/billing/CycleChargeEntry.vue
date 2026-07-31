@@ -1108,6 +1108,17 @@ const getRecordPaymentRoute = (entry: VariableChargeEntry) => {
   }
 }
 
+const variableChargeExportUrl = (format: 'pdf' | 'xlsx') => {
+  if (!selectedPeriod.value) return '#'
+
+  const params = new URLSearchParams({
+    chargeName: props.chargeName,
+    export: format,
+  })
+
+  return `/api/admin/billing/periods/${selectedPeriod.value.id}/variable-charges?${params.toString()}`
+}
+
 const canRecordPaymentForEntry = (entry: VariableChargeEntry) =>
   (props.camRunFlow ? getEntryNetBillableAmount(entry) : Number(entry.amount ?? 0)) > 0 &&
   Number(getRecordPaymentPeriod(entry)?.dueCount ?? 0) > 0
@@ -2241,6 +2252,28 @@ watch(
           </p>
         </div>
         <div class="list-page__exports">
+          <AppDocumentLink
+            v-if="!camRunFlow"
+            :href="variableChargeExportUrl('pdf')"
+            :viewer-title="`${chargeName} PDF`"
+            label="PDF"
+            icon="pi pi-file-pdf"
+            severity="secondary"
+            outlined
+            :disabled="!selectedPeriod"
+          />
+          <Button
+            v-if="!camRunFlow"
+            as="a"
+            :href="variableChargeExportUrl('xlsx')"
+            label="Excel"
+            icon="pi pi-file-excel"
+            severity="secondary"
+            outlined
+            target="_blank"
+            rel="noopener"
+            :disabled="!selectedPeriod"
+          />
           <Button
             v-if="!camRunFlow"
             label="Create period"
