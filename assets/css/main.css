@@ -3516,6 +3516,20 @@ th.expense-summary-table__first-data-column {
   background: #dc2626;
 }
 
+.billing-generation-complete {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.billing-generation-complete strong {
+  font-weight: 900;
+}
+
+.billing-generation-complete span,
+.billing-generation-complete small {
+  line-height: 1.4;
+}
+
 .billing-variable-charge-panel header,
 .billing-variable-charge-toolbar {
   display: flex;

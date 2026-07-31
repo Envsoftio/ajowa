@@ -19,6 +19,16 @@ type GenerationProgressStep = {
   label: string
   detail: string
   status: GenerationProgressStepStatus
+  progress?: number
+  weight?: number
+}
+
+type GenerationResult = {
+  generated: number
+  skipped: number
+  advanceAppliedAmount: number
+  deliveryJobCount: number
+  processedFlatCount: number
 }
 
 type PeriodResponse = {
@@ -178,6 +188,8 @@ const props = withDefaults(
 const api = useApi()
 const route = useRoute()
 const toast = useToast()
+
+const DG_BILL_GENERATION_BATCH_SIZE = 40
 
 const formatMoney = (value: number) =>
   new Intl.NumberFormat('en-IN', {
@@ -415,6 +427,7 @@ const billChannels = ref<BillChannel[]>(['EMAIL'])
 const billDeliveryFlatIds = ref<string[]>([])
 const generationProgressSteps = ref<GenerationProgressStep[]>([])
 const activeGenerationStepId = ref<string | null>(null)
+const generationResult = ref<GenerationResult | null>(null)
 const lastGeneratedDueIds = ref<string[]>([])
 const { downloadingBillPdfs, downloadBillPdfs } = useBillPdfZipDownload()
 
@@ -743,9 +756,11 @@ const buildCamGenerationProgressSteps = (
 const buildStandardGenerationProgressSteps = (): GenerationProgressStep[] => [
   {
     id: 'generate-dues',
-    label: 'Generate bill records',
-    detail: `Creating dues for ${formatUnit(selectedFlatIds.value.length, 'flat')}.`,
+    label: 'Generate DG Set bills',
+    detail: `Preparing ${formatUnit(selectedFlatIds.value.length, 'flat')} for safe batch generation.`,
     status: 'pending',
+    progress: 0,
+    weight: 8,
   },
   {
     id: 'bill-delivery',
@@ -756,12 +771,14 @@ const buildStandardGenerationProgressSteps = (): GenerationProgressStep[] => [
       ? `Preparing ${formatUnit(selectedBillDeliveryCount.value, 'bill')} for ${billChannels.value.join(', ')}.`
       : 'Bills will be generated without notifications.',
     status: 'pending',
+    weight: 1,
   },
   {
     id: 'refresh-billing-data',
     label: 'Refresh billing data',
-    detail: 'Loading the latest billing period totals.',
+    detail: 'Loading the latest DG Set period totals.',
     status: 'pending',
+    weight: 1,
   },
 ]
 
@@ -791,13 +808,21 @@ const activeGenerationStep = computed(
 const generationProgressPercent = computed(() => {
   if (generationProgressSteps.value.length === 0) return 0
 
+  const totalWeight = generationProgressSteps.value.reduce(
+    (total, step) => total + (step.weight ?? 1),
+    0,
+  )
   const progress = generationProgressSteps.value.reduce((total, step) => {
-    if (step.status === 'done') return total + 1
-    if (step.status === 'active') return total + 0.5
+    const weight = step.weight ?? 1
+    if (step.status === 'done') return total + weight
+    if (step.status === 'active' || step.status === 'error') {
+      const stepProgress = Math.min(1, Math.max(0, step.progress ?? 0.5))
+      return total + weight * stepProgress
+    }
     return total
   }, 0)
 
-  return Math.round((progress / generationProgressSteps.value.length) * 100)
+  return Math.round((progress / totalWeight) * 100)
 })
 
 const getGenerationStepIcon = (status: GenerationProgressStepStatus) => {
@@ -810,6 +835,7 @@ const getGenerationStepIcon = (status: GenerationProgressStepStatus) => {
 const resetGenerationProgress = () => {
   generationProgressSteps.value = []
   activeGenerationStepId.value = null
+  generationResult.value = null
 }
 
 const setGenerationProgressSteps = (steps: GenerationProgressStep[]) => {
@@ -844,6 +870,7 @@ const startGenerationProgressStep = (id: string, detail?: string) => {
 const completeGenerationProgressStep = (id: string, detail?: string) => {
   updateGenerationProgressStep(id, {
     status: 'done',
+    progress: 1,
     ...(detail ? { detail } : {}),
   })
 
@@ -1592,6 +1619,16 @@ const sendGeneratedBillNotifications = async (
 const getUniqueDueIds = (targets: GeneratedDueTarget[]) =>
   Array.from(new Set(targets.map((target) => target.dueId)))
 
+const chunkFlatIds = (flatIds: string[], batchSize: number) => {
+  const batches: string[][] = []
+
+  for (let index = 0; index < flatIds.length; index += batchSize) {
+    batches.push(flatIds.slice(index, index + batchSize))
+  }
+
+  return batches
+}
+
 const downloadLastGeneratedBillPdfs = () => {
   if (lastGeneratedDueIds.value.length === 0) return
 
@@ -1898,27 +1935,71 @@ const generateDues = async () => {
 
   if (!selectedPeriod.value || !generationPreview.value) return
 
+  const billingPeriodId = selectedPeriod.value.id
+  const selectedFlatIdsForRun = [...selectedFlatIds.value]
+  const flatIdBatches = chunkFlatIds(
+    selectedFlatIdsForRun,
+    DG_BILL_GENERATION_BATCH_SIZE,
+  )
+  const billTargets: GeneratedDueTarget[] = []
+  let completedBatchCount = 0
+
   setGenerationProgressSteps(buildStandardGenerationProgressSteps())
+  generationResult.value = null
   generating.value = true
 
   try {
     startGenerationProgressStep(
       'generate-dues',
-      `Creating bill records for ${formatUnit(selectedFlatIds.value.length, 'flat')}.`,
+      `Starting ${formatUnit(flatIdBatches.length, 'batch')} for ${formatUnit(selectedFlatIdsForRun.length, 'flat')}.`,
     )
-    const response = await api<GenerationResponse>('/api/admin/billing/dues', {
-      method: 'POST',
-      showErrorToast: false,
-      body: {
-        billingPeriodId: selectedPeriod.value.id,
-        flatIds: selectedFlatIds.value.length
-          ? selectedFlatIds.value
-          : undefined,
-      },
-    })
+
+    let generated = 0
+    let skipped = 0
+    let advanceAppliedAmount = 0
+
+    for (const [batchIndex, flatIds] of flatIdBatches.entries()) {
+      const batchNumber = batchIndex + 1
+      const processedBeforeBatch = batchIndex * DG_BILL_GENERATION_BATCH_SIZE
+
+      updateGenerationProgressStep('generate-dues', {
+        detail: `Batch ${batchNumber} of ${flatIdBatches.length}: creating DG Set bills for flats ${processedBeforeBatch + 1}-${processedBeforeBatch + flatIds.length} of ${selectedFlatIdsForRun.length}.`,
+        progress: batchIndex / flatIdBatches.length,
+      })
+
+      const response = await api<GenerationResponse>(
+        '/api/admin/billing/dues',
+        {
+          method: 'POST',
+          showErrorToast: false,
+          body: {
+            billingPeriodId,
+            flatIds,
+          },
+        },
+      )
+
+      generated += response.data.generated
+      skipped += response.data.skipped
+      advanceAppliedAmount = roundChargeValue(
+        advanceAppliedAmount + response.data.advanceAppliedAmount,
+      )
+      billTargets.push(
+        ...response.data.generatedDues,
+        ...response.data.skippedDues,
+      )
+      completedBatchCount = batchNumber
+      lastGeneratedDueIds.value = getUniqueDueIds(billTargets)
+
+      updateGenerationProgressStep('generate-dues', {
+        detail: `Batch ${batchNumber} of ${flatIdBatches.length} complete: ${generated} created and ${skipped} skipped so far.`,
+        progress: batchNumber / flatIdBatches.length,
+      })
+    }
+
     completeGenerationProgressStep(
       'generate-dues',
-      `${response.data.generated} created, ${response.data.skipped} skipped.`,
+      `${generated} created and ${skipped} skipped across ${formatUnit(flatIdBatches.length, 'batch')}.`,
     )
 
     startGenerationProgressStep(
@@ -1927,14 +2008,8 @@ const generateDues = async () => {
         ? `Queueing selected bill notifications for ${billChannels.value.join(', ')}.`
         : 'Bill delivery is off for this run.',
     )
-    const sentBills = await sendGeneratedBillNotifications([
-      ...response.data.generatedDues,
-      ...response.data.skippedDues,
-    ])
-    lastGeneratedDueIds.value = getUniqueDueIds([
-      ...response.data.generatedDues,
-      ...response.data.skippedDues,
-    ])
+    const sentBills = await sendGeneratedBillNotifications(billTargets)
+    lastGeneratedDueIds.value = getUniqueDueIds(billTargets)
     completeGenerationProgressStep(
       'bill-delivery',
       sentBills
@@ -1942,15 +2017,33 @@ const generateDues = async () => {
         : 'Bill delivery skipped.',
     )
 
+    startGenerationProgressStep(
+      'refresh-billing-data',
+      'Refreshing DG Set period totals.',
+    )
+    await refreshPeriods()
+    completeGenerationProgressStep(
+      'refresh-billing-data',
+      'Latest DG Set billing data loaded.',
+    )
+
+    generationResult.value = {
+      generated,
+      skipped,
+      advanceAppliedAmount,
+      deliveryJobCount: sentBills?.jobCount ?? 0,
+      processedFlatCount: selectedFlatIdsForRun.length,
+    }
+
     toast.add({
       severity: 'success',
-      summary: 'Bills generated',
+      summary: 'DG Set bills generated',
       detail:
         [
-          `${response.data.generated} created`,
-          `${response.data.skipped} skipped`,
-          response.data.advanceAppliedAmount > 0
-            ? `${formatMoney(response.data.advanceAppliedAmount)} advance applied`
+          `${generated} created`,
+          `${skipped} skipped`,
+          advanceAppliedAmount > 0
+            ? `${formatMoney(advanceAppliedAmount)} advance applied`
             : '',
           sentBills
             ? `${sentBills.jobCount} delivery job${sentBills.jobCount === 1 ? '' : 's'} queued`
@@ -1960,25 +2053,17 @@ const generateDues = async () => {
           .join(', ') + '.',
       life: 10000,
     })
-
-    startGenerationProgressStep(
-      'refresh-billing-data',
-      'Refreshing billing period totals.',
-    )
-    await refreshPeriods()
-    completeGenerationProgressStep(
-      'refresh-billing-data',
-      'Latest billing data loaded.',
-    )
-    generationDialogVisible.value = false
   } catch (error) {
-    const detail = getApiErrorMessage(error)
+    const errorDetail = getApiErrorMessage(error)
+    const detail = completedBatchCount > 0
+      ? `${errorDetail} ${completedBatchCount} of ${flatIdBatches.length} batches were saved. Retry to continue; completed flats will be skipped automatically.`
+      : errorDetail
     failActiveGenerationProgressStep(
       detail,
     )
     toast.add({
       severity: 'error',
-      summary: 'Bill generation failed',
+      summary: 'DG Set bill generation paused',
       detail,
       life: 15000,
     })
@@ -2178,9 +2263,9 @@ watch(
             @click="recomputeCamDues"
           />
           <Button
-            :label="camRunFlow ? 'Generate CAM bills' : 'Generate bills'"
+            :label="camRunFlow ? 'Generate CAM bills' : 'Generate DG Set bills'"
             icon="pi pi-bolt"
-            :disabled="camRunFlow ? loadingCharges : !selectedPeriod"
+            :disabled="generating || (camRunFlow ? loadingCharges : !selectedPeriod)"
             @click="openGenerationDialog"
           />
         </div>
@@ -2846,6 +2931,29 @@ watch(
         </ol>
       </section>
 
+      <Message
+        v-if="generationResult"
+        severity="success"
+        :closable="false"
+      >
+        <div class="billing-generation-complete">
+          <strong>DG Set generation complete</strong>
+          <span>
+            {{ generationResult.generated }} created,
+            {{ generationResult.skipped }} skipped across
+            {{ formatUnit(generationResult.processedFlatCount, 'flat') }}.
+          </span>
+          <small v-if="generationResult.advanceAppliedAmount > 0">
+            {{ formatMoney(generationResult.advanceAppliedAmount) }} in advance
+            credits applied.
+          </small>
+          <small v-if="generationResult.deliveryJobCount > 0">
+            {{ formatUnit(generationResult.deliveryJobCount, 'delivery job') }}
+            queued.
+          </small>
+        </div>
+      </Message>
+
         <div v-if="camRunFlow" class="admin-form-layout">
           <div class="billing-generation-summary">
             <div>
@@ -2978,7 +3086,7 @@ watch(
           />
         </div>
       </div>
-      <div v-else class="admin-form-layout">
+      <div v-else v-show="!generating" class="admin-form-layout">
         <AppSkeletonState v-if="loadingGenerationPreview" />
         <Message v-else-if="!generationPreview" severity="warn">
           Select at least one flat with saved charges to preview bill
@@ -3097,31 +3205,46 @@ watch(
         </template>
 
         <div class="admin-inline-actions dialog-actions">
-          <Button
-            label="Cancel"
-            severity="secondary"
-            outlined
-            :disabled="generating"
-            @click="generationDialogVisible = false"
-          />
-          <Button
-            :label="camRunFlow ? 'Generate CAM bills' : 'Generate bills'"
-            icon="pi pi-bolt"
-            :loading="generating"
-            :disabled="
-              camRunFlow
-                ? generating || camRunGroups.length === 0
-                : generating ||
-                  !generationPreview ||
-                  generationPreview.isLocked ||
-                  generationPreview.totalFlats === 0 ||
-                  selectedFlatIds.length === 0 ||
-                  (sendBillsAfterGeneration &&
-                    (billChannels.length === 0 ||
-                      selectedBillDeliveryCount === 0))
-            "
-            @click="generateDues"
-          />
+          <template v-if="generationResult">
+            <Button
+              label="Close"
+              severity="secondary"
+              outlined
+              @click="generationDialogVisible = false"
+            />
+            <Button
+              v-if="lastGeneratedDueIds.length > 0"
+              :label="`Download ${lastGeneratedDueIds.length} bill PDF${lastGeneratedDueIds.length === 1 ? '' : 's'}`"
+              icon="pi pi-download"
+              :loading="downloadingBillPdfs"
+              @click="downloadLastGeneratedBillPdfs"
+            />
+          </template>
+          <template v-else>
+            <Button
+              label="Cancel"
+              severity="secondary"
+              outlined
+              :disabled="generating"
+              @click="generationDialogVisible = false"
+            />
+            <Button
+              label="Generate DG Set bills"
+              icon="pi pi-bolt"
+              :loading="generating"
+              :disabled="
+                generating ||
+                !generationPreview ||
+                generationPreview.isLocked ||
+                generationPreview.totalFlats === 0 ||
+                selectedFlatIds.length === 0 ||
+                (sendBillsAfterGeneration &&
+                  (billChannels.length === 0 ||
+                    selectedBillDeliveryCount === 0))
+              "
+              @click="generateDues"
+            />
+          </template>
         </div>
       </div>
     </Dialog>
