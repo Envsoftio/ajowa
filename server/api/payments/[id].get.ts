@@ -32,7 +32,25 @@ export default defineEventHandler(async (event) => {
             order by pa.allocation_order
           ) filter (where pa.id is not null),
           '[]'::jsonb
-        ) as allocations
+        ) as allocations,
+        coalesce((
+          select jsonb_agg(
+            jsonb_build_object(
+              'id', rac.id,
+              'originalAmount', rac.original_amount,
+              'currentBalance', rac.current_balance,
+              'status', rac.status,
+              'applicableChargeType', rac.applicable_charge_type,
+              'sourceBillingPeriodId', rac.source_billing_period_id,
+              'sourceBillingPeriodLabel', source_bp.label
+            )
+            order by rac.created_at asc
+          )
+          from resident_advance_credits rac
+          left join billing_periods source_bp
+            on source_bp.id = rac.source_billing_period_id
+          where rac.source_payment_id = p.id
+        ), '[]'::jsonb) as advance_credits
       from payments p
       left join flats f on f.id = p.received_for_flat_id
       left join blocks b on b.id = f.block_id

@@ -6,6 +6,7 @@ import type { AuditAction } from '~/shared/audit'
 import type {
   AccountHead,
   BankAccount,
+  BillingPeriodChargeType,
   FinancePaymentMode,
   FinanceCategory,
   FinanceJournalEntry,
@@ -1041,6 +1042,51 @@ export const reverseFinanceTransaction = async (
   return { reversalEntryId: reversalId, voucherNumber }
 }
 
+const getMaintenanceReceiptAmounts = async (
+  client: PoolClient,
+  paymentId: string,
+  paymentAmount: number,
+) => {
+  const result = await client.query<{
+    late_fee: string
+    advance_amount: string
+  }>(
+    `
+      select
+        coalesce((
+          select sum(pa.late_fee_component)
+          from payment_allocations pa
+          where pa.payment_id = $1
+        ), 0)::text as late_fee,
+        coalesce((
+          select sum(rac.original_amount)
+          from resident_advance_credits rac
+          where rac.source_payment_id = $1
+            and rac.is_liability_accounted = true
+        ), 0)::text as advance_amount
+    `,
+    [paymentId],
+  )
+  const amount = roundMoney(paymentAmount)
+  const advanceAmount = roundMoney(
+    Math.min(amount, Number(result.rows[0]?.advance_amount ?? 0)),
+  )
+  const allocatedReceiptAmount = roundMoney(amount - advanceAmount)
+  const lateFee = roundMoney(
+    Math.min(
+      allocatedReceiptAmount,
+      Number(result.rows[0]?.late_fee ?? 0),
+    ),
+  )
+
+  return {
+    amount,
+    advanceAmount,
+    lateFee,
+    maintenanceIncome: roundMoney(allocatedReceiptAmount - lateFee),
+  }
+}
+
 export const postMaintenanceReceiptJournal = async (
   client: PoolClient,
   input: { paymentId: string; societyId: string; postedByUserId: string; bankAccountId?: string | null },
@@ -1094,37 +1140,35 @@ export const postMaintenanceReceiptJournal = async (
     throw new AppError({ code: 'VALIDATION_ERROR', statusCode: 400, message: 'Select or configure an active bank account for receipt posting.' })
   }
 
-  const incomeHeads = await client.query<{ code: string; id: string }>(
+  const accountHeads = await client.query<{ code: string; id: string }>(
     `
       select code, id
       from account_heads
       where (society_id = $1 or society_id is null)
-        and code in ('INC-MAINT', 'INC-LATE-FEE', 'INC-LATEFEE')
+        and code in ('INC-MAINT', 'INC-LATE-FEE', 'INC-LATEFEE', 'LIAB-RES-ADV')
         and is_active = true
     `,
     [input.societyId],
   )
-  const maintenanceHeadId = incomeHeads.rows.find((row) => row.code === 'INC-MAINT')?.id
+  const maintenanceHeadId = accountHeads.rows.find((row) => row.code === 'INC-MAINT')?.id
   const lateFeeHeadId =
-    incomeHeads.rows.find((row) => row.code === 'INC-LATE-FEE')?.id ??
-    incomeHeads.rows.find((row) => row.code === 'INC-LATEFEE')?.id
-
-  const lateFeeResult = await client.query<{ late_fee: string }>(
-    `
-      select coalesce(sum(late_fee_component), 0)::text as late_fee
-      from payment_allocations
-      where payment_id = $1
-    `,
-    [input.paymentId],
+    accountHeads.rows.find((row) => row.code === 'INC-LATE-FEE')?.id ??
+    accountHeads.rows.find((row) => row.code === 'INC-LATEFEE')?.id
+  const advanceHeadId = accountHeads.rows.find((row) => row.code === 'LIAB-RES-ADV')?.id
+  const receiptAmounts = await getMaintenanceReceiptAmounts(
+    client,
+    input.paymentId,
+    Number(paymentRow.amount),
   )
-  const amount = roundMoney(Number(paymentRow.amount))
-  const lateFee = roundMoney(Math.min(amount, Number(lateFeeResult.rows[0]?.late_fee ?? 0)))
-  const maintenanceIncome = roundMoney(amount - lateFee)
+  const { amount, advanceAmount, lateFee, maintenanceIncome } = receiptAmounts
   if (maintenanceIncome > 0 && !maintenanceHeadId) {
     throw new AppError({ code: 'VALIDATION_ERROR', statusCode: 400, message: 'Maintenance income head is required before posting receipts.' })
   }
   if (lateFee > 0 && !lateFeeHeadId) {
     throw new AppError({ code: 'VALIDATION_ERROR', statusCode: 400, message: 'Late-fee income head is required before posting receipts.' })
+  }
+  if (advanceAmount > 0 && !advanceHeadId) {
+    throw new AppError({ code: 'VALIDATION_ERROR', statusCode: 400, message: 'Resident-advance liability head is required before posting receipts.' })
   }
   const voucherNumber = await nextJournalVoucherNumber(client, paymentRow.payment_date)
   const entry = await client.query<{ id: string; voucher_number: string }>(
@@ -1173,6 +1217,9 @@ export const postMaintenanceReceiptJournal = async (
     }
     lines.push([lines.length + 1, headId, 'CREDIT', lateFee, 'Late fee income'])
   }
+  if (advanceAmount > 0) {
+    lines.push([lines.length + 1, advanceHeadId!, 'CREDIT', advanceAmount, 'Resident advance liability'])
+  }
   for (const line of lines) {
     await client.query(
       `
@@ -1182,6 +1229,122 @@ export const postMaintenanceReceiptJournal = async (
       [entryRow.id, ...line],
     )
   }
+  await client.query(`update journal_entries set status = 'POSTED' where id = $1`, [entryRow.id])
+
+  return entryRow
+}
+
+export const postAdvanceCreditConsumptionJournal = async (
+  client: PoolClient,
+  input: {
+    paymentId: string
+    societyId: string
+    billingPeriodId: string
+    paymentDate: string
+    amount: number
+    chargeType: BillingPeriodChargeType
+  },
+) => {
+  const existing = await client.query<{ id: string; voucher_number: string }>(
+    'select id, voucher_number from journal_entries where payment_id = $1 limit 1',
+    [input.paymentId],
+  )
+  if (existing.rows[0]) {
+    return existing.rows[0]
+  }
+
+  const amount = roundMoney(input.amount)
+  if (amount <= 0) {
+    throw new AppError({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message: 'Advance-credit journal amount must be greater than zero.',
+    })
+  }
+
+  const accountHeads = await client.query<{ code: string; id: string }>(
+    `
+      select code, id
+      from account_heads
+      where (society_id = $1 or society_id is null)
+        and code in ('INC-MAINT', 'LIAB-RES-ADV')
+        and is_active = true
+    `,
+    [input.societyId],
+  )
+  const maintenanceHeadId = accountHeads.rows.find((row) => row.code === 'INC-MAINT')?.id
+  const advanceHeadId = accountHeads.rows.find((row) => row.code === 'LIAB-RES-ADV')?.id
+  if (!maintenanceHeadId || !advanceHeadId) {
+    throw new AppError({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message: 'Maintenance income and resident-advance liability heads are required before applying advance credit.',
+    })
+  }
+
+  const chargeTypeLabel = input.chargeType === 'DG_SET'
+    ? 'DG Set'
+    : input.chargeType === 'CAM'
+      ? 'CAM'
+      : 'general'
+  const description = `${chargeTypeLabel} advance credit applied`
+  const voucherNumber = await nextJournalVoucherNumber(client, input.paymentDate)
+  const entry = await client.query<{ id: string; voucher_number: string }>(
+    `
+      insert into journal_entries (
+        society_id,
+        voucher_number,
+        payment_id,
+        billing_period_id,
+        entry_date,
+        description,
+        status,
+        posted_at
+      )
+      values ($1, $2, $3, $4, $5, $6, 'DRAFT', now())
+      returning id, voucher_number
+    `,
+    [
+      input.societyId,
+      voucherNumber,
+      input.paymentId,
+      input.billingPeriodId,
+      input.paymentDate,
+      description,
+    ],
+  )
+  const entryRow = entry.rows[0]
+  if (!entryRow) {
+    throw new AppError({
+      code: 'INTERNAL_ERROR',
+      statusCode: 500,
+      message: 'Advance-credit journal creation failed.',
+    })
+  }
+
+  await client.query(
+    `
+      insert into journal_lines (
+        journal_entry_id,
+        line_no,
+        account_head_id,
+        line_type,
+        amount,
+        description
+      )
+      values
+        ($1, 1, $2, 'DEBIT', $4, $5),
+        ($1, 2, $3, 'CREDIT', $4, $6)
+    `,
+    [
+      entryRow.id,
+      advanceHeadId,
+      maintenanceHeadId,
+      amount,
+      'Resident advance liability released',
+      `${chargeTypeLabel} maintenance income`,
+    ],
+  )
   await client.query(`update journal_entries set status = 'POSTED' where id = $1`, [entryRow.id])
 
   return entryRow
@@ -1270,36 +1433,35 @@ export const refreshMaintenanceReceiptJournalForPayment = async (
     })
   }
 
-  const incomeHeads = await client.query<{ code: string; id: string }>(
+  const accountHeads = await client.query<{ code: string; id: string }>(
     `
       select code, id
       from account_heads
       where (society_id = $1 or society_id is null)
-        and code in ('INC-MAINT', 'INC-LATE-FEE', 'INC-LATEFEE')
+        and code in ('INC-MAINT', 'INC-LATE-FEE', 'INC-LATEFEE', 'LIAB-RES-ADV')
         and is_active = true
     `,
     [input.societyId],
   )
-  const maintenanceHeadId = incomeHeads.rows.find((row) => row.code === 'INC-MAINT')?.id
+  const maintenanceHeadId = accountHeads.rows.find((row) => row.code === 'INC-MAINT')?.id
   const lateFeeHeadId =
-    incomeHeads.rows.find((row) => row.code === 'INC-LATE-FEE')?.id ??
-    incomeHeads.rows.find((row) => row.code === 'INC-LATEFEE')?.id
-  const lateFeeResult = await client.query<{ late_fee: string }>(
-    `
-      select coalesce(sum(late_fee_component), 0)::text as late_fee
-      from payment_allocations
-      where payment_id = $1
-    `,
-    [input.paymentId],
+    accountHeads.rows.find((row) => row.code === 'INC-LATE-FEE')?.id ??
+    accountHeads.rows.find((row) => row.code === 'INC-LATEFEE')?.id
+  const advanceHeadId = accountHeads.rows.find((row) => row.code === 'LIAB-RES-ADV')?.id
+  const receiptAmounts = await getMaintenanceReceiptAmounts(
+    client,
+    input.paymentId,
+    Number(paymentRow.amount),
   )
-  const amount = roundMoney(Number(paymentRow.amount))
-  const lateFee = roundMoney(Math.min(amount, Number(lateFeeResult.rows[0]?.late_fee ?? 0)))
-  const maintenanceIncome = roundMoney(amount - lateFee)
+  const { amount, advanceAmount, lateFee, maintenanceIncome } = receiptAmounts
   if (maintenanceIncome > 0 && !maintenanceHeadId) {
     throw new AppError({ code: 'VALIDATION_ERROR', statusCode: 400, message: 'Maintenance income head is required before refreshing receipts.' })
   }
   if (lateFee > 0 && !lateFeeHeadId) {
     throw new AppError({ code: 'VALIDATION_ERROR', statusCode: 400, message: 'Late-fee income head is required before refreshing receipts.' })
+  }
+  if (advanceAmount > 0 && !advanceHeadId) {
+    throw new AppError({ code: 'VALIDATION_ERROR', statusCode: 400, message: 'Resident-advance liability head is required before refreshing receipts.' })
   }
 
   const lines: Array<[number, string, 'DEBIT' | 'CREDIT', number, string]> = [
@@ -1310,6 +1472,9 @@ export const refreshMaintenanceReceiptJournalForPayment = async (
   }
   if (lateFee > 0) {
     lines.push([lines.length + 1, lateFeeHeadId!, 'CREDIT', lateFee, 'Late fee income'])
+  }
+  if (advanceAmount > 0) {
+    lines.push([lines.length + 1, advanceHeadId!, 'CREDIT', advanceAmount, 'Resident advance liability'])
   }
 
   await client.query(`delete from journal_lines where journal_entry_id = $1`, [journal.id])

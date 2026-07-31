@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type {
   BankAccount,
+  BillingPeriodChargeType,
   FlatDetail,
   FlatResidentRelationship,
   FlatSummary,
@@ -36,6 +37,8 @@ type AllocationPreview = {
   totalDue: number
   allocatedAmount: number
   advanceAmount: number
+  advanceApplicableChargeType: BillingPeriodChargeType | null
+  advanceSourceBillingPeriodId: string | null
   policy: string
 }
 
@@ -927,10 +930,15 @@ const resetForm = () => {
                 <dd>{{ formatMoney(preview.allocatedAmount) }}</dd>
               </div>
               <div>
-                <dt>Advance</dt>
+                <dt>{{ preview.advanceApplicableChargeType === 'DG_SET' ? 'DG Set advance' : 'Advance' }}</dt>
                 <dd>{{ formatMoney(preview.advanceAmount) }}</dd>
               </div>
             </dl>
+            <p v-if="preview.advanceAmount > 0" class="field-help">
+              {{ preview.advanceApplicableChargeType === 'DG_SET'
+                ? 'This amount is reserved for future DG Set bills for this flat.'
+                : 'This amount can be applied to a future bill for this flat.' }}
+            </p>
             <AppDataTable :value="preview.lines" responsive-layout="scroll">
               <Column field="billingPeriodLabel" header="Period" />
               <Column field="allocatedAmount" header="Allocated">

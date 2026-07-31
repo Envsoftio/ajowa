@@ -507,8 +507,16 @@ export default defineEventHandler(async (event) => {
             and flat_id = any($2::uuid[])
             and status = 'ACTIVE'
             and current_balance > 0
+            and (
+              applicable_charge_type is null
+              or applicable_charge_type = $3
+            )
         `,
-        [authMe.user.societyId, generatedDues.map((due) => due.flatId)],
+        [
+          authMe.user.societyId,
+          generatedDues.map((due) => due.flatId),
+          period.charge_type,
+        ],
       )
       const flatIdsWithAdvanceCredit = new Set(advanceCreditResult.rows.map((row) => row.flat_id))
 

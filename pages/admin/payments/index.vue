@@ -3,6 +3,7 @@ import type { DataTablePageEvent } from 'primevue/datatable'
 import type {
   BankAccount,
   BillingPeriod,
+  BillingPeriodChargeType,
   FlatDetail,
   FlatResidentRelationship,
   FlatSummary,
@@ -83,6 +84,16 @@ type PaymentAllocation = {
   allocationOrder: number
 }
 
+type PaymentAdvanceCredit = {
+  id: string
+  originalAmount: string
+  currentBalance: string
+  status: string
+  applicableChargeType: BillingPeriodChargeType | null
+  sourceBillingPeriodId: string | null
+  sourceBillingPeriodLabel: string | null
+}
+
 type PaymentSnapshot = {
   selectedDueIds?: string[]
   tenureMonths?: number
@@ -115,6 +126,7 @@ type PaymentDetail = {
   block_name: string | null
   payer_name: string | null
   allocations: PaymentAllocation[]
+  advance_credits: PaymentAdvanceCredit[]
 }
 
 type PaymentsResponse = {
@@ -131,6 +143,7 @@ type PaymentUpdateResponse = {
     amount: number
     allocatedAmount: number | null
     advanceAmount: number | null
+    advanceApplicableChargeType: BillingPeriodChargeType | null
     receiptInvalidated: boolean
     changed: boolean
   }
@@ -851,7 +864,9 @@ const savePaymentEdit = async () => {
       severity: 'success',
       summary: 'Payment updated',
       detail: response.data.advanceAmount && response.data.advanceAmount > 0
-        ? `${formatMoney(response.data.advanceAmount)} kept as advance.`
+        ? response.data.advanceApplicableChargeType === 'DG_SET'
+          ? `${formatMoney(response.data.advanceAmount)} kept for future DG Set bills.`
+          : `${formatMoney(response.data.advanceAmount)} kept as advance.`
         : undefined,
       life: 10000,
     })
@@ -1302,6 +1317,26 @@ const onProofFileChange = async (event: Event) => {
             <template #body="{ data: row }">{{ formatMoney(row.remainingBalance) }}</template>
           </Column>
         </AppDataTable>
+        <section v-if="selectedPayment.advance_credits.length > 0" class="surface-card">
+          <p class="eyebrow">Advance retained</p>
+          <AppDataTable :value="selectedPayment.advance_credits" responsive-layout="scroll">
+            <Column field="applicableChargeType" header="Applies to">
+              <template #body="{ data: row }">
+                {{ row.applicableChargeType === 'DG_SET' ? 'DG Set only' : 'Any bill' }}
+              </template>
+            </Column>
+            <Column field="sourceBillingPeriodLabel" header="Source period">
+              <template #body="{ data: row }">{{ row.sourceBillingPeriodLabel || '-' }}</template>
+            </Column>
+            <Column field="originalAmount" header="Original">
+              <template #body="{ data: row }">{{ formatMoney(row.originalAmount) }}</template>
+            </Column>
+            <Column field="currentBalance" header="Available">
+              <template #body="{ data: row }">{{ formatMoney(row.currentBalance) }}</template>
+            </Column>
+            <Column field="status" header="Status" />
+          </AppDataTable>
+        </section>
       </div>
     </Dialog>
 

@@ -18,6 +18,12 @@ import { createPdfBuffer, getSocietyStampImage } from './pdf'
 import { recomputeUserAccess } from './qr-access'
 import { uploadPrivateFile } from './storage'
 import { setCamAdvanceCoverageForPeriod } from './cam-advance'
+import {
+  getAdvanceCreditScopeLabel,
+  resolveAdvanceCreditContext,
+} from './payment-advance'
+import { postAdvanceCreditConsumptionJournal } from './finance'
+import type { BillingPeriodChargeType } from '~/types/domain'
 
 export const allocationModeSchema = z.enum([
   'OLDEST_UNPAID_FIRST',
@@ -115,7 +121,7 @@ type DueRow = {
   society_id: string
   billing_period_id: string
   billing_period_label: string
-  billing_period_charge_type: string
+  billing_period_charge_type: BillingPeriodChargeType
   billing_period_start_date: string
   billing_period_end_date: string
   flat_id: string
@@ -199,10 +205,19 @@ type PaymentReceiptAllocationRow = {
   allocation_order: number
 }
 
+type PaymentReceiptAdvanceCreditRow = {
+  original_amount: string
+  current_balance: string
+  status: string
+  applicable_charge_type: BillingPeriodChargeType | null
+  source_billing_period_label: string | null
+}
+
 type PaymentAmountEditAllocationLine = {
   dueId: string
   billingPeriodId: string
   billingPeriodLabel: string
+  billingPeriodChargeType: BillingPeriodChargeType
   dueAmount: number
   lateFeeComponent: number
   allocatedAmount: number
@@ -505,6 +520,7 @@ const previewPaymentAllocationWithClient = async (
         dueId: due.id,
         billingPeriodId: due.billing_period_id,
         billingPeriodLabel: due.billing_period_label,
+        billingPeriodChargeType: due.billing_period_charge_type,
         dueAmount: allocationAmounts.dueAmount,
         lateFeeComponent: allocationAmounts.lateFeeComponent,
         allocatedAmount,
@@ -513,6 +529,8 @@ const previewPaymentAllocationWithClient = async (
       }
     })
     .filter((line) => line.allocatedAmount > 0)
+
+  const advanceCredit = resolveAdvanceCreditContext(lines)
 
   return {
     lines,
@@ -523,6 +541,8 @@ const previewPaymentAllocationWithClient = async (
       lines.reduce((sum, line) => sum + line.allocatedAmount, 0),
     ),
     advanceAmount: roundMoney(Math.max(0, remainingPayment)),
+    advanceApplicableChargeType: advanceCredit.applicableChargeType,
+    advanceSourceBillingPeriodId: advanceCredit.sourceBillingPeriodId,
     policy: policy.excessPaymentHandling,
   }
 }
@@ -785,11 +805,14 @@ export const allocateMaintenancePaymentWithClient = async (
             user_id,
             flat_id,
             source_payment_id,
+            applicable_charge_type,
+            source_billing_period_id,
+            is_liability_accounted,
             original_amount,
             current_balance,
             notes
           )
-          values ($1, $2, $3, $4, $5, $5, $6)
+          values ($1, $2, $3, $4, $5, $6, true, $7, $7, $8)
           returning id
         `,
       [
@@ -797,8 +820,12 @@ export const allocateMaintenancePaymentWithClient = async (
         payment.payer_user_id,
         payment.received_for_flat_id,
         paymentId,
+        preview.advanceApplicableChargeType,
+        preview.advanceSourceBillingPeriodId,
         preview.advanceAmount,
-        'Excess payment retained as advance credit.',
+        preview.advanceApplicableChargeType === 'DG_SET'
+          ? 'Excess DG Set payment retained for future DG Set bills.'
+          : 'Excess payment retained as advance credit.',
       ],
     )
     await client.query(
@@ -822,6 +849,7 @@ export const allocateMaintenancePaymentWithClient = async (
     idempotent: false,
     affectedPeriods: affected,
     advanceAmount: preview.advanceAmount,
+    advanceApplicableChargeType: preview.advanceApplicableChargeType,
   }
 }
 
@@ -1323,6 +1351,7 @@ export const updatePaymentWithClient = async (
       amount: nextAmount,
       allocatedAmount: null,
       advanceAmount: null,
+      advanceApplicableChargeType: null,
       receiptInvalidated: false,
       changed: false,
       beforeState,
@@ -1338,6 +1367,8 @@ export const updatePaymentWithClient = async (
     totalDue: number
     allocatedAmount: number
     advanceAmount: number
+    advanceApplicableChargeType: BillingPeriodChargeType | null
+    advanceSourceBillingPeriodId: string | null
     policy: string
   } | null = null
 
@@ -1506,11 +1537,14 @@ export const updatePaymentWithClient = async (
             user_id,
             flat_id,
             source_payment_id,
+            applicable_charge_type,
+            source_billing_period_id,
+            is_liability_accounted,
             original_amount,
             current_balance,
             notes
           )
-          values ($1, $2, $3, $4, $5, $5, $6)
+          values ($1, $2, $3, $4, $5, $6, true, $7, $7, $8)
           returning id
         `,
         [
@@ -1518,8 +1552,12 @@ export const updatePaymentWithClient = async (
           nextPayerUserId,
           nextFlatId,
           payment.id,
+          nextPreview.advanceApplicableChargeType,
+          nextPreview.advanceSourceBillingPeriodId,
           nextPreview.advanceAmount,
-          'Excess payment retained as advance credit after payment edit.',
+          nextPreview.advanceApplicableChargeType === 'DG_SET'
+            ? 'Excess DG Set payment retained for future DG Set bills after payment edit.'
+            : 'Excess payment retained as advance credit after payment edit.',
         ],
       )
       await client.query(
@@ -1549,6 +1587,8 @@ export const updatePaymentWithClient = async (
       totalDue: nextPreview.totalDue,
       allocatedAmount: nextPreview.allocatedAmount,
       advanceAmount: nextPreview.advanceAmount,
+      advanceApplicableChargeType: nextPreview.advanceApplicableChargeType,
+      advanceSourceBillingPeriodId: nextPreview.advanceSourceBillingPeriodId,
       policy: nextPreview.policy,
     }
   }
@@ -1641,6 +1681,7 @@ export const updatePaymentWithClient = async (
     amount: nextAmount,
     allocatedAmount: preview?.allocatedAmount ?? null,
     advanceAmount: preview?.advanceAmount ?? null,
+    advanceApplicableChargeType: preview?.advanceApplicableChargeType ?? null,
     receiptInvalidated: Boolean(payment.receipt_file_path && receiptShouldInvalidate),
     changed: true,
     beforeState,
@@ -1757,15 +1798,32 @@ export const consumeAdvanceCreditsForDueWithClient = async (
     id: string
     current_balance: string
     source_payment_id: string | null
+    applicable_charge_type: BillingPeriodChargeType | null
+    is_liability_accounted: boolean
   }>(
     `
-      select id, current_balance::text, source_payment_id
+      select
+        id,
+        current_balance::text,
+        source_payment_id,
+        applicable_charge_type,
+        is_liability_accounted
       from resident_advance_credits
-      where society_id = $1 and flat_id = $2 and status = 'ACTIVE' and current_balance > 0
-      order by created_at asc
+      where society_id = $1
+        and flat_id = $2
+        and status = 'ACTIVE'
+        and current_balance > 0
+        and (
+          applicable_charge_type is null
+          or applicable_charge_type = $3
+        )
+      order by
+        case when applicable_charge_type = $3 then 0 else 1 end,
+        created_at asc,
+        id asc
       for update
     `,
-    [due.society_id, due.flat_id],
+    [due.society_id, due.flat_id, due.billing_period_charge_type],
   )
 
   for (const credit of credits.rows) {
@@ -1799,8 +1857,21 @@ export const consumeAdvanceCreditsForDueWithClient = async (
         where id = $1
         returning id
       `,
-      [credit.id, amount, `Advance credit consumed against due ${dueId}.`, settlementDate],
+      [
+        credit.id,
+        amount,
+        `${getAdvanceCreditScopeLabel(credit.applicable_charge_type)} advance credit consumed against due ${dueId}.`,
+        settlementDate,
+      ],
     )
+    const advancePaymentId = payment.rows[0]?.id
+    if (!advancePaymentId) {
+      throw new AppError({
+        code: 'INTERNAL_ERROR',
+        statusCode: 500,
+        message: 'Advance-credit payment creation failed.',
+      })
+    }
     const allocation = await client.query<{ id: string }>(
       `
         insert into payment_allocations (
@@ -1817,7 +1888,7 @@ export const consumeAdvanceCreditsForDueWithClient = async (
         returning id
       `,
       [
-        payment.rows[0]?.id,
+        advancePaymentId,
         dueId,
         amount,
         allocationAmounts.dueAmount,
@@ -1849,11 +1920,21 @@ export const consumeAdvanceCreditsForDueWithClient = async (
       [
         credit.id,
         amount,
-        payment.rows[0]?.id,
+        advancePaymentId,
         allocation.rows[0]?.id,
         `Consumed against due ${dueId}.`,
       ],
     )
+    if (credit.is_liability_accounted) {
+      await postAdvanceCreditConsumptionJournal(client, {
+        paymentId: advancePaymentId,
+        societyId: due.society_id,
+        billingPeriodId: due.billing_period_id,
+        paymentDate: settlementDate,
+        amount,
+        chargeType: due.billing_period_charge_type,
+      })
+    }
     remaining = roundMoney(remaining - amount)
     consumedAmount = roundMoney(consumedAmount + amount)
     consumedCreditCount += 1
@@ -1991,10 +2072,26 @@ export const getPaymentReceiptData = async (
     `,
     [paymentId],
   )
+  const advanceCreditsResult = await queryRows<PaymentReceiptAdvanceCreditRow>(
+    `
+      select
+        rac.original_amount::text,
+        rac.current_balance::text,
+        rac.status::text,
+        rac.applicable_charge_type,
+        bp.label as source_billing_period_label
+      from resident_advance_credits rac
+      left join billing_periods bp on bp.id = rac.source_billing_period_id
+      where rac.source_payment_id = $1
+      order by rac.created_at asc
+    `,
+    [paymentId],
+  )
 
   return {
     payment,
     allocations: allocationsResult.rows,
+    advanceCredits: advanceCreditsResult.rows,
   }
 }
 
@@ -2007,7 +2104,7 @@ export const generatePaymentReceiptPdf = async (
     allowLinkedFlatAccess?: boolean
   },
 ) => {
-  const { payment, allocations } = await getPaymentReceiptData(
+  const { payment, allocations, advanceCredits } = await getPaymentReceiptData(
     paymentId,
     access,
   )
@@ -2069,6 +2166,35 @@ export const generatePaymentReceiptPdf = async (
       '',
     ])
   }
+
+  const advanceCreditBody: unknown[][] = [
+    [
+      { text: 'Scope', style: 'tableHeader' },
+      { text: 'Source Period', style: 'tableHeader' },
+      { text: 'Retained', style: 'tableHeader' },
+      { text: 'Available', style: 'tableHeader' },
+      { text: 'Status', style: 'tableHeader' },
+    ],
+    ...advanceCredits.map((credit) => [
+      {
+        text: getAdvanceCreditScopeLabel(credit.applicable_charge_type),
+        style: 'tableCell',
+      },
+      {
+        text: credit.source_billing_period_label ?? '-',
+        style: 'tableCell',
+      },
+      {
+        text: formatReceiptMoney(Number(credit.original_amount)),
+        style: 'tableCellRight',
+      },
+      {
+        text: formatReceiptMoney(Number(credit.current_balance)),
+        style: 'tableCellRight',
+      },
+      { text: credit.status, style: 'tableCell' },
+    ]),
+  ]
 
   const docDefinition = {
     pageMargins: [36, 42, 36, 36],
@@ -2162,6 +2288,23 @@ export const generatePaymentReceiptPdf = async (
         },
         layout: 'lightHorizontalLines',
       },
+      ...(advanceCredits.length > 0
+        ? [
+            {
+              text: 'Advance Retained',
+              style: 'sectionTitle',
+              margin: [0, 16, 0, 6],
+            },
+            {
+              table: {
+                headerRows: 1,
+                widths: ['20%', '*', '18%', '18%', '16%'],
+                body: advanceCreditBody,
+              },
+              layout: 'lightHorizontalLines',
+            },
+          ]
+        : []),
       {
         columns: [
           {
@@ -2194,6 +2337,7 @@ export const generatePaymentReceiptPdf = async (
     styles: {
       brand: { fontSize: 14, color: '#0f766e', bold: true },
       title: { fontSize: 20, bold: true, color: '#2f4050' },
+      sectionTitle: { fontSize: 10, bold: true, color: '#2f4050' },
       receiptNumber: {
         fontSize: 10,
         bold: true,
