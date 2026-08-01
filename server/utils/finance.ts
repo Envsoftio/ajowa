@@ -1092,8 +1092,8 @@ export const postMaintenanceReceiptJournal = async (
   input: { paymentId: string; societyId: string; postedByUserId: string; bankAccountId?: string | null },
 ) => {
   const existing = await client.query<{ id: string; voucher_number: string }>(
-    'select id, voucher_number from journal_entries where payment_id = $1 limit 1',
-    [input.paymentId],
+    'select id, voucher_number from journal_entries where payment_id = $1 and society_id = $2 limit 1',
+    [input.paymentId, input.societyId],
   )
   if (existing.rows[0]) {
     return existing.rows[0]

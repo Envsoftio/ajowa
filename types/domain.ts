@@ -763,6 +763,34 @@ export type CamAdvanceCoverage = AuditFields & {
   primaryResidentName: string | null
 }
 
+export type DgAdvanceCreditStatus =
+  | 'ACTIVE'
+  | 'CONSUMED'
+  | 'ADJUSTED'
+  | 'EXPIRED'
+  | 'REVERSED'
+
+export type DgAdvanceCredit = AuditFields & {
+  id: string
+  societyId: string
+  flatId: string
+  flatNumber: string
+  blockName: string
+  unitType: string
+  payerUserId: string
+  payerName: string | null
+  originalAmount: number
+  currentBalance: number
+  status: DgAdvanceCreditStatus
+  sourcePaymentId: string | null
+  paymentDate: string | null
+  paymentMode: string | null
+  reference: string | null
+  receiptNumber: string | null
+  paymentNotes: string | null
+  creditNotes: string | null
+}
+
 export type CamPaymentArrangement = AuditFields & {
   id: string
   societyId: string

@@ -233,6 +233,11 @@ export const shellNavigation: Record<AppShellType, AppNavGroup[]> = {
           to: '/admin/billing/dg-set',
           icon: 'pi pi-bolt',
         },
+        {
+          label: 'DG Advance',
+          to: '/admin/billing/dg-advance',
+          icon: 'pi pi-wallet',
+        },
         { label: 'Dues', to: '/admin/billing/dues', icon: 'pi pi-wallet' },
         {
           label: 'Defaulters',

@@ -4,10 +4,20 @@ import {
   getAdvanceApplicableChargeType,
   getAdvanceCreditScope,
   getAdvanceCreditScopeLabel,
+  isAdvanceConsumptionAllowedForDueStatus,
   isAdvanceCreditEligibleForCharge,
   resolveAdvanceCreditContext,
   wouldApplyAdvanceOutsideScope,
 } from '../server/utils/payment-advance.ts'
+
+test('does not consume advance credits against closed dues', () => {
+  for (const status of ['PAID', 'WAIVED', 'CANCELLED']) {
+    assert.equal(isAdvanceConsumptionAllowedForDueStatus(status), false)
+  }
+  for (const status of ['OPEN', 'PARTIALLY_PAID', 'OVERDUE']) {
+    assert.equal(isAdvanceConsumptionAllowedForDueStatus(status), true)
+  }
+})
 
 test('scopes excess from one DG Set bill to DG Set and its source period', () => {
   const result = resolveAdvanceCreditContext([

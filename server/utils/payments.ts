@@ -22,6 +22,7 @@ import {
   getAdvanceApplicableChargeType,
   getAdvanceCreditScope,
   getAdvanceCreditScopeLabel,
+  isAdvanceConsumptionAllowedForDueStatus,
   isAdvanceCreditEligibleForCharge,
   resolveAdvanceCreditContext,
   wouldApplyAdvanceOutsideScope,
@@ -2064,6 +2065,14 @@ export const consumeAdvanceCreditsForDueWithClient = async (
     policy.graceDays,
     policy.lateFeePerDay,
   )
+  if (!isAdvanceConsumptionAllowedForDueStatus(due.status)) {
+    return {
+      consumedAmount: 0,
+      consumedCreditCount: 0,
+      balanceAmount: currentComputed.balanceAmount,
+      affectedAccessPair: null,
+    }
+  }
   let remaining = currentComputed.balanceAmount
   let consumedAmount = 0
   let consumedCreditCount = 0

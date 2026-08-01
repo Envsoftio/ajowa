@@ -63,6 +63,11 @@ export const isAdvanceCreditEligibleForCharge = (
   ? applicableChargeType === 'DG_SET'
   : applicableChargeType === null || applicableChargeType === targetChargeType
 
+const closedDueStatuses = new Set(['PAID', 'WAIVED', 'CANCELLED'])
+
+export const isAdvanceConsumptionAllowedForDueStatus = (status: string) =>
+  !closedDueStatuses.has(status)
+
 const getOutOfScopeAllocatedAmount = (
   lines: ScopedPaymentAllocation[],
   applicableChargeType: BillingPeriodChargeType | null,
