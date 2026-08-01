@@ -98,7 +98,7 @@ type DueFilterSortDirection = NonNullable<DueFilterPayload['sortDirection']>
 const api = useApi()
 const toast = useToast()
 const authStore = useAuthStore()
-const notificationBatchSize = 500
+const notificationBatchSize = 40
 const dueMutationBatchSize = 500
 
 const hasPermission = (permission: StaffPermission) =>

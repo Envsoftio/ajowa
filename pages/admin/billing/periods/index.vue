@@ -1,4 +1,9 @@
 <script setup lang="ts">
+import {
+  BILL_NOTIFICATION_REQUEST_BATCH_SIZE,
+  chunkBillingRequestIds,
+  getDueGenerationFlatIdBatches,
+} from '~/shared/billing'
 import type {
   BillingFrequency,
   BillingPeriod,
@@ -30,6 +35,16 @@ type GenerationResponse = {
     advanceAppliedCount: number
     advanceAppliedAmount: number
     dueIds: string[]
+    generatedDues: Array<{ dueId: string; flatId: string }>
+    skippedDues: Array<{ dueId: string; flatId: string }>
+  }
+}
+type BillSendResponse = {
+  ok: true
+  data: {
+    eligible: number
+    jobCount: number
+    workerStarted: boolean
   }
 }
 
@@ -406,18 +421,33 @@ const isDgCharge = (charge: ChargeBreakdownItem) =>
   charge.chargeType === 'DG_SET' ||
   /\b(dg\s*set|dgset|generator|power\s*back\s*up|power\s*backup)\b/i.test(charge.label)
 
-const getPreviewChargeTotal = (predicate: (charge: ChargeBreakdownItem) => boolean) =>
+const getPreviewChargeTotal = (
+  predicate: (charge: ChargeBreakdownItem) => boolean,
+  getSupplementalAmount: (charge: ChargeBreakdownItem) => number = () => 0,
+) =>
   generationPreview.value?.flatTypeBreakdown.reduce(
     (sum, group) =>
       sum +
       group.chargeTemplate
         .filter(predicate)
-        .reduce((chargeSum, charge) => chargeSum + Number(charge.amount ?? 0) * group.flatCount, 0),
+        .reduce(
+          (chargeSum, charge) =>
+            chargeSum +
+            (Number(charge.amount ?? 0) + getSupplementalAmount(charge)) *
+              group.flatCount,
+          0,
+        ),
     0,
   ) ?? 0
 
 const generationCamTotal = computed(() => getPreviewChargeTotal(isCamCharge))
-const generationDgTotal = computed(() => getPreviewChargeTotal(isDgCharge))
+const generationDgTotal = computed(() =>
+  generationPreview.value?.billingPeriodChargeType === 'DG_SET'
+    ? generationPreview.value.totalAmount
+    : getPreviewChargeTotal(isDgCharge, (charge) =>
+        Number(charge.interestAmount ?? 0),
+      ),
+)
 
 const loadGenerationPreview = async () => {
   if (!generationTarget.value) return
@@ -425,10 +455,11 @@ const loadGenerationPreview = async () => {
   const response = await api<PreviewResponse>(
     '/api/admin/billing/dues/preview',
     {
-      query: {
+      method: 'POST',
+      body: {
         billingPeriodId: generationTarget.value.id,
         flatIds: selectedFlatIds.value.length
-          ? selectedFlatIds.value.join(',')
+          ? [...selectedFlatIds.value]
           : undefined,
       },
     },
@@ -469,27 +500,94 @@ watch(
 
 const generateDues = async () => {
   if (!generationTarget.value) return
+  const isDgGeneration = generationTarget.value.chargeType === 'DG_SET'
+  const batches = getDueGenerationFlatIdBatches({
+    chargeType: generationTarget.value.chargeType,
+    selectedFlatIds: selectedFlatIds.value,
+    availableFlatIds: flatOptions.value.map((flat) => flat.value),
+  })
+
+  if (batches.length === 0) {
+    toast.add({
+      severity: 'warn',
+      summary: 'No flats available',
+      detail: 'There are no active flats available for bill generation.',
+      life: 10000,
+    })
+    return
+  }
+
   generating.value = true
 
   try {
-    const response = await api<GenerationResponse>('/api/admin/billing/dues', {
-      method: 'POST',
-      body: {
-        billingPeriodId: generationTarget.value.id,
-        flatIds: selectedFlatIds.value.length
-          ? selectedFlatIds.value
-          : undefined,
-      },
-    })
-    lastGeneratedDueIds.value = response.data.dueIds
+    let generated = 0
+    let skipped = 0
+    let advanceAppliedAmount = 0
+    const dueIds: string[] = []
+
+    for (const flatIds of batches) {
+      const response = await api<GenerationResponse>('/api/admin/billing/dues', {
+        method: 'POST',
+        body: {
+          billingPeriodId: generationTarget.value.id,
+          flatIds,
+        },
+      })
+
+      generated += response.data.generated
+      skipped += response.data.skipped
+      advanceAppliedAmount += response.data.advanceAppliedAmount
+      if (isDgGeneration) {
+        dueIds.push(
+          ...response.data.generatedDues.map((due) => due.dueId),
+          ...response.data.skippedDues.map((due) => due.dueId),
+        )
+      } else {
+        dueIds.push(...response.data.dueIds)
+      }
+      lastGeneratedDueIds.value = Array.from(new Set(dueIds))
+    }
+
+    let emailedBillCount = 0
+    let emailJobCount = 0
+    let emailWorkerStarted = false
+    if (
+      isDgGeneration &&
+      dueIds.length > 0
+    ) {
+      for (const batchDueIds of chunkBillingRequestIds(
+        Array.from(new Set(dueIds)),
+        BILL_NOTIFICATION_REQUEST_BATCH_SIZE,
+      )) {
+        const response = await api<BillSendResponse>(
+          '/api/admin/billing/dues/send-bills',
+          {
+            method: 'POST',
+            body: {
+              dueIds: batchDueIds,
+              channels: ['EMAIL'],
+            },
+          },
+        )
+        emailedBillCount += response.data.eligible
+        emailJobCount += response.data.jobCount
+        emailWorkerStarted ||= response.data.workerStarted
+      }
+    }
+
     toast.add({
       severity: 'success',
       summary: 'Bills generated',
       detail: [
-        `${response.data.generated} created`,
-        `${response.data.skipped} skipped`,
-        response.data.advanceAppliedAmount > 0
-          ? `${formatMoney(response.data.advanceAppliedAmount)} advance applied`
+        `${generated} created`,
+        `${skipped} skipped`,
+        advanceAppliedAmount > 0
+          ? `${formatMoney(advanceAppliedAmount)} advance applied`
+          : '',
+        isDgGeneration && emailedBillCount > 0
+          ? emailJobCount > 0
+            ? `${emailJobCount} email job${emailJobCount === 1 ? '' : 's'} queued for ${emailedBillCount} bill${emailedBillCount === 1 ? '' : 's'}${emailWorkerStarted ? '' : ' (scheduled retry will pick them up)'}`
+            : `Email delivery checked for ${emailedBillCount} existing bill${emailedBillCount === 1 ? '' : 's'}`
           : '',
       ].filter(Boolean).join(', ') + '.',
       life: 10000,

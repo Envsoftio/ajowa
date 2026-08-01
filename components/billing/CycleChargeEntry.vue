@@ -1,4 +1,8 @@
 <script setup lang="ts">
+import {
+  BILL_NOTIFICATION_REQUEST_BATCH_SIZE,
+  DG_DUE_GENERATION_BATCH_SIZE,
+} from '~/shared/billing'
 import type {
   BillingFrequency,
   BillingPeriod,
@@ -115,6 +119,7 @@ type BillSendResponse = {
   data: {
     eligible: number
     jobCount: number
+    workerStarted: boolean
   }
 }
 
@@ -188,8 +193,6 @@ const props = withDefaults(
 const api = useApi()
 const route = useRoute()
 const toast = useToast()
-
-const DG_BILL_GENERATION_BATCH_SIZE = 40
 
 const formatMoney = (value: number) =>
   new Intl.NumberFormat('en-IN', {
@@ -422,13 +425,14 @@ const loadingGenerationPreview = ref(false)
 const selectedFlatIds = ref<string[]>([])
 const generating = ref(false)
 const recomputingCamDues = ref(false)
-const sendBillsAfterGeneration = ref(false)
+const sendBillsAfterGeneration = ref(props.mode === 'DG')
 const billChannels = ref<BillChannel[]>(['EMAIL'])
 const billDeliveryFlatIds = ref<string[]>([])
 const generationProgressSteps = ref<GenerationProgressStep[]>([])
 const activeGenerationStepId = ref<string | null>(null)
 const generationResult = ref<GenerationResult | null>(null)
 const lastGeneratedDueIds = ref<string[]>([])
+let generationPreviewRequestId = 0
 const { downloadingBillPdfs, downloadBillPdfs } = useBillPdfZipDownload()
 
 const billChannelOptions: Array<{ label: string; value: BillChannel }> = [
@@ -533,6 +537,22 @@ const filteredChargeEntries = computed(() => {
   )
 })
 
+const getEntryConfiguredBillAmount = (
+  entry: Pick<
+    VariableChargeEntry,
+    'amount' | 'interestAmount'
+  >,
+) =>
+  Number(entry.amount ?? 0) +
+  (props.mode === 'DG'
+    ? Number(entry.interestAmount ?? 0)
+    : 0)
+
+const getEntryGenerationBillableAmount = (entry: VariableChargeEntry) =>
+  props.mode === 'DG'
+    ? getEntryConfiguredBillAmount(entry)
+    : getEntryNetBillableAmount(entry)
+
 const flatOptions = computed(() =>
   chargeEntries.value.map((entry) => ({
     label: `${entry.blockName} ${entry.flatNumber} - ${entry.unitType}`,
@@ -544,7 +564,8 @@ const billDeliveryFlatOptions = computed(() =>
   chargeEntries.value
     .filter(
       (entry) =>
-        getEntryNetBillableAmount(entry) > 0 && !isCamAdvanceCoveredForEntry(entry),
+        getEntryGenerationBillableAmount(entry) > 0 &&
+        !isCamAdvanceCoveredForEntry(entry),
     )
     .map((entry) => ({
       label: `${entry.blockName} ${entry.flatNumber} - ${entry.unitType}`,
@@ -561,14 +582,16 @@ const selectedBillDeliveryCount = computed(
 
 const filledChargeCount = computed(
   () =>
-    chargeEntries.value.filter((entry) => Number(entry.amount ?? 0) > 0).length,
+    chargeEntries.value.filter((entry) => getEntryConfiguredBillAmount(entry) > 0)
+      .length,
 )
 
 const billableFlatIds = computed(() =>
   chargeEntries.value
     .filter(
       (entry) =>
-        getEntryNetBillableAmount(entry) > 0 && !isCamAdvanceCoveredForEntry(entry),
+        getEntryGenerationBillableAmount(entry) > 0 &&
+        !isCamAdvanceCoveredForEntry(entry),
     )
     .map((entry) => entry.flatId),
 )
@@ -655,7 +678,7 @@ const camRunGroups = computed(() => {
 
 const chargeTotal = computed(() =>
   chargeEntries.value.reduce(
-    (sum, entry) => sum + Number(entry.amount ?? 0),
+    (sum, entry) => sum + getEntryConfiguredBillAmount(entry),
     0,
   ),
 )
@@ -1122,7 +1145,7 @@ const isCamAdvanceCoveredForEntry = (
 const getRecordPaymentRoute = (entry: VariableChargeEntry) => {
   const amount = props.camRunFlow
     ? getEntryNetBillableAmount(entry)
-    : Number(entry.amount ?? 0)
+    : getEntryConfiguredBillAmount(entry)
   const billingPeriodId = getRecordPaymentPeriod(entry)?.id ?? ''
 
   return {
@@ -1147,7 +1170,9 @@ const variableChargeExportUrl = (format: 'pdf' | 'xlsx') => {
 }
 
 const canRecordPaymentForEntry = (entry: VariableChargeEntry) =>
-  (props.camRunFlow ? getEntryNetBillableAmount(entry) : Number(entry.amount ?? 0)) > 0 &&
+  (props.camRunFlow
+    ? getEntryNetBillableAmount(entry)
+    : getEntryConfiguredBillAmount(entry)) > 0 &&
   Number(getRecordPaymentPeriod(entry)?.dueCount ?? 0) > 0
 
 const getRecordPaymentTitle = (entry: VariableChargeEntry) =>
@@ -1552,31 +1577,39 @@ const loadGenerationPreview = async () => {
   if (!selectedPeriod.value) return
 
   if (selectedFlatIds.value.length === 0) {
+    generationPreviewRequestId += 1
     generationPreview.value = null
+    loadingGenerationPreview.value = false
     return
   }
 
+  const requestId = ++generationPreviewRequestId
   loadingGenerationPreview.value = true
 
   try {
     const response = await api<PreviewResponse>(
       '/api/admin/billing/dues/preview',
       {
-        query: {
+        method: 'POST',
+        body: {
           billingPeriodId: selectedPeriod.value.id,
-          flatIds: selectedFlatIds.value.join(','),
+          flatIds: [...selectedFlatIds.value],
         },
       },
     )
 
-    generationPreview.value = response.data
+    if (requestId === generationPreviewRequestId) {
+      generationPreview.value = response.data
+    }
   } finally {
-    loadingGenerationPreview.value = false
+    if (requestId === generationPreviewRequestId) {
+      loadingGenerationPreview.value = false
+    }
   }
 }
 
 const resetBillDeliveryOptions = (flatIds: string[]) => {
-  sendBillsAfterGeneration.value = false
+  sendBillsAfterGeneration.value = props.mode === 'DG'
   billChannels.value = ['EMAIL']
   billDeliveryFlatIds.value = [...flatIds]
 }
@@ -1598,23 +1631,60 @@ const sendGeneratedBillNotifications = async (
   )
 
   if (dueIds.length === 0) {
-    return { eligible: 0, jobCount: 0 }
+    return { eligible: 0, jobCount: 0, workerStarted: false }
   }
 
-  const response = await api<BillSendResponse>(
-    '/api/admin/billing/dues/send-bills',
-    {
-      method: 'POST',
-      showErrorToast: false,
-      body: {
-        dueIds,
-        channels: billChannels.value,
-      },
-    },
-  )
+  const result = {
+    eligible: 0,
+    jobCount: 0,
+    workerStarted: false,
+  }
 
-  return response.data
+  for (const batchDueIds of chunkFlatIds(
+    dueIds,
+    BILL_NOTIFICATION_REQUEST_BATCH_SIZE,
+  )) {
+    const response = await api<BillSendResponse>(
+      '/api/admin/billing/dues/send-bills',
+      {
+        method: 'POST',
+        showErrorToast: false,
+        body: {
+          dueIds: batchDueIds,
+          channels: billChannels.value,
+        },
+      },
+    )
+
+    result.eligible += response.data.eligible
+    result.jobCount += response.data.jobCount
+    result.workerStarted ||= response.data.workerStarted
+  }
+
+  return result
 }
+
+const formatBillDeliveryResult = (
+  result: BillSendResponse['data'],
+) => {
+  const queued = `${formatUnit(result.jobCount, 'delivery job')} queued for ${formatUnit(result.eligible, 'bill')}`
+
+  if (!billChannels.value.includes('EMAIL')) {
+    return queued
+  }
+
+  return result.workerStarted
+    ? `${queued}; email delivery started`
+    : `${queued}; email delivery did not start—retry Send Bills from Billing Dues`
+}
+
+const billEmailWorkerFailed = (result: BillSendResponse['data'] | null) =>
+  Boolean(
+    result &&
+    result.eligible > 0 &&
+    billChannels.value.includes('EMAIL') &&
+    !result.workerStarted,
+  )
 
 const getUniqueDueIds = (targets: GeneratedDueTarget[]) =>
   Array.from(new Set(targets.map((target) => target.dueId)))
@@ -1637,7 +1707,20 @@ const downloadLastGeneratedBillPdfs = () => {
   })
 }
 
-const openGenerationDialog = async () => {
+const downloadSelectedPeriodDgBillPdfs = () => {
+  if (!selectedPeriod.value || props.mode !== 'DG') return
+
+  void downloadBillPdfs({
+    filters: {
+      billingPeriodId: selectedPeriod.value.id,
+      chargeType: 'DG_SET',
+      sortBy: 'flatNumber',
+      sortDirection: 'asc',
+    },
+  })
+}
+
+const openGenerationDialog = () => {
   resetGenerationProgress()
 
   if (props.camRunFlow) {
@@ -1707,7 +1790,6 @@ const openGenerationDialog = async () => {
   resetBillDeliveryOptions(selectedFlatIds.value)
   generationPreview.value = null
   generationDialogVisible.value = true
-  await loadGenerationPreview()
 }
 
 const generateDues = async () => {
@@ -1869,7 +1951,7 @@ const generateDues = async () => {
       completeGenerationProgressStep(
         'bill-delivery',
         sentBills
-          ? `${formatUnit(sentBills.jobCount, 'delivery job')} queued for ${formatUnit(sentBills.eligible, 'bill')}.`
+          ? formatBillDeliveryResult(sentBills)
           : 'Bill delivery skipped.',
       )
 
@@ -1885,7 +1967,7 @@ const generateDues = async () => {
       )
 
       toast.add({
-        severity: 'success',
+        severity: billEmailWorkerFailed(sentBills) ? 'warn' : 'success',
         summary: 'CAM bills generated',
         detail:
           [
@@ -1904,7 +1986,7 @@ const generateDues = async () => {
               ? `${formatMoney(advanceAppliedAmount)} advance applied across ${formatUnit(advanceAppliedCount, 'flat')}`
               : '',
             sentBills
-              ? `${sentBills.jobCount} delivery job${sentBills.jobCount === 1 ? '' : 's'} queued`
+              ? formatBillDeliveryResult(sentBills)
               : '',
           ]
             .filter(Boolean)
@@ -1939,7 +2021,7 @@ const generateDues = async () => {
   const selectedFlatIdsForRun = [...selectedFlatIds.value]
   const flatIdBatches = chunkFlatIds(
     selectedFlatIdsForRun,
-    DG_BILL_GENERATION_BATCH_SIZE,
+    DG_DUE_GENERATION_BATCH_SIZE,
   )
   const billTargets: GeneratedDueTarget[] = []
   let completedBatchCount = 0
@@ -1960,7 +2042,7 @@ const generateDues = async () => {
 
     for (const [batchIndex, flatIds] of flatIdBatches.entries()) {
       const batchNumber = batchIndex + 1
-      const processedBeforeBatch = batchIndex * DG_BILL_GENERATION_BATCH_SIZE
+      const processedBeforeBatch = batchIndex * DG_DUE_GENERATION_BATCH_SIZE
 
       updateGenerationProgressStep('generate-dues', {
         detail: `Batch ${batchNumber} of ${flatIdBatches.length}: creating DG Set bills for flats ${processedBeforeBatch + 1}-${processedBeforeBatch + flatIds.length} of ${selectedFlatIdsForRun.length}.`,
@@ -2013,7 +2095,7 @@ const generateDues = async () => {
     completeGenerationProgressStep(
       'bill-delivery',
       sentBills
-        ? `${formatUnit(sentBills.jobCount, 'delivery job')} queued for ${formatUnit(sentBills.eligible, 'bill')}.`
+        ? formatBillDeliveryResult(sentBills)
         : 'Bill delivery skipped.',
     )
 
@@ -2036,7 +2118,7 @@ const generateDues = async () => {
     }
 
     toast.add({
-      severity: 'success',
+      severity: billEmailWorkerFailed(sentBills) ? 'warn' : 'success',
       summary: 'DG Set bills generated',
       detail:
         [
@@ -2046,7 +2128,7 @@ const generateDues = async () => {
             ? `${formatMoney(advanceAppliedAmount)} advance applied`
             : '',
           sentBills
-            ? `${sentBills.jobCount} delivery job${sentBills.jobCount === 1 ? '' : 's'} queued`
+            ? formatBillDeliveryResult(sentBills)
             : '',
         ]
           .filter(Boolean)
@@ -2242,6 +2324,17 @@ watch(
             severity="secondary"
             outlined
             @click="openCreatePeriod"
+          />
+          <Button
+            v-if="mode === 'DG' && selectedPeriod"
+            label="Download period DG PDFs"
+            icon="pi pi-file-pdf"
+            severity="secondary"
+            outlined
+            :loading="downloadingBillPdfs"
+            :disabled="generating"
+            title="Download every generated DG Set bill for the selected period as one ZIP"
+            @click="downloadSelectedPeriodDgBillPdfs"
           />
           <Button
             v-if="lastGeneratedDueIds.length > 0"
@@ -2594,6 +2687,13 @@ watch(
           reading below opening reading.
         </Message>
 
+        <Message v-if="mode === 'DG'" severity="info">
+          Previous DG amount is saved and printed for reference only; it does
+          not change the amount payable. Interest is a financial charge and is
+          added before applicable payments, advance credits, and waivers are
+          deducted.
+        </Message>
+
         <AppSkeletonState v-if="loadingCharges" />
         <AppDataTable
           v-else
@@ -2754,6 +2854,50 @@ watch(
                   {{ getEntryCamAdvanceLabel(row) }}
                 </p>
               </div>
+            </template>
+          </Column>
+          <Column
+            v-if="mode === 'DG'"
+            style="min-width: 10rem"
+          >
+            <template #header>
+              <span class="field-label">
+                Previous DG amount (reference)
+                <AppHelpIcon
+                  text="Reference only. This previous DG amount is saved and printed on the bill, but it does not increase the payable balance or create a receivable. Enter 0 when no reference amount is needed."
+                />
+              </span>
+            </template>
+            <template #body="{ data: row }">
+              <InputNumber
+                v-model="row.previousOutstanding"
+                :min="0"
+                :max-fraction-digits="2"
+                placeholder="0"
+                fluid
+              />
+            </template>
+          </Column>
+          <Column
+            v-if="mode === 'DG'"
+            style="min-width: 9rem"
+          >
+            <template #header>
+              <span class="field-label">
+                Interest
+                <AppHelpIcon
+                  text="Financial charge. This interest amount increases the payable balance. Enter the calculated amount, or 0 when no interest applies."
+                />
+              </span>
+            </template>
+            <template #body="{ data: row }">
+              <InputNumber
+                v-model="row.interestAmount"
+                :min="0"
+                :max-fraction-digits="2"
+                placeholder="0"
+                fluid
+              />
             </template>
           </Column>
           <Column
@@ -3104,6 +3248,13 @@ watch(
               <strong>{{ generationPreview.totalFlats }}</strong>
               <small>{{ generationPreview.skippedExisting }} skipped</small>
             </div>
+            <div v-if="mode === 'DG'">
+              <span>Previous DG reference</span>
+              <strong>{{
+                formatMoney(generationPreview.dgPreviousReferenceAmount ?? 0)
+              }}</strong>
+              <small>Reference only · not included in payable</small>
+            </div>
             <div>
               <span>{{ amountSummaryLabel }}</span>
               <strong>{{ formatMoney(generationChargeTotal) }}</strong>
@@ -3154,8 +3305,16 @@ watch(
           <section class="billing-delivery-panel">
             <label class="admin-toggle-card">
               <span>
-                <strong>Send bills after generation</strong>
-                <small>Owner contacts only</small>
+                <strong>{{
+                  mode === 'DG'
+                    ? 'Send DG bill PDFs after generation'
+                    : 'Send bills after generation'
+                }}</strong>
+                <small>{{
+                  mode === 'DG'
+                    ? 'Email is selected by default · owner contacts only'
+                    : 'Owner contacts only'
+                }}</small>
               </span>
               <ToggleSwitch
                 v-model="sendBillsAfterGeneration"

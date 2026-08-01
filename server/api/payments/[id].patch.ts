@@ -1,6 +1,7 @@
 import { createApiSuccess, readJsonBody, validateInput } from '~/server/utils/api'
 import { requireRole } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
+import { AppError } from '~/server/utils/errors'
 import { refreshMaintenanceReceiptJournalForPayment } from '~/server/utils/finance'
 import { readUuidParam, writeMasterAudit } from '~/server/utils/master-data'
 import {
@@ -16,6 +17,39 @@ export default defineEventHandler(async (event) => {
 
   try {
     await client.query('begin')
+
+    if (input.advanceCreditScope !== undefined) {
+      const targetPayment = await client.query<{ id: string }>(
+        `
+          select id
+          from payments
+          where id = $1
+            and society_id = $2
+          for update
+        `,
+        [paymentId, authMe.user.societyId],
+      )
+      if (targetPayment.rows[0]) {
+        const existingSourceCredits = await client.query<{ id: string }>(
+          `
+            select id
+            from resident_advance_credits
+            where source_payment_id = $1
+            order by id asc
+            for update
+          `,
+          [paymentId],
+        )
+        if (existingSourceCredits.rows.length > 0) {
+          throw new AppError({
+            code: 'CONFLICT',
+            statusCode: 409,
+            message:
+              'An existing advance scope cannot be changed through payment editing. Use the dedicated DG advance classification action for an eligible unused legacy advance.',
+          })
+        }
+      }
+    }
 
     const result = await updatePaymentWithClient(client, {
       paymentId,

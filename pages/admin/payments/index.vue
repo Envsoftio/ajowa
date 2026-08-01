@@ -72,6 +72,8 @@ type CamAdvancePaymentSource =
   | 'OPENING_BALANCE'
   | 'LEGACY_MARKER'
 
+type AdvanceCreditScope = 'ANY_BILL' | BillingPeriodChargeType
+
 type PaymentAllocation = {
   id: string
   dueId: string
@@ -92,11 +94,13 @@ type PaymentAdvanceCredit = {
   applicableChargeType: BillingPeriodChargeType | null
   sourceBillingPeriodId: string | null
   sourceBillingPeriodLabel: string | null
+  canClassifyAsDg: boolean
 }
 
 type PaymentSnapshot = {
   selectedDueIds?: string[]
   tenureMonths?: number
+  advanceCreditScope?: AdvanceCreditScope
   cheque?: {
     chequeNumber?: string
     chequeDate?: string
@@ -146,6 +150,18 @@ type PaymentUpdateResponse = {
     advanceApplicableChargeType: BillingPeriodChargeType | null
     receiptInvalidated: boolean
     changed: boolean
+  }
+}
+type DgAdvanceClassificationResponse = {
+  ok: true
+  data: {
+    paymentId: string
+    creditId: string
+    applicableChargeType: 'DG_SET'
+    amount: number
+    receiptInvalidated: boolean
+    financialValuesChanged: false
+    journalRefreshed: false
   }
 }
 type ProofUploadResponse = {
@@ -224,6 +240,14 @@ const allocationModes = [
   { label: 'Oldest unpaid first', value: 'OLDEST_UNPAID_FIRST' },
   { label: 'Selected periods', value: 'SELECTED_PERIODS' },
   { label: 'Tenure pack', value: 'TENURE_PACK' },
+  { label: 'Keep entire amount as advance', value: 'ADVANCE_ONLY' },
+]
+
+const advanceCreditScopes = [
+  { label: 'DG Set bills only', value: 'DG_SET' },
+  { label: 'CAM bills only', value: 'CAM' },
+  { label: 'General bills only', value: 'GENERAL' },
+  { label: 'Any non-DG bill (DG requires explicit scope)', value: 'ANY_BILL' },
 ]
 
 const statusOptions = [
@@ -246,6 +270,13 @@ const formatMoney = (value: number | string | null | undefined) =>
     currency: 'INR',
     maximumFractionDigits: 0,
   }).format(Number(value ?? 0))
+
+const formatAdvanceCreditScope = (scope: AdvanceCreditScope | null) => {
+  if (scope === 'DG_SET') return 'DG Set-only'
+  if (scope === 'CAM') return 'CAM-only'
+  if (scope === 'GENERAL') return 'general-bill-only'
+  return 'non-DG'
+}
 
 const formatDate = (value: string | null | undefined) =>
   value
@@ -410,6 +441,10 @@ watch(
 const selectedPayment = ref<PaymentDetail | null>(null)
 const detailVisible = ref(false)
 const detailPending = ref(false)
+const dgClassificationVisible = ref(false)
+const dgClassificationSaving = ref(false)
+const dgClassificationCredit = ref<PaymentAdvanceCredit | null>(null)
+const dgClassificationReason = ref('')
 const proofInput = ref<HTMLInputElement | null>(null)
 const proofTargetPaymentId = ref<string | null>(null)
 const proofUploadingId = ref<string | null>(null)
@@ -433,6 +468,7 @@ const paymentEditForm = reactive({
   chequeDate: '',
   bankName: '',
   allocationMode: 'OLDEST_UNPAID_FIRST',
+  advanceCreditScope: 'DG_SET' as AdvanceCreditScope,
   selectedDueIds: [] as string[],
   tenureMonths: '3',
   notes: '',
@@ -491,6 +527,53 @@ const openDetail = async (payment: Pick<PaymentSummary, 'id'>) => {
     selectedPayment.value = response.data
   } finally {
     detailPending.value = false
+  }
+}
+
+const openDgAdvanceClassification = (credit: PaymentAdvanceCredit) => {
+  if (!credit.canClassifyAsDg) return
+
+  dgClassificationCredit.value = credit
+  dgClassificationReason.value = ''
+  dgClassificationVisible.value = true
+}
+
+const classifyAdvanceAsDg = async () => {
+  const payment = selectedPayment.value
+  const credit = dgClassificationCredit.value
+  const reason = dgClassificationReason.value.trim()
+  if (!payment || !credit || reason.length < 5) {
+    toast.add({
+      severity: 'warn',
+      summary: 'Reason required',
+      detail: 'Enter a clear reason for classifying this receipt as DG advance.',
+      life: 8000,
+    })
+    return
+  }
+
+  dgClassificationSaving.value = true
+  try {
+    const response = await api<DgAdvanceClassificationResponse>(
+      `/api/admin/payments/${payment.id}/advance-credits/${credit.id}/classify-dg`,
+      {
+        method: 'POST',
+        body: { reason },
+      },
+    )
+    dgClassificationVisible.value = false
+    toast.add({
+      severity: 'success',
+      summary: 'DG advance classified',
+      detail: response.data.receiptInvalidated
+        ? `${formatMoney(response.data.amount)} is now DG Set-only. The cached receipt was invalidated and will regenerate on download; financial entries were unchanged.`
+        : `${formatMoney(response.data.amount)} is now DG Set-only. Financial entries were unchanged.`,
+      life: 12000,
+    })
+    await refresh()
+    await openDetail({ id: payment.id })
+  } finally {
+    dgClassificationSaving.value = false
   }
 }
 
@@ -576,6 +659,14 @@ const paymentEditNeedsCheque = computed(() => paymentEditForm.mode === 'CHEQUE')
 const paymentEditReferenceValue = computed(() =>
   paymentEditForm.utrReference.trim() || paymentEditForm.bankReference.trim(),
 )
+const paymentEditAdvanceCredits = computed(() => paymentEditPayment.value?.advance_credits ?? [])
+const paymentEditHasExistingAdvanceCredit = computed(
+  () => paymentEditAdvanceCredits.value.length > 0,
+)
+const paymentEditShowsAdvanceScope = computed(() =>
+  paymentEditForm.allocationMode === 'ADVANCE_ONLY' &&
+  !paymentEditHasExistingAdvanceCredit.value,
+)
 
 const validatePaymentEditForm = (showToast = false) => {
   clearPaymentEditFieldErrors()
@@ -612,6 +703,10 @@ const validatePaymentEditForm = (showToast = false) => {
     if (!Number.isInteger(months) || months <= 0) {
       setPaymentEditFieldError('tenureMonths', 'Enter a valid tenure in months.')
     }
+  }
+
+  if (paymentEditShowsAdvanceScope.value) {
+    requirePaymentEditField('advanceCreditScope', paymentEditForm.advanceCreditScope, 'Select which bill type this advance can be used for.')
   }
 
   if (paymentEditForm.allowDuplicateUtr) {
@@ -670,6 +765,7 @@ const applyPaymentDetailToEditForm = (payment: PaymentDetail) => {
   paymentEditForm.chequeDate = cheque.chequeDate ?? ''
   paymentEditForm.bankName = cheque.bankName ?? ''
   paymentEditForm.allocationMode = payment.allocation_mode || 'OLDEST_UNPAID_FIRST'
+  paymentEditForm.advanceCreditScope = payment.advance_credits[0]?.applicableChargeType ?? snapshot.advanceCreditScope ?? 'ANY_BILL'
   paymentEditForm.selectedDueIds = selectedDueIds
   paymentEditForm.tenureMonths = String(snapshot.tenureMonths ?? '3')
   paymentEditForm.notes = payment.notes ?? ''
@@ -806,6 +902,7 @@ watch(
     paymentEditForm.chequeDate,
     paymentEditForm.bankName,
     paymentEditForm.allocationMode,
+    paymentEditForm.advanceCreditScope,
     paymentEditForm.selectedDueIds.join(','),
     paymentEditForm.tenureMonths,
     paymentEditForm.allowDuplicateUtr,
@@ -847,6 +944,7 @@ const savePaymentEdit = async () => {
         chequeDate: paymentEditNeedsCheque.value ? paymentEditForm.chequeDate || null : null,
         bankName: paymentEditNeedsCheque.value ? paymentEditForm.bankName || null : null,
         allocationMode: paymentEditForm.allocationMode,
+        advanceCreditScope: paymentEditShowsAdvanceScope.value ? paymentEditForm.advanceCreditScope : undefined,
         selectedDueIds: paymentEditForm.allocationMode === 'SELECTED_PERIODS'
           ? paymentEditForm.selectedDueIds
           : [],
@@ -864,9 +962,7 @@ const savePaymentEdit = async () => {
       severity: 'success',
       summary: 'Payment updated',
       detail: response.data.advanceAmount && response.data.advanceAmount > 0
-        ? response.data.advanceApplicableChargeType === 'DG_SET'
-          ? `${formatMoney(response.data.advanceAmount)} kept for future DG Set bills.`
-          : `${formatMoney(response.data.advanceAmount)} kept as advance.`
+        ? `${formatMoney(response.data.advanceAmount)} kept as ${formatAdvanceCreditScope(response.data.advanceApplicableChargeType)} advance.`
         : undefined,
       life: 10000,
     })
@@ -1322,7 +1418,7 @@ const onProofFileChange = async (event: Event) => {
           <AppDataTable :value="selectedPayment.advance_credits" responsive-layout="scroll">
             <Column field="applicableChargeType" header="Applies to">
               <template #body="{ data: row }">
-                {{ row.applicableChargeType === 'DG_SET' ? 'DG Set only' : 'Any bill' }}
+                {{ formatAdvanceCreditScope(row.applicableChargeType) }}
               </template>
             </Column>
             <Column field="sourceBillingPeriodLabel" header="Source period">
@@ -1335,9 +1431,89 @@ const onProofFileChange = async (event: Event) => {
               <template #body="{ data: row }">{{ formatMoney(row.currentBalance) }}</template>
             </Column>
             <Column field="status" header="Status" />
+            <Column v-if="canEditPayment" header="DG scope">
+              <template #body="{ data: row }">
+                <Button
+                  v-if="row.canClassifyAsDg"
+                  type="button"
+                  label="Classify as DG"
+                  icon="pi pi-bolt"
+                  size="small"
+                  severity="secondary"
+                  outlined
+                  @click="openDgAdvanceClassification(row)"
+                />
+                <Tag
+                  v-else-if="row.applicableChargeType === 'DG_SET'"
+                  value="DG Set-only"
+                  severity="info"
+                  rounded
+                />
+                <span v-else>-</span>
+              </template>
+            </Column>
           </AppDataTable>
         </section>
       </div>
+    </Dialog>
+
+    <Dialog
+      v-model:visible="dgClassificationVisible"
+      header="Classify advance as DG"
+      modal
+      :style="{ width: '560px' }"
+    >
+      <form
+        v-if="dgClassificationCredit"
+        class="admin-form-layout"
+        novalidate
+        @submit.prevent="classifyAdvanceAsDg"
+      >
+        <section class="admin-form-section">
+          <div class="admin-form-section__header">
+            <div>
+              <p class="eyebrow">Untouched legacy advance</p>
+              <h2>{{ formatMoney(dgClassificationCredit.currentBalance) }}</h2>
+              <p>
+                This makes the selected unused credit available to DG Set bills only.
+                Payment amount, allocations, CAM advances, liability accounting, and journal entries stay unchanged.
+                Generate or retry the DG period afterward; an existing open DG bill can consume the newly classified credit without creating a duplicate bill.
+              </p>
+            </div>
+          </div>
+          <label>
+            <span class="field-label">Classification reason <span class="required-marker">*</span></span>
+            <Textarea
+              v-model="dgClassificationReason"
+              rows="3"
+              auto-resize
+              maxlength="500"
+              placeholder="Example: Advance received specifically for future DG Set bills"
+              autofocus
+              required
+            />
+            <small class="field-help">
+              The admin, reason, amount, and before/after scope are stored in audit history.
+            </small>
+          </label>
+        </section>
+        <div class="admin-form-actions">
+          <Button
+            type="button"
+            label="Cancel"
+            severity="secondary"
+            outlined
+            @click="dgClassificationVisible = false"
+          />
+          <Button
+            type="submit"
+            label="Classify as DG Set-only"
+            icon="pi pi-bolt"
+            :loading="dgClassificationSaving"
+            :disabled="dgClassificationSaving || dgClassificationReason.trim().length < 5"
+          />
+        </div>
+      </form>
     </Dialog>
 
     <Dialog v-model:visible="camAdvanceEditVisible" header="Edit advance payment" modal :style="{ width: '640px' }">
@@ -1635,6 +1811,30 @@ const onProofFileChange = async (event: Event) => {
               <InputText v-model="paymentEditForm.tenureMonths" inputmode="numeric" :invalid="Boolean(paymentEditFieldError('tenureMonths'))" />
               <small v-if="paymentEditFieldError('tenureMonths')" class="field-error">{{ paymentEditFieldError('tenureMonths') }}</small>
             </label>
+            <label v-if="paymentEditShowsAdvanceScope">
+              <span class="field-label">Advance applies to <span class="required-marker">*</span></span>
+              <Select
+                v-model="paymentEditForm.advanceCreditScope"
+                :options="advanceCreditScopes"
+                option-label="label"
+                option-value="value"
+                :invalid="Boolean(paymentEditFieldError('advanceCreditScope'))"
+              />
+              <small class="field-help">
+                Choose the scope for the new advance that this payment edit will create.
+              </small>
+              <small v-if="paymentEditFieldError('advanceCreditScope')" class="field-error">{{ paymentEditFieldError('advanceCreditScope') }}</small>
+            </label>
+            <label v-else-if="paymentEditHasExistingAdvanceCredit">
+              <span class="field-label">Existing advance scope</span>
+              <InputText
+                :model-value="formatAdvanceCreditScope(paymentEditAdvanceCredits[0]?.applicableChargeType ?? null)"
+                disabled
+              />
+              <small class="field-help">
+                Existing advance scope cannot be changed through payment editing. For an eligible untouched legacy receipt, open Payment detail and use “Classify as DG”.
+              </small>
+            </label>
             <label v-if="paymentEditForm.allocationMode === 'SELECTED_PERIODS'" class="admin-form-grid__full">
               <span class="field-label">Selected periods <span class="required-marker">*</span></span>
               <MultiSelect
@@ -1646,6 +1846,9 @@ const onProofFileChange = async (event: Event) => {
                 filter
                 :invalid="Boolean(paymentEditFieldError('selectedDueIds'))"
               />
+              <small class="field-help">
+                This reallocates the original receipt to the selected bill; any unused balance remains advance credit under the selected scope.
+              </small>
               <small v-if="paymentEditFieldError('selectedDueIds')" class="field-error">{{ paymentEditFieldError('selectedDueIds') }}</small>
             </label>
             <label class="admin-form-grid__full">

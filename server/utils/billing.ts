@@ -1,6 +1,7 @@
 import * as QRCode from 'qrcode'
 import { z } from 'zod'
 import type { Pool, PoolClient } from 'pg'
+import { BILL_NOTIFICATION_REQUEST_BATCH_SIZE } from '~/shared/billing'
 import type { ChargeBreakdownItem } from '~/types/domain'
 import { AppError } from './errors'
 import { camAdvanceCoverageLateralSql } from './cam-advance'
@@ -8,6 +9,10 @@ import { getDatabasePool } from './database'
 import { normalizeSocietySettings } from './master-data'
 import { createPdfBuffer, getSocietyStampImageForPdf } from './pdf'
 import { downloadPrivateFile } from './storage'
+import {
+  resolveBillPdfAmountAllocation,
+  resolveDgBillAmountSummary,
+} from './dg-bill-amounts'
 
 export const chargeBreakdownItemSchema = z.object({
   label: z.string().trim().min(1).max(200),
@@ -183,7 +188,13 @@ export const dueReminderSchema = z.object({
 })
 
 export const dueBillSendSchema = z.object({
-  dueIds: z.array(z.string().uuid()).min(1).max(500),
+  dueIds: z
+    .array(z.string().uuid())
+    .min(1)
+    .max(
+      BILL_NOTIFICATION_REQUEST_BATCH_SIZE,
+      `Send at most ${BILL_NOTIFICATION_REQUEST_BATCH_SIZE} bills per request.`,
+    ),
   channels: z.array(z.enum(['PUSH', 'EMAIL', 'WHATSAPP', 'IN_APP'])).min(1).max(4).default(['EMAIL']),
 })
 
@@ -2110,7 +2121,6 @@ export const generateMaintenanceBillPdf = async (
     currentAmounts,
     currentTiming,
     previousOutstanding,
-    netPayable,
     fileName,
   } = bill
   const flatLabel = `${due.block_name} ${due.flat_number}`
@@ -2123,15 +2133,15 @@ export const generateMaintenanceBillPdf = async (
   const hasSeparateDgBill = dgCharges.length > 0
   const maintenanceAmount = sumBillCharges(invoiceCharges)
   const dgAmount = sumBillCharges(dgCharges)
+  const dgInterestAmount = roundBillMoney(
+    dgCharges.reduce((sum, charge) => {
+      const amount = Number(charge.interestAmount ?? 0)
+      return sum + (Number.isFinite(amount) ? Math.max(0, amount) : 0)
+    }, 0),
+  )
   const invoiceStampImage = await getSocietyStampImageForPdf()
   const societyBankAccounts = getSocietyBankAccountsForPdf(due)
-  let printedTotalPayable = 0
-  let hasPrintedTotalPayable = false
-
-  const addPrintedTotalPayable = (value: number) => {
-    printedTotalPayable = roundBillMoney(printedTotalPayable + value)
-    hasPrintedTotalPayable = true
-  }
+  let maintenanceSectionTotal: number | null = null
 
   const dgOuterLayout = {
     hLineWidth: () => 0.9,
@@ -2200,7 +2210,7 @@ export const generateMaintenanceBillPdf = async (
         : []),
     ]
     const invoiceTotal = roundBillMoney(invoiceLineItems.reduce((sum, item) => sum + item.amount, 0))
-    addPrintedTotalPayable(invoiceTotal)
+    maintenanceSectionTotal = invoiceTotal
     const primaryInvoiceCharge = invoiceCharges.find(isCamCharge) ?? invoiceCharges[0]
     const areaSqFt = primaryInvoiceCharge?.areaSqFt
       ?? (Number.isFinite(Number(due.area_sq_ft)) ? Number(due.area_sq_ft) : null)
@@ -2536,14 +2546,29 @@ export const generateMaintenanceBillPdf = async (
         : null)
     const ratePerUnit = primaryCharge.ratePerUnit
       ?? (consumedUnits && consumedUnits > 0 ? roundBillMoney(dgAmount / consumedUnits) : null)
-    const previousDgOutstanding = roundBillMoney(
-      dgCharges.reduce((sum, charge) => sum + Number(charge.previousOutstanding ?? 0), 0),
-    )
-    const dgInterestAmount = roundBillMoney(
-      dgCharges.reduce((sum, charge) => sum + Number(charge.interestAmount ?? 0), 0),
-    )
-    const dgNetPayable = roundBillMoney(dgAmount + previousDgOutstanding + dgInterestAmount)
-    addPrintedTotalPayable(dgNetPayable)
+    const isStandaloneDgBill = maintenanceSectionTotal == null
+    const pdfAmountAllocation = resolveBillPdfAmountAllocation({
+      hasDgSection: true,
+      maintenanceSectionTotal,
+      mixedDgComponentAmount: roundBillMoney(dgAmount + dgInterestAmount),
+      currentDueBalanceAmount: currentAmounts.balanceAmount,
+      previousOutstandingAmount: previousOutstanding,
+    })
+    const dgAmounts = resolveDgBillAmountSummary({
+      currentChargeAmount: dgAmount,
+      previousReferenceAmount: dgCharges.reduce(
+        (sum, charge) => sum + Number(charge.previousOutstanding ?? 0),
+        0,
+      ),
+      interestAmount: dgInterestAmount,
+      lateFeeAmount: isStandaloneDgBill ? currentAmounts.lateFeeAmount : 0,
+      paidAmount: isStandaloneDgBill ? Number(due.paid_amount) : 0,
+      waivedAmount: isStandaloneDgBill ? Number(due.waived_amount) : 0,
+      balanceAmount: pdfAmountAllocation.dgSectionBalanceAmount ?? 0,
+    })
+    const previousDgReferenceAmount = dgAmounts.previousReferenceAmount
+    const displayedDgInterestAmount = dgAmounts.interestAmount
+    const dgNetPayable = dgAmounts.netPayable
     const tariffRateLabel = primaryCharge.tariffRateLabel
       ?? (ratePerUnit != null ? `Rs.${formatBillPlainNumber(ratePerUnit)}/Unit` : '-')
     const qrPayload = buildUpiPaymentPayload(due, dgNetPayable, `${bill.billNumber}-DG`)
@@ -2686,23 +2711,53 @@ export const generateMaintenanceBillPdf = async (
                           { text: 'AMOUNT (Rs.)', style: 'dgTableHeaderRight' },
                         ],
                         [
-                          { text: 'POWER BACK UP CHARGES', style: 'dgValueBold' },
+                          { text: 'CURRENT DG SET CHARGES', style: 'dgValueBold' },
                           { text: optionalNumber(consumedUnits), style: 'dgValueRight' },
                           { text: tariffRateLabel, style: 'dgValueRight' },
-                          { text: formatBillPlainNumber(dgAmount), style: 'dgValueRight' },
+                          { text: formatBillPlainNumber(dgAmounts.currentChargeAmount), style: 'dgValueRight' },
                         ],
                         [
-                          { text: 'PREVIOUS OUTSTANDING BALANCE', style: 'dgValueBold' },
+                          { text: 'PREVIOUS DG AMOUNT (REFERENCE ONLY)', style: 'dgValueBold' },
                           { text: '', style: 'dgValueRight' },
                           { text: '', style: 'dgValueRight' },
-                          { text: formatBillPlainNumber(previousDgOutstanding), style: 'dgValueRight' },
+                          { text: formatBillPlainNumber(previousDgReferenceAmount), style: 'dgValueRight' },
                         ],
                         [
-                          { text: 'Interest @1.5% on previous outstanding', style: 'dgValueBold' },
+                          { text: 'INTEREST CHARGE', style: 'dgValueBold' },
                           { text: '', style: 'dgValueRight' },
                           { text: '', style: 'dgValueRight' },
-                          { text: formatBillPlainNumber(dgInterestAmount), style: 'dgValueRight' },
+                          { text: formatBillPlainNumber(displayedDgInterestAmount), style: 'dgValueRight' },
                         ],
+                        ...(dgAmounts.lateFeeAmount > 0
+                          ? [[
+                              { text: 'LATE PAYMENT CHARGES', style: 'dgValueBold' },
+                              { text: '', style: 'dgValueRight' },
+                              { text: '', style: 'dgValueRight' },
+                              { text: formatBillPlainNumber(dgAmounts.lateFeeAmount), style: 'dgValueRight' },
+                            ]]
+                          : []),
+                        [
+                          { text: 'GROSS AMOUNT BEFORE ADJUSTMENTS', style: 'dgValueBold' },
+                          { text: '', style: 'dgValueRight' },
+                          { text: '', style: 'dgValueRight' },
+                          { text: formatBillPlainNumber(dgAmounts.grossAmount), style: 'dgValueRight' },
+                        ],
+                        ...(dgAmounts.paidOrAdvanceAmount > 0
+                          ? [[
+                              { text: 'LESS: PAYMENTS / ADVANCE APPLIED', style: 'dgValueBold' },
+                              { text: '', style: 'dgValueRight' },
+                              { text: '', style: 'dgValueRight' },
+                              { text: `-${formatBillPlainNumber(dgAmounts.paidOrAdvanceAmount)}`, style: 'dgValueRight' },
+                            ]]
+                          : []),
+                        ...(dgAmounts.waivedAmount > 0
+                          ? [[
+                              { text: 'LESS: WAIVER / ADJUSTMENT', style: 'dgValueBold' },
+                              { text: '', style: 'dgValueRight' },
+                              { text: '', style: 'dgValueRight' },
+                              { text: `-${formatBillPlainNumber(dgAmounts.waivedAmount)}`, style: 'dgValueRight' },
+                            ]]
+                          : []),
                         [
                           { text: 'NET AMOUNT PAYABLE', style: 'dgTotalLabel', colSpan: 3 },
                           {},
@@ -2887,12 +2942,19 @@ export const generateMaintenanceBillPdf = async (
   }
 
   const buffer = await createPdfBuffer(docDefinition)
+  const pdfAmountAllocation = resolveBillPdfAmountAllocation({
+    hasDgSection: dgCharges.length > 0,
+    maintenanceSectionTotal,
+    mixedDgComponentAmount: roundBillMoney(dgAmount + dgInterestAmount),
+    currentDueBalanceAmount: currentAmounts.balanceAmount,
+    previousOutstandingAmount: previousOutstanding,
+  })
 
   return {
     buffer,
     billNumber: bill.billNumber,
     fileName: `${fileName}.pdf`,
-    totalPayable: hasPrintedTotalPayable ? printedTotalPayable : netPayable,
+    totalPayable: pdfAmountAllocation.totalPayable,
     dueId: due.id,
     flatLabel,
     billingPeriodLabel: due.billing_period_label,

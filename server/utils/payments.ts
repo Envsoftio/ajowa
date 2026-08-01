@@ -15,12 +15,17 @@ import {
   resolveNotificationAudience,
 } from './notifications'
 import { createPdfBuffer, getSocietyStampImage } from './pdf'
-import { recomputeUserAccess } from './qr-access'
+import { recomputeUserAccess, recomputeUserAccessForPairs } from './qr-access'
 import { uploadPrivateFile } from './storage'
 import { setCamAdvanceCoverageForPeriod } from './cam-advance'
 import {
+  getAdvanceApplicableChargeType,
+  getAdvanceCreditScope,
   getAdvanceCreditScopeLabel,
+  isAdvanceCreditEligibleForCharge,
   resolveAdvanceCreditContext,
+  wouldApplyAdvanceOutsideScope,
+  type AdvanceCreditScope,
 } from './payment-advance'
 import { postAdvanceCreditConsumptionJournal } from './finance'
 import type { BillingPeriodChargeType } from '~/types/domain'
@@ -29,7 +34,47 @@ export const allocationModeSchema = z.enum([
   'OLDEST_UNPAID_FIRST',
   'SELECTED_PERIODS',
   'TENURE_PACK',
+  'ADVANCE_ONLY',
 ])
+
+export const advanceCreditScopeSchema = z.enum([
+  'ANY_BILL',
+  'GENERAL',
+  'CAM',
+  'DG_SET',
+])
+
+const requireAdvanceCreditScope = (
+  value: {
+    allocationMode?: z.infer<typeof allocationModeSchema> | undefined
+    advanceCreditScope?: AdvanceCreditScope | undefined
+    selectedDueIds?: string[] | undefined
+  },
+  context: z.RefinementCtx,
+) => {
+  if (
+    value.allocationMode === 'ADVANCE_ONLY' &&
+    value.advanceCreditScope === undefined
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['advanceCreditScope'],
+      message: 'Select which bill type this advance can be used for.',
+    })
+  }
+
+  if (
+    value.allocationMode === 'ADVANCE_ONLY' &&
+    (value.selectedDueIds?.length ?? 0) > 0
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['selectedDueIds'],
+      message:
+        'Advance-only receipts do not pay an existing due. Use Selected periods to apply this payment to an existing bill.',
+    })
+  }
+}
 
 export const paymentModeSchema = z.enum([
   'CASH',
@@ -48,6 +93,7 @@ export const manualPaymentSchema = z.object({
   mode: paymentModeSchema.exclude(['ONLINE_GATEWAY', 'ADVANCE_CREDIT']),
   transferKind: z.enum(['NEFT', 'IMPS', 'RTGS', 'BANK_TRANSFER']).optional(),
   allocationMode: allocationModeSchema.default('OLDEST_UNPAID_FIRST'),
+  advanceCreditScope: advanceCreditScopeSchema.optional(),
   selectedDueIds: z.array(z.string().uuid()).optional().default([]),
   tenureMonths: z.coerce.number().int().positive().max(24).optional(),
   utrReference: z.string().trim().max(120).optional(),
@@ -61,15 +107,16 @@ export const manualPaymentSchema = z.object({
   idempotencyKey: z.string().trim().max(160).optional(),
   allowDuplicateUtr: z.boolean().optional().default(false),
   overrideReason: z.string().trim().max(500).optional(),
-})
+}).superRefine(requireAdvanceCreditScope)
 
 export const paymentPreviewSchema = z.object({
   flatId: z.string().uuid(),
   amount: z.coerce.number().positive(),
   allocationMode: allocationModeSchema.default('OLDEST_UNPAID_FIRST'),
+  advanceCreditScope: advanceCreditScopeSchema.optional(),
   selectedDueIds: z.array(z.string().uuid()).optional().default([]),
   tenureMonths: z.coerce.number().int().positive().max(24).optional(),
-})
+}).superRefine(requireAdvanceCreditScope)
 
 export const paymentAmountUpdateSchema = z.object({
   amount: z.coerce.number().positive(),
@@ -89,6 +136,7 @@ export const paymentUpdateSchema = z.object({
   mode: paymentModeSchema.exclude(['ONLINE_GATEWAY', 'ADVANCE_CREDIT']).optional(),
   transferKind: z.enum(['NEFT', 'IMPS', 'RTGS', 'BANK_TRANSFER']).nullable().optional(),
   allocationMode: allocationModeSchema.optional(),
+  advanceCreditScope: advanceCreditScopeSchema.optional(),
   selectedDueIds: z.array(z.string().uuid()).optional(),
   tenureMonths: z.coerce.number().int().positive().max(24).nullable().optional(),
   utrReference: optionalNullableText(120),
@@ -486,20 +534,26 @@ const previewPaymentAllocationWithClient = async (
   }
 
   const policy = await getPaymentPolicy(client, societyId)
-  const dueInput: Parameters<typeof selectAllocatableDues>[1] = {
-    flatId: input.flatId,
-    mode: input.allocationMode,
-    selectedDueIds: input.selectedDueIds,
-    graceDays: policy.graceDays,
-    lateFeePerDay: policy.lateFeePerDay,
-  }
-  if (input.asOfDate !== undefined) {
-    dueInput.asOfDate = input.asOfDate
-  }
-  if (input.tenureMonths !== undefined) {
-    dueInput.tenureMonths = input.tenureMonths
-  }
-  const dues = await selectAllocatableDues(client, dueInput)
+  const dues = await (async () => {
+    if (input.allocationMode === 'ADVANCE_ONLY') {
+      return []
+    }
+
+    const dueInput: Parameters<typeof selectAllocatableDues>[1] = {
+      flatId: input.flatId,
+      mode: input.allocationMode,
+      selectedDueIds: input.selectedDueIds,
+      graceDays: policy.graceDays,
+      lateFeePerDay: policy.lateFeePerDay,
+    }
+    if (input.asOfDate !== undefined) {
+      dueInput.asOfDate = input.asOfDate
+    }
+    if (input.tenureMonths !== undefined) {
+      dueInput.tenureMonths = input.tenureMonths
+    }
+    return selectAllocatableDues(client, dueInput)
+  })()
 
   let remainingPayment = input.amount
   const asOfDate = input.asOfDate ?? todayDate()
@@ -530,7 +584,15 @@ const previewPaymentAllocationWithClient = async (
     })
     .filter((line) => line.allocatedAmount > 0)
 
-  const advanceCredit = resolveAdvanceCreditContext(lines)
+  const advanceCredit =
+    input.advanceCreditScope !== undefined
+      ? {
+          applicableChargeType: getAdvanceApplicableChargeType(
+            input.advanceCreditScope,
+          ),
+          sourceBillingPeriodId: null,
+        }
+      : resolveAdvanceCreditContext(lines)
 
   return {
     lines,
@@ -660,9 +722,71 @@ const refreshDueTotals = async (
   }
 }
 
+export type AffectedDueAccessPair = {
+  billingPeriodId: string
+  flatId?: string
+}
+
+export const recomputeAccessForAffectedDuesWithClient = async (
+  client: PoolClient,
+  affected: AffectedDueAccessPair[],
+) => {
+  const duePairs = [
+    ...new Map(
+      affected
+        .filter((item): item is { billingPeriodId: string; flatId: string } =>
+          Boolean(item.billingPeriodId && item.flatId),
+        )
+        .map((item) => [`${item.flatId}:${item.billingPeriodId}`, item]),
+    ).values(),
+  ]
+
+  if (duePairs.length === 0) {
+    return { recomputed: 0, revoked: 0 }
+  }
+
+  const users = await client.query<{
+    user_id: string
+    billing_period_id: string
+  }>(
+    `
+      with affected_dues as (
+        select distinct flat_id, billing_period_id
+        from jsonb_to_recordset($1::jsonb) as payload(
+          flat_id uuid,
+          billing_period_id uuid
+        )
+      )
+      select distinct
+        fr.user_id,
+        affected_dues.billing_period_id
+      from affected_dues
+      inner join flat_residents fr
+        on fr.flat_id = affected_dues.flat_id
+        and fr.is_active = true
+    `,
+    [
+      JSON.stringify(
+        duePairs.map((item) => ({
+          flat_id: item.flatId,
+          billing_period_id: item.billingPeriodId,
+        })),
+      ),
+    ],
+  )
+
+  return recomputeUserAccessForPairs(
+    client,
+    users.rows.map((user) => ({
+      userId: user.user_id,
+      billingPeriodId: user.billing_period_id,
+    })),
+  )
+}
+
 const recomputeAccessForAffectedDues = async (
   client: PoolClient,
-  affected: { billingPeriodId: string; flatId?: string }[],
+  affected: AffectedDueAccessPair[],
 ) => {
   for (const item of affected) {
     if (!item.flatId) continue
@@ -711,11 +835,29 @@ export const allocateMaintenancePaymentWithClient = async (
     })
   }
 
-  const existing = await client.query<{ count: string }>(
-    `select count(*)::text from payment_allocations where payment_id = $1`,
+  const existing = await client.query<{
+    has_allocations: boolean
+    has_advance_credit: boolean
+  }>(
+    `
+      select
+        exists (
+          select 1
+          from payment_allocations
+          where payment_id = $1
+        ) as has_allocations,
+        exists (
+          select 1
+          from resident_advance_credits
+          where source_payment_id = $1
+        ) as has_advance_credit
+    `,
     [paymentId],
   )
-  if (Number(existing.rows[0]?.count ?? 0) > 0) {
+  if (
+    existing.rows[0]?.has_allocations ||
+    existing.rows[0]?.has_advance_credit
+  ) {
     return { paymentId, idempotent: true, affectedPeriods: [] }
   }
 
@@ -732,7 +874,7 @@ export const allocateMaintenancePaymentWithClient = async (
   }>(`select allocation_snapshot from payments where id = $1`, [paymentId])
   const snapshot = snapshotResult.rows[0]?.allocation_snapshot ?? {}
   const policy = await getPaymentPolicy(client, payment.society_id)
-  const preview = await previewPaymentAllocationWithClient(client, {
+  const previewInput: PaymentAllocationInput = {
     flatId: payment.received_for_flat_id,
     amount: Number(payment.amount),
     allocationMode: allocationModeSchema.parse(payment.allocation_mode),
@@ -744,7 +886,14 @@ export const allocateMaintenancePaymentWithClient = async (
       typeof snapshot.tenureMonths === 'number'
         ? snapshot.tenureMonths
         : undefined,
-  })
+  }
+  const snapshotAdvanceCreditScope = advanceCreditScopeSchema.safeParse(
+    snapshot.advanceCreditScope,
+  )
+  if (snapshotAdvanceCreditScope.success) {
+    previewInput.advanceCreditScope = snapshotAdvanceCreditScope.data
+  }
+  const preview = await previewPaymentAllocationWithClient(client, previewInput)
 
   if (
     preview.advanceAmount > 0 &&
@@ -823,9 +972,11 @@ export const allocateMaintenancePaymentWithClient = async (
         preview.advanceApplicableChargeType,
         preview.advanceSourceBillingPeriodId,
         preview.advanceAmount,
-        preview.advanceApplicableChargeType === 'DG_SET'
-          ? 'Excess DG Set payment retained for future DG Set bills.'
-          : 'Excess payment retained as advance credit.',
+        preview.lines.length === 0
+          ? `Payment retained as ${getAdvanceCreditScopeLabel(preview.advanceApplicableChargeType)} advance credit.`
+          : preview.advanceApplicableChargeType === 'DG_SET'
+            ? 'Excess DG Set payment retained for future DG Set bills.'
+            : 'Excess payment retained as advance credit.',
       ],
     )
     await client.query(
@@ -867,6 +1018,11 @@ const getSnapshotSelectedDueIds = (
 
 const getSnapshotTenureMonths = (snapshot: Record<string, unknown>) =>
   typeof snapshot.tenureMonths === 'number' ? snapshot.tenureMonths : undefined
+
+const getSnapshotAdvanceCreditScope = (snapshot: Record<string, unknown>) => {
+  const parsed = advanceCreditScopeSchema.safeParse(snapshot.advanceCreditScope)
+  return parsed.success ? parsed.data : undefined
+}
 
 const getSnapshotText = (snapshot: Record<string, unknown>, key: string) => {
   const value = snapshot[key]
@@ -981,13 +1137,22 @@ export const updatePaymentWithClient = async (
     id: string
     maintenance_due_id: string
     allocation_order: number
+    allocated_amount: string
+    billing_period_charge_type: BillingPeriodChargeType
   }>(
     `
-      select id, maintenance_due_id, allocation_order
-      from payment_allocations
-      where payment_id = $1
-      order by allocation_order asc, created_at asc
-      for update
+      select
+        pa.id,
+        pa.maintenance_due_id,
+        pa.allocation_order,
+        pa.allocated_amount::text,
+        bp.charge_type::text as billing_period_charge_type
+      from payment_allocations pa
+      inner join maintenance_dues md on md.id = pa.maintenance_due_id
+      inner join billing_periods bp on bp.id = md.billing_period_id
+      where pa.payment_id = $1
+      order by pa.allocation_order asc, pa.created_at asc
+      for update of pa
     `,
     [payment.id],
   )
@@ -1244,8 +1409,58 @@ export const updatePaymentWithClient = async (
     }
   }
 
+  const sourceCredits = await client.query<{
+    id: string
+    original_amount: string
+    current_balance: string
+    status: string
+    applicable_charge_type: BillingPeriodChargeType | null
+  }>(
+    `
+      select
+        id,
+        original_amount::text,
+        current_balance::text,
+        status::text,
+        applicable_charge_type
+      from resident_advance_credits
+      where source_payment_id = $1
+      order by created_at asc, id asc
+      for update
+    `,
+    [payment.id],
+  )
+
   const previousAllocationMode = allocationModeSchema.parse(payment.allocation_mode)
   const nextAllocationMode = input.changes.allocationMode ?? previousAllocationMode
+  const sourceCredit = sourceCredits.rows[0]
+  const previousAdvanceCreditScope = sourceCredit
+    ? getAdvanceCreditScope(sourceCredit.applicable_charge_type)
+    : getSnapshotAdvanceCreditScope(snapshot)
+  const nextAdvanceCreditScope = input.changes.advanceCreditScope ?? previousAdvanceCreditScope
+
+  if (nextAllocationMode === 'ADVANCE_ONLY' && nextAdvanceCreditScope === undefined) {
+    throw new AppError({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message: 'Select which bill type this advance can be used for.',
+    })
+  }
+
+  const nextAdvanceApplicableChargeType = nextAdvanceCreditScope === undefined
+    ? undefined
+    : getAdvanceApplicableChargeType(nextAdvanceCreditScope)
+  const creditScopeChanged = input.changes.advanceCreditScope !== undefined &&
+    sourceCredits.rows.some((credit) => credit.applicable_charge_type !== nextAdvanceApplicableChargeType)
+
+  if (creditScopeChanged && sourceCredits.rows.length !== 1) {
+    throw new AppError({
+      code: 'CONFLICT',
+      statusCode: 409,
+      message: 'This payment has an ambiguous advance-credit history and its scope cannot be changed automatically.',
+    })
+  }
+
   const previousSelectedDueIds = getSnapshotSelectedDueIds(snapshot, existingDueIds)
   const nextSelectedDueIds = nextAllocationMode === 'SELECTED_PERIODS'
     ? input.changes.selectedDueIds ?? previousSelectedDueIds
@@ -1280,15 +1495,17 @@ export const updatePaymentWithClient = async (
     !sameStringArray(nextSelectedDueIds, previousSelectedDueIds)
   const tenureMonthsChanged = nextAllocationMode === 'TENURE_PACK' &&
     nextTenureMonths !== previousTenureMonths
-  const allocationAffectingChanged =
+  const paymentAllocationChanged =
     amountChanged ||
     paymentDateChanged ||
     flatChanged ||
     allocationModeChanged ||
     selectedDueIdsChanged ||
     tenureMonthsChanged
+  const allocationAffectingChanged =
+    paymentAllocationChanged || creditScopeChanged
   const reallocatePayment =
-    payment.status === 'VERIFIED' && allocationAffectingChanged
+    payment.status === 'VERIFIED' && paymentAllocationChanged
   const changed =
     allocationAffectingChanged ||
     payerChanged ||
@@ -1315,6 +1532,7 @@ export const updatePaymentWithClient = async (
     utrReference: payment.utr_reference,
     bankReference: payment.bank_reference,
     allocationMode: previousAllocationMode,
+    advanceCreditScope: previousAdvanceCreditScope ?? null,
     selectedDueIds: previousSelectedDueIds,
     tenureMonths: previousTenureMonths ?? null,
     cheque: existingCheque,
@@ -1331,6 +1549,7 @@ export const updatePaymentWithClient = async (
     utrReference: nextUtrReference,
     bankReference: nextBankReference,
     allocationMode: nextAllocationMode,
+    advanceCreditScope: nextAdvanceCreditScope ?? null,
     selectedDueIds: nextSelectedDueIds,
     tenureMonths: nextTenureMonths ?? null,
     cheque: nextMode === 'CHEQUE'
@@ -1350,8 +1569,10 @@ export const updatePaymentWithClient = async (
       previousAmount,
       amount: nextAmount,
       allocatedAmount: null,
-      advanceAmount: null,
-      advanceApplicableChargeType: null,
+      advanceAmount: sourceCredit
+        ? roundMoney(Number(sourceCredit.current_balance))
+        : null,
+      advanceApplicableChargeType: sourceCredit?.applicable_charge_type ?? null,
       receiptInvalidated: false,
       changed: false,
       beforeState,
@@ -1391,21 +1612,7 @@ export const updatePaymentWithClient = async (
     }
   }
 
-  if (reallocatePayment || payerChanged || flatChanged) {
-    const sourceCredits = await client.query<{
-      id: string
-      original_amount: string
-      current_balance: string
-      status: string
-    }>(
-      `
-        select id, original_amount::text, current_balance::text, status::text
-        from resident_advance_credits
-        where source_payment_id = $1
-        for update
-      `,
-      [payment.id],
-    )
+  if (reallocatePayment || payerChanged || flatChanged || creditScopeChanged) {
     const consumedCredit = sourceCredits.rows.find(
       (credit) =>
         credit.status !== 'ACTIVE' ||
@@ -1448,6 +1655,38 @@ export const updatePaymentWithClient = async (
         [sourceCreditIds, nextPayerUserId],
       )
     }
+
+    if (creditScopeChanged && !reallocatePayment && sourceCredit) {
+      await client.query(
+        `
+          update resident_advance_credits
+          set applicable_charge_type = $2,
+              updated_at = now()
+          where id = $1
+        `,
+        [sourceCredit.id, nextAdvanceApplicableChargeType ?? null],
+      )
+      await client.query(
+        `
+          insert into resident_advance_credit_history (
+            credit_id,
+            action,
+            amount,
+            payment_id,
+            actor_user_id,
+            notes
+          )
+          values ($1, 'ADJUSTED', $2, $3, $4, $5)
+        `,
+        [
+          sourceCredit.id,
+          roundMoney(Number(sourceCredit.current_balance)),
+          payment.id,
+          input.actorUserId,
+          `Advance scope changed from ${getAdvanceCreditScopeLabel(sourceCredit.applicable_charge_type)} to ${getAdvanceCreditScopeLabel(nextAdvanceApplicableChargeType ?? null)}.`,
+        ],
+      )
+    }
   }
 
   if (reallocatePayment) {
@@ -1477,10 +1716,31 @@ export const updatePaymentWithClient = async (
     if (nextAllocationMode === 'TENURE_PACK' && nextTenureMonths !== undefined) {
       previewInput.tenureMonths = nextTenureMonths
     }
+    if (nextAdvanceCreditScope !== undefined) {
+      previewInput.advanceCreditScope = nextAdvanceCreditScope
+    }
     const nextPreview = await previewPaymentAllocationWithClient(
       client,
       previewInput,
     )
+
+    if (
+      sourceCredit &&
+      wouldApplyAdvanceOutsideScope({
+        applicableChargeType: nextAdvanceApplicableChargeType ?? null,
+        previousAllocations: existingAllocations.rows.map((allocation) => ({
+          billingPeriodChargeType: allocation.billing_period_charge_type,
+          allocatedAmount: Number(allocation.allocated_amount),
+        })),
+        nextAllocations: nextPreview.lines,
+      })
+    ) {
+      throw new AppError({
+        code: 'VALIDATION_ERROR',
+        statusCode: 400,
+        message: `${getAdvanceCreditScopeLabel(nextAdvanceApplicableChargeType ?? null)} advance cannot be applied to a bill outside that scope. Classify the unused advance first or record a separate payment.`,
+      })
+    }
 
     if (
       nextPreview.advanceAmount > 0 &&
@@ -1555,9 +1815,11 @@ export const updatePaymentWithClient = async (
           nextPreview.advanceApplicableChargeType,
           nextPreview.advanceSourceBillingPeriodId,
           nextPreview.advanceAmount,
-          nextPreview.advanceApplicableChargeType === 'DG_SET'
-            ? 'Excess DG Set payment retained for future DG Set bills after payment edit.'
-            : 'Excess payment retained as advance credit after payment edit.',
+          nextPreview.lines.length === 0
+            ? `Payment retained as ${getAdvanceCreditScopeLabel(nextPreview.advanceApplicableChargeType)} advance credit after payment edit.`
+            : nextPreview.advanceApplicableChargeType === 'DG_SET'
+              ? 'Excess DG Set payment retained for future DG Set bills after payment edit.'
+              : 'Excess payment retained as advance credit after payment edit.',
         ],
       )
       await client.query(
@@ -1597,6 +1859,7 @@ export const updatePaymentWithClient = async (
     ...snapshot,
     selectedDueIds: nextSelectedDueIds,
     tenureMonths: nextTenureMonths,
+    advanceCreditScope: nextAdvanceCreditScope,
     preview: preview ?? snapshot.preview,
     cheque: nextMode === 'CHEQUE'
       ? {
@@ -1631,6 +1894,7 @@ export const updatePaymentWithClient = async (
       modeChanged ||
       transferKindChanged ||
       referencesChanged ||
+      creditScopeChanged ||
       reallocatePayment
     )
 
@@ -1680,8 +1944,16 @@ export const updatePaymentWithClient = async (
     previousAmount,
     amount: nextAmount,
     allocatedAmount: preview?.allocatedAmount ?? null,
-    advanceAmount: preview?.advanceAmount ?? null,
-    advanceApplicableChargeType: preview?.advanceApplicableChargeType ?? null,
+    advanceAmount: preview
+      ? preview.advanceAmount
+      : sourceCredit
+        ? roundMoney(Number(sourceCredit.current_balance))
+        : null,
+    advanceApplicableChargeType: preview
+      ? preview.advanceApplicableChargeType
+      : creditScopeChanged
+        ? (nextAdvanceApplicableChargeType ?? null)
+        : (sourceCredit?.applicable_charge_type ?? null),
     receiptInvalidated: Boolean(payment.receipt_file_path && receiptShouldInvalidate),
     changed: true,
     beforeState,
@@ -1725,6 +1997,7 @@ export const allocateMaintenancePayment = async (paymentId: string) => {
 export const consumeAdvanceCreditsForDueWithClient = async (
   client: PoolClient,
   dueId: string,
+  options: { recomputeAccess?: boolean } = {},
 ) => {
   const dueResult = await client.query<DueRow>(
     `
@@ -1814,8 +2087,17 @@ export const consumeAdvanceCreditsForDueWithClient = async (
         and status = 'ACTIVE'
         and current_balance > 0
         and (
-          applicable_charge_type is null
-          or applicable_charge_type = $3
+          (
+            $3 = 'DG_SET'
+            and applicable_charge_type = 'DG_SET'
+          )
+          or (
+            $3 <> 'DG_SET'
+            and (
+              applicable_charge_type is null
+              or applicable_charge_type = $3
+            )
+          )
         )
       order by
         case when applicable_charge_type = $3 then 0 else 1 end,
@@ -1827,6 +2109,14 @@ export const consumeAdvanceCreditsForDueWithClient = async (
   )
 
   for (const credit of credits.rows) {
+    if (
+      !isAdvanceCreditEligibleForCharge(
+        credit.applicable_charge_type,
+        due.billing_period_charge_type,
+      )
+    ) {
+      continue
+    }
     if (remaining <= 0) break
     const amount = roundMoney(
       Math.min(remaining, Number(credit.current_balance)),
@@ -1947,14 +2237,22 @@ export const consumeAdvanceCreditsForDueWithClient = async (
     policy.lateFeePerDay,
     settlementDate,
   )
-  if (refreshed) {
+  if (refreshed && options.recomputeAccess !== false) {
     await recomputeAccessForAffectedDues(client, [refreshed])
   }
+
+  const affectedAccessPair = refreshed
+    ? {
+        billingPeriodId: refreshed.billingPeriodId,
+        flatId: refreshed.flatId,
+      }
+    : null
 
   return {
     consumedAmount,
     consumedCreditCount,
     balanceAmount: refreshed?.balanceAmount ?? remaining,
+    affectedAccessPair,
   }
 }
 

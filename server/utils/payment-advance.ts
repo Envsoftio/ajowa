@@ -5,6 +5,13 @@ export type AdvanceCreditContext = {
   sourceBillingPeriodId: string | null
 }
 
+export type AdvanceCreditScope = BillingPeriodChargeType | 'ANY_BILL'
+
+type ScopedPaymentAllocation = {
+  billingPeriodChargeType: BillingPeriodChargeType
+  allocatedAmount: number
+}
+
 type AdvanceAllocationLine = {
   billingPeriodId: string
   billingPeriodChargeType: BillingPeriodChargeType
@@ -34,4 +41,53 @@ export const resolveAdvanceCreditContext = (
 
 export const getAdvanceCreditScopeLabel = (
   applicableChargeType: BillingPeriodChargeType | null,
-) => (applicableChargeType === 'DG_SET' ? 'DG Set only' : 'Any bill')
+) => {
+  if (applicableChargeType === 'DG_SET') return 'DG Set only'
+  if (applicableChargeType === 'CAM') return 'CAM only'
+  if (applicableChargeType === 'GENERAL') return 'General bills only'
+  return 'Any non-DG bill'
+}
+
+export const getAdvanceApplicableChargeType = (
+  scope: AdvanceCreditScope,
+): BillingPeriodChargeType | null => (scope === 'ANY_BILL' ? null : scope)
+
+export const getAdvanceCreditScope = (
+  applicableChargeType: BillingPeriodChargeType | null,
+): AdvanceCreditScope => applicableChargeType ?? 'ANY_BILL'
+
+export const isAdvanceCreditEligibleForCharge = (
+  applicableChargeType: BillingPeriodChargeType | null,
+  targetChargeType: BillingPeriodChargeType,
+) => targetChargeType === 'DG_SET'
+  ? applicableChargeType === 'DG_SET'
+  : applicableChargeType === null || applicableChargeType === targetChargeType
+
+const getOutOfScopeAllocatedAmount = (
+  lines: ScopedPaymentAllocation[],
+  applicableChargeType: BillingPeriodChargeType | null,
+) => Math.round(
+  lines.reduce(
+    (sum, line) => sum + (
+      isAdvanceCreditEligibleForCharge(
+        applicableChargeType,
+        line.billingPeriodChargeType,
+      )
+        ? 0
+        : Math.max(0, line.allocatedAmount)
+    ),
+    0,
+  ) * 100,
+) / 100
+
+export const wouldApplyAdvanceOutsideScope = (input: {
+  applicableChargeType: BillingPeriodChargeType | null
+  previousAllocations: ScopedPaymentAllocation[]
+  nextAllocations: ScopedPaymentAllocation[]
+}) => getOutOfScopeAllocatedAmount(
+  input.nextAllocations,
+  input.applicableChargeType,
+) > getOutOfScopeAllocatedAmount(
+  input.previousAllocations,
+  input.applicableChargeType,
+)

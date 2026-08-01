@@ -7,14 +7,29 @@ import { getDatabasePool, queryRows } from '~/server/utils/database'
 import { paymentPreviewSchema, previewPaymentAllocation } from '~/server/utils/payments'
 import { AppError } from '~/server/utils/errors'
 
-const schema = paymentPreviewSchema.extend({
-  idempotencyKey: z.string().trim().min(8).max(160),
-})
+const schema = z.intersection(
+  paymentPreviewSchema,
+  z.object({
+    idempotencyKey: z.string().trim().min(8).max(160),
+  }),
+)
 
 export default defineEventHandler(async (event) => {
   const authMe = await requireActiveUser(event)
   const input = validateInput(schema, await readJsonBody(event))
   const hasFlatAccess = authMe.flatAccess.some((flat) => flat.flatId === input.flatId)
+
+  if (
+    input.allocationMode === 'ADVANCE_ONLY' ||
+    input.advanceCreditScope !== undefined
+  ) {
+    throw new AppError({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message:
+        'Explicit advance classification must be recorded by an admin or manager.',
+    })
+  }
 
   if (!hasFlatAccess) {
     throw new AppError({

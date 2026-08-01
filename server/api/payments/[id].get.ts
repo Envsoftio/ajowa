@@ -1,6 +1,7 @@
 import { createApiSuccess } from '~/server/utils/api'
 import { requireActiveUser } from '~/server/utils/auth'
 import { queryRows } from '~/server/utils/database'
+import { getDgAdvanceClassificationEligibility } from '~/server/utils/dg-advance-classification'
 import { AppError } from '~/server/utils/errors'
 import { readUuidParam } from '~/server/utils/master-data'
 
@@ -42,7 +43,25 @@ export default defineEventHandler(async (event) => {
               'status', rac.status,
               'applicableChargeType', rac.applicable_charge_type,
               'sourceBillingPeriodId', rac.source_billing_period_id,
-              'sourceBillingPeriodLabel', source_bp.label
+              'sourceBillingPeriodLabel', source_bp.label,
+              'sourceCreditCount', (
+                select count(*)::integer
+                from resident_advance_credits source_credit_count
+                where source_credit_count.source_payment_id = p.id
+              ),
+              'dependentHistoryCount', (
+                select count(*)::integer
+                from resident_advance_credit_history history
+                where history.credit_id = rac.id
+                  and (
+                    history.action <> 'CREATED'
+                    or history.payment_allocation_id is not null
+                    or (
+                      history.payment_id is not null
+                      and history.payment_id <> p.id
+                    )
+                  )
+              )
             )
             order by rac.created_at asc
           )
@@ -70,6 +89,34 @@ export default defineEventHandler(async (event) => {
   if (!payment) {
     throw new AppError({ code: 'NOT_FOUND', statusCode: 404, message: 'Payment not found.' })
   }
+
+  payment.advance_credits = Array.isArray(payment.advance_credits)
+    ? payment.advance_credits.map((credit: Record<string, unknown>) => {
+        const eligibility = getDgAdvanceClassificationEligibility({
+          paymentStatus: String(payment.status),
+          paymentMode: String(payment.mode),
+          sourceCreditCount: Number(credit.sourceCreditCount ?? 0),
+          creditStatus: String(credit.status),
+          originalAmount: String(credit.originalAmount ?? ''),
+          currentBalance: String(credit.currentBalance ?? ''),
+          applicableChargeType:
+            typeof credit.applicableChargeType === 'string'
+              ? credit.applicableChargeType
+              : null,
+          dependentHistoryCount: Number(credit.dependentHistoryCount ?? 0),
+        })
+        const {
+          sourceCreditCount: _sourceCreditCount,
+          dependentHistoryCount: _dependentHistoryCount,
+          ...publicCredit
+        } = credit
+
+        return {
+          ...publicCredit,
+          canClassifyAsDg: isStaff && eligibility.eligible,
+        }
+      })
+    : []
 
   return createApiSuccess(event, payment)
 })

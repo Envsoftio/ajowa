@@ -20,8 +20,17 @@ import {
   resolveChargeBreakdown,
 } from '~/server/utils/billing'
 import { AppError } from '~/server/utils/errors'
+import { getRequestLogger } from '~/server/utils/logging'
 import { enqueueDueBillingContactNotifications } from '~/server/utils/notifications'
-import { consumeAdvanceCreditsForDueWithClient } from '~/server/utils/payments'
+import {
+  consumeAdvanceCreditsForDueWithClient,
+  recomputeAccessForAffectedDuesWithClient,
+  type AffectedDueAccessPair,
+} from '~/server/utils/payments'
+import {
+  DG_DUE_GENERATION_BATCH_SIZE,
+  getAdvanceConsumptionDueTargets,
+} from '~/shared/billing'
 import type { ChargeBreakdownItem } from '~/types/domain'
 
 type FlatTarget = {
@@ -70,16 +79,60 @@ const flatNumberSortExpression =
 
 const roundMoney = (value: number) => Math.round(value * 100) / 100
 
+const getDgSupplementalAmount = (breakdown: ChargeBreakdownItem[]) =>
+  roundMoney(
+    breakdown.reduce((sum, item) => {
+      const interestAmount = Number(item.interestAmount ?? 0)
+
+      return sum +
+        (Number.isFinite(interestAmount) ? Math.max(0, interestAmount) : 0)
+    }, 0),
+  )
+
 export default defineEventHandler(async (event) => {
   const authMe = await requireRole(event, ['ADMIN', 'MANAGER'])
   const body = validatePayload<DueGenerationInput>(dueGenerationSchema, await readJsonBody(event))
+  const logger = getRequestLogger(event)
+  const requestStartedAt = Date.now()
+  let activePhase = 'database_connection'
+  let phaseStartedAt = requestStartedAt
+  let periodChargeType: string | null = null
+  let selectedFlatCount = 0
+  let generatedCountForLog = 0
+  let advanceEligibleFlatCount = 0
+  let transactionOpen = false
+  const startPhase = (phase: string) => {
+    activePhase = phase
+    phaseStartedAt = Date.now()
+  }
+  const completePhase = (extra: Record<string, unknown> = {}) => {
+    const now = Date.now()
+    logger.info('Maintenance due generation phase completed.', {
+      operation: 'maintenance_dues.generate',
+      phase: activePhase,
+      phaseDurationMs: now - phaseStartedAt,
+      elapsedMs: now - requestStartedAt,
+      billingPeriodId: body.billingPeriodId,
+      chargeType: periodChargeType,
+      requestedFlatCount: body.flatIds?.length ?? null,
+      selectedFlatCount,
+      generatedCount: generatedCountForLog,
+      advanceEligibleFlatCount,
+      ...extra,
+    })
+  }
   const pool = getDatabasePool()
   const client = await pool.connect()
+  completePhase()
 
   try {
+    startPhase('database_transaction_begin')
     await client.query('begin')
+    transactionOpen = true
+    completePhase()
 
     // Verify period exists and is not locked
+    startPhase('billing_period_validation')
     const periodResult = await client.query<{
       id: string
       label: string
@@ -116,12 +169,30 @@ export default defineEventHandler(async (event) => {
       })
     }
 
+    periodChargeType = period.charge_type
+    const isDgGeneration = period.charge_type === 'DG_SET'
+
+    if (
+      isDgGeneration &&
+      (!body.flatIds ||
+        body.flatIds.length === 0 ||
+        body.flatIds.length > DG_DUE_GENERATION_BATCH_SIZE)
+    ) {
+      throw new AppError({
+        code: 'VALIDATION_ERROR',
+        statusCode: 400,
+        message: `DG Set bills must be generated in explicit batches of 1 to ${DG_DUE_GENERATION_BATCH_SIZE} flats.`,
+      })
+    }
+
     const periodDueDate = period.due_date
     const generatedAtDate = body.billDate ?? new Date().toISOString().slice(0, 10)
     const cycleMultiplier = getBillingCycleMultiplier(period)
     const cycleLabel = getBillingCycleLabel(cycleMultiplier)
+    completePhase({ cycleMultiplier, cycleLabel })
 
     // Fetch active flats
+    startPhase('generation_inputs')
     const flatsResult = await client.query<FlatTarget>(
       `
         select
@@ -149,6 +220,7 @@ export default defineEventHandler(async (event) => {
         message: 'No active flats found to generate dues for.',
       })
     }
+    selectedFlatCount = flatsResult.rows.length
 
     // Fetch charge configuration
     const chargesResult = await client.query<ChargeConfig>(
@@ -294,8 +366,16 @@ export default defineEventHandler(async (event) => {
         })
       : new Map()
     const insertPayload: DueInsertPayload[] = []
+    completePhase({
+      configuredChargeCount: chargesResult.rows.length,
+      existingDueCount: existingResult.rows.length,
+      camAdvanceCoverageCount: advanceCoverageResult.rows.length,
+      overlappingCamDueCount: overlappingCamResult.rows.length,
+      paymentArrangementCount: arrangementsByFlatId.size,
+    })
 
     // Generate dues
+    startPhase('due_payload_build')
     let advanceAppliedCount = 0
     let advanceAppliedAmount = 0
     let advanceCoveredCount = 0
@@ -356,8 +436,15 @@ export default defineEventHandler(async (event) => {
             treatUnclassifiedChargesAsCam: true,
           })
         : breakdown
-      const totalBase = roundMoney(adjustedBreakdown.reduce((sum, item) => sum + item.amount, 0))
-      const advanceReduction = roundMoney(originalBase - totalBase)
+      const currentChargeBase = roundMoney(adjustedBreakdown.reduce((sum, item) => sum + item.amount, 0))
+      const dgSupplementalAmount =
+        period.charge_type === 'DG_SET'
+          ? getDgSupplementalAmount(adjustedBreakdown)
+          : 0
+      const totalBase = roundMoney(currentChargeBase + dgSupplementalAmount)
+      const advanceReduction = isCamPeriod
+        ? roundMoney(originalBase - totalBase)
+        : 0
 
       if (adjustedBreakdown.length === 0 || totalBase <= 0) {
         if (coverageSummary?.isFullyCovered || advanceReduction > 0) {
@@ -400,6 +487,14 @@ export default defineEventHandler(async (event) => {
       })
     }
 
+    completePhase({
+      dueInsertCandidateCount: insertPayload.length,
+      advanceCoveredCount,
+      advanceProratedCount,
+      overlapSkippedCount,
+    })
+
+    startPhase('due_insert_and_reconcile')
     const insertResult = insertPayload.length
         ? await client.query<{ id: string; flat_id: string }>(
             `
@@ -497,8 +592,17 @@ export default defineEventHandler(async (event) => {
       .filter((due): due is { dueId: string; flatId: string } => Boolean(due))
     const generated = generatedDues.length
     const skipped = skippedDues.length + advanceCoveredCount + overlapSkippedCount
+    generatedCountForLog = generated
+    completePhase({ skippedCount: skipped })
 
-    if (generatedDues.length > 0) {
+    startPhase('advance_credit_consumption')
+    const affectedAccessPairs: AffectedDueAccessPair[] = []
+    const advanceConsumptionDues = getAdvanceConsumptionDueTargets({
+      chargeType: period.charge_type as 'GENERAL' | 'CAM' | 'DG_SET',
+      generatedDues,
+      skippedDues,
+    })
+    if (advanceConsumptionDues.length > 0) {
       const advanceCreditResult = await client.query<{ flat_id: string }>(
         `
           select distinct flat_id
@@ -508,73 +612,164 @@ export default defineEventHandler(async (event) => {
             and status = 'ACTIVE'
             and current_balance > 0
             and (
-              applicable_charge_type is null
-              or applicable_charge_type = $3
+              (
+                $3 = 'DG_SET'
+                and applicable_charge_type = 'DG_SET'
+              )
+              or (
+                $3 <> 'DG_SET'
+                and (
+                  applicable_charge_type is null
+                  or applicable_charge_type = $3
+                )
+              )
             )
         `,
         [
           authMe.user.societyId,
-          generatedDues.map((due) => due.flatId),
+          advanceConsumptionDues.map((due) => due.flatId),
           period.charge_type,
         ],
       )
       const flatIdsWithAdvanceCredit = new Set(advanceCreditResult.rows.map((row) => row.flat_id))
+      const advanceEligibleDues = advanceConsumptionDues.filter((due) =>
+        flatIdsWithAdvanceCredit.has(due.flatId),
+      )
+      advanceEligibleFlatCount = advanceEligibleDues.length
 
-      for (const due of generatedDues) {
-        if (!flatIdsWithAdvanceCredit.has(due.flatId)) {
-          continue
+      for (const due of advanceEligibleDues) {
+        const advanceResult = isDgGeneration
+          ? await consumeAdvanceCreditsForDueWithClient(
+              client,
+              due.dueId,
+              { recomputeAccess: false },
+            )
+          : await consumeAdvanceCreditsForDueWithClient(client, due.dueId)
+        if (isDgGeneration && advanceResult.affectedAccessPair) {
+          affectedAccessPairs.push(advanceResult.affectedAccessPair)
         }
-
-        const advanceResult = await consumeAdvanceCreditsForDueWithClient(client, due.dueId)
         if (advanceResult.consumedAmount > 0) {
           advanceAppliedCount += 1
           advanceAppliedAmount = roundMoney(advanceAppliedAmount + advanceResult.consumedAmount)
         }
       }
+
+      if (isDgGeneration && affectedAccessPairs.length > 0) {
+        await recomputeAccessForAffectedDuesWithClient(
+          client,
+          affectedAccessPairs,
+        )
+      }
     }
 
-    if (generated > 0) {
-      const queued = await enqueueDueBillingContactNotifications(client, {
-        societyId: authMe.user.societyId,
-        dueIds: generatedDueIds,
-        eventKey: 'maintenance_due.created',
-        title: 'Maintenance due generated',
-        bodyPrefix: 'A new maintenance due has been generated for',
-        triggeredByUserId: authMe.user.id,
-      })
+    completePhase({
+      advanceAppliedCount,
+      advanceAppliedAmount,
+      affectedAccessPairCount: affectedAccessPairs.length,
+    })
 
-      await writeMasterAudit({
-        client,
-        event,
-        actorUserId: authMe.user.id,
-        actorAuthUserId: authMe.authUser.id,
-        action: 'CREATED',
-        eventKey: 'maintenance_dues.generated',
-        metadata: {
-          billingPeriodId: body.billingPeriodId,
-          cycleMultiplier,
-          cycleLabel,
-          generatedCount: generated,
-          skippedCount: skipped,
-          advanceCoveredCount,
-          advanceProratedCount,
-          advanceProratedAmount,
-          overlapSkippedCount,
-          advanceAppliedCount,
-          advanceAppliedAmount,
-          paymentArrangementAppliedCount,
-          flatIds: body.flatIds,
+    if (isDgGeneration) {
+      startPhase('database_transaction_commit')
+      await client.query('commit')
+      transactionOpen = false
+      completePhase({ commitMode: 'dg_early' })
+    }
+
+    let queued = { eventCount: 0, audienceCount: 0, jobCount: 0 }
+    if (generated > 0 || (isDgGeneration && advanceAppliedCount > 0)) {
+      if (isDgGeneration) {
+        startPhase('created_notification_skip')
+        completePhase({
+          notificationEventCount: 0,
+          notificationAudienceCount: 0,
+          notificationJobCount: 0,
+          notificationEnqueueSkipped: true,
+        })
+      } else {
+        startPhase('created_notification_enqueue')
+        queued = await enqueueDueBillingContactNotifications(client, {
+          societyId: authMe.user.societyId,
+          dueIds: generatedDueIds,
+          eventKey: 'maintenance_due.created',
+          title: 'Maintenance due generated',
+          bodyPrefix: 'A new maintenance due has been generated for',
+          triggeredByUserId: authMe.user.id,
+        })
+        completePhase({
           notificationEventCount: queued.eventCount,
           notificationAudienceCount: queued.audienceCount,
           notificationJobCount: queued.jobCount,
-        },
-        relatedEntities: [
-          { entityTable: 'billing_periods', entityId: body.billingPeriodId, entityLabel: period.label },
-        ],
-      })
+          notificationEnqueueSkipped: false,
+        })
+      }
+
+      const writeGenerationAudit = () =>
+        writeMasterAudit({
+          client,
+          event,
+          actorUserId: authMe.user.id,
+          actorAuthUserId: authMe.authUser.id,
+          action: 'CREATED',
+          eventKey: 'maintenance_dues.generated',
+          metadata: {
+            billingPeriodId: body.billingPeriodId,
+            cycleMultiplier,
+            cycleLabel,
+            generatedCount: generated,
+            skippedCount: skipped,
+            advanceCoveredCount,
+            advanceProratedCount,
+            advanceProratedAmount,
+            overlapSkippedCount,
+            advanceAppliedCount,
+            advanceAppliedAmount,
+            paymentArrangementAppliedCount,
+            flatIds: body.flatIds,
+            notificationEventCount: queued.eventCount,
+            notificationAudienceCount: queued.audienceCount,
+            notificationJobCount: queued.jobCount,
+            ...(isDgGeneration
+              ? { notificationEnqueueSkipped: true }
+              : {}),
+          },
+          relatedEntities: [
+            {
+              entityTable: 'billing_periods',
+              entityId: body.billingPeriodId,
+              entityLabel: period.label,
+            },
+          ],
+        })
+
+      startPhase('master_audit')
+      if (isDgGeneration) {
+        try {
+          await writeGenerationAudit()
+          completePhase({ auditWriteFailed: false })
+        } catch (error) {
+          completePhase({ auditWriteFailed: true })
+          logger.error('Generated-dues audit enqueue failed after commit.', {
+            operation: 'maintenance_dues.generate',
+            billingPeriodId: body.billingPeriodId,
+            generatedCount: generated,
+            cause: error instanceof Error ? error.message : String(error),
+          })
+        }
+      } else {
+        await writeGenerationAudit()
+        completePhase({ auditWriteFailed: false })
+      }
     }
 
-    await client.query('commit')
+    if (!isDgGeneration) {
+      startPhase('database_transaction_commit')
+      await client.query('commit')
+      transactionOpen = false
+      completePhase({ commitMode: 'cam_general_atomic' })
+    }
+
+    startPhase('request_complete')
+    completePhase({ skippedCount: skipped })
     return createApiSuccess(event, {
       generated,
       skipped,
@@ -590,7 +785,33 @@ export default defineEventHandler(async (event) => {
       skippedDues,
     })
   } catch (error) {
-    await client.query('rollback')
+    if (transactionOpen) {
+      try {
+        await client.query('rollback')
+      } catch (rollbackError) {
+        logger.error('Maintenance due generation rollback failed.', {
+          operation: 'maintenance_dues.generate',
+          billingPeriodId: body.billingPeriodId,
+          cause:
+            rollbackError instanceof Error
+              ? rollbackError.message
+              : String(rollbackError),
+        })
+      }
+    }
+    logger.error('Maintenance due generation failed.', {
+      operation: 'maintenance_dues.generate',
+      phase: activePhase,
+      phaseDurationMs: Date.now() - phaseStartedAt,
+      elapsedMs: Date.now() - requestStartedAt,
+      billingPeriodId: body.billingPeriodId,
+      chargeType: periodChargeType,
+      requestedFlatCount: body.flatIds?.length ?? null,
+      selectedFlatCount,
+      generatedCount: generatedCountForLog,
+      advanceEligibleFlatCount,
+      cause: error instanceof Error ? error.message : String(error),
+    })
     throw error
   } finally {
     client.release()

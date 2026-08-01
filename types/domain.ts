@@ -852,6 +852,7 @@ export type DueGenerationPreview = {
   cycleLabel: string
   totalFlats: number
   totalAmount: number
+  dgPreviousReferenceAmount?: number
   skippedAdvanceCovered?: number
   skippedOverlappingCam?: number
   flatTypeBreakdown: {

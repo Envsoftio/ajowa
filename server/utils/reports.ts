@@ -2,6 +2,7 @@ import * as XLSX from 'xlsx/xlsx.mjs'
 import { z } from 'zod'
 import { AppError } from './errors'
 import { getDatabasePool } from './database'
+import { getResidentLedgerEntryLabel, getResidentLedgerReceiptAmount, isSyntheticAdvanceApplication } from './payment-reporting'
 import { createPdfBuffer, getSocietyStampImage } from './pdf'
 
 export const reportTypes = [
@@ -815,7 +816,7 @@ const buildProfitLossReport = async ({ societyId, filters }: ReportQueryContext)
 
 const buildCollectionReport = async ({ societyId, filters, exportMode }: ReportQueryContext) => {
   const params: unknown[] = [societyId, filters.startDate, filters.endDate]
-  const where = ['p.society_id = $1', 'p.payment_date between $2 and $3']
+  const where = ['p.society_id = $1', 'p.payment_date between $2 and $3', "p.mode <> 'ADVANCE_CREDIT'"]
   if (filters.flatId) {
     params.push(filters.flatId)
     where.push(`p.received_for_flat_id = $${params.length}`)
@@ -982,10 +983,15 @@ const buildPaymentLedgerReport = async ({ societyId, filters, exportMode }: Repo
   const result = await getDatabasePool().query<Record<string, string>>(
     `
       select
+        p.id::text as "paymentId",
         p.payment_date::text as "paymentDate",
         concat(b.name, ' ', f.flat_number) as flat,
         u.full_name as resident,
-        coalesce(p.receipt_number, '-') as receipt,
+        case
+          when p.mode = 'ADVANCE_CREDIT' then 'Internal advance application'
+          else coalesce(p.receipt_number, '-')
+        end as receipt,
+        p.mode::text as "paymentMode",
         bp.label as period,
         p.amount::text as "paymentAmount",
         pa.allocated_amount::text as "allocatedAmount",
@@ -1004,12 +1010,24 @@ const buildPaymentLedgerReport = async ({ societyId, filters, exportMode }: Repo
     `,
     params,
   )
-  const rows: Array<Record<string, unknown>> = result.rows.map((row) => ({
-    ...row,
-    paymentAmount: money(row.paymentAmount),
-    allocatedAmount: money(row.allocatedAmount),
-    remainingDueBalance: money(row.remainingDueBalance),
-  }))
+  const countedReceiptPaymentIds = new Set<string>()
+  const rows: Array<Record<string, unknown>> = result.rows.map((row) => {
+    const paymentId = row.paymentId ?? ''
+    const paymentMode = row.paymentMode ?? null
+    const alreadyCounted = countedReceiptPaymentIds.has(paymentId)
+    countedReceiptPaymentIds.add(paymentId)
+
+    return {
+      ...row,
+      entryType: getResidentLedgerEntryLabel(paymentMode),
+      paymentAmount: money(getResidentLedgerReceiptAmount({ paymentAmount: Number(row.paymentAmount), paymentMode, alreadyCounted })),
+      allocatedAmount: money(row.allocatedAmount),
+      remainingDueBalance: money(row.remainingDueBalance),
+      syntheticAdvanceApplication: isSyntheticAdvanceApplication(paymentMode),
+    }
+  })
+  const totalPaid = rows.reduce((sum, row) => sum + Number(row.paymentAmount), 0)
+  const totalAllocated = rows.reduce((sum, row) => sum + Number(row.allocatedAmount), 0)
 
   return {
     columns: [
@@ -1017,21 +1035,22 @@ const buildPaymentLedgerReport = async ({ societyId, filters, exportMode }: Repo
       { key: 'flat', label: 'Flat' },
       { key: 'resident', label: 'Resident' },
       { key: 'receipt', label: 'Receipt' },
+      { key: 'entryType', label: 'Entry type' },
       { key: 'period', label: 'Period' },
-      { key: 'paymentAmount', label: 'Payment', type: 'money' },
+      { key: 'paymentAmount', label: 'Money received', type: 'money' },
       { key: 'allocatedAmount', label: 'Allocated', type: 'money' },
       { key: 'remainingDueBalance', label: 'Remaining due', type: 'money' },
       { key: 'status', label: 'Status' },
     ] satisfies ReportColumn[],
     rows,
     summary: {
-      totalPaid: rows.reduce((sum, row) => sum + Number(row.paymentAmount), 0),
-      totalAllocated: rows.reduce((sum, row) => sum + Number(row.allocatedAmount), 0),
+      totalPaid,
+      totalAllocated,
       rowCount: rows.length,
     },
     chart: [
-      { label: 'Paid', value: rows.reduce((sum, row) => sum + Number(row.paymentAmount), 0), color: chartColor(0) },
-      { label: 'Allocated', value: rows.reduce((sum, row) => sum + Number(row.allocatedAmount), 0), color: chartColor(1) },
+      { label: 'Money received', value: totalPaid, color: chartColor(0) },
+      { label: 'Allocated', value: totalAllocated, color: chartColor(1) },
     ],
   }
 }

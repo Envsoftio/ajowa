@@ -149,6 +149,7 @@ export default defineEventHandler(async (event) => {
     flatId: input.flatId,
     amount: input.amount,
     allocationMode: input.allocationMode ?? 'OLDEST_UNPAID_FIRST',
+    advanceCreditScope: input.advanceCreditScope,
     selectedDueIds: input.selectedDueIds ?? [],
     asOfDate: input.paymentDate,
   }
@@ -200,6 +201,7 @@ export default defineEventHandler(async (event) => {
           JSON.stringify({
             selectedDueIds: input.selectedDueIds,
             tenureMonths: input.tenureMonths,
+            advanceCreditScope: input.advanceCreditScope,
             preview,
             cheque:
               input.mode === 'CHEQUE'

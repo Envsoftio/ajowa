@@ -124,6 +124,10 @@ export default defineNuxtConfig({
           content: 'AJOWA',
         },
         {
+          name: 'facebook-domain-verification',
+          content: '3802lwq8rmz3hkpmxbgt5ss997auf3',
+        },
+        {
           name: 'apple-mobile-web-app-title',
           content: 'AJOWA',
         },

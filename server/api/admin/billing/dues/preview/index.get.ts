@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import type { H3Event } from 'h3'
 import { createApiSuccess, validateInput } from '~/server/utils/api'
 import { requireRole } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
@@ -46,21 +47,21 @@ const previewQuerySchema = z.object({
   flatIds: z.string().trim().optional(),
 })
 
-export default defineEventHandler(async (event) => {
-  const authMe = await requireRole(event, ['ADMIN', 'MANAGER'])
-  const query = validateInput(previewQuerySchema, getQuerySafe(event))
-  const flatIds = query.flatIds
-    ?.split(',')
-    .map((item) => item.trim())
-    .filter(Boolean)
+export const dueGenerationPreviewInputSchema = z.object({
+  billingPeriodId: z.string().uuid(),
+  flatIds: z.array(z.string().uuid()).min(1).max(1000).optional(),
+})
 
-  if (flatIds?.some((id) => !z.string().uuid().safeParse(id).success)) {
-    throw new AppError({
-      code: 'VALIDATION_ERROR',
-      statusCode: 400,
-      message: 'One or more flat identifiers are invalid.',
-    })
-  }
+export type DueGenerationPreviewInput = z.output<
+  typeof dueGenerationPreviewInputSchema
+>
+
+export const createDueGenerationPreview = async (
+  event: H3Event,
+  input: DueGenerationPreviewInput,
+) => {
+  const authMe = await requireRole(event, ['ADMIN', 'MANAGER'])
+  const flatIds = input.flatIds
 
   const pool = getDatabasePool()
   const periodResult = await pool.query<{
@@ -79,7 +80,7 @@ export default defineEventHandler(async (event) => {
       where id = $1 and society_id = $2
       limit 1
     `,
-    [query.billingPeriodId, authMe.user.societyId],
+    [input.billingPeriodId, authMe.user.societyId],
   )
 
   const period = periodResult.rows[0]
@@ -126,7 +127,7 @@ export default defineEventHandler(async (event) => {
           and (billing_period_id is null or billing_period_id = $2)
         order by scope, flat_type
       `,
-      [authMe.user.societyId, query.billingPeriodId],
+      [authMe.user.societyId, input.billingPeriodId],
     ),
     pool.query<{ flat_id: string }>(
       `
@@ -134,7 +135,7 @@ export default defineEventHandler(async (event) => {
         from maintenance_dues
         where society_id = $1 and billing_period_id = $2
       `,
-      [authMe.user.societyId, query.billingPeriodId],
+      [authMe.user.societyId, input.billingPeriodId],
     ),
   ])
 
@@ -253,6 +254,7 @@ export default defineEventHandler(async (event) => {
   >()
   const warnings: string[] = []
   let totalAmount = 0
+  let dgPreviousReferenceAmount = 0
   let skippedExisting = 0
   let skippedAdvanceCovered = 0
   let advanceProratedCount = 0
@@ -308,8 +310,25 @@ export default defineEventHandler(async (event) => {
         })
       : configuredCharges
     const configuredAmount = configuredCharges.reduce((sum, item) => sum + item.amount, 0)
-    const flatAmount = effectiveCharges.reduce((sum, item) => sum + item.amount, 0)
-    const advanceReduction = Math.round((configuredAmount - flatAmount) * 100) / 100
+    const currentChargeAmount = effectiveCharges.reduce((sum, item) => sum + item.amount, 0)
+    const dgPreviousReferenceForFlat = period.charge_type === 'DG_SET'
+      ? effectiveCharges.reduce((sum, item) => {
+          const amount = Number(item.previousOutstanding ?? 0)
+          return sum + (Number.isFinite(amount) ? Math.max(0, amount) : 0)
+        }, 0)
+      : 0
+    const dgFinancialSupplement = period.charge_type === 'DG_SET'
+      ? effectiveCharges.reduce((sum, item) => {
+          const amount = Number(item.interestAmount ?? 0)
+          return sum + (Number.isFinite(amount) ? Math.max(0, amount) : 0)
+        }, 0)
+      : 0
+    const flatAmount = Math.round(
+      (currentChargeAmount + dgFinancialSupplement) * 100,
+    ) / 100
+    const advanceReduction = isCamPeriod
+      ? Math.round((configuredAmount - currentChargeAmount) * 100) / 100
+      : 0
 
     if (hasUnresolvedAreaRateCharge(effectiveCharges)) {
       warnings.push(`${flat.blockName} ${flat.flatNumber} is missing area; area-based CAM cannot be generated.`)
@@ -334,6 +353,7 @@ export default defineEventHandler(async (event) => {
     }
 
     totalAmount += flatAmount
+    dgPreviousReferenceAmount += dgPreviousReferenceForFlat
     if (current) {
       current.flatCount += 1
       current.totalAmount += flatAmount
@@ -378,6 +398,12 @@ export default defineEventHandler(async (event) => {
     cycleLabel,
     totalFlats: flatsResult.rows.length - skippedExisting - skippedAdvanceCovered - skippedOverlappingCam,
     totalAmount: Math.round(totalAmount * 100) / 100,
+    ...(period.charge_type === 'DG_SET'
+      ? {
+          dgPreviousReferenceAmount:
+            Math.round(dgPreviousReferenceAmount * 100) / 100,
+        }
+      : {}),
     flatTypeBreakdown: Array.from(breakdownMap.values()).map((item) => ({
       ...item,
       totalAmount: Math.round(item.totalAmount * 100) / 100,
@@ -392,4 +418,28 @@ export default defineEventHandler(async (event) => {
   }
 
   return createApiSuccess(event, preview)
+}
+
+export default defineEventHandler(async (event) => {
+  const query = validateInput(previewQuerySchema, getQuerySafe(event))
+  const flatIds = query.flatIds
+    ?.split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
+
+  if (flatIds?.some((id) => !z.string().uuid().safeParse(id).success)) {
+    throw new AppError({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message: 'One or more flat identifiers are invalid.',
+    })
+  }
+
+  return createDueGenerationPreview(
+    event,
+    validateInput(dueGenerationPreviewInputSchema, {
+      billingPeriodId: query.billingPeriodId,
+      ...(flatIds?.length ? { flatIds } : {}),
+    }),
+  )
 })
