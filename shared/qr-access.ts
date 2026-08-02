@@ -3,7 +3,7 @@ export type QrBillingPeriodCandidate = {
   chargeType: string
   startDate: string
   endDate: string
-  hasGeneratedDues: boolean
+  isFullyGenerated: boolean
 }
 
 const chargeTypePriority = (chargeType: string) =>
@@ -20,7 +20,7 @@ export const selectCurrentQrBillingPeriodId = (
       if (chargePriority !== 0) return chargePriority
 
       const duePriority =
-        Number(right.hasGeneratedDues) - Number(left.hasGeneratedDues)
+        Number(right.isFullyGenerated) - Number(left.isFullyGenerated)
       if (duePriority !== 0) return duePriority
 
       const startDatePriority = right.startDate.localeCompare(left.startDate)

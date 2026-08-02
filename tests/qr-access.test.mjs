@@ -7,7 +7,7 @@ const period = (overrides) => ({
   chargeType: 'CAM',
   startDate: '2026-07-01',
   endDate: '2026-09-30',
-  hasGeneratedDues: true,
+  isFullyGenerated: true,
   ...overrides,
 })
 
@@ -18,7 +18,7 @@ test('selects an active CAM period with dues over a newer overlapping empty peri
         id: 'empty-august',
         startDate: '2026-08-01',
         endDate: '2026-10-31',
-        hasGeneratedDues: false,
+        isFullyGenerated: false,
       }),
       period({ id: 'generated-july' }),
     ]),
@@ -26,7 +26,7 @@ test('selects an active CAM period with dues over a newer overlapping empty peri
   )
 })
 
-test('keeps the latest CAM period when competing periods both have dues', () => {
+test('keeps the latest CAM period when competing periods are both fully generated', () => {
   assert.equal(
     selectCurrentQrBillingPeriodId([
       period({ id: 'july' }),
@@ -40,15 +40,30 @@ test('keeps the latest CAM period when competing periods both have dues', () => 
   )
 })
 
-test('falls back to the latest active CAM period when none have dues', () => {
+test('does not switch to a newer CAM period during partial due generation', () => {
   assert.equal(
     selectCurrentQrBillingPeriodId([
-      period({ id: 'july', hasGeneratedDues: false }),
+      period({ id: 'fully-generated-july' }),
+      period({
+        id: 'partially-generated-august',
+        startDate: '2026-08-01',
+        endDate: '2026-10-31',
+        isFullyGenerated: false,
+      }),
+    ]),
+    'fully-generated-july',
+  )
+})
+
+test('falls back to the latest active CAM period when none are fully generated', () => {
+  assert.equal(
+    selectCurrentQrBillingPeriodId([
+      period({ id: 'july', isFullyGenerated: false }),
       period({
         id: 'august',
         startDate: '2026-08-01',
         endDate: '2026-10-31',
-        hasGeneratedDues: false,
+        isFullyGenerated: false,
       }),
     ]),
     'august',
@@ -58,7 +73,7 @@ test('falls back to the latest active CAM period when none have dues', () => {
 test('continues to prefer CAM over other active charge types', () => {
   assert.equal(
     selectCurrentQrBillingPeriodId([
-      period({ id: 'cam', hasGeneratedDues: false }),
+      period({ id: 'cam', isFullyGenerated: false }),
       period({ id: 'dg', chargeType: 'DG_SET' }),
     ]),
     'cam',

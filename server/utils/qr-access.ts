@@ -263,7 +263,7 @@ export const getCurrentBillingPeriodId = async (client: PoolClient, societyId: s
     charge_type: string
     start_date: string
     end_date: string
-    has_generated_dues: boolean
+    is_fully_generated: boolean
   }>(
     `
       select
@@ -273,9 +273,22 @@ export const getCurrentBillingPeriodId = async (client: PoolClient, societyId: s
         bp.end_date::text,
         exists (
           select 1
-          from maintenance_dues md
-          where md.billing_period_id = bp.id
-        ) as has_generated_dues
+          from flats active_flat
+          where active_flat.society_id = bp.society_id
+            and active_flat.is_active = true
+        )
+        and not exists (
+          select 1
+          from flats active_flat
+          where active_flat.society_id = bp.society_id
+            and active_flat.is_active = true
+            and not exists (
+              select 1
+              from maintenance_dues md
+              where md.billing_period_id = bp.id
+                and md.flat_id = active_flat.id
+            )
+        ) as is_fully_generated
       from billing_periods bp
       inner join society_profile sp on sp.id = bp.society_id
       where bp.society_id = $1
@@ -291,7 +304,7 @@ export const getCurrentBillingPeriodId = async (client: PoolClient, societyId: s
       chargeType: period.charge_type,
       startDate: period.start_date,
       endDate: period.end_date,
-      hasGeneratedDues: period.has_generated_dues,
+      isFullyGenerated: period.is_fully_generated,
     })),
   )
 }
