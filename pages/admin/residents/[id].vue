@@ -35,6 +35,37 @@ type ResidentNotesResponse = {
   updated: boolean
 }
 
+type AdminQrStatusResponse = {
+  resident: { id: string; name: string }
+  period: null | {
+    id: string
+    label: string
+    startDate: string
+    endDate: string
+  }
+  access: null | {
+    state: 'ALLOWED' | 'BLOCKED'
+    basis: string | null
+    unpaidFlats: string[]
+    totalFlats: number
+    totalPaidFlats: number
+    totalUnpaidFlats: number
+    totalDue: number
+    totalPaid: number
+    totalBalance: number
+    overrideState: string | null
+    overrideReason: string | null
+    overrideExpiresAt: string | null
+    computedAt: string
+  }
+  qr: {
+    state: 'ACTIVE' | 'REVOKED' | 'EXPIRED' | 'NOT_ISSUED'
+    generatedAt: string | null
+    validUntil: string | null
+  }
+  checkedAt: string
+}
+
 type DocumentField =
   | 'profileImagePath'
   | 'governmentIdDocumentPath'
@@ -49,6 +80,7 @@ const route = useRoute()
 const router = useRouter()
 const api = useApi()
 const toast = useToast()
+const authStore = useAuthStore()
 const { formatMoney, formatDate, formatDateTime } = useFinanceFormatters()
 
 const residentId = computed(() => String(route.params.id))
@@ -67,6 +99,11 @@ const runningAction = ref<ResidentAction | ''>('')
 const notesDraft = ref('')
 const savingNotes = ref(false)
 const displayEditDialog = ref(false)
+const displayQrStatusDialog = ref(false)
+const checkingQrStatus = ref(false)
+const qrStatus = ref<AdminQrStatusResponse | null>(null)
+const qrStatusError = ref('')
+const canCheckQrStatus = computed(() => authStore.me?.user.role === 'ADMIN')
 const displayValue = (value: string | null | undefined) => value || '-'
 const relationshipSeverity = (type: string) => {
   if (type === 'OWNER') return 'success'
@@ -306,6 +343,44 @@ const openEditDialog = () => {
 
 const onResidentSaved = async () => {
   await refresh()
+}
+
+const getApiErrorMessage = (error: unknown) => {
+  if (
+    typeof error === 'object' &&
+    error != null &&
+    'data' in error &&
+    typeof (error as { data?: { message?: unknown } }).data?.message ===
+      'string'
+  ) {
+    return (error as { data: { message: string } }).data.message
+  }
+
+  return 'QR status could not be checked. Please try again.'
+}
+
+const checkQrStatus = async () => {
+  displayQrStatusDialog.value = true
+  checkingQrStatus.value = true
+  qrStatus.value = null
+  qrStatusError.value = ''
+
+  try {
+    const response = await api<{ ok: true; data: AdminQrStatusResponse }>(
+      `/api/admin/residents/${residentId.value}/qr-status`,
+    )
+    qrStatus.value = response.data
+  } catch (error: unknown) {
+    qrStatusError.value = getApiErrorMessage(error)
+  } finally {
+    checkingQrStatus.value = false
+  }
+}
+
+const qrStateSeverity = (state: AdminQrStatusResponse['qr']['state']) => {
+  if (state === 'ACTIVE') return 'success'
+  if (state === 'REVOKED' || state === 'EXPIRED') return 'danger'
+  return 'secondary'
 }
 
 watch(
@@ -1118,11 +1193,22 @@ const saveResidentNotes = async () => {
               <p class="eyebrow">Access</p>
               <h2>Recent gate scans</h2>
             </div>
-            <Tag
-              :value="`${resident.accessLogs.length} scans`"
-              severity="secondary"
-              rounded
-            />
+            <div class="resident-access-actions">
+              <Tag
+                :value="`${resident.accessLogs.length} scans`"
+                severity="secondary"
+                rounded
+              />
+              <Button
+                v-if="canCheckQrStatus"
+                label="Check QR status"
+                icon="pi pi-shield"
+                severity="secondary"
+                outlined
+                :loading="checkingQrStatus"
+                @click="checkQrStatus"
+              />
+            </div>
           </div>
 
           <AppDataTable
@@ -1161,6 +1247,125 @@ const saveResidentNotes = async () => {
       </section>
     </template>
 
+    <Dialog
+      v-model:visible="displayQrStatusDialog"
+      header="QR status check"
+      modal
+      :style="{ width: 'min(94vw, 34rem)' }"
+    >
+      <AppSkeletonState v-if="checkingQrStatus" />
+      <AppState
+        v-else-if="qrStatusError"
+        variant="error"
+        title="Unable to check QR status"
+        :message="qrStatusError"
+        action-label="Try again"
+        @retry="checkQrStatus"
+      />
+      <div v-else-if="qrStatus" class="resident-qr-status">
+        <Message severity="info" :closable="false">
+          Read-only check. No QR was generated, changed, scanned, or displayed.
+        </Message>
+
+        <div class="resident-qr-status__heading">
+          <div>
+            <p class="eyebrow">Resident</p>
+            <h2>{{ qrStatus.resident.name }}</h2>
+          </div>
+          <Tag
+            :value="qrStatus.access?.state ?? 'NOT COMPUTED'"
+            :severity="
+              qrStatus.access?.state === 'ALLOWED'
+                ? 'success'
+                : qrStatus.access?.state === 'BLOCKED'
+                  ? 'danger'
+                  : 'secondary'
+            "
+            rounded
+          />
+        </div>
+
+        <AppState
+          v-if="!qrStatus.period"
+          title="No current QR period"
+          message="No active QR billing period is configured. Nothing was changed."
+          icon="pi pi-calendar"
+        />
+        <template v-else>
+          <div class="resident-fact-grid resident-qr-status__facts">
+            <div>
+              <span>Billing period</span>
+              <strong>{{ qrStatus.period.label }}</strong>
+            </div>
+            <div>
+              <span>QR record</span>
+              <Tag
+                :value="qrStatus.qr.state.replaceAll('_', ' ')"
+                :severity="qrStateSeverity(qrStatus.qr.state)"
+                rounded
+              />
+            </div>
+            <div>
+              <span>Access basis</span>
+              <strong>{{
+                qrStatus.access?.basis?.replaceAll('_', ' ') || '-'
+              }}</strong>
+            </div>
+            <div>
+              <span>Flats clear</span>
+              <strong>
+                {{
+                  qrStatus.access
+                    ? `${qrStatus.access.totalPaidFlats}/${qrStatus.access.totalFlats}`
+                    : '-'
+                }}
+              </strong>
+            </div>
+            <div>
+              <span>Outstanding</span>
+              <strong>{{
+                qrStatus.access
+                  ? formatMoney(qrStatus.access.totalBalance)
+                  : '-'
+              }}</strong>
+            </div>
+            <div>
+              <span>QR valid until</span>
+              <strong>{{ formatDateTime(qrStatus.qr.validUntil) }}</strong>
+            </div>
+            <div>
+              <span>Status computed</span>
+              <strong>{{ formatDateTime(qrStatus.access?.computedAt) }}</strong>
+            </div>
+            <div>
+              <span>Checked</span>
+              <strong>{{ formatDateTime(qrStatus.checkedAt) }}</strong>
+            </div>
+          </div>
+
+          <Message v-if="!qrStatus.access" severity="warn" :closable="false">
+            Access status has not been computed yet. The admin check did not
+            trigger computation.
+          </Message>
+          <Message
+            v-else-if="qrStatus.access.unpaidFlats.length"
+            severity="warn"
+            :closable="false"
+          >
+            Blocking flat(s): {{ qrStatus.access.unpaidFlats.join(', ') }}
+          </Message>
+          <Message
+            v-if="qrStatus.access?.overrideState"
+            severity="warn"
+            :closable="false"
+          >
+            Manual override: {{ qrStatus.access.overrideState }}.
+            {{ qrStatus.access.overrideReason }}
+          </Message>
+        </template>
+      </div>
+    </Dialog>
+
     <ResidentEditorDialog
       v-model:visible="displayEditDialog"
       :resident-id="residentId"
@@ -1188,6 +1393,35 @@ const saveResidentNotes = async () => {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
+}
+
+.resident-access-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.resident-qr-status {
+  display: grid;
+  gap: 1rem;
+}
+
+.resident-qr-status__heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.resident-qr-status__heading h2,
+.resident-qr-status__heading p {
+  margin: 0;
+}
+
+.resident-qr-status__facts {
+  margin-top: 0;
 }
 
 .resident-household-identity {
