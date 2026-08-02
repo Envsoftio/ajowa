@@ -8,7 +8,10 @@ import { requirePermission } from '~/server/utils/auth'
 import { isDedicatedDgAdvanceAllocation } from '~/server/utils/dg-advance'
 import { AppError } from '~/server/utils/errors'
 import { recordManualPayment } from '~/server/utils/manual-payment'
-import { manualPaymentSchema } from '~/server/utils/payments'
+import {
+  consumeDgAdvanceCreditsForFlat,
+  manualPaymentSchema,
+} from '~/server/utils/payments'
 
 export default defineEventHandler(async (event) => {
   const authMe = await requirePermission(event, 'billing.manage')
@@ -43,6 +46,14 @@ export default defineEventHandler(async (event) => {
     userId: authMe.user.id,
     societyId: authMe.user.societyId,
   })
+  const adjustment = await consumeDgAdvanceCreditsForFlat({
+    societyId: authMe.user.societyId,
+    flatId: input.flatId,
+  })
 
-  return createApiSuccess(event, result)
+  return createApiSuccess(event, {
+    ...result,
+    appliedToOutstandingAmount: adjustment.consumedAmount,
+    appliedDueCount: adjustment.affectedAccessPairs.length,
+  })
 })

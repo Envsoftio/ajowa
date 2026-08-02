@@ -2038,8 +2038,8 @@ export const getMaintenanceBillData = async (
     previousResult.rows.map((previousDue) => previousDue.id),
   )
 
-  const previousOutstanding = roundBillMoney(
-    previousResult.rows.reduce((sum, previousDue) => {
+  const previousBalances = previousResult.rows.reduce(
+    (totals, previousDue) => {
       const previousChargeBreakdown = Array.isArray(previousDue.charge_breakdown)
         ? previousDue.charge_breakdown as ChargeBreakdownItem[]
         : []
@@ -2063,9 +2063,16 @@ export const getMaintenanceBillData = async (
         settings.lateFeePerDay,
       )
 
-      return sum + computed.balanceAmount
-    }, 0),
+      totals.all += computed.balanceAmount
+      if (previousDue.billing_period_charge_type === 'DG_SET') {
+        totals.dg += computed.balanceAmount
+      }
+      return totals
+    },
+    { all: 0, dg: 0 },
   )
+  const previousOutstanding = roundBillMoney(previousBalances.all)
+  const previousDgOutstanding = roundBillMoney(previousBalances.dg)
 
   let chargeBreakdown = normalizeBillChargeBreakdown(due.charge_breakdown, Number(due.base_amount))
   if (
@@ -2103,6 +2110,7 @@ export const getMaintenanceBillData = async (
     fileName,
     chargeBreakdown,
     previousOutstanding,
+    previousDgOutstanding,
     currentAmounts,
     currentTiming,
     currentBalance,
@@ -2121,6 +2129,7 @@ export const generateMaintenanceBillPdf = async (
     currentAmounts,
     currentTiming,
     previousOutstanding,
+    previousDgOutstanding,
     fileName,
   } = bill
   const flatLabel = `${due.block_name} ${due.flat_number}`
@@ -2552,10 +2561,11 @@ export const generateMaintenanceBillPdf = async (
       maintenanceSectionTotal,
       mixedDgComponentAmount: roundBillMoney(dgAmount + dgInterestAmount),
       currentDueBalanceAmount: currentAmounts.balanceAmount,
-      previousOutstandingAmount: previousOutstanding,
+      previousOutstandingAmount: previousDgOutstanding,
     })
     const dgAmounts = resolveDgBillAmountSummary({
       currentChargeAmount: dgAmount,
+      previousOutstandingAmount: previousDgOutstanding,
       previousReferenceAmount: dgCharges.reduce(
         (sum, charge) => sum + Number(charge.previousOutstanding ?? 0),
         0,
@@ -2567,6 +2577,7 @@ export const generateMaintenanceBillPdf = async (
       balanceAmount: pdfAmountAllocation.dgSectionBalanceAmount ?? 0,
     })
     const previousDgReferenceAmount = dgAmounts.previousReferenceAmount
+    const previousDgOutstandingAmount = dgAmounts.previousOutstandingAmount
     const displayedDgInterestAmount = dgAmounts.interestAmount
     const dgNetPayable = dgAmounts.netPayable
     const tariffRateLabel = primaryCharge.tariffRateLabel
@@ -2716,12 +2727,22 @@ export const generateMaintenanceBillPdf = async (
                           { text: tariffRateLabel, style: 'dgValueRight' },
                           { text: formatBillPlainNumber(dgAmounts.currentChargeAmount), style: 'dgValueRight' },
                         ],
-                        [
-                          { text: 'PREVIOUS DG AMOUNT (REFERENCE ONLY)', style: 'dgValueBold' },
-                          { text: '', style: 'dgValueRight' },
-                          { text: '', style: 'dgValueRight' },
-                          { text: formatBillPlainNumber(previousDgReferenceAmount), style: 'dgValueRight' },
-                        ],
+                        ...(previousDgOutstandingAmount > 0
+                          ? [[
+                              { text: 'PREVIOUS DG OUTSTANDING', style: 'dgValueBold' },
+                              { text: '', style: 'dgValueRight' },
+                              { text: '', style: 'dgValueRight' },
+                              { text: formatBillPlainNumber(previousDgOutstandingAmount), style: 'dgValueRight' },
+                            ]]
+                          : []),
+                        ...(previousDgReferenceAmount > 0
+                          ? [[
+                              { text: 'LEGACY DG REFERENCE (NON-PAYABLE)', style: 'dgValueBold' },
+                              { text: '', style: 'dgValueRight' },
+                              { text: '', style: 'dgValueRight' },
+                              { text: formatBillPlainNumber(previousDgReferenceAmount), style: 'dgValueRight' },
+                            ]]
+                          : []),
                         [
                           { text: 'INTEREST CHARGE', style: 'dgValueBold' },
                           { text: '', style: 'dgValueRight' },

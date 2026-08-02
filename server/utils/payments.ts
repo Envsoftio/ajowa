@@ -2281,6 +2281,73 @@ export const consumeAdvanceCreditsForDue = async (dueId: string) => {
   }
 }
 
+export const consumeDgAdvanceCreditsForFlatWithClient = async (
+  client: PoolClient,
+  input: {
+    societyId: string
+    flatId: string
+    recomputeAccess?: boolean
+  },
+) => {
+  const dueResult = await client.query<{ id: string }>(
+    `
+      select md.id
+      from maintenance_dues md
+      inner join billing_periods bp on bp.id = md.billing_period_id
+      where md.society_id = $1
+        and md.flat_id = $2
+        and bp.charge_type = 'DG_SET'
+        and md.status in ('OPEN', 'PARTIALLY_PAID', 'OVERDUE')
+        and md.balance_amount > 0
+      order by bp.start_date asc, md.due_date asc, md.id asc
+      for update of md
+    `,
+    [input.societyId, input.flatId],
+  )
+
+  let consumedAmount = 0
+  let consumedCreditCount = 0
+  const affectedAccessPairs: AffectedDueAccessPair[] = []
+
+  for (const due of dueResult.rows) {
+    const result = await consumeAdvanceCreditsForDueWithClient(
+      client,
+      due.id,
+      { recomputeAccess: false },
+    )
+    consumedAmount = roundMoney(consumedAmount + result.consumedAmount)
+    consumedCreditCount += result.consumedCreditCount
+    if (result.affectedAccessPair && result.consumedAmount > 0) {
+      affectedAccessPairs.push(result.affectedAccessPair)
+    }
+  }
+
+  if (input.recomputeAccess !== false && affectedAccessPairs.length > 0) {
+    await recomputeAccessForAffectedDuesWithClient(client, affectedAccessPairs)
+  }
+
+  return { consumedAmount, consumedCreditCount, affectedAccessPairs }
+}
+
+export const consumeDgAdvanceCreditsForFlat = async (input: {
+  societyId: string
+  flatId: string
+}) => {
+  const client = await getDatabasePool().connect()
+
+  try {
+    await client.query('begin')
+    const result = await consumeDgAdvanceCreditsForFlatWithClient(client, input)
+    await client.query('commit')
+    return result
+  } catch (error) {
+    await client.query('rollback')
+    throw error
+  } finally {
+    client.release()
+  }
+}
+
 export const getPaymentReceiptData = async (
   paymentId: string,
   access?: {

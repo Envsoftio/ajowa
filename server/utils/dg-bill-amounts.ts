@@ -1,5 +1,6 @@
 export type DgBillAmountSummaryInput = {
   currentChargeAmount: number
+  previousOutstandingAmount: number
   previousReferenceAmount: number
   interestAmount: number
   lateFeeAmount: number
@@ -10,6 +11,7 @@ export type DgBillAmountSummaryInput = {
 
 export type DgBillAmountSummary = {
   currentChargeAmount: number
+  previousOutstandingAmount: number
   previousReferenceAmount: number
   interestAmount: number
   lateFeeAmount: number
@@ -42,7 +44,8 @@ const roundSignedMoney = (value: number) =>
  * Allocates the authoritative due balance to the sections printed in the PDF.
  *
  * CAM-only bills keep their existing printed invoice total. Standalone DG bills
- * use only the current due balance, because previous DG is reference-only. A
+ * display the current due plus earlier open DG balances without copying those
+ * balances into the current receivable. A
  * legacy mixed bill has no component-level payment allocation model, so its DG
  * section remains component-only instead of attributing due-level payments,
  * waivers, or late fees to DG. This keeps the existing CAM section unchanged
@@ -68,8 +71,8 @@ export const resolveBillPdfAmountAllocation = (
 
   if (maintenanceSectionTotal == null) {
     return {
-      dgSectionBalanceAmount: currentDueBalanceAmount,
-      totalPayable: currentDueBalanceAmount,
+      dgSectionBalanceAmount: roundMoney(currentDueBalanceAmount + previousOutstandingAmount),
+      totalPayable: roundMoney(currentDueBalanceAmount + previousOutstandingAmount),
     }
   }
 
@@ -85,18 +88,20 @@ export const resolveDgBillAmountSummary = (
   input: DgBillAmountSummaryInput,
 ): DgBillAmountSummary => {
   const currentChargeAmount = roundMoney(input.currentChargeAmount)
+  const previousOutstandingAmount = roundMoney(input.previousOutstandingAmount)
   const previousReferenceAmount = roundMoney(input.previousReferenceAmount)
   const interestAmount = roundMoney(input.interestAmount)
   const lateFeeAmount = roundMoney(input.lateFeeAmount)
 
   return {
     currentChargeAmount,
+    previousOutstandingAmount,
     previousReferenceAmount,
     interestAmount,
     lateFeeAmount,
-    // The previous DG amount is informational and must never enter the
-    // receivable, gross amount, payment allocation, or journal.
-    grossAmount: roundMoney(currentChargeAmount + interestAmount + lateFeeAmount),
+    // Previous outstanding remains in its original due rows. It enters this
+    // statement total only and is never copied into the current receivable.
+    grossAmount: roundMoney(previousOutstandingAmount + currentChargeAmount + interestAmount + lateFeeAmount),
     paidOrAdvanceAmount: roundMoney(input.paidAmount),
     waivedAmount: roundMoney(input.waivedAmount),
     // The persisted due computation is authoritative after payments, advance

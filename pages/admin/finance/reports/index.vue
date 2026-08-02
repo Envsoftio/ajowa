@@ -37,6 +37,7 @@ const reportOptions = [
   { label: 'Expense transactions', value: 'expense-only', excel: true },
   { label: 'Category expenses', value: 'category-expense', excel: true },
   { label: 'Vendor expenses', value: 'vendor-expense', excel: true },
+  { label: 'DG balances', value: 'dg-balance', excel: true },
   { label: 'Missing attachments', value: 'attachment-missing', excel: true },
 ]
 const periodOptions = [
@@ -107,7 +108,7 @@ watch(() => filters.periodMode, (periodMode) => {
   setRangeByPeriodMode(periodMode)
 })
 
-const showFlatFilter = computed(() => ['collection', 'defaulter', 'resident-payment-ledger'].includes(filters.reportType))
+const showFlatFilter = computed(() => ['collection', 'defaulter', 'resident-payment-ledger', 'dg-balance'].includes(filters.reportType))
 const showOwnerFilter = computed(() => filters.reportType === 'resident-payment-ledger')
 
 const query = computed(() => ({

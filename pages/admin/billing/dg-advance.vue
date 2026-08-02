@@ -32,7 +32,12 @@ type FlatDetailResponse = { ok: true; data: FlatDetail }
 type BankAccountsResponse = { ok: true; data: { items: BankAccount[] } }
 type PaymentCreateResponse = {
   ok: true
-  data: { id: string; receiptNumber: string }
+  data: {
+    id: string
+    receiptNumber: string
+    appliedToOutstandingAmount: number
+    appliedDueCount: number
+  }
 }
 
 const api = useApi()
@@ -369,7 +374,9 @@ const saveAdvance = async () => {
     toast.add({
       severity: 'success',
       summary: 'DG advance recorded',
-      detail: `${formatMoney(form.amount)} was reserved for this flat's DG Set bills. Receipt ${response.data.receiptNumber}. If this cycle's DG due already exists, rerun DG due generation for the flat.`,
+      detail: response.data.appliedToOutstandingAmount > 0
+        ? `${formatMoney(response.data.appliedToOutstandingAmount)} was applied to the oldest DG balance. Any remainder stays reserved for future DG bills. Receipt ${response.data.receiptNumber}.`
+        : `${formatMoney(form.amount)} was reserved for this flat's future DG Set bills. Receipt ${response.data.receiptNumber}.`,
       life: 10000,
     })
     dialogVisible.value = false

@@ -24,6 +24,7 @@ import { getRequestLogger } from '~/server/utils/logging'
 import { enqueueDueBillingContactNotifications } from '~/server/utils/notifications'
 import {
   consumeAdvanceCreditsForDueWithClient,
+  consumeDgAdvanceCreditsForFlatWithClient,
   recomputeAccessForAffectedDuesWithClient,
   type AffectedDueAccessPair,
 } from '~/server/utils/payments'
@@ -639,14 +640,14 @@ export default defineEventHandler(async (event) => {
 
       for (const due of advanceEligibleDues) {
         const advanceResult = isDgGeneration
-          ? await consumeAdvanceCreditsForDueWithClient(
-              client,
-              due.dueId,
-              { recomputeAccess: false },
-            )
+          ? await consumeDgAdvanceCreditsForFlatWithClient(client, {
+              societyId: authMe.user.societyId,
+              flatId: due.flatId,
+              recomputeAccess: false,
+            })
           : await consumeAdvanceCreditsForDueWithClient(client, due.dueId)
-        if (isDgGeneration && advanceResult.affectedAccessPair) {
-          affectedAccessPairs.push(advanceResult.affectedAccessPair)
+        if (isDgGeneration && 'affectedAccessPairs' in advanceResult) {
+          affectedAccessPairs.push(...advanceResult.affectedAccessPairs)
         }
         if (advanceResult.consumedAmount > 0) {
           advanceAppliedCount += 1

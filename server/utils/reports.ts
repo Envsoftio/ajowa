@@ -13,6 +13,7 @@ export const reportTypes = [
   'resident-payment-ledger',
   'collection',
   'defaulter',
+  'dg-balance',
   'income-expense',
   'profit-loss',
   'category-expense',
@@ -93,6 +94,7 @@ export const reportLabels: Record<ReportType, string> = {
   'resident-payment-ledger': 'Resident Payment Ledger',
   collection: 'Collection Report',
   defaulter: 'Defaulter List',
+  'dg-balance': 'DG Balance and Reconciliation Report',
   'income-expense': 'Income and Expense Report',
   'profit-loss': 'P&L Statement',
   'category-expense': 'Category-wise Expense Breakdown',
@@ -871,6 +873,124 @@ const buildCollectionReport = async ({ societyId, filters, exportMode }: ReportQ
   }
 }
 
+const buildDgBalanceReport = async ({ societyId, filters, exportMode }: ReportQueryContext) => {
+  const params: unknown[] = [societyId, filters.startDate, filters.endDate]
+  const where = [
+    'md.society_id = $1',
+    "bp.charge_type = 'DG_SET'",
+    "md.status <> 'CANCELLED'",
+    'coalesce(md.opening_balance_as_of, bp.start_date) between $2::date and $3::date',
+  ]
+  if (filters.flatId) {
+    params.push(filters.flatId)
+    where.push(`md.flat_id = $${params.length}`)
+  }
+  addSearch(params, where, ['f.flat_number', 'b.name', 'bp.label', 'resident.full_name'], filters.search)
+  params.push(withLimit(filters, exportMode))
+
+  const result = await getDatabasePool().query<Record<string, string>>(
+    `
+      select
+        concat(b.name, ' ', f.flat_number) as flat,
+        resident.full_name as resident,
+        bp.label as period,
+        coalesce(md.opening_balance_as_of, bp.start_date)::text as "balanceDate",
+        case when md.origin = 'DG_OPENING_BALANCE' then 'Opening balance' else 'Generated bill' end as source,
+        greatest(md.base_amount - amounts.interest_amount, 0)::text as principal,
+        amounts.interest_amount::text as interest,
+        md.late_fee_amount::text as "lateFee",
+        md.total_amount::text as "totalBilled",
+        allocations.cash_paid::text as "cashPaid",
+        allocations.advance_applied::text as "advanceApplied",
+        md.waived_amount::text as waived,
+        md.balance_amount::text as "closingBalance",
+        md.status::text as status
+      from maintenance_dues md
+      inner join billing_periods bp on bp.id = md.billing_period_id
+      inner join flats f on f.id = md.flat_id
+      inner join blocks b on b.id = f.block_id
+      left join lateral (
+        select u.full_name
+        from flat_residents fr
+        inner join users u on u.id = fr.user_id
+        where fr.flat_id = f.id and fr.is_active = true and u.is_active = true
+        order by fr.is_billing_contact desc, fr.is_primary_contact desc, fr.created_at asc
+        limit 1
+      ) resident on true
+      left join lateral (
+        select coalesce(sum(
+          case
+            when coalesce(item->>'interestAmount', '') ~ '^[0-9]+([.][0-9]+)?$'
+              then (item->>'interestAmount')::numeric
+            else 0
+          end
+        ), 0) as interest_amount
+        from jsonb_array_elements(
+          case when jsonb_typeof(md.charge_breakdown) = 'array'
+            then md.charge_breakdown else '[]'::jsonb end
+        ) item
+      ) amounts on true
+      left join lateral (
+        select
+          coalesce(sum(pa.allocated_amount) filter (where p.status = 'VERIFIED' and p.mode <> 'ADVANCE_CREDIT'), 0) as cash_paid,
+          coalesce(sum(pa.allocated_amount) filter (where p.status = 'VERIFIED' and p.mode = 'ADVANCE_CREDIT'), 0) as advance_applied
+        from payment_allocations pa
+        inner join payments p on p.id = pa.payment_id
+        where pa.maintenance_due_id = md.id
+      ) allocations on true
+      where ${where.join(' and ')}
+      order by coalesce(md.opening_balance_as_of, bp.start_date), b.sort_order, f.flat_number
+      limit $${params.length}
+    `,
+    params,
+  )
+
+  const moneyKeys = ['principal', 'interest', 'lateFee', 'totalBilled', 'cashPaid', 'advanceApplied', 'waived', 'closingBalance']
+  const rows: Array<Record<string, unknown>> = result.rows.map((row) => ({
+    ...row,
+    ...Object.fromEntries(moneyKeys.map((key) => [key, money(row[key])])),
+  }))
+  const total = (key: string) => rows.reduce((sum, row) => sum + Number(row[key] ?? 0), 0)
+  const expectedClosing = money(total('totalBilled') - total('cashPaid') - total('advanceApplied') - total('waived'))
+  const closingBalance = money(total('closingBalance'))
+
+  return {
+    columns: [
+      { key: 'flat', label: 'Flat' },
+      { key: 'resident', label: 'Resident' },
+      { key: 'period', label: 'Period' },
+      { key: 'balanceDate', label: 'Balance date', type: 'date' },
+      { key: 'source', label: 'Source' },
+      { key: 'principal', label: 'Principal', type: 'money' },
+      { key: 'interest', label: 'Interest', type: 'money' },
+      { key: 'lateFee', label: 'Late fee', type: 'money' },
+      { key: 'totalBilled', label: 'Total billed', type: 'money' },
+      { key: 'cashPaid', label: 'Cash paid', type: 'money' },
+      { key: 'advanceApplied', label: 'Advance applied', type: 'money' },
+      { key: 'waived', label: 'Waived', type: 'money' },
+      { key: 'closingBalance', label: 'Closing balance', type: 'money' },
+      { key: 'status', label: 'Status' },
+    ] satisfies ReportColumn[],
+    rows,
+    summary: {
+      principal: money(total('principal')),
+      interest: money(total('interest')),
+      lateFee: money(total('lateFee')),
+      totalBilled: money(total('totalBilled')),
+      cashPaid: money(total('cashPaid')),
+      advanceApplied: money(total('advanceApplied')),
+      waived: money(total('waived')),
+      closingBalance,
+      reconciliationVariance: money(closingBalance - expectedClosing),
+    },
+    chart: [
+      { label: 'Cash paid', value: money(total('cashPaid')), color: chartColor(0) },
+      { label: 'Advance applied', value: money(total('advanceApplied')), color: chartColor(2) },
+      { label: 'Outstanding', value: closingBalance, color: chartColor(4) },
+    ],
+  }
+}
+
 const buildDefaulterReport = async ({ societyId, filters, exportMode }: ReportQueryContext) => {
   const params: unknown[] = [societyId]
   const where = [
@@ -1223,6 +1343,7 @@ const buildPayload = async (context: ReportQueryContext): Promise<ReportPayload>
   if (context.filters.reportType === 'resident-payment-ledger') return buildPaymentLedgerReport(context)
   if (context.filters.reportType === 'collection') return buildCollectionReport(context)
   if (context.filters.reportType === 'defaulter') return buildDefaulterReport(context)
+  if (context.filters.reportType === 'dg-balance') return buildDgBalanceReport(context)
   if (context.filters.reportType === 'profit-loss') return buildProfitLossReport(context)
   if (
     ['income-expense', 'income-only', 'expense-only', 'category-expense', 'vendor-expense', 'attachment-missing', 'pending-review'].includes(

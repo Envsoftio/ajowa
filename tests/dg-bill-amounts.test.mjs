@@ -23,6 +23,7 @@ test('keeps the existing pure CAM PDF total unchanged', () => {
 test('shows the previous DG amount for reference without adding it to payable', () => {
   const summary = resolveDgBillAmountSummary({
     currentChargeAmount: 1_000,
+    previousOutstandingAmount: 0,
     previousReferenceAmount: 200,
     interestAmount: 30,
     lateFeeAmount: 20,
@@ -33,6 +34,7 @@ test('shows the previous DG amount for reference without adding it to payable', 
 
   assert.deepEqual(summary, {
     currentChargeAmount: 1_000,
+    previousOutstandingAmount: 0,
     previousReferenceAmount: 200,
     interestAmount: 30,
     lateFeeAmount: 20,
@@ -47,7 +49,7 @@ test('shows the previous DG amount for reference without adding it to payable', 
   )
 })
 
-test('uses the persisted due balance after a full advance payment', () => {
+test('adds earlier DG outstanding after a full current-bill advance payment', () => {
   const allocation = resolveBillPdfAmountAllocation({
     hasDgSection: true,
     maintenanceSectionTotal: null,
@@ -57,7 +59,8 @@ test('uses the persisted due balance after a full advance payment', () => {
   })
   const summary = resolveDgBillAmountSummary({
     currentChargeAmount: 900,
-    previousReferenceAmount: 100,
+    previousOutstandingAmount: 100,
+    previousReferenceAmount: 0,
     interestAmount: 0,
     lateFeeAmount: 0,
     paidAmount: 900,
@@ -65,10 +68,10 @@ test('uses the persisted due balance after a full advance payment', () => {
     balanceAmount: allocation.dgSectionBalanceAmount ?? 0,
   })
 
-  assert.equal(allocation.totalPayable, 0)
-  assert.equal(summary.grossAmount, 900)
+  assert.equal(allocation.totalPayable, 100)
+  assert.equal(summary.grossAmount, 1_000)
   assert.equal(summary.paidOrAdvanceAmount, 900)
-  assert.equal(summary.netPayable, 0)
+  assert.equal(summary.netPayable, 100)
 })
 
 test('prints a mixed legacy CAM and DG total without duplicating the full due balance', () => {
@@ -90,6 +93,7 @@ test('prints a mixed legacy CAM and DG total without duplicating the full due ba
 test('rounds DG bill figures to paise and guards invalid negative display values', () => {
   const summary = resolveDgBillAmountSummary({
     currentChargeAmount: 100.005,
+    previousOutstandingAmount: 0,
     previousReferenceAmount: 10.004,
     interestAmount: Number.NaN,
     lateFeeAmount: -10,
@@ -100,6 +104,7 @@ test('rounds DG bill figures to paise and guards invalid negative display values
 
   assert.deepEqual(summary, {
     currentChargeAmount: 100.01,
+    previousOutstandingAmount: 0,
     previousReferenceAmount: 10,
     interestAmount: 0,
     lateFeeAmount: 0,

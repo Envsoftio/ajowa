@@ -791,6 +791,47 @@ export type DgAdvanceCredit = AuditFields & {
   creditNotes: string | null
 }
 
+export type DgBalanceOrigin = 'GENERATED_BILL' | 'DG_OPENING_BALANCE'
+
+export type DgBalance = AuditFields & {
+  id: string
+  societyId: string
+  flatId: string
+  flatNumber: string
+  blockName: string
+  unitType: string
+  primaryResidentName: string | null
+  billingPeriodId: string
+  billingPeriodLabel: string
+  periodStartDate: string
+  dueDate: string
+  origin: DgBalanceOrigin
+  openingBalanceAsOf: string | null
+  openingBalanceNote: string | null
+  principalAmount: number
+  interestAmount: number
+  lateFeeAmount: number
+  totalAmount: number
+  cashPaidAmount: number
+  advanceAppliedAmount: number
+  waivedAmount: number
+  balanceAmount: number
+  status: DueStatus
+}
+
+export type DgBalanceSummary = {
+  principalAmount: number
+  interestAmount: number
+  lateFeeAmount: number
+  totalBilledAmount: number
+  cashPaidAmount: number
+  advanceAppliedAmount: number
+  waivedAmount: number
+  outstandingAmount: number
+  availableAdvanceAmount: number
+  netPositionAmount: number
+}
+
 export type CamPaymentArrangement = AuditFields & {
   id: string
   societyId: string

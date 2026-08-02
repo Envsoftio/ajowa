@@ -128,6 +128,7 @@ export const getAdminRoutePermission = (path: string) => {
     pathname.startsWith('/admin/billing/cam-payment-arrangements') ||
     pathname.startsWith('/admin/billing/cam-advance') ||
     pathname.startsWith('/admin/billing/dg-advance') ||
+    pathname.startsWith('/admin/billing/dg-balances') ||
     pathname.startsWith('/admin/billing/cam') ||
     pathname.startsWith('/admin/billing/dg-set')
   ) {
