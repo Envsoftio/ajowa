@@ -24,6 +24,11 @@ type NoticeRow = {
   body: string
   priority: string
   status: string
+  audienceScope: AudienceScope | null
+  audienceFilter: {
+    scope?: AudienceScope
+    flatIds?: string[]
+  } | null
   isPinned: boolean
   publishedAt: string | null
   expiresAt: string | null
@@ -49,6 +54,9 @@ const rowAttachmentTargetNoticeId = ref<string | null>(null)
 const rowAttachmentUploadingId = ref<string | null>(null)
 const saveProgress = ref<'idle' | 'submitting' | 'uploading' | 'refreshing'>('idle')
 const publishingNoticeId = ref<string | null>(null)
+const editingNoticeId = ref<string | null>(null)
+const editingExistingAttachmentLabel = ref<string | null>(null)
+const noticeForm = ref<HTMLFormElement | null>(null)
 const attachmentAccept = 'application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,image/jpeg,image/png,image/webp'
 const attachmentAllowedMimeTypes = attachmentAccept.split(',')
 const attachmentMaxSizeBytes = 10 * 1024 * 1024
@@ -108,9 +116,11 @@ const { data, pending, refresh } = noticesAsyncData
 const { data: flatsData } = flatsAsyncData
 const rows = computed(() => data.value?.data.items ?? [])
 const isSaving = computed(() => saveProgress.value !== 'idle')
+const isEditing = computed(() => editingNoticeId.value !== null)
 const saveProgressLabel = computed(() => {
   if (saveProgress.value === 'uploading') return 'Uploading notice attachment…'
   if (saveProgress.value === 'refreshing') return 'Refreshing the notice list…'
+  if (isEditing.value) return 'Updating draft notice…'
   return form.publish
     ? 'Publishing notice and queuing notifications…'
     : 'Saving notice…'
@@ -143,6 +153,47 @@ const buildAudience = () => {
     return { scope: form.audienceScope, flatIds: form.flatId ? [form.flatId] : [] }
   }
   return { scope: form.audienceScope }
+}
+
+const resetForm = () => {
+  form.title = ''
+  form.summary = ''
+  form.body = ''
+  form.priority = 'MEDIUM'
+  form.isPinned = false
+  form.publish = false
+  form.channels = ['IN_APP']
+  form.audienceScope = 'ALL_ACTIVE_RESIDENTS'
+  form.flatId = null
+  editingNoticeId.value = null
+  editingExistingAttachmentLabel.value = null
+  clearAttachment()
+}
+
+const editDraft = async (notice: NoticeRow) => {
+  if (notice.status !== 'DRAFT') {
+    return
+  }
+
+  editingNoticeId.value = notice.id
+  editingExistingAttachmentLabel.value = notice.attachmentLabel
+  form.title = notice.title
+  form.summary = notice.summary ?? ''
+  form.body = notice.body
+  form.priority = notice.priority
+  form.isPinned = notice.isPinned
+  form.publish = false
+  form.channels = ['IN_APP']
+  form.audienceScope = notice.audienceFilter?.scope ?? notice.audienceScope ?? 'ALL_ACTIVE_RESIDENTS'
+  form.flatId = notice.audienceFilter?.flatIds?.[0] ?? null
+  clearAttachment()
+
+  await nextTick()
+  noticeForm.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+const cancelEdit = () => {
+  resetForm()
 }
 
 const formatBytes = (value: number | null | undefined) => {
@@ -272,7 +323,7 @@ const save = async () => {
     return
   }
 
-  if (form.publish) {
+  if (form.publish && !isEditing.value) {
     const confirmed = await confirmAction({
       header: 'Publish notice?',
       message: 'Save and publish this notice to the selected audience now?',
@@ -288,37 +339,48 @@ const save = async () => {
 
   saveProgress.value = 'submitting'
   try {
-    const response = await api<{ ok: true; data: { id: string; jobCount: number } }>('/api/admin/notices', {
-      method: 'POST',
-      errorFallback: form.publish
-        ? 'The notice could not be published. Your form is unchanged; please try again.'
-        : 'The notice could not be saved. Your form is unchanged; please try again.',
-      body: {
-        title: form.title,
-        summary: form.summary || null,
-        body: form.body,
-        priority: form.priority,
-        isPinned: form.isPinned,
-        publish: form.publish,
-        channels: form.channels,
-        audience: buildAudience(),
-      },
-    })
+    const response = isEditing.value
+      ? await api<{ ok: true; data: { id: string } }>(`/api/admin/notices/${editingNoticeId.value}`, {
+          method: 'PATCH',
+          errorFallback: 'The draft could not be updated. Your changes are still in the form; please try again.',
+          body: {
+            title: form.title,
+            summary: form.summary || null,
+            body: form.body,
+            priority: form.priority,
+            isPinned: form.isPinned,
+            audience: buildAudience(),
+          },
+        })
+      : await api<{ ok: true; data: { id: string; jobCount: number } }>('/api/admin/notices', {
+          method: 'POST',
+          errorFallback: form.publish
+            ? 'The notice could not be published. Your form is unchanged; please try again.'
+            : 'The notice could not be saved. Your form is unchanged; please try again.',
+          body: {
+            title: form.title,
+            summary: form.summary || null,
+            body: form.body,
+            priority: form.priority,
+            isPinned: form.isPinned,
+            publish: form.publish,
+            channels: form.channels,
+            audience: buildAudience(),
+          },
+        })
     if (attachmentFile.value) {
       saveProgress.value = 'uploading'
       await uploadAttachment(response.data.id)
     }
     toast.add({
       severity: 'success',
-      summary: form.publish ? 'Notice published' : 'Notice saved',
-      detail: `${response.data.jobCount ?? 0} notification jobs queued.`,
+      summary: isEditing.value ? 'Draft updated' : form.publish ? 'Notice published' : 'Notice saved',
+      detail: isEditing.value
+        ? 'Your draft changes have been saved.'
+        : `${'jobCount' in response.data ? response.data.jobCount : 0} notification jobs queued.`,
       life: 10000,
     })
-    form.title = ''
-    form.summary = ''
-    form.body = ''
-    form.flatId = null
-    clearAttachment()
+    resetForm()
     saveProgress.value = 'refreshing'
     await refresh()
   } finally {
@@ -372,7 +434,22 @@ const publish = async (notice: NoticeRow) => {
         </div>
       </header>
 
-      <form class="admin-form-layout" :aria-busy="isSaving" @submit.prevent="save">
+      <form ref="noticeForm" class="admin-form-layout" :aria-busy="isSaving" @submit.prevent="save">
+        <div v-if="isEditing" class="notice-edit-banner">
+          <div>
+            <strong>Editing draft notice</strong>
+            <span>Update the content and audience, then save the draft before publishing it.</span>
+          </div>
+          <Button
+            type="button"
+            label="Cancel edit"
+            icon="pi pi-times"
+            severity="secondary"
+            text
+            :disabled="isSaving"
+            @click="cancelEdit"
+          />
+        </div>
         <InputText v-model="form.title" placeholder="Notice title" :disabled="isSaving" />
         <InputText v-model="form.summary" placeholder="Short summary" :disabled="isSaving" />
         <Textarea v-model="form.body" rows="6" placeholder="Notice details" :disabled="isSaving" />
@@ -388,13 +465,20 @@ const publish = async (notice: NoticeRow) => {
             filter
             placeholder="Select flat owner"
           />
-          <MultiSelect v-model="form.channels" :options="channelOptions" option-label="label" option-value="value" display="chip" />
+          <MultiSelect
+            v-if="!isEditing"
+            v-model="form.channels"
+            :options="channelOptions"
+            option-label="label"
+            option-value="value"
+            display="chip"
+          />
         </div>
         <div class="admin-inline-actions">
           <ToggleSwitch v-model="form.isPinned" />
           <span>Pin notice</span>
-          <ToggleSwitch v-model="form.publish" />
-          <span>Publish now</span>
+          <ToggleSwitch v-if="!isEditing" v-model="form.publish" />
+          <span v-if="!isEditing">Publish now</span>
         </div>
         <div class="resident-file-upload">
           <input
@@ -406,15 +490,21 @@ const publish = async (notice: NoticeRow) => {
           >
           <div class="resident-file-upload__body">
             <div class="resident-file-upload__header">
-              <strong>{{ attachmentFile?.fileName || 'No attachment selected' }}</strong>
+              <strong>
+                {{ attachmentFile?.fileName || editingExistingAttachmentLabel || 'No attachment selected' }}
+              </strong>
               <span class="muted-line">
-                {{ attachmentFile ? `${attachmentFile.mimeType} · ${formatBytes(attachmentFile.sizeBytes)}` : 'PDF, Excel, PNG, JPG, JPEG, or WebP' }}
+                {{ attachmentFile
+                  ? `${attachmentFile.mimeType} · ${formatBytes(attachmentFile.sizeBytes)}`
+                  : editingExistingAttachmentLabel
+                    ? 'Current attachment · choose Replace to upload a new file'
+                    : 'PDF, Excel, PNG, JPG, JPEG, or WebP' }}
               </span>
             </div>
             <div class="admin-inline-actions">
               <Button
                 type="button"
-                :label="attachmentFile ? 'Replace' : 'Upload'"
+                :label="attachmentFile || editingExistingAttachmentLabel ? 'Replace' : 'Upload'"
                 icon="pi pi-upload"
                 severity="secondary"
                 outlined
@@ -439,13 +529,25 @@ const publish = async (notice: NoticeRow) => {
             <span>Please keep this page open. This should only take a moment.</span>
           </div>
         </div>
-        <Button
-          :label="form.publish ? 'Publish notice' : 'Save notice'"
-          :icon="form.publish ? 'pi pi-send' : 'pi pi-save'"
-          type="submit"
-          :loading="isSaving"
-          :disabled="isSaving || publishingNoticeId !== null"
-        />
+        <div class="admin-inline-actions">
+          <Button
+            :label="isEditing ? 'Update draft' : form.publish ? 'Publish notice' : 'Save notice'"
+            :icon="form.publish && !isEditing ? 'pi pi-send' : 'pi pi-save'"
+            type="submit"
+            :loading="isSaving"
+            :disabled="isSaving || publishingNoticeId !== null"
+          />
+          <Button
+            v-if="isEditing"
+            type="button"
+            label="Cancel"
+            icon="pi pi-times"
+            severity="secondary"
+            outlined
+            :disabled="isSaving"
+            @click="cancelEdit"
+          />
+        </div>
       </form>
 
       <div v-if="publishingNoticeId" class="notice-publish-progress" role="status" aria-live="polite">
@@ -488,16 +590,28 @@ const publish = async (notice: NoticeRow) => {
         </Column>
         <Column header="Actions">
           <template #body="{ data: row }">
-            <Button
-              label="Publish"
-              icon="pi pi-send"
-              size="small"
-              severity="secondary"
-              outlined
-              :loading="publishingNoticeId === row.id"
-              :disabled="row.status === 'PUBLISHED' || publishingNoticeId !== null || isSaving"
-              @click="publish(row)"
-            />
+            <div class="admin-inline-actions">
+              <Button
+                v-if="row.status === 'DRAFT'"
+                label="Edit"
+                icon="pi pi-pencil"
+                size="small"
+                severity="secondary"
+                outlined
+                :disabled="isSaving || publishingNoticeId !== null"
+                @click="editDraft(row)"
+              />
+              <Button
+                label="Publish"
+                icon="pi pi-send"
+                size="small"
+                severity="secondary"
+                outlined
+                :loading="publishingNoticeId === row.id"
+                :disabled="row.status !== 'DRAFT' || publishingNoticeId !== null || isSaving"
+                @click="publish(row)"
+              />
+            </div>
           </template>
         </Column>
       </AppDataTable>
@@ -514,6 +628,27 @@ const publish = async (notice: NoticeRow) => {
   border: 1px solid color-mix(in srgb, var(--p-primary-color) 30%, var(--surface-border));
   border-radius: 0.75rem;
   background: color-mix(in srgb, var(--p-primary-color) 7%, var(--surface-card));
+}
+
+.notice-edit-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.875rem 1rem;
+  border: 1px solid color-mix(in srgb, var(--p-primary-color) 30%, var(--surface-border));
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--p-primary-color) 7%, var(--surface-card));
+}
+
+.notice-edit-banner > div {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.notice-edit-banner span {
+  color: var(--text-color-secondary);
+  font-size: 0.875rem;
 }
 
 .notice-publish-progress :deep(.p-progressspinner) {
