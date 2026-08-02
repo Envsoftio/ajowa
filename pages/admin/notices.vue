@@ -47,6 +47,8 @@ const rowAttachmentInput = ref<HTMLInputElement | null>(null)
 const attachmentFile = ref<NoticeAttachment | null>(null)
 const rowAttachmentTargetNoticeId = ref<string | null>(null)
 const rowAttachmentUploadingId = ref<string | null>(null)
+const saveProgress = ref<'idle' | 'submitting' | 'uploading' | 'refreshing'>('idle')
+const publishingNoticeId = ref<string | null>(null)
 const attachmentAccept = 'application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,image/jpeg,image/png,image/webp'
 const attachmentAllowedMimeTypes = attachmentAccept.split(',')
 const attachmentMaxSizeBytes = 10 * 1024 * 1024
@@ -105,6 +107,20 @@ const [
 const { data, pending, refresh } = noticesAsyncData
 const { data: flatsData } = flatsAsyncData
 const rows = computed(() => data.value?.data.items ?? [])
+const isSaving = computed(() => saveProgress.value !== 'idle')
+const saveProgressLabel = computed(() => {
+  if (saveProgress.value === 'uploading') return 'Uploading notice attachment…'
+  if (saveProgress.value === 'refreshing') return 'Refreshing the notice list…'
+  return form.publish
+    ? 'Publishing notice and queuing notifications…'
+    : 'Saving notice…'
+})
+const publishProgressLabel = computed(() => {
+  const notice = rows.value.find((row) => row.id === publishingNoticeId.value)
+  return notice
+    ? `Publishing “${notice.title.trim()}” and queuing notifications…`
+    : 'Publishing notice and queuing notifications…'
+})
 
 const flatOptions = computed(() =>
   (flatsData.value?.data.items ?? []).map((flat) => {
@@ -270,32 +286,44 @@ const save = async () => {
     }
   }
 
-  const response = await api<{ ok: true; data: { id: string; jobCount: number } }>('/api/admin/notices', {
-    method: 'POST',
-    body: {
-      title: form.title,
-      summary: form.summary || null,
-      body: form.body,
-      priority: form.priority,
-      isPinned: form.isPinned,
-      publish: form.publish,
-      channels: form.channels,
-      audience: buildAudience(),
-    },
-  })
-  await uploadAttachment(response.data.id)
-  toast.add({
-    severity: 'success',
-    summary: form.publish ? 'Notice published' : 'Notice saved',
-    detail: `${response.data.jobCount ?? 0} notification jobs queued.`,
-    life: 10000,
-  })
-  form.title = ''
-  form.summary = ''
-  form.body = ''
-  form.flatId = null
-  clearAttachment()
-  await refresh()
+  saveProgress.value = 'submitting'
+  try {
+    const response = await api<{ ok: true; data: { id: string; jobCount: number } }>('/api/admin/notices', {
+      method: 'POST',
+      errorFallback: form.publish
+        ? 'The notice could not be published. Your form is unchanged; please try again.'
+        : 'The notice could not be saved. Your form is unchanged; please try again.',
+      body: {
+        title: form.title,
+        summary: form.summary || null,
+        body: form.body,
+        priority: form.priority,
+        isPinned: form.isPinned,
+        publish: form.publish,
+        channels: form.channels,
+        audience: buildAudience(),
+      },
+    })
+    if (attachmentFile.value) {
+      saveProgress.value = 'uploading'
+      await uploadAttachment(response.data.id)
+    }
+    toast.add({
+      severity: 'success',
+      summary: form.publish ? 'Notice published' : 'Notice saved',
+      detail: `${response.data.jobCount ?? 0} notification jobs queued.`,
+      life: 10000,
+    })
+    form.title = ''
+    form.summary = ''
+    form.body = ''
+    form.flatId = null
+    clearAttachment()
+    saveProgress.value = 'refreshing'
+    await refresh()
+  } finally {
+    saveProgress.value = 'idle'
+  }
 }
 
 const publish = async (notice: NoticeRow) => {
@@ -311,12 +339,18 @@ const publish = async (notice: NoticeRow) => {
     return
   }
 
-  const response = await api<{ ok: true; data: { jobCount: number } }>(`/api/admin/notices/${notice.id}/publish`, {
-    method: 'POST',
-    body: { channels: ['PUSH', 'EMAIL', 'WHATSAPP', 'IN_APP'] },
-  })
-  toast.add({ severity: 'success', summary: 'Notice published', detail: `${response.data.jobCount} jobs queued.`, life: 10000 })
-  await refresh()
+  publishingNoticeId.value = notice.id
+  try {
+    const response = await api<{ ok: true; data: { jobCount: number } }>(`/api/admin/notices/${notice.id}/publish`, {
+      method: 'POST',
+      errorFallback: 'The notice could not be published. It remains a draft; please try again.',
+      body: { channels: ['PUSH', 'EMAIL', 'WHATSAPP', 'IN_APP'] },
+    })
+    toast.add({ severity: 'success', summary: 'Notice published', detail: `${response.data.jobCount} jobs queued.`, life: 10000 })
+    await refresh()
+  } finally {
+    publishingNoticeId.value = null
+  }
 }
 </script>
 
@@ -338,10 +372,10 @@ const publish = async (notice: NoticeRow) => {
         </div>
       </header>
 
-      <form class="admin-form-layout" @submit.prevent="save">
-        <InputText v-model="form.title" placeholder="Notice title" />
-        <InputText v-model="form.summary" placeholder="Short summary" />
-        <Textarea v-model="form.body" rows="6" placeholder="Notice details" />
+      <form class="admin-form-layout" :aria-busy="isSaving" @submit.prevent="save">
+        <InputText v-model="form.title" placeholder="Notice title" :disabled="isSaving" />
+        <InputText v-model="form.summary" placeholder="Short summary" :disabled="isSaving" />
+        <Textarea v-model="form.body" rows="6" placeholder="Notice details" :disabled="isSaving" />
         <div class="surface-grid">
           <Select v-model="form.priority" :options="['LOW', 'MEDIUM', 'HIGH', 'EMERGENCY']" />
           <Select v-model="form.audienceScope" :options="audienceOptions" option-label="label" option-value="value" />
@@ -398,8 +432,29 @@ const publish = async (notice: NoticeRow) => {
             </div>
           </div>
         </div>
-        <Button label="Save notice" icon="pi pi-save" type="submit" />
+        <div v-if="isSaving" class="notice-publish-progress" role="status" aria-live="polite">
+          <ProgressSpinner stroke-width="5" />
+          <div>
+            <strong>{{ saveProgressLabel }}</strong>
+            <span>Please keep this page open. This should only take a moment.</span>
+          </div>
+        </div>
+        <Button
+          :label="form.publish ? 'Publish notice' : 'Save notice'"
+          :icon="form.publish ? 'pi pi-send' : 'pi pi-save'"
+          type="submit"
+          :loading="isSaving"
+          :disabled="isSaving || publishingNoticeId !== null"
+        />
       </form>
+
+      <div v-if="publishingNoticeId" class="notice-publish-progress" role="status" aria-live="polite">
+        <ProgressSpinner stroke-width="5" />
+        <div>
+          <strong>{{ publishProgressLabel }}</strong>
+          <span>Preparing delivery jobs for the selected audience.</span>
+        </div>
+      </div>
 
       <AppDataTable :value="rows" :loading="pending" responsive-layout="scroll" class="list-page__table">
         <Column field="title" header="Title" />
@@ -433,10 +488,51 @@ const publish = async (notice: NoticeRow) => {
         </Column>
         <Column header="Actions">
           <template #body="{ data: row }">
-            <Button label="Publish" icon="pi pi-send" size="small" severity="secondary" outlined :disabled="row.status === 'PUBLISHED'" @click="publish(row)" />
+            <Button
+              label="Publish"
+              icon="pi pi-send"
+              size="small"
+              severity="secondary"
+              outlined
+              :loading="publishingNoticeId === row.id"
+              :disabled="row.status === 'PUBLISHED' || publishingNoticeId !== null || isSaving"
+              @click="publish(row)"
+            />
           </template>
         </Column>
       </AppDataTable>
     </section>
   </div>
 </template>
+
+<style scoped>
+.notice-publish-progress {
+  display: flex;
+  align-items: center;
+  gap: 0.875rem;
+  padding: 0.875rem 1rem;
+  border: 1px solid color-mix(in srgb, var(--p-primary-color) 30%, var(--surface-border));
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--p-primary-color) 7%, var(--surface-card));
+}
+
+.notice-publish-progress :deep(.p-progressspinner) {
+  width: 2rem;
+  height: 2rem;
+  flex: 0 0 auto;
+}
+
+.notice-publish-progress div {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.notice-publish-progress strong {
+  color: var(--text-color);
+}
+
+.notice-publish-progress span {
+  color: var(--text-color-secondary);
+  font-size: 0.875rem;
+}
+</style>

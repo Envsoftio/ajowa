@@ -119,6 +119,12 @@ type AudienceUserRow = {
   notification_in_app_enabled: boolean
 }
 
+type InsertedNotificationAudienceRow = {
+  id: string
+  target_user_id: string
+  channel: NotificationChannel
+}
+
 type NotificationEventSettingRow = {
   push_enabled: boolean
   email_enabled: boolean
@@ -812,85 +818,148 @@ export const enqueueNotificationForUsers = async (
     return { eventId: null, audienceCount: 0, jobCount: 0 }
   }
 
-  let audienceCount = 0
-  let jobCount = 0
-
-  for (const { user, channels } of queueableUsers) {
-    for (const channel of channels) {
+  const queueEntries = queueableUsers.flatMap(({ user, channels }) =>
+    channels.flatMap((channel) => {
       const address = channelAddress(user, channel)
       if ((channel === 'EMAIL' || channel === 'WHATSAPP') && !address) {
-        continue
+        return []
       }
 
-      const audienceResult = await client.query<{ id: string }>(
-        `
-          insert into notification_audiences (
-            notification_event_id,
-            target_user_id,
-            channel,
-            resolved_address,
-            audience_label,
-            filters_snapshot,
-            target_user_status,
-            preference_snapshot
-          )
-          values ($1, $2, $3, $4, $5, $6::jsonb, $7, $8::jsonb)
-          returning id
-        `,
-        [
-          eventId,
-          user.id,
-          channel,
-          address,
-          input.audienceLabel ?? 'Resolved recipient',
-          JSON.stringify(input.audienceSnapshot ?? { eventKey: input.eventKey }),
-          user.isActive === false ? 'INACTIVE' : 'ACTIVE',
-          JSON.stringify({
-            preset: user.preferredNotificationChannels,
-            pushEnabled: user.pushEnabled,
-            emailEnabled: user.emailEnabled,
-            whatsappEnabled: user.whatsappEnabled,
-            inAppEnabled: user.inAppEnabled,
-          }),
-        ],
-      )
+      return [{
+        userId: user.id,
+        channel,
+        address,
+        targetUserStatus: user.isActive === false ? 'INACTIVE' : 'ACTIVE',
+        preferenceSnapshot: {
+          preset: user.preferredNotificationChannels,
+          pushEnabled: user.pushEnabled,
+          emailEnabled: user.emailEnabled,
+          whatsappEnabled: user.whatsappEnabled,
+          inAppEnabled: user.inAppEnabled,
+        },
+      }]
+    }),
+  )
 
-      const audienceId = audienceResult.rows[0]?.id
-      audienceCount += audienceId ? 1 : 0
-
-      const jobResult = await client.query<{ id: string }>(
-        `
-          insert into notification_jobs (
-            notification_event_id,
-            audience_id,
-            channel,
-            dedupe_key,
-            priority,
-            max_attempts,
-            payload,
-            scheduled_for,
-            next_attempt_at
-          )
-          values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, coalesce($8, now()))
-          on conflict (dedupe_key) do nothing
-          returning id
-        `,
-        [
-          eventId,
-          audienceId ?? null,
-          channel,
-          createDedupeKey(input, user.id, channel),
-          input.priority ?? 'MEDIUM',
-          normalizeNotificationMaxAttempts(input.maxAttempts, eventSetting?.retry_max_attempts ?? defaultMaxAttempts),
-          JSON.stringify(input.payload ?? {}),
-          scheduledFor,
-        ],
-      )
-      jobCount += jobResult.rowCount ?? 0
-    }
+  if (queueEntries.length === 0) {
+    return { eventId, audienceCount: 0, jobCount: 0 }
   }
 
-  return { eventId, audienceCount, jobCount }
+  // A society-wide notice can fan out to thousands of channel deliveries. Insert
+  // the resolved audience and jobs in two batches instead of making two database
+  // round trips for every delivery, which can exceed a serverless request timeout.
+  const audienceResult = await client.query<InsertedNotificationAudienceRow>(
+    `
+      with queue_entries as (
+        select *
+        from jsonb_to_recordset($2::jsonb) as entry(
+          user_id uuid,
+          channel text,
+          resolved_address text,
+          target_user_status text,
+          preference_snapshot jsonb
+        )
+      )
+      insert into notification_audiences (
+        notification_event_id,
+        target_user_id,
+        channel,
+        resolved_address,
+        audience_label,
+        filters_snapshot,
+        target_user_status,
+        preference_snapshot
+      )
+      select
+        $1,
+        entry.user_id,
+        entry.channel::notification_channel,
+        entry.resolved_address,
+        $3,
+        $4::jsonb,
+        entry.target_user_status,
+        entry.preference_snapshot
+      from queue_entries entry
+      returning id, target_user_id, channel::text
+    `,
+    [
+      eventId,
+      JSON.stringify(queueEntries.map((entry) => ({
+        user_id: entry.userId,
+        channel: entry.channel,
+        resolved_address: entry.address,
+        target_user_status: entry.targetUserStatus,
+        preference_snapshot: entry.preferenceSnapshot,
+      }))),
+      input.audienceLabel ?? 'Resolved recipient',
+      JSON.stringify(input.audienceSnapshot ?? { eventKey: input.eventKey }),
+    ],
+  )
+
+  const maxAttempts = normalizeNotificationMaxAttempts(
+    input.maxAttempts,
+    eventSetting?.retry_max_attempts ?? defaultMaxAttempts,
+  )
+  const audienceIds = new Map(
+    audienceResult.rows.map((row) => [`${row.target_user_id}:${row.channel}`, row.id]),
+  )
+  const jobEntries = queueEntries.map((entry) => ({
+    audience_id: audienceIds.get(`${entry.userId}:${entry.channel}`) ?? null,
+    user_id: entry.userId,
+    channel: entry.channel,
+    dedupe_key: createDedupeKey(input, entry.userId, entry.channel),
+  }))
+  const jobResult = await client.query<{ id: string }>(
+    `
+      with queue_entries as (
+        select *
+        from jsonb_to_recordset($2::jsonb) as entry(
+          audience_id uuid,
+          user_id uuid,
+          channel text,
+          dedupe_key text
+        )
+      )
+      insert into notification_jobs (
+        notification_event_id,
+        audience_id,
+        channel,
+        dedupe_key,
+        priority,
+        max_attempts,
+        payload,
+        scheduled_for,
+        next_attempt_at
+      )
+      select
+        $1,
+        entry.audience_id,
+        entry.channel::notification_channel,
+        entry.dedupe_key,
+        $3,
+        $4,
+        $5::jsonb,
+        $6,
+        coalesce($6::timestamptz, now())
+      from queue_entries entry
+      on conflict (dedupe_key) do nothing
+      returning id
+    `,
+    [
+      eventId,
+      JSON.stringify(jobEntries),
+      input.priority ?? 'MEDIUM',
+      maxAttempts,
+      JSON.stringify(input.payload ?? {}),
+      scheduledFor,
+    ],
+  )
+
+  return {
+    eventId,
+    audienceCount: audienceResult.rowCount ?? 0,
+    jobCount: jobResult.rowCount ?? 0,
+  }
 }
 
 export const enqueueNotificationForAudience = async (
