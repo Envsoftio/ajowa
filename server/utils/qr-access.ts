@@ -12,6 +12,7 @@ import {
 import { normalizeSocietySettings } from './master-data'
 import { enqueueNotificationForUsers } from './notifications'
 import { createStorageObjectKey, uploadPrivateFile } from './storage'
+import { selectCurrentQrBillingPeriodId } from '~/shared/qr-access'
 
 type AccessScope = 'OWNERSHIP' | 'TENANCY' | 'HOUSEHOLD'
 type ScanResult = 'GRANTED' | 'DENIED' | 'EXPIRED' | 'REVOKED' | 'INVALID'
@@ -257,23 +258,42 @@ const importedOwnerEmailJoin = `
 `
 
 export const getCurrentBillingPeriodId = async (client: PoolClient, societyId: string) => {
-  const result = await client.query<{ id: string }>(
+  const result = await client.query<{
+    id: string
+    charge_type: string
+    start_date: string
+    end_date: string
+    has_generated_dues: boolean
+  }>(
     `
-      select bp.id
+      select
+        bp.id,
+        bp.charge_type,
+        bp.start_date::text,
+        bp.end_date::text,
+        exists (
+          select 1
+          from maintenance_dues md
+          where md.billing_period_id = bp.id
+        ) as has_generated_dues
       from billing_periods bp
       inner join society_profile sp on sp.id = bp.society_id
       where bp.society_id = $1
         and bp.start_date <= (now() at time zone sp.timezone)::date
         and bp.end_date >= (now() at time zone sp.timezone)::date
-      order by
-        case when bp.charge_type = 'CAM' then 0 else 1 end,
-        bp.start_date desc,
-        bp.end_date asc
-      limit 1
     `,
     [societyId],
   )
-  return result.rows[0]?.id ?? null
+
+  return selectCurrentQrBillingPeriodId(
+    result.rows.map((period) => ({
+      id: period.id,
+      chargeType: period.charge_type,
+      startDate: period.start_date,
+      endDate: period.end_date,
+      hasGeneratedDues: period.has_generated_dues,
+    })),
+  )
 }
 
 const getBillingPeriodForQr = async (client: PoolClient, billingPeriodId: string) => {
