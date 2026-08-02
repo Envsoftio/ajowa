@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { selectCurrentQrBillingPeriodId } from '../shared/qr-access.ts'
+import {
+  getQrAccessValidThroughDate,
+  selectCurrentQrBillingPeriodId,
+} from '../shared/qr-access.ts'
 
 const period = (overrides) => ({
   id: 'period',
@@ -82,4 +85,45 @@ test('continues to prefer CAM over other active charge types', () => {
 
 test('returns null when there is no active billing period candidate', () => {
   assert.equal(selectCurrentQrBillingPeriodId([]), null)
+})
+
+test('keeps an unpaid first monthly CAM installment eligible through the 10th', () => {
+  assert.equal(
+    getQrAccessValidThroughDate({
+      periodStartDate: '2026-07-01',
+      periodEndDate: '2026-09-30',
+      coveredMonthCount: 0,
+    }),
+    '2026-07-10',
+  )
+})
+
+test('moves QR validity to the next monthly 10th for each paid installment', () => {
+  assert.equal(
+    getQrAccessValidThroughDate({
+      periodStartDate: '2026-07-01',
+      periodEndDate: '2026-09-30',
+      coveredMonthCount: 1,
+    }),
+    '2026-08-10',
+  )
+  assert.equal(
+    getQrAccessValidThroughDate({
+      periodStartDate: '2026-07-01',
+      periodEndDate: '2026-09-30',
+      coveredMonthCount: 2,
+    }),
+    '2026-09-10',
+  )
+})
+
+test('caps fully paid monthly checkpoints at the billing period end', () => {
+  assert.equal(
+    getQrAccessValidThroughDate({
+      periodStartDate: '2026-07-01',
+      periodEndDate: '2026-09-30',
+      coveredMonthCount: 3,
+    }),
+    '2026-09-30',
+  )
 })

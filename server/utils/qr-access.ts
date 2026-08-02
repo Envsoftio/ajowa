@@ -12,7 +12,10 @@ import {
 import { normalizeSocietySettings } from './master-data'
 import { enqueueNotificationForUsers } from './notifications'
 import { createStorageObjectKey, uploadPrivateFile } from './storage'
-import { selectCurrentQrBillingPeriodId } from '~/shared/qr-access'
+import {
+  getQrAccessValidThroughDate,
+  selectCurrentQrBillingPeriodId,
+} from '~/shared/qr-access'
 
 type AccessScope = 'OWNERSHIP' | 'TENANCY' | 'HOUSEHOLD'
 type ScanResult = 'GRANTED' | 'DENIED' | 'EXPIRED' | 'REVOKED' | 'INVALID'
@@ -451,7 +454,7 @@ const getCamAdvanceAdjustmentAmount = (due: DueAccessRow) => {
   }, 0)
 }
 
-const getPartialCamPaidThroughDate = (due: DueAccessRow) => {
+const getCamQrAccessValidThroughDate = (due: DueAccessRow) => {
   if (due.billing_period_charge_type !== 'CAM') return null
 
   const segments = getBillingPeriodMonthSegments(
@@ -474,9 +477,11 @@ const getPartialCamPaidThroughDate = (due: DueAccessRow) => {
     Math.floor((creditedAmount + 1) / monthlyAmount),
   )
 
-  if (paidMonths <= 0) return null
-
-  return segments[paidMonths - 1]?.endDate ?? null
+  return getQrAccessValidThroughDate({
+    periodStartDate: due.billing_period_start_date,
+    periodEndDate: due.billing_period_end_date,
+    coveredMonthCount: paidMonths,
+  })
 }
 
 const assessDueForQrAccess = (
@@ -492,14 +497,14 @@ const assessDueForQrAccess = (
     }
   }
 
-  const partialCamPaidThroughDate = getPartialCamPaidThroughDate(due)
+  const camQrAccessValidThroughDate = getCamQrAccessValidThroughDate(due)
   if (
-    partialCamPaidThroughDate &&
-    compareDateOnly(partialCamPaidThroughDate, societyToday) >= 0
+    camQrAccessValidThroughDate &&
+    compareDateOnly(camQrAccessValidThroughDate, societyToday) >= 0
   ) {
     return {
       isClear: true,
-      validThroughDate: partialCamPaidThroughDate,
+      validThroughDate: camQrAccessValidThroughDate,
       blockingBalance: 0,
     }
   }
@@ -944,7 +949,7 @@ export const recomputeUserAccessForPairs = async (
                 assessed.status in ('PAID', 'WAIVED')
                 or assessed.balance_amount <= 0
                 or assessed.is_cam_advance_covered
-                or coalesce(assessed.partial_cam_paid_through_date >= assessed.society_today, false)
+                or coalesce(assessed.cam_qr_access_valid_through_date >= assessed.society_today, false)
               )
             )
             or (assessed.due_id is null and assessed.is_cam_advance_covered)
@@ -957,7 +962,7 @@ export const recomputeUserAccessForPairs = async (
                 or assessed.is_cam_advance_covered
               ) then assessed.billing_period_end_date
             when assessed.due_id is null and assessed.is_cam_advance_covered then assessed.billing_period_end_date
-            when assessed.partial_cam_paid_through_date >= assessed.society_today then assessed.partial_cam_paid_through_date
+            when assessed.cam_qr_access_valid_through_date >= assessed.society_today then assessed.cam_qr_access_valid_through_date
             else null::date
           end as valid_through_date
         from (
@@ -970,27 +975,31 @@ export const recomputeUserAccessForPairs = async (
                 and (ar.base_amount + ar.cam_advance_adjustment_amount) > 0
               then least(
                 ar.billing_period_end_date,
-                (
-                  ar.billing_period_start_date
-                  + (
-                    least(
-                      ar.period_months,
-                      floor(
-                        (
-                          ar.paid_amount
-                          + ar.waived_amount
-                          + ar.cam_advance_adjustment_amount
-                          + 1
+                greatest(
+                  ar.billing_period_start_date,
+                  (
+                    date_trunc('month', ar.billing_period_start_date::timestamp)
+                    + greatest(
+                        0,
+                        least(
+                          ar.period_months,
+                          floor(
+                            (
+                              ar.paid_amount
+                              + ar.waived_amount
+                              + ar.cam_advance_adjustment_amount
+                              + 1
+                            )
+                            / ((ar.base_amount + ar.cam_advance_adjustment_amount) / ar.period_months)
+                          )::integer
                         )
-                        / ((ar.base_amount + ar.cam_advance_adjustment_amount) / ar.period_months)
-                      )::integer
-                    ) * interval '1 month'
-                  )
-                  - interval '1 day'
-                )::date
+                      ) * interval '1 month'
+                    + interval '9 days'
+                  )::date
+                )
               )
               else null::date
-            end as partial_cam_paid_through_date
+            end as cam_qr_access_valid_through_date
           from access_rows ar
           inner join society_settings ss on ss.society_id = ar.society_id
         ) assessed
