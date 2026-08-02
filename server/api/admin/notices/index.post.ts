@@ -38,7 +38,7 @@ const schema = z.object({
   expiresAt: z.string().datetime().nullable().optional(),
   isPinned: z.boolean().default(false),
   audience: audienceSchema.default({ scope: 'ALL_ACTIVE_RESIDENTS' }),
-  channels: z.array(z.enum(['PUSH', 'EMAIL', 'WHATSAPP', 'IN_APP'])).default(['IN_APP']),
+  channels: z.array(z.enum(['PUSH', 'EMAIL', 'WHATSAPP', 'IN_APP'])).min(1).default(['PUSH', 'EMAIL', 'WHATSAPP', 'IN_APP']),
   publish: z.boolean().default(false),
   attachmentLabel: z.string().max(180).nullable().optional(),
 })
@@ -66,9 +66,10 @@ export default defineEventHandler(async (event) => {
           published_at,
           expires_at,
           created_by_user_id,
-          attachment_label
+          attachment_label,
+          notification_channels
         )
-        values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, null, $9, case when $10 then now() else null end, $11, $12, $13)
+        values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, null, $9, case when $10 then now() else null end, $11, $12, $13, $14::notification_channel[])
         returning id
       `,
       [
@@ -85,6 +86,7 @@ export default defineEventHandler(async (event) => {
         body.expiresAt ?? null,
         authMe.user.id,
         body.attachmentLabel ?? null,
+        body.channels,
       ],
     )
 

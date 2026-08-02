@@ -19,6 +19,7 @@ type NoticeRow = {
   created_at: string
   attachment_file_id: string | null
   attachment_label: string | null
+  notification_channels: string[]
 }
 
 export default defineEventHandler(async (event) => {
@@ -55,7 +56,8 @@ export default defineEventHandler(async (event) => {
           expires_at::text,
           created_at::text,
           attachment_file_id::text,
-          attachment_label
+          attachment_label,
+          notification_channels::text[]
         from notices
         where ${where.join(' and ')}
         order by is_pinned desc, created_at desc
@@ -90,6 +92,7 @@ export default defineEventHandler(async (event) => {
       createdAt: row.created_at,
       attachmentFileId: row.attachment_file_id,
       attachmentLabel: row.attachment_label,
+      notificationChannels: row.notification_channels,
       attachmentUrl: row.attachment_file_id ? `/api/admin/notices/${row.id}/attachment` : null,
     })),
     total: Number(total.rows[0]?.total ?? 0),

@@ -6,7 +6,7 @@ import { enqueueNotificationForAudience } from '~/server/utils/notifications'
 import type { NotificationAudienceFilter } from '~/server/utils/notifications'
 
 const schema = z.object({
-  channels: z.array(z.enum(['PUSH', 'EMAIL', 'WHATSAPP', 'IN_APP'])).min(1),
+  channels: z.array(z.enum(['PUSH', 'EMAIL', 'WHATSAPP', 'IN_APP'])).min(1).optional(),
 })
 
 export default defineEventHandler(async (event) => {
@@ -26,9 +26,10 @@ export default defineEventHandler(async (event) => {
       body: string
       priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'EMERGENCY'
       audience_filter: NotificationAudienceFilter
+      notification_channels: Array<'PUSH' | 'EMAIL' | 'WHATSAPP' | 'IN_APP'>
     }>(
       `
-        select title, summary, body, priority::text, audience_filter
+        select title, summary, body, priority::text, audience_filter, notification_channels::text[]
         from notices
         where id = $1 and society_id = $2
         limit 1
@@ -55,7 +56,7 @@ export default defineEventHandler(async (event) => {
       idempotencyKey: `notice.published:${id}`,
       idempotencyWindowSeconds: 31536000,
       triggeredByUserId: authMe.user.id,
-      channels: body.channels,
+      channels: body.channels ?? notice.notification_channels,
       audience: notice.audience_filter,
       audienceLabel: notice.audience_filter.scope,
     })

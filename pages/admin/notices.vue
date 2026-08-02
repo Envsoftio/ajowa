@@ -35,6 +35,7 @@ type NoticeRow = {
   attachmentFileId: string | null
   attachmentLabel: string | null
   attachmentUrl: string | null
+  notificationChannels: string[]
 }
 
 type NoticeAttachment = {
@@ -61,6 +62,7 @@ const attachmentAccept = 'application/pdf,application/vnd.ms-excel,application/v
 const attachmentAllowedMimeTypes = attachmentAccept.split(',')
 const attachmentMaxSizeBytes = 10 * 1024 * 1024
 const flatOwnerScope = 'OWNER_OF_FLAT' as const
+const defaultNoticeChannels = ['PUSH', 'EMAIL', 'WHATSAPP', 'IN_APP']
 const form = reactive({
   title: '',
   summary: '',
@@ -68,7 +70,7 @@ const form = reactive({
   priority: 'MEDIUM',
   isPinned: false,
   publish: false,
-  channels: ['IN_APP'] as string[],
+  channels: [...defaultNoticeChannels] as string[],
   audienceScope: 'ALL_ACTIVE_RESIDENTS' as AudienceScope,
   flatId: null as string | null,
 })
@@ -162,7 +164,7 @@ const resetForm = () => {
   form.priority = 'MEDIUM'
   form.isPinned = false
   form.publish = false
-  form.channels = ['IN_APP']
+  form.channels = [...defaultNoticeChannels]
   form.audienceScope = 'ALL_ACTIVE_RESIDENTS'
   form.flatId = null
   editingNoticeId.value = null
@@ -183,7 +185,9 @@ const editDraft = async (notice: NoticeRow) => {
   form.priority = notice.priority
   form.isPinned = notice.isPinned
   form.publish = false
-  form.channels = ['IN_APP']
+  form.channels = notice.notificationChannels.length
+    ? [...notice.notificationChannels]
+    : [...defaultNoticeChannels]
   form.audienceScope = notice.audienceFilter?.scope ?? notice.audienceScope ?? 'ALL_ACTIVE_RESIDENTS'
   form.flatId = notice.audienceFilter?.flatIds?.[0] ?? null
   clearAttachment()
@@ -313,6 +317,16 @@ const onRowAttachmentChange = async (event: Event) => {
 }
 
 const save = async () => {
+  if (form.channels.length === 0) {
+    toast.add({
+      severity: 'warn',
+      summary: 'Select notice media',
+      detail: 'Choose at least one delivery medium for this notice.',
+      life: 10000,
+    })
+    return
+  }
+
   if (form.audienceScope === flatOwnerScope && !form.flatId) {
     toast.add({
       severity: 'warn',
@@ -350,6 +364,7 @@ const save = async () => {
             priority: form.priority,
             isPinned: form.isPinned,
             audience: buildAudience(),
+            channels: form.channels,
           },
         })
       : await api<{ ok: true; data: { id: string; jobCount: number } }>('/api/admin/notices', {
@@ -406,7 +421,7 @@ const publish = async (notice: NoticeRow) => {
     const response = await api<{ ok: true; data: { jobCount: number } }>(`/api/admin/notices/${notice.id}/publish`, {
       method: 'POST',
       errorFallback: 'The notice could not be published. It remains a draft; please try again.',
-      body: { channels: ['PUSH', 'EMAIL', 'WHATSAPP', 'IN_APP'] },
+      body: {},
     })
     toast.add({ severity: 'success', summary: 'Notice published', detail: `${response.data.jobCount} jobs queued.`, life: 10000 })
     await refresh()
@@ -452,7 +467,7 @@ const publish = async (notice: NoticeRow) => {
         </div>
         <InputText v-model="form.title" placeholder="Notice title" :disabled="isSaving" />
         <InputText v-model="form.summary" placeholder="Short summary" :disabled="isSaving" />
-        <Textarea v-model="form.body" rows="6" placeholder="Notice details" :disabled="isSaving" />
+        <Textarea v-model="form.body" rows="9" placeholder="Notice description" :disabled="isSaving" />
         <div class="surface-grid">
           <Select v-model="form.priority" :options="['LOW', 'MEDIUM', 'HIGH', 'EMERGENCY']" />
           <Select v-model="form.audienceScope" :options="audienceOptions" option-label="label" option-value="value" />
@@ -465,14 +480,17 @@ const publish = async (notice: NoticeRow) => {
             filter
             placeholder="Select flat owner"
           />
-          <MultiSelect
-            v-if="!isEditing"
-            v-model="form.channels"
-            :options="channelOptions"
-            option-label="label"
-            option-value="value"
-            display="chip"
-          />
+          <label class="notice-media-field">
+            <span class="field-label">Notice media</span>
+            <MultiSelect
+              v-model="form.channels"
+              :options="channelOptions"
+              option-label="label"
+              option-value="value"
+              display="chip"
+              placeholder="Select notice media"
+            />
+          </label>
         </div>
         <div class="admin-inline-actions">
           <ToggleSwitch v-model="form.isPinned" />
@@ -639,6 +657,11 @@ const publish = async (notice: NoticeRow) => {
   border: 1px solid color-mix(in srgb, var(--p-primary-color) 30%, var(--surface-border));
   border-radius: 0.75rem;
   background: color-mix(in srgb, var(--p-primary-color) 7%, var(--surface-card));
+}
+
+.notice-media-field {
+  display: grid;
+  gap: 0.4rem;
 }
 
 .notice-edit-banner > div {
