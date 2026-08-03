@@ -3,7 +3,7 @@ import { createApiSuccess, readJsonBody } from '~/server/utils/api'
 import { requireRole } from '~/server/utils/auth'
 import {
   addBillingDays,
-  computeBillingDueAmounts,
+  computeDgAwareBillingDueAmounts,
   dueLateFeeCorrectionSchema,
   getVerifiedDuePaymentEvents,
   todayDate,
@@ -247,7 +247,7 @@ export default defineEventHandler(async (event) => {
       }
 
       const paymentEvents = paymentEventsByDueId.get(due.id) ?? []
-      const computedBeforeWaiver = computeBillingDueAmounts(
+      const computedBeforeWaiver = computeDgAwareBillingDueAmounts(
         {
           dueDate: due.due_date,
           billingPeriodChargeType: due.billing_period_charge_type,
@@ -265,6 +265,7 @@ export default defineEventHandler(async (event) => {
         asOfDate,
         settings.graceDays,
         settings.lateFeePerDay,
+        settings,
       )
 
       if (body.action === 'WAIVE_AND_CLOSE') {
@@ -288,7 +289,7 @@ export default defineEventHandler(async (event) => {
         )
       }
 
-      const computed = computeBillingDueAmounts(
+      const computed = computeDgAwareBillingDueAmounts(
         {
           dueDate: due.due_date,
           billingPeriodChargeType: due.billing_period_charge_type,
@@ -306,6 +307,7 @@ export default defineEventHandler(async (event) => {
         asOfDate,
         settings.graceDays,
         settings.lateFeePerDay,
+        settings,
       )
       const nextStatus =
         body.action === 'WAIVE_AND_CLOSE' && computed.balanceAmount <= 0

@@ -4,7 +4,7 @@ import { getDatabasePool } from '~/server/utils/database'
 import { AppError } from '~/server/utils/errors'
 import { normalizeSocietySettings, readUuidParam, validatePayload, writeMasterAudit } from '~/server/utils/master-data'
 import {
-  computeBillingDueAmounts,
+  computeDgAwareBillingDueAmounts,
   dueWaiveSchema,
   getVerifiedDuePaymentEvents,
   todayDate,
@@ -105,7 +105,7 @@ export default defineEventHandler(async (event) => {
     const paymentEventsByDueId = await getVerifiedDuePaymentEvents(client, [
       due.id,
     ])
-    const currentComputed = computeBillingDueAmounts(
+    const currentComputed = computeDgAwareBillingDueAmounts(
       {
         dueDate: due.due_date,
         billingPeriodChargeType: due.billing_period_charge_type,
@@ -125,6 +125,7 @@ export default defineEventHandler(async (event) => {
       todayDate(),
       settings.graceDays,
       settings.lateFeePerDay,
+      settings,
     )
 
     const waivedAmount = body.waived

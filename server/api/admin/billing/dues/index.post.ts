@@ -1,5 +1,6 @@
 import { createApiSuccess, readJsonBody } from '~/server/utils/api'
 import { requireRole } from '~/server/utils/auth'
+import { invokeBillEmailNotificationWorker } from '~/server/utils/bill-notification-dispatch'
 import {
   getActiveCamPaymentArrangementsForDueDate,
   getArrangementLateFeeStartsOn,
@@ -79,16 +80,6 @@ const flatNumberSortExpression =
   "coalesce(nullif(regexp_replace(f.flat_number, '\\D', '', 'g'), '')::integer, 2147483647)"
 
 const roundMoney = (value: number) => Math.round(value * 100) / 100
-
-const getDgSupplementalAmount = (breakdown: ChargeBreakdownItem[]) =>
-  roundMoney(
-    breakdown.reduce((sum, item) => {
-      const interestAmount = Number(item.interestAmount ?? 0)
-
-      return sum +
-        (Number.isFinite(interestAmount) ? Math.max(0, interestAmount) : 0)
-    }, 0),
-  )
 
 export default defineEventHandler(async (event) => {
   const authMe = await requireRole(event, ['ADMIN', 'MANAGER'])
@@ -437,17 +428,17 @@ export default defineEventHandler(async (event) => {
             treatUnclassifiedChargesAsCam: true,
           })
         : breakdown
-      const currentChargeBase = roundMoney(adjustedBreakdown.reduce((sum, item) => sum + item.amount, 0))
-      const dgSupplementalAmount =
-        period.charge_type === 'DG_SET'
-          ? getDgSupplementalAmount(adjustedBreakdown)
-          : 0
-      const totalBase = roundMoney(currentChargeBase + dgSupplementalAmount)
+      const billableBreakdown = period.charge_type === 'DG_SET'
+        ? adjustedBreakdown.map((item) => ({ ...item, interestAmount: 0 }))
+        : adjustedBreakdown
+      const totalBase = roundMoney(
+        billableBreakdown.reduce((sum, item) => sum + item.amount, 0),
+      )
       const advanceReduction = isCamPeriod
         ? roundMoney(originalBase - totalBase)
         : 0
 
-      if (adjustedBreakdown.length === 0 || totalBase <= 0) {
+      if (billableBreakdown.length === 0 || totalBase <= 0) {
         if (coverageSummary?.isFullyCovered || advanceReduction > 0) {
           advanceCoveredCount += 1
         }
@@ -458,7 +449,7 @@ export default defineEventHandler(async (event) => {
         advanceProratedAmount = roundMoney(advanceProratedAmount + advanceReduction)
       }
 
-      if (hasUnresolvedAreaRateCharge(adjustedBreakdown)) {
+      if (hasUnresolvedAreaRateCharge(billableBreakdown)) {
         throw new AppError({
           code: 'VALIDATION_ERROR',
           statusCode: 400,
@@ -484,7 +475,7 @@ export default defineEventHandler(async (event) => {
         baseAmount: totalBase,
         totalAmount,
         status: totalAmount <= 0 ? 'PAID' : 'OPEN',
-        chargeBreakdown: adjustedBreakdown,
+        chargeBreakdown: billableBreakdown,
       })
     }
 
@@ -677,15 +668,56 @@ export default defineEventHandler(async (event) => {
     }
 
     let queued = { eventCount: 0, audienceCount: 0, jobCount: 0 }
+    let workerStarted = false
     if (generated > 0 || (isDgGeneration && advanceAppliedCount > 0)) {
       if (isDgGeneration) {
-        startPhase('created_notification_skip')
-        completePhase({
-          notificationEventCount: 0,
-          notificationAudienceCount: 0,
-          notificationJobCount: 0,
-          notificationEnqueueSkipped: true,
-        })
+        if (generatedDueIds.length > 0) {
+          startPhase('dg_bill_notification_enqueue')
+          try {
+            queued = await enqueueDueBillingContactNotifications(client, {
+              societyId: authMe.user.societyId,
+              dueIds: generatedDueIds,
+              eventKey: 'maintenance_due.bill',
+              title: 'DG Set bill generated',
+              bodyPrefix: 'Your DG Set bill is ready for',
+              channels: ['EMAIL'],
+              recipientRelationshipTypes: ['OWNER'],
+              triggeredByUserId: authMe.user.id,
+            })
+            workerStarted = queued.jobCount > 0
+              ? await invokeBillEmailNotificationWorker(authMe.user.societyId)
+              : false
+            completePhase({
+              notificationEventCount: queued.eventCount,
+              notificationAudienceCount: queued.audienceCount,
+              notificationJobCount: queued.jobCount,
+              notificationWorkerStarted: workerStarted,
+              notificationEnqueueSkipped: false,
+            })
+          } catch (error) {
+            completePhase({
+              notificationEventCount: queued.eventCount,
+              notificationAudienceCount: queued.audienceCount,
+              notificationJobCount: queued.jobCount,
+              notificationWorkerStarted: workerStarted,
+              notificationEnqueueFailed: true,
+            })
+            logger.error('DG Set bill notification enqueue failed after commit.', {
+              operation: 'maintenance_dues.generate',
+              billingPeriodId: body.billingPeriodId,
+              generatedCount: generated,
+              cause: error instanceof Error ? error.message : String(error),
+            })
+          }
+        } else {
+          startPhase('dg_bill_notification_skip')
+          completePhase({
+            notificationEventCount: 0,
+            notificationAudienceCount: 0,
+            notificationJobCount: 0,
+            notificationEnqueueSkipped: true,
+          })
+        }
       } else {
         startPhase('created_notification_enqueue')
         queued = await enqueueDueBillingContactNotifications(client, {
@@ -730,7 +762,7 @@ export default defineEventHandler(async (event) => {
             notificationAudienceCount: queued.audienceCount,
             notificationJobCount: queued.jobCount,
             ...(isDgGeneration
-              ? { notificationEnqueueSkipped: true }
+              ? { notificationWorkerStarted: workerStarted }
               : {}),
           },
           relatedEntities: [
@@ -781,6 +813,10 @@ export default defineEventHandler(async (event) => {
       advanceAppliedCount,
       advanceAppliedAmount,
       paymentArrangementAppliedCount,
+      notificationEventCount: queued.eventCount,
+      notificationAudienceCount: queued.audienceCount,
+      notificationJobCount: queued.jobCount,
+      notificationWorkerStarted: workerStarted,
       dueIds: generatedDueIds,
       generatedDues,
       skippedDues,

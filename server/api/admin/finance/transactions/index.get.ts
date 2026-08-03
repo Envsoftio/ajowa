@@ -17,11 +17,12 @@ export default defineEventHandler(async (event) => {
   const pagination = getPaginationParams(query)
   const offset = (pagination.page - 1) * pagination.pageSize
   const pool = getDatabasePool()
-  const isIncomeReportDrilldown = query.source === 'report' &&
-    query.transactionType === 'INCOME' &&
+  const isPostedIncome = query.transactionType === 'INCOME' &&
     query.status === 'POSTED'
+  const isIncomeReportDrilldown = query.source === 'report' && isPostedIncome
+  const isIncomeListingWithDgCollections = !isIncomeReportDrilldown && isPostedIncome
 
-  if (isIncomeReportDrilldown) {
+  if (isIncomeReportDrilldown || isIncomeListingWithDgCollections) {
     const sort = getFinanceTransactionSort(query)
     const result = await getIncomeReportDrilldownTransactions(
       pool,
@@ -31,16 +32,26 @@ export default defineEventHandler(async (event) => {
         page: pagination.page,
         pageSize: pagination.pageSize,
         ...sort,
+        ...(isIncomeListingWithDgCollections
+          ? { billingChargeTypes: ['DG_SET'] as const }
+          : {}),
       },
     )
+    const summary = isIncomeListingWithDgCollections
+      ? await getFinanceTransactionSummary(
+          pool,
+          buildFinanceTransactionFilterSql(authMe.user.societyId, query),
+          query,
+        )
+      : result.summary
 
     return createApiSuccess(event, {
       items: result.items,
       total: result.total,
       summary: {
-        income: result.summary.income,
-        expense: result.summary.expense,
-        missingAttachments: result.summary.missingAttachments,
+        income: summary.income,
+        expense: summary.expense,
+        missingAttachments: summary.missingAttachments,
       },
       page: pagination.page,
       pageSize: pagination.pageSize,

@@ -11,6 +11,15 @@ export type DgBalanceSummaryAmounts = {
   netPositionAmount: number
 }
 
+export type DgDueStatementSummary = {
+  currentChargeAmount: number
+  currentBalanceAmount: number
+  previousOutstandingAmount: number
+  combinedPayableAmount: number
+  advanceAppliedAmount: number
+  availableAdvanceAmount: number
+}
+
 const money = (value: number) =>
   Math.round((Number.isFinite(value) ? value : 0) * 100) / 100
 
@@ -34,6 +43,27 @@ export const buildDgBalanceSummary = (
     netPositionAmount: money(
       Math.max(0, summary.outstandingAmount - summary.availableAdvanceAmount),
     ),
+  }
+}
+
+export const buildDgDueStatementSummary = (
+  input: Omit<DgDueStatementSummary, 'combinedPayableAmount'>,
+): DgDueStatementSummary => {
+  const currentChargeAmount = money(Math.max(0, input.currentChargeAmount))
+  const currentBalanceAmount = money(Math.max(0, input.currentBalanceAmount))
+  const previousOutstandingAmount = money(
+    Math.max(0, input.previousOutstandingAmount),
+  )
+
+  return {
+    currentChargeAmount,
+    currentBalanceAmount,
+    previousOutstandingAmount,
+    combinedPayableAmount: money(
+      currentBalanceAmount + previousOutstandingAmount,
+    ),
+    advanceAppliedAmount: money(Math.max(0, input.advanceAppliedAmount)),
+    availableAdvanceAmount: money(Math.max(0, input.availableAdvanceAmount)),
   }
 }
 

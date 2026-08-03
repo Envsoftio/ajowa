@@ -176,7 +176,10 @@ const normalizeVariableChargeEntry = (
     previousOutstanding: roundVariableChargeMoney(
       Number(entry.previousOutstanding ?? 0),
     ),
-    interestAmount: roundVariableChargeMoney(Number(entry.interestAmount ?? 0)),
+    interestAmount:
+      config.chargeType === 'DG_SET'
+        ? 0
+        : roundVariableChargeMoney(Number(entry.interestAmount ?? 0)),
     cycleMultiplier,
     cycleLabel: normalizeOptionalText(entry.cycleLabel),
     amount: roundVariableChargeMoney(Math.max(0, computedAmount)),

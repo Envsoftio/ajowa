@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import {
   buildDgBalanceSummary,
+  buildDgDueStatementSummary,
   getDgBalanceStatePredicate,
 } from '../shared/dg-balance.ts'
 import { getAdminRoutePermission } from '../shared/auth.ts'
@@ -51,6 +53,55 @@ test('never presents a negative DG net payable when advance exceeds dues', () =>
   assert.equal(summary.availableAdvanceAmount, 100)
 })
 
+test('shows previous and current DG balances once in the statement payable', () => {
+  assert.deepEqual(
+    buildDgDueStatementSummary({
+      currentChargeAmount: 435,
+      currentBalanceAmount: 435,
+      previousOutstandingAmount: 406,
+      advanceAppliedAmount: 0,
+      availableAdvanceAmount: 0,
+    }),
+    {
+      currentChargeAmount: 435,
+      currentBalanceAmount: 435,
+      previousOutstandingAmount: 406,
+      combinedPayableAmount: 841,
+      advanceAppliedAmount: 0,
+      availableAdvanceAmount: 0,
+    },
+  )
+})
+
+test('does not deduct an unapplied DG advance or an applied advance twice', () => {
+  assert.deepEqual(
+    buildDgDueStatementSummary({
+      currentChargeAmount: 900,
+      currentBalanceAmount: 0,
+      previousOutstandingAmount: 100,
+      advanceAppliedAmount: 900,
+      availableAdvanceAmount: 425,
+    }),
+    {
+      currentChargeAmount: 900,
+      currentBalanceAmount: 0,
+      previousOutstandingAmount: 100,
+      combinedPayableAmount: 100,
+      advanceAppliedAmount: 900,
+      availableAdvanceAmount: 425,
+    },
+  )
+
+  const unapplied = buildDgDueStatementSummary({
+    currentChargeAmount: 435,
+    currentBalanceAmount: 435,
+    previousOutstandingAmount: 406,
+    advanceAppliedAmount: 0,
+    availableAdvanceAmount: 1_000,
+  })
+  assert.equal(unapplied.combinedPayableAmount, 841)
+})
+
 test('maps DG balance register filters to bounded SQL predicates', () => {
   assert.equal(
     getDgBalanceStatePredicate('outstanding'),
@@ -69,4 +120,18 @@ test('protects DG balances with billing management permission', () => {
     getAdminRoutePermission('/admin/billing/dg-balances'),
     'billing.manage',
   )
+})
+
+test('keeps generated DG bills out of the carried-forward balance register', async () => {
+  const source = await readFile(
+    new URL(
+      '../server/api/admin/billing/dg-balances/index.get.ts',
+      import.meta.url,
+    ),
+    'utf8',
+  )
+  const openingBalanceFilters =
+    source.match(/md\.origin = 'DG_OPENING_BALANCE'/g) ?? []
+
+  assert.ok(openingBalanceFilters.length >= 3)
 })

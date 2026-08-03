@@ -1,9 +1,5 @@
 <script setup lang="ts">
-import {
-  BILL_NOTIFICATION_REQUEST_BATCH_SIZE,
-  chunkBillingRequestIds,
-  getDueGenerationFlatIdBatches,
-} from '~/shared/billing'
+import { getDueGenerationFlatIdBatches } from '~/shared/billing'
 import type {
   BillingFrequency,
   BillingPeriod,
@@ -34,17 +30,11 @@ type GenerationResponse = {
     skipped: number
     advanceAppliedCount: number
     advanceAppliedAmount: number
+    notificationJobCount?: number
+    notificationWorkerStarted?: boolean
     dueIds: string[]
     generatedDues: Array<{ dueId: string; flatId: string }>
     skippedDues: Array<{ dueId: string; flatId: string }>
-  }
-}
-type BillSendResponse = {
-  ok: true
-  data: {
-    eligible: number
-    jobCount: number
-    workerStarted: boolean
   }
 }
 
@@ -523,6 +513,8 @@ const generateDues = async () => {
     let generated = 0
     let skipped = 0
     let advanceAppliedAmount = 0
+    let emailJobCount = 0
+    let emailWorkerStarted = false
     const dueIds: string[] = []
 
     for (const flatIds of batches) {
@@ -537,6 +529,8 @@ const generateDues = async () => {
       generated += response.data.generated
       skipped += response.data.skipped
       advanceAppliedAmount += response.data.advanceAppliedAmount
+      emailJobCount += response.data.notificationJobCount ?? 0
+      emailWorkerStarted ||= Boolean(response.data.notificationWorkerStarted)
       if (isDgGeneration) {
         dueIds.push(
           ...response.data.generatedDues.map((due) => due.dueId),
@@ -548,33 +542,6 @@ const generateDues = async () => {
       lastGeneratedDueIds.value = Array.from(new Set(dueIds))
     }
 
-    let emailedBillCount = 0
-    let emailJobCount = 0
-    let emailWorkerStarted = false
-    if (
-      isDgGeneration &&
-      dueIds.length > 0
-    ) {
-      for (const batchDueIds of chunkBillingRequestIds(
-        Array.from(new Set(dueIds)),
-        BILL_NOTIFICATION_REQUEST_BATCH_SIZE,
-      )) {
-        const response = await api<BillSendResponse>(
-          '/api/admin/billing/dues/send-bills',
-          {
-            method: 'POST',
-            body: {
-              dueIds: batchDueIds,
-              channels: ['EMAIL'],
-            },
-          },
-        )
-        emailedBillCount += response.data.eligible
-        emailJobCount += response.data.jobCount
-        emailWorkerStarted ||= response.data.workerStarted
-      }
-    }
-
     toast.add({
       severity: 'success',
       summary: 'Bills generated',
@@ -584,10 +551,10 @@ const generateDues = async () => {
         advanceAppliedAmount > 0
           ? `${formatMoney(advanceAppliedAmount)} advance applied`
           : '',
-        isDgGeneration && emailedBillCount > 0
+        isDgGeneration && dueIds.length > 0
           ? emailJobCount > 0
-            ? `${emailJobCount} email job${emailJobCount === 1 ? '' : 's'} queued for ${emailedBillCount} bill${emailedBillCount === 1 ? '' : 's'}${emailWorkerStarted ? '' : ' (scheduled retry will pick them up)'}`
-            : `Email delivery checked for ${emailedBillCount} existing bill${emailedBillCount === 1 ? '' : 's'}`
+            ? `${emailJobCount} email job${emailJobCount === 1 ? '' : 's'} queued${emailWorkerStarted ? '' : ' (scheduled retry will pick them up)'}`
+            : 'Bill email queue checked'
           : '',
       ].filter(Boolean).join(', ') + '.',
       life: 10000,

@@ -2,7 +2,7 @@ import type { PoolClient } from 'pg'
 import { createApiSuccess, readJsonBody } from '~/server/utils/api'
 import { requireRole } from '~/server/utils/auth'
 import {
-  computeBillingDueAmounts,
+  computeDgAwareBillingDueAmounts,
   dueBulkDueDateUpdateSchema,
   getVerifiedDuePaymentEvents,
   todayDate,
@@ -334,7 +334,7 @@ export default defineEventHandler(async (event) => {
       const lateFeeStartsOn = arrangement
         ? getArrangementLateFeeStartsOn(body.dueDate, arrangement.penalty_free_until_day)
         : null
-      const computed = computeBillingDueAmounts(
+      const computed = computeDgAwareBillingDueAmounts(
         {
           dueDate: body.dueDate,
           billingPeriodChargeType: due.billing_period_charge_type,
@@ -354,6 +354,7 @@ export default defineEventHandler(async (event) => {
         today,
         settings.graceDays,
         settings.lateFeePerDay,
+        settings,
       )
 
       if (computed.totalAmount < paidAmount) {

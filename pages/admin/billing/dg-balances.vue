@@ -49,6 +49,13 @@ const todayDate = () => {
   return date.toISOString().slice(0, 10)
 }
 
+const previousCycleEndDate = () => {
+  const date = new Date()
+  date.setDate(0)
+  date.setMinutes(date.getMinutes() - date.getTimezoneOffset())
+  return date.toISOString().slice(0, 10)
+}
+
 const formatMoney = (value: number | string | null | undefined) =>
   new Intl.NumberFormat('en-IN', {
     style: 'currency',
@@ -137,34 +144,31 @@ const tableSortOrder = computed(() => (query.sortDirection === 'asc' ? 1 : -1))
 const stateOptions = [
   { label: 'Outstanding', value: 'outstanding' },
   { label: 'Settled', value: 'settled' },
-  { label: 'Opening balances', value: 'opening' },
-  { label: 'All DG bills', value: '' },
+  { label: 'All carried-forward entries', value: '' },
 ]
 
 const dialogVisible = ref(false)
 const saving = ref(false)
 const form = reactive({
   flatId: '',
-  asOfDate: todayDate(),
+  asOfDate: previousCycleEndDate(),
   dueDate: todayDate(),
   principalAmount: null as number | null,
-  interestAmount: 0 as number | null,
   note: '',
 })
 
 const openCreateDialog = () => {
   Object.assign(form, {
     flatId: '',
-    asOfDate: todayDate(),
+    asOfDate: previousCycleEndDate(),
     dueDate: todayDate(),
     principalAmount: null,
-    interestAmount: 0,
     note: '',
   })
   dialogVisible.value = true
 }
 
-const saveOpeningBalance = async () => {
+const savePreviousBalance = async () => {
   if (
     !form.flatId ||
     !form.asOfDate ||
@@ -177,7 +181,7 @@ const saveOpeningBalance = async () => {
       severity: 'warn',
       summary: 'Complete required fields',
       detail:
-        'Select a flat and enter the balance date, due date, principal, and audit note.',
+        'Select a flat and enter the previous cycle date, due date, unpaid amount, and audit note.',
       life: 7000,
     })
     return
@@ -186,7 +190,7 @@ const saveOpeningBalance = async () => {
     toast.add({
       severity: 'warn',
       summary: 'Check the due date',
-      detail: 'The due date cannot be before the opening-balance date.',
+      detail: 'The due date cannot be before the previous cycle date.',
       life: 7000,
     })
     return
@@ -203,7 +207,6 @@ const saveOpeningBalance = async () => {
           asOfDate: form.asOfDate,
           dueDate: form.dueDate,
           principalAmount: form.principalAmount,
-          interestAmount: form.interestAmount ?? 0,
           note: form.note,
         },
       },
@@ -211,7 +214,7 @@ const saveOpeningBalance = async () => {
     const applied = response.data.advanceAppliedAmount
     toast.add({
       severity: 'success',
-      summary: 'DG opening balance added',
+      summary: 'Carried-forward DG balance added',
       detail:
         applied > 0
           ? `${formatMoney(applied)} of DG advance was applied oldest-first. Remaining balance: ${formatMoney(response.data.balanceAmount)}.`
@@ -262,8 +265,8 @@ const statusSeverity = (status: DgBalance['status']) => {
           <p class="eyebrow">DG billing</p>
           <h1>DG balances</h1>
           <p>
-            Track generated DG dues and add audited balances carried into the
-            system. DG advances are applied to the oldest unpaid DG bill first.
+            Record and settle unpaid DG amounts carried into AJOWA from earlier
+            cycles. Current-cycle bills remain in DG Set Charges and Dues.
           </p>
         </div>
         <div class="billing-command-actions">
@@ -276,7 +279,7 @@ const statusSeverity = (status: DgBalance['status']) => {
             outlined
           />
           <Button
-            label="Add opening balance"
+            label="Add carried-forward balance"
             icon="pi pi-plus-circle"
             :disabled="!canManageBilling"
             @click="openCreateDialog"
@@ -286,9 +289,9 @@ const statusSeverity = (status: DgBalance['status']) => {
 
       <div class="billing-cycle-guide">
         <div>
-          <span>DG outstanding</span>
+          <span>Carried-forward outstanding</span>
           <strong>{{ formatMoney(summary.outstandingAmount) }}</strong>
-          <p>Open DG receivables</p>
+          <p>Old unpaid DG amounts</p>
         </div>
         <div>
           <span>Available DG advance</span>
@@ -313,18 +316,20 @@ const statusSeverity = (status: DgBalance['status']) => {
       </div>
 
       <Message severity="info" :closable="false">
-        Add an opening balance only for DG bills that pre-date this system.
-        Generated unpaid DG bills already appear automatically and must not be
-        entered again.
+        Initial setup only: enter each flat's unpaid DG amount carried from
+        before AJOWA. Current and future bills are generated from DG Set Charges
+        and remain visible in Dues and bill PDFs; they are not repeated in this
+        carried-forward register.
       </Message>
     </section>
 
     <section class="list-page surface-card">
       <header class="list-page__header">
         <div>
-          <h1>DG balance register</h1>
+          <h1>Carried-forward DG balances</h1>
           <p>
-            Principal, interest, cash, advance adjustments, and closing balance.
+            Previous-cycle amounts entered during setup, less payments and DG
+            advance adjustments.
           </p>
         </div>
         <div class="list-page__exports">
@@ -397,23 +402,13 @@ const statusSeverity = (status: DgBalance['status']) => {
           <template #body="{ data: row }">
             <strong>{{ row.billingPeriodLabel }}</strong>
             <p class="table-muted">
-              {{
-                row.origin === 'DG_OPENING_BALANCE'
-                  ? 'Opening balance'
-                  : 'Generated bill'
-              }}
-              · {{ formatDate(row.periodStartDate) }}
+              Carried-forward balance · {{ formatDate(row.periodStartDate) }}
             </p>
           </template>
         </Column>
         <Column field="principalAmount" header="Principal">
           <template #body="{ data: row }">{{
             formatMoney(row.principalAmount)
-          }}</template>
-        </Column>
-        <Column field="interestAmount" header="Interest">
-          <template #body="{ data: row }">{{
-            formatMoney(row.interestAmount + row.lateFeeAmount)
           }}</template>
         </Column>
         <Column field="cashPaidAmount" header="Cash paid">
@@ -426,7 +421,7 @@ const statusSeverity = (status: DgBalance['status']) => {
             formatMoney(row.advanceAppliedAmount)
           }}</template>
         </Column>
-        <Column field="balanceAmount" header="Closing balance" sortable>
+        <Column field="balanceAmount" header="Amount outstanding" sortable>
           <template #body="{ data: row }"
             ><strong>{{ formatMoney(row.balanceAmount) }}</strong></template
           >
@@ -445,18 +440,18 @@ const statusSeverity = (status: DgBalance['status']) => {
 
     <Dialog
       v-model:visible="dialogVisible"
-      header="Add DG opening balance"
+      header="Add carried-forward DG balance"
       modal
       :style="{ width: '680px' }"
     >
-      <form class="admin-form-layout" @submit.prevent="saveOpeningBalance">
+      <form class="admin-form-layout" @submit.prevent="savePreviousBalance">
         <div class="billing-dialog-intro">
           <div>
-            <p class="eyebrow">Historical DG receivable</p>
-            <h2>Bring an unpaid DG bill into the ledger</h2>
+            <p class="eyebrow">Initial balance setup</p>
+            <h2>Record an old unpaid DG amount</h2>
             <p>
-              This creates a payable DG due and immediately applies any
-              available DG advance oldest-first.
+              Enter the amount payable when AJOWA tracking begins. Any available
+              DG advance is applied oldest-first.
             </p>
           </div>
         </div>
@@ -476,7 +471,7 @@ const statusSeverity = (status: DgBalance['status']) => {
           </label>
           <label>
             <span class="field-label"
-              >Balance as of <span class="required-marker">*</span></span
+              >Previous cycle date <span class="required-marker">*</span></span
             >
             <InputText v-model="form.asOfDate" type="date" required />
           </label>
@@ -488,7 +483,7 @@ const statusSeverity = (status: DgBalance['status']) => {
           </label>
           <label>
             <span class="field-label"
-              >Principal <span class="required-marker">*</span></span
+              >Unpaid amount <span class="required-marker">*</span></span
             >
             <InputNumber
               v-model="form.principalAmount"
@@ -501,18 +496,6 @@ const statusSeverity = (status: DgBalance['status']) => {
               required
             />
           </label>
-          <label>
-            <span class="field-label">Existing interest</span>
-            <InputNumber
-              v-model="form.interestAmount"
-              mode="currency"
-              currency="INR"
-              locale="en-IN"
-              :min="0"
-              :max-fraction-digits="2"
-              fluid
-            />
-          </label>
           <label class="admin-form-grid__full">
             <span class="field-label"
               >Audit note <span class="required-marker">*</span></span
@@ -521,13 +504,14 @@ const statusSeverity = (status: DgBalance['status']) => {
               v-model="form.note"
               rows="4"
               auto-resize
-              placeholder="Source bill number, migration reference, and reason"
+              placeholder="Previous bill number, cycle, and reason for the balance entry"
               required
             />
           </label>
         </div>
         <Message severity="warn" :closable="false">
-          Do not add a balance for a DG bill already generated in AJOWA.
+          Do this once during setup. If a DG bill was generated in AJOWA, its
+          unpaid amount is already tracked here and must not be added again.
         </Message>
         <div class="admin-inline-actions dialog-actions">
           <Button

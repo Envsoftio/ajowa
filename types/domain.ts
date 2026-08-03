@@ -45,6 +45,9 @@ export type SocietyPolicySettings = {
   highValueThreshold: number
   graceDays: number
   lateFeePerDay: number
+  dgLateFeeEnabled: boolean
+  dgGraceDays: number
+  dgLateFeePerDay: number
 }
 
 export type SocietyProfile = AuditFields & {
@@ -131,6 +134,7 @@ export type FlatDetail = FlatSummary & {
     totalDueAmount: number
     totalBalanceAmount: number
     openDueCount: number
+    availableDgAdvanceAmount: number
   }
   accessSummary: {
     activeResidents: number
@@ -247,12 +251,16 @@ export type ResidentPaymentSummary = AuditFields & {
 export type ResidentDueSummary = AuditFields & {
   id: string
   billingPeriodLabel: string
+  billingPeriodChargeType: BillingPeriodChargeType
+  origin: DgBalanceOrigin | null
   flatId: string
   flatNumber: string
   blockName: string
   dueDate: string
   totalAmount: number
   paidAmount: number
+  advanceAppliedAmount: number
+  availableDgAdvanceAmount: number
   balanceAmount: number
   status: string
 }
@@ -295,6 +303,7 @@ export type ResidentDetail = ResidentSummary & {
   ownershipProofPath: string | null
   leaseAgreementPath: string | null
   preferredNotificationChannels: string
+  availableDgAdvanceAmount: number
   relationships: FlatResidentRelationship[]
   flatOccupants: FlatResidentRelationship[]
   dues: ResidentDueSummary[]
@@ -869,6 +878,7 @@ export type MaintenanceDue = AuditFields & {
   billingPeriodLabel: string
   billingPeriodDueDate: string
   billingPeriodChargeType?: BillingPeriodChargeType
+  origin?: DgBalanceOrigin | null
   billingPeriodStartDate?: string
   billingPeriodEndDate?: string
   flatId: string
@@ -891,6 +901,11 @@ export type MaintenanceDue = AuditFields & {
   lateFeeAmount: number
   waivedAmount: number
   paidAmount: number
+  cashPaidAmount?: number
+  advanceAppliedAmount?: number
+  availableDgAdvanceAmount?: number
+  previousDgOutstandingAmount?: number
+  previousDgOutstandingCount?: number
   totalAmount: number
   balanceAmount: number
   status: DueStatus

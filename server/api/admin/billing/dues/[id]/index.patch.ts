@@ -13,7 +13,7 @@ import {
   writeMasterAudit,
 } from '~/server/utils/master-data'
 import {
-  computeBillingDueAmounts,
+  computeDgAwareBillingDueAmounts,
   dueUpdateSchema,
   getVerifiedDuePaymentEvents,
   todayDate,
@@ -175,7 +175,7 @@ export default defineEventHandler(async (event) => {
     const paymentEventsByDueId = await getVerifiedDuePaymentEvents(client, [
       due.id,
     ])
-    const nextComputed = computeBillingDueAmounts(
+    const nextComputed = computeDgAwareBillingDueAmounts(
       {
         dueDate: nextDueDate,
         billingPeriodChargeType: due.billing_period_charge_type,
@@ -195,6 +195,7 @@ export default defineEventHandler(async (event) => {
       todayDate(),
       settings.graceDays,
       settings.lateFeePerDay,
+      settings,
     )
 
     if (nextComputed.totalAmount < paidAmount) {

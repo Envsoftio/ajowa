@@ -1,81 +1,13 @@
-import process from 'node:process'
 import { createApiSuccess, readJsonBody } from '~/server/utils/api'
 import { requireRole } from '~/server/utils/auth'
 import {
-  BILL_EMAIL_NOTIFICATION_WORKER_PATH,
-  BILL_EMAIL_NOTIFICATION_WORKER_SECRET_HEADER,
-  drainQueuedBillEmails,
-  getBillEmailNotificationWorkerSecret,
+  invokeBillEmailNotificationWorker,
 } from '~/server/utils/bill-notification-dispatch'
 import { dueBillSendSchema } from '~/server/utils/billing'
 import { getDatabasePool } from '~/server/utils/database'
 import { getRequestLogger } from '~/server/utils/logging'
 import { validatePayload, writeMasterAudit } from '~/server/utils/master-data'
 import { enqueueDueBillingContactNotifications } from '~/server/utils/notifications'
-
-const getWorkerEndpoint = () => {
-  const siteUrl = process.env.DEPLOY_PRIME_URL ?? process.env.URL
-  return siteUrl
-    ? new URL(BILL_EMAIL_NOTIFICATION_WORKER_PATH, siteUrl).toString()
-    : null
-}
-
-const invokeBillEmailWorker = async (societyId: string) => {
-  const workerSecret = getBillEmailNotificationWorkerSecret()
-
-  if (!workerSecret && process.env.NETLIFY === 'true') {
-    return false
-  }
-
-  const headers: HeadersInit = {
-    'content-type': 'application/json',
-  }
-
-  if (workerSecret) {
-    headers[BILL_EMAIL_NOTIFICATION_WORKER_SECRET_HEADER] = workerSecret
-  }
-
-  const workerEndpoint = workerSecret ? getWorkerEndpoint() : null
-  if (workerSecret && !workerEndpoint && process.env.NETLIFY === 'true') {
-    return false
-  }
-
-  if (workerSecret && workerEndpoint) {
-    try {
-      const response = await fetch(workerEndpoint, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ societyId }),
-        signal: AbortSignal.timeout(5_000),
-      })
-
-      if (response.ok || response.status === 202) {
-        return true
-      }
-
-      if (process.env.NETLIFY === 'true') {
-        return false
-      }
-    } catch {
-      if (process.env.NETLIFY === 'true') {
-        return false
-      }
-    }
-  }
-
-  void drainQueuedBillEmails(societyId).catch((error) => {
-    console.error(
-      JSON.stringify({
-        level: 'error',
-        message: 'Local bill email notification worker failed.',
-        societyId,
-        cause: error instanceof Error ? error.message : String(error),
-      }),
-    )
-  })
-
-  return true
-}
 
 export default defineEventHandler(async (event) => {
   const authMe = await requireRole(event, ['ADMIN', 'MANAGER'])
@@ -158,7 +90,7 @@ export default defineEventHandler(async (event) => {
   const shouldStartEmailWorker =
     dueIds.length > 0 && channels.includes('EMAIL')
   const workerStarted = shouldStartEmailWorker
-    ? await invokeBillEmailWorker(authMe.user.societyId)
+    ? await invokeBillEmailNotificationWorker(authMe.user.societyId)
     : false
 
   logger.info('Maintenance bill notification jobs queued.', {

@@ -4,11 +4,13 @@ import { z } from 'zod'
 import { AppError } from './errors'
 import { getDatabasePool, queryRows } from './database'
 import {
-  computeBillingDueAmounts,
+  computeDgAwareBillingDueAmounts,
   getVerifiedDuePaymentEvents,
   todayDate,
+  type DgLateFeePolicy,
   type DuePaymentEvent,
 } from './billing'
+import { normalizeSocietySettings } from './master-data'
 import { getValidatedRuntimeConfig } from './env'
 import {
   enqueueNotificationForUsers,
@@ -314,8 +316,9 @@ const buildAllocationLineAmounts = (
   asOfDate: string,
   graceDays: number,
   lateFeePerDay: number,
+  dgLateFeePolicy: DgLateFeePolicy,
 ) => {
-  const computed = computeBillingDueAmounts(
+  const computed = computeDgAwareBillingDueAmounts(
     {
       dueDate: due.due_date,
       billingPeriodChargeType: due.billing_period_charge_type,
@@ -338,6 +341,7 @@ const buildAllocationLineAmounts = (
     asOfDate,
     graceDays,
     lateFeePerDay,
+    dgLateFeePolicy,
   )
 
   return {
@@ -397,13 +401,19 @@ const getPaymentPolicy = async (client: PoolClient, societyId: string) => {
     [societyId],
   )
   const settings = result.rows[0]?.settings ?? {}
+  const normalizedSettings = normalizeSocietySettings(settings)
 
   return {
+    // Preserve the established CAM/general payment fallbacks. DG policy is
+    // deliberately additive so enabling its configuration cannot alter CAM.
     excessPaymentHandling: String(
       settings.excessPaymentHandling ?? 'KEEP_AS_ADVANCE',
     ),
     graceDays: Number(settings.graceDays ?? 0),
     lateFeePerDay: Number(settings.lateFeePerDay ?? 0),
+    dgLateFeeEnabled: normalizedSettings.dgLateFeeEnabled,
+    dgGraceDays: normalizedSettings.dgGraceDays,
+    dgLateFeePerDay: normalizedSettings.dgLateFeePerDay,
   }
 }
 
@@ -416,6 +426,7 @@ const selectAllocatableDues = async (
     tenureMonths?: number
     graceDays: number
     lateFeePerDay: number
+    dgLateFeePolicy: DgLateFeePolicy
     asOfDate?: string
     lockRows?: boolean
   },
@@ -484,7 +495,7 @@ const selectAllocatableDues = async (
 
   return result.rows.map((due) => {
     const paymentEvents = paymentEventsByDueId.get(due.id) ?? []
-    const computed = computeBillingDueAmounts(
+    const computed = computeDgAwareBillingDueAmounts(
       {
         dueDate: due.due_date,
         billingPeriodChargeType: due.billing_period_charge_type,
@@ -504,6 +515,7 @@ const selectAllocatableDues = async (
       asOfDate,
       input.graceDays,
       input.lateFeePerDay,
+      input.dgLateFeePolicy,
     )
 
     return {
@@ -546,6 +558,7 @@ const previewPaymentAllocationWithClient = async (
       selectedDueIds: input.selectedDueIds,
       graceDays: policy.graceDays,
       lateFeePerDay: policy.lateFeePerDay,
+      dgLateFeePolicy: policy,
     }
     if (input.asOfDate !== undefined) {
       dueInput.asOfDate = input.asOfDate
@@ -570,6 +583,7 @@ const previewPaymentAllocationWithClient = async (
         asOfDate,
         policy.graceDays,
         policy.lateFeePerDay,
+        policy,
       )
       return {
         dueId: due.id,
@@ -625,6 +639,7 @@ const refreshDueTotals = async (
   dueId: string,
   graceDays: number,
   lateFeePerDay: number,
+  dgLateFeePolicy: DgLateFeePolicy,
   asOfDate = todayDate(),
 ) => {
   const dueResult = await client.query<DueRow>(
@@ -669,7 +684,7 @@ const refreshDueTotals = async (
   )
   const paidAmount = Number(paidResult.rows[0]?.paid_amount ?? 0)
   const paymentEventsByDueId = await getVerifiedDuePaymentEvents(client, [dueId])
-  const computed = computeBillingDueAmounts(
+  const computed = computeDgAwareBillingDueAmounts(
     {
       dueDate: due.due_date,
       billingPeriodChargeType: due.billing_period_charge_type,
@@ -689,6 +704,7 @@ const refreshDueTotals = async (
     asOfDate,
     graceDays,
     lateFeePerDay,
+    dgLateFeePolicy,
   )
 
   await client.query(
@@ -941,6 +957,7 @@ export const allocateMaintenancePaymentWithClient = async (
         line.dueId,
         policy.graceDays,
         policy.lateFeePerDay,
+        policy,
         payment.payment_date,
       )
       if (refreshed) affected.push(refreshed)
@@ -1701,6 +1718,7 @@ export const updatePaymentWithClient = async (
         dueId,
         policy.graceDays,
         policy.lateFeePerDay,
+        policy,
       )
       if (refreshed) affected.push(refreshed)
     }
@@ -1785,6 +1803,7 @@ export const updatePaymentWithClient = async (
         line.dueId,
         policy.graceDays,
         policy.lateFeePerDay,
+        policy,
         nextPaymentDate,
       )
       if (refreshed) affected.push(refreshed)
@@ -2044,7 +2063,7 @@ export const consumeAdvanceCreditsForDueWithClient = async (
     ...due,
     paymentEvents: paymentEventsByDueId.get(dueId) ?? [],
   }
-  const currentComputed = computeBillingDueAmounts(
+  const currentComputed = computeDgAwareBillingDueAmounts(
     {
       dueDate: due.due_date,
       billingPeriodChargeType: due.billing_period_charge_type,
@@ -2064,6 +2083,7 @@ export const consumeAdvanceCreditsForDueWithClient = async (
     settlementDate,
     policy.graceDays,
     policy.lateFeePerDay,
+    policy,
   )
   if (!isAdvanceConsumptionAllowedForDueStatus(due.status)) {
     return {
@@ -2136,6 +2156,7 @@ export const consumeAdvanceCreditsForDueWithClient = async (
       settlementDate,
       policy.graceDays,
       policy.lateFeePerDay,
+      policy,
     )
     const payment = await client.query<{ id: string }>(
       `
@@ -2244,6 +2265,7 @@ export const consumeAdvanceCreditsForDueWithClient = async (
     dueId,
     policy.graceDays,
     policy.lateFeePerDay,
+    policy,
     settlementDate,
   )
   if (refreshed && options.recomputeAccess !== false) {

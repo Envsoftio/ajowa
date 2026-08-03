@@ -124,6 +124,11 @@ const displayRelationshipNote = (note: string | null | undefined) => {
           <p>{{ flat.duesSummary.openDueCount }} open dues across the flat.</p>
         </section>
         <section class="surface-card">
+          <p class="eyebrow">DG advance available</p>
+          <h3>{{ formatMoney(flat.duesSummary.availableDgAdvanceAmount) }}</h3>
+          <p>Unused credit reserved for future DG bills.</p>
+        </section>
+        <section class="surface-card">
           <p class="eyebrow">Access</p>
           <h3>{{ flat.accessSummary.activeResidents }}</h3>
           <p>{{ flat.accessSummary.loginEnabledResidents }} residents have login enabled.</p>

@@ -598,6 +598,11 @@ const saveResidentNotes = async () => {
           <p>{{ formatMoney(financialSummary.paidTotal) }} paid</p>
         </section>
         <section class="surface-card">
+          <p class="eyebrow">DG advance available</p>
+          <h3>{{ formatMoney(resident.availableDgAdvanceAmount) }}</h3>
+          <p>Unused credit across the resident's linked flats.</p>
+        </section>
+        <section class="surface-card">
           <p class="eyebrow">Payments</p>
           <h3>{{ resident.payments.length }}</h3>
           <p>{{ formatMoney(financialSummary.paymentTotal) }} recorded</p>
@@ -1038,7 +1043,17 @@ const saveResidentNotes = async () => {
             responsive-layout="scroll"
             class="list-page__table"
           >
-            <Column field="billingPeriodLabel" header="Period" />
+            <Column field="billingPeriodLabel" header="Period">
+              <template #body="{ data: row }">
+                <span>{{ row.billingPeriodLabel }}</span>
+                <p v-if="row.origin === 'DG_OPENING_BALANCE'" class="table-muted">
+                  Carried-forward DG balance
+                </p>
+                <p v-else-if="row.billingPeriodChargeType === 'DG_SET'" class="table-muted">
+                  DG Charges bill
+                </p>
+              </template>
+            </Column>
             <Column header="Flat">
               <template #body="{ data: row }">{{ flatLabel(row) }}</template>
             </Column>
@@ -1051,6 +1066,17 @@ const saveResidentNotes = async () => {
               <template #body="{ data: row }">{{
                 formatMoney(row.paidAmount)
               }}</template>
+            </Column>
+            <Column header="DG advance">
+              <template #body="{ data: row }">
+                <span v-if="row.billingPeriodChargeType === 'DG_SET'">
+                  {{ formatMoney(row.advanceAppliedAmount) }} applied
+                </span>
+                <p v-if="row.billingPeriodChargeType === 'DG_SET'" class="table-muted">
+                  {{ formatMoney(row.availableDgAdvanceAmount) }} available
+                </p>
+                <span v-else>-</span>
+              </template>
             </Column>
             <Column header="Balance">
               <template #body="{ data: row }">

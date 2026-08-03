@@ -25,6 +25,7 @@ type FlatDetailRow = {
   total_due_amount: string
   total_balance_amount: string
   open_due_count: string
+  available_dg_advance_amount: string
   active_residents: string
   login_enabled_residents: string
   open_ticket_count: string
@@ -111,6 +112,7 @@ export default defineEventHandler(async (event) => {
           coalesce(sum(md.total_amount), 0)::text as total_due_amount,
           coalesce(sum(md.balance_amount), 0)::text as total_balance_amount,
           count(*) filter (where md.status in ('OPEN', 'PARTIALLY_PAID', 'OVERDUE'))::text as open_due_count,
+          coalesce(dg_credit.available_amount, 0)::text as available_dg_advance_amount,
           count(distinct fr.user_id) filter (where fr.is_active = true)::text as active_residents,
           count(distinct fr.user_id) filter (where fr.is_active = true and fr.can_login = true)::text as login_enabled_residents,
           count(distinct sr.id) filter (where sr.status not in ('CLOSED', 'CANCELLED'))::text as open_ticket_count,
@@ -126,11 +128,20 @@ export default defineEventHandler(async (event) => {
           order by coverage.covered_until desc, coverage.updated_at desc, coverage.created_at desc
           limit 1
         ) coverage on true
+        left join lateral (
+          select coalesce(sum(rac.current_balance), 0) as available_amount
+          from resident_advance_credits rac
+          where rac.society_id = f.society_id
+            and rac.flat_id = f.id
+            and rac.applicable_charge_type = 'DG_SET'
+            and rac.status = 'ACTIVE'
+            and rac.current_balance > 0
+        ) dg_credit on true
         left join maintenance_dues md on md.flat_id = f.id
         left join flat_residents fr on fr.flat_id = f.id
         left join service_requests sr on sr.flat_id = f.id
         where f.id = $1 and f.society_id = $2
-        group by f.id, b.id, coverage.covered_from, coverage.covered_until, coverage.notes
+        group by f.id, b.id, coverage.covered_from, coverage.covered_until, coverage.notes, dg_credit.available_amount
       `,
       [id, authMe.user.societyId],
     ),
@@ -200,6 +211,7 @@ export default defineEventHandler(async (event) => {
       totalDueAmount: Number(row.total_due_amount),
       totalBalanceAmount: Number(row.total_balance_amount),
       openDueCount: Number(row.open_due_count),
+      availableDgAdvanceAmount: Number(row.available_dg_advance_amount),
     },
     accessSummary: {
       activeResidents: Number(row.active_residents),

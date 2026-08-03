@@ -269,17 +269,29 @@ type FinanceTransactionReportRow = {
   sortCreatedAt: string
 }
 
-const camCollectionCategoryCte = `
-  cam_category as (
-    select id, name, category_group
-    from transaction_categories
-    where code = 'INC-MNT-001'
-      and transaction_type = 'INCOME'
-    limit 1
+const billingCollectionCategoryCte = `
+  billing_category as (
+    (
+      select id, code, name, category_group, 'CAM'::text as charge_type
+      from transaction_categories
+      where code = 'INC-MNT-001'
+        and transaction_type = 'INCOME'
+      limit 1
+    )
+    union all
+    (
+      select id, code, name, category_group, 'DG_SET'::text as charge_type
+      from transaction_categories
+      where code = 'INC-MNT-002'
+        and transaction_type = 'INCOME'
+        and (society_id = $1 or society_id is null)
+      order by society_id nulls last
+      limit 1
+    )
   )
 `
 
-const addCamCollectionSearch = (params: unknown[], where: string[], search: string) =>
+const addBillingCollectionSearch = (params: unknown[], where: string[], search: string) =>
   addSearch(
     params,
     where,
@@ -298,19 +310,25 @@ const addCamCollectionSearch = (params: unknown[], where: string[], search: stri
     search,
   )
 
-const buildCamCollectionWhere = (params: unknown[], filters: ReportFilters) => {
+const buildBillingCollectionWhere = (params: unknown[], filters: ReportFilters) => {
   const where = [
     'p.society_id = $1',
     "p.status = 'VERIFIED'",
-    "bp.charge_type = 'CAM'",
+    "(bp.charge_type <> 'DG_SET' or p.mode <> 'ADVANCE_CREDIT')",
+    "bp.charge_type in ('CAM', 'DG_SET')",
     'p.payment_date between $2 and $3',
     `not exists (
       select 1
       from transactions source_t
+      join transaction_categories source_tc on source_tc.id = source_t.category_id
       where source_t.source_payment_id = p.id
         and source_t.society_id = p.society_id
         and source_t.transaction_type = 'INCOME'
         and source_t.status = 'POSTED'
+        and (
+          cc.charge_type = 'CAM'
+          or source_tc.code = 'INC-MNT-002'
+        )
     )`,
   ]
 
@@ -318,20 +336,20 @@ const buildCamCollectionWhere = (params: unknown[], filters: ReportFilters) => {
     params.push(filters.categoryId)
     where.push(`cc.id = $${params.length}`)
   }
-  addCamCollectionSearch(params, where, filters.search)
+  addBillingCollectionSearch(params, where, filters.search)
 
   return where
 }
 
-const getCamCollectionMonthlySummaryRows = async (
+const getBillingCollectionMonthlySummaryRows = async (
   societyId: string,
   filters: ReportFilters,
 ): Promise<MonthlySummaryRow[]> => {
   const params: unknown[] = [societyId, filters.startDate, filters.endDate]
-  const where = buildCamCollectionWhere(params, filters)
+  const where = buildBillingCollectionWhere(params, filters)
   const result = await getDatabasePool().query<MonthlySummaryRow>(
     `
-      with ${camCollectionCategoryCte}
+      with ${billingCollectionCategoryCte}
       select
         cc.id as category_id,
         cc.name as description,
@@ -345,7 +363,7 @@ const getCamCollectionMonthlySummaryRows = async (
       join flats f on f.id = md.flat_id
       join blocks b on b.id = f.block_id
       left join users u on u.id = p.payer_user_id
-      cross join cam_category cc
+      join billing_category cc on cc.charge_type = bp.charge_type::text
       where ${where.join(' and ')}
       group by cc.id, cc.name, cc.category_group, date_trunc('month', p.payment_date)::date
       order by cc.category_group asc, cc.name asc
@@ -356,25 +374,28 @@ const getCamCollectionMonthlySummaryRows = async (
   return result.rows
 }
 
-const getCamCollectionTransactionRows = async (
+const getBillingCollectionTransactionRows = async (
   societyId: string,
   filters: ReportFilters,
   limit: number,
 ): Promise<FinanceTransactionReportRow[]> => {
   const params: unknown[] = [societyId, filters.startDate, filters.endDate]
-  const where = buildCamCollectionWhere(params, filters)
+  const where = buildBillingCollectionWhere(params, filters)
   params.push(limit)
 
   const result = await getDatabasePool().query<FinanceTransactionReportRow>(
     `
-      with ${camCollectionCategoryCte}
+      with ${billingCollectionCategoryCte}
       select
         p.payment_date::text as "transactionDate",
         'INCOME' as "transactionType",
         cc.name as category,
         case
-          when count(distinct bp.label) = 1 then concat('CAM collection - ', min(bp.label))
-          else 'CAM collection - multiple periods'
+          when count(distinct bp.label) = 1 then concat(
+            case when min(bp.charge_type::text) = 'DG_SET' then 'DG Set collection - ' else 'CAM collection - ' end,
+            min(bp.label)
+          )
+          else concat(case when min(bp.charge_type::text) = 'DG_SET' then 'DG Set' else 'CAM' end, ' collection - multiple periods')
         end as title,
         coalesce(u.full_name, '-') as counterparty,
         coalesce(p.receipt_number, p.utr_reference, p.bank_reference, '-') as "voucherNumber",
@@ -389,7 +410,7 @@ const getCamCollectionTransactionRows = async (
       join flats f on f.id = md.flat_id
       join blocks b on b.id = f.block_id
       left join users u on u.id = p.payer_user_id
-      cross join cam_category cc
+      join billing_category cc on cc.charge_type = bp.charge_type::text
       where ${where.join(' and ')}
       group by p.id, p.payment_date, p.created_at, cc.name, u.full_name, p.receipt_number, p.utr_reference, p.bank_reference
       order by p.payment_date desc, p.created_at desc
@@ -512,7 +533,7 @@ const buildMonthlyTransactionSummaryReport = async (
   )
   const sourceRows =
     transactionType === 'INCOME'
-      ? [...result.rows, ...(await getCamCollectionMonthlySummaryRows(societyId, filters))]
+      ? [...result.rows, ...(await getBillingCollectionMonthlySummaryRows(societyId, filters))]
       : result.rows
   const sortedSourceRows = [...sourceRows].sort((left, right) =>
     left.category_group.localeCompare(right.category_group) ||
@@ -711,7 +732,7 @@ const buildFinanceTransactionReport = async ({ societyId, filters, exportMode }:
   )
   const sourceRows =
     reportMode === 'income-only' || reportMode === 'income-expense'
-      ? [...result.rows, ...(await getCamCollectionTransactionRows(societyId, filters, limit))]
+      ? [...result.rows, ...(await getBillingCollectionTransactionRows(societyId, filters, limit))]
       : result.rows
   const sortedRows = sourceRows
     .sort((left, right) =>
@@ -895,7 +916,7 @@ const buildDgBalanceReport = async ({ societyId, filters, exportMode }: ReportQu
         resident.full_name as resident,
         bp.label as period,
         coalesce(md.opening_balance_as_of, bp.start_date)::text as "balanceDate",
-        case when md.origin = 'DG_OPENING_BALANCE' then 'Opening balance' else 'Generated bill' end as source,
+        case when md.origin = 'DG_OPENING_BALANCE' then 'Carried-forward balance' else 'DG Charges bill' end as source,
         greatest(md.base_amount - amounts.interest_amount, 0)::text as principal,
         amounts.interest_amount::text as interest,
         md.late_fee_amount::text as "lateFee",

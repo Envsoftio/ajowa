@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { DataTablePageEvent } from 'primevue/datatable'
+import { buildDgDueStatementSummary } from '~/shared/dg-balance'
 import type { StaffPermission } from '~/shared/permissions'
 import type { BillingPeriod, MaintenanceDue } from '~/types/domain'
 
@@ -112,6 +113,14 @@ const formatMoney = (value: number) =>
     style: 'currency',
     currency: 'INR',
     maximumFractionDigits: 0,
+  }).format(value)
+
+const formatDgMoney = (value: number) =>
+  new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
   }).format(value)
 
 const formatDate = (value: string | null | undefined) =>
@@ -329,10 +338,27 @@ const getRecordPaymentRoute = (due: MaintenanceDue) => ({
 })
 
 const isCamDue = (due: MaintenanceDue) => due.billingPeriodChargeType === 'CAM'
+const isDgDue = (due: MaintenanceDue) => due.billingPeriodChargeType === 'DG_SET'
+const isGeneratedDgDue = (due: MaintenanceDue) =>
+  isDgDue(due) && due.origin !== 'DG_OPENING_BALANCE'
+const getDgStatementSummary = (due: MaintenanceDue) =>
+  buildDgDueStatementSummary({
+    currentChargeAmount: due.baseAmount,
+    currentBalanceAmount: due.balanceAmount,
+    previousOutstandingAmount: Number(due.previousDgOutstandingAmount ?? 0),
+    advanceAppliedAmount: Number(due.advanceAppliedAmount ?? 0),
+    availableAdvanceAmount: Number(due.availableDgAdvanceAmount ?? 0),
+  })
+const previousDgOutstandingNote = (due: MaintenanceDue) => {
+  const count = Number(due.previousDgOutstandingCount ?? 0)
+  if (count <= 0) return 'No earlier DG due remains outstanding.'
+  return `From ${count} earlier DG due${count === 1 ? '' : 's'}; record its payment on the original DG due row. It is not copied into this bill.`
+}
 const isCoverageRow = (due: MaintenanceDue) => Boolean(due.isAdvanceCoverageRow)
 const billTypeLabel = (due: MaintenanceDue) => {
   if (due.billingPeriodChargeType === 'CAM') return 'CAM'
-  if (due.billingPeriodChargeType === 'DG_SET') return 'DG Set'
+  if (due.origin === 'DG_OPENING_BALANCE') return 'DG carried-forward'
+  if (due.billingPeriodChargeType === 'DG_SET') return 'DG Charges bill'
   return 'General'
 }
 const camAdvanceAdjustmentAmount = (due: MaintenanceDue) =>
@@ -372,6 +398,12 @@ const paymentProgressLabel = (due: MaintenanceDue) => {
 const advanceStatusKind = (due: MaintenanceDue) => {
   if (isCoverageRow(due) || due.isCamAdvanceCovered) return 'covered'
   if (hasCamAdvanceAdjustment(due)) return 'billable'
+  if (
+    isDgDue(due) &&
+    Number(due.advanceAppliedAmount ?? 0) > 0 &&
+    due.balanceAmount <= 0
+  ) return 'covered'
+  if (isDgDue(due)) return 'billable'
   if (isCamDue(due)) return 'billable'
   return 'not-cam'
 }
@@ -380,6 +412,16 @@ const advanceStatusLabel = (due: MaintenanceDue) => {
   if (isCoverageRow(due)) return 'Coverage marker'
   if (due.isCamAdvanceCovered) return 'Covered'
   if (hasCamAdvanceAdjustment(due)) return 'Advance deducted'
+  if (
+    isDgDue(due) &&
+    Number(due.advanceAppliedAmount ?? 0) > 0 &&
+    due.balanceAmount <= 0
+  ) return 'Settled by DG advance'
+  if (isDgDue(due) && Number(due.advanceAppliedAmount ?? 0) > 0)
+    return 'DG advance partly applied'
+  if (isDgDue(due) && Number(due.availableDgAdvanceAmount ?? 0) > 0)
+    return 'DG advance available'
+  if (isDgDue(due)) return 'No DG advance'
   if (isCamDue(due)) return 'Billable'
   return 'Not CAM'
 }
@@ -393,6 +435,11 @@ const advanceStatusDetail = (due: MaintenanceDue) => {
   if (hasCamAdvanceAdjustment(due)) {
     const note = camAdvanceAdjustmentNote(due)
     return `${formatMoney(camAdvanceAdjustmentAmount(due))} advance deducted${note ? ` (${note})` : ''}. Remaining due is payable.`
+  }
+  if (isDgDue(due)) {
+    const applied = Number(due.advanceAppliedAmount ?? 0)
+    const available = Number(due.availableDgAdvanceAmount ?? 0)
+    return `Applied to this DG due: ${formatDgMoney(applied)}. Available DG advance: ${formatDgMoney(available)}${available > 0 ? ' (not deducted until applied).' : '.'}`
   }
   if (isCamDue(due)) return 'No advance coverage for this CAM period.'
   return 'Advance coverage applies only to CAM bills.'
@@ -1691,7 +1738,8 @@ watch(
         </Column>
         <Column field="lateFeeAmount" header="Late fee">
           <template #body="{ data: row }">
-            {{ formatMoney(row.lateFeeAmount) }}
+            <span v-if="isDgDue(row)">Not charged</span>
+            <template v-else>{{ formatMoney(row.lateFeeAmount) }}</template>
           </template>
         </Column>
         <Column field="paidAmount" header="Paid">
@@ -1702,11 +1750,32 @@ watch(
         <Column field="balanceAmount" header="Balance">
           <template #body="{ data: row }">
             <div class="billing-balance-cell">
-              <strong>{{ formatMoney(row.balanceAmount) }}</strong>
-              <span>{{ paymentProgressLabel(row) }}</span>
-              <div class="billing-progress-track">
+              <strong v-if="!isGeneratedDgDue(row)">{{ formatMoney(row.balanceAmount) }}</strong>
+              <span v-if="!isGeneratedDgDue(row)">{{ paymentProgressLabel(row) }}</span>
+              <div v-if="!isGeneratedDgDue(row)" class="billing-progress-track">
                 <span :style="{ width: `${paymentProgress(row)}%` }" />
               </div>
+              <dl v-if="isGeneratedDgDue(row)" class="billing-dg-statement">
+                <div>
+                  <dt>Current DG charge</dt>
+                  <dd>{{ formatDgMoney(getDgStatementSummary(row).currentChargeAmount) }}</dd>
+                </div>
+                <div>
+                  <dt>Current DG remaining</dt>
+                  <dd>{{ formatDgMoney(getDgStatementSummary(row).currentBalanceAmount) }}</dd>
+                </div>
+                <div>
+                  <dt>Previous DG outstanding</dt>
+                  <dd>{{ formatDgMoney(getDgStatementSummary(row).previousOutstandingAmount) }}</dd>
+                </div>
+                <div class="billing-dg-statement__total">
+                  <dt>Combined DG payable</dt>
+                  <dd>{{ formatDgMoney(getDgStatementSummary(row).combinedPayableAmount) }}</dd>
+                </div>
+              </dl>
+              <p v-if="isGeneratedDgDue(row)" class="billing-dg-statement__note">
+                {{ previousDgOutstandingNote(row) }}
+              </p>
             </div>
           </template>
         </Column>
@@ -1844,7 +1913,10 @@ watch(
             </span>
             <p>{{ advanceStatusDetail(due) }}</p>
           </div>
-          <div class="billing-balance-cell billing-balance-cell--card">
+          <div
+            v-if="!isGeneratedDgDue(due)"
+            class="billing-balance-cell billing-balance-cell--card"
+          >
             <strong>{{ formatMoney(due.balanceAmount) }}</strong>
             <span v-if="due.isCamAdvanceCovered">
               {{ isCoverageRow(due) ? 'Coverage marker row' : 'Covered by CAM advance' }}
@@ -1862,11 +1934,34 @@ watch(
               <span :style="{ width: `${paymentProgress(due)}%` }" />
             </div>
           </div>
+          <template v-if="isGeneratedDgDue(due)">
+            <dl class="billing-dg-statement billing-dg-statement--card">
+              <div>
+                <dt>Current DG charge</dt>
+                <dd>{{ formatDgMoney(getDgStatementSummary(due).currentChargeAmount) }}</dd>
+              </div>
+              <div>
+                <dt>Current DG remaining</dt>
+                <dd>{{ formatDgMoney(getDgStatementSummary(due).currentBalanceAmount) }}</dd>
+              </div>
+              <div>
+                <dt>Previous DG outstanding</dt>
+                <dd>{{ formatDgMoney(getDgStatementSummary(due).previousOutstandingAmount) }}</dd>
+              </div>
+              <div class="billing-dg-statement__total">
+                <dt>Combined DG payable</dt>
+                <dd>{{ formatDgMoney(getDgStatementSummary(due).combinedPayableAmount) }}</dd>
+              </div>
+            </dl>
+            <p class="billing-dg-statement__note">
+              {{ previousDgOutstandingNote(due) }}
+            </p>
+          </template>
           <div class="list-card__row">
             <span>Billing contact</span>
             <strong>{{ due.primaryResidentName || '-' }}</strong>
           </div>
-          <div class="list-card__row">
+          <div v-if="!isDgDue(due)" class="list-card__row">
             <span>Base + late fee</span>
             <strong>
               {{ formatMoney(due.baseAmount) }} +

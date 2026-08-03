@@ -105,6 +105,9 @@ export const societyPolicySchema = z.object({
   highValueThreshold: z.coerce.number().nonnegative(),
   graceDays: z.coerce.number().int().nonnegative().default(0),
   lateFeePerDay: z.coerce.number().nonnegative().default(50),
+  dgLateFeeEnabled: z.boolean().default(false),
+  dgGraceDays: z.coerce.number().int().nonnegative().default(0),
+  dgLateFeePerDay: z.coerce.number().nonnegative().default(50),
 })
 
 export const societyProfileSchema = z.object({
@@ -332,6 +335,9 @@ export const defaultSocietyPolicies: z.infer<typeof societyPolicySchema> = {
   highValueThreshold: 10000,
   graceDays: 0,
   lateFeePerDay: 50,
+  dgLateFeeEnabled: false,
+  dgGraceDays: 0,
+  dgLateFeePerDay: 50,
 }
 
 const enumValue = <T extends readonly string[]>(
@@ -446,6 +452,16 @@ export const normalizeSocietySettings = (
     lateFeePerDay: nonNegativeNumberSetting(
       normalized.lateFeePerDay ?? settings.lateFeePerDay,
       defaultSocietyPolicies.lateFeePerDay,
+    ),
+    dgLateFeeEnabled:
+      normalized.dgLateFeeEnabled ?? defaultSocietyPolicies.dgLateFeeEnabled,
+    dgGraceDays: nonNegativeIntegerSetting(
+      normalized.dgGraceDays ?? settings.dgGraceDays,
+      defaultSocietyPolicies.dgGraceDays,
+    ),
+    dgLateFeePerDay: nonNegativeNumberSetting(
+      normalized.dgLateFeePerDay ?? settings.dgLateFeePerDay,
+      defaultSocietyPolicies.dgLateFeePerDay,
     ),
   }
 }

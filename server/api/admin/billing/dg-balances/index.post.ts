@@ -19,13 +19,13 @@ const openingBalanceSchema = z
     interestAmount: z.coerce
       .number()
       .nonnegative()
-      .max(99_999_999.99)
+      .max(0)
       .default(0),
     note: z.string().trim().min(3).max(1000),
   })
   .refine((value) => value.dueDate >= value.asOfDate, {
     path: ['dueDate'],
-    message: 'Due date cannot be before the opening-balance date.',
+    message: 'Due date cannot be before the previous cycle date.',
   })
 
 const roundMoney = (value: number) => Math.round(value * 100) / 100
@@ -65,7 +65,7 @@ export default defineEventHandler(async (event) => {
       })
     }
 
-    const periodLabel = `DG Opening Balance ${input.asOfDate}`
+    const periodLabel = `DG Carried-forward Balance ${input.asOfDate}`
     const periodInsert = await client.query<{ id: string; is_locked: boolean }>(
       `
         insert into billing_periods (
@@ -97,7 +97,7 @@ export default defineEventHandler(async (event) => {
       throw new AppError({
         code: 'INTERNAL_ERROR',
         statusCode: 500,
-        message: 'DG opening-balance period could not be created.',
+        message: 'DG carried-forward balance period could not be created.',
       })
     }
     if (period.is_locked) {
@@ -105,7 +105,7 @@ export default defineEventHandler(async (event) => {
         code: 'CONFLICT',
         statusCode: 409,
         message:
-          'The DG opening-balance date belongs to a locked billing period.',
+          'The DG previous cycle date belongs to a locked billing period.',
       })
     }
 
@@ -146,7 +146,7 @@ export default defineEventHandler(async (event) => {
         totalAmount,
         JSON.stringify([
           {
-            label: 'DG opening balance',
+            label: 'DG carried-forward balance',
             amount: principalAmount,
             chargeType: 'DG_SET',
             source: 'DG_OPENING_BALANCE',
@@ -164,7 +164,7 @@ export default defineEventHandler(async (event) => {
         code: 'CONFLICT',
         statusCode: 409,
         message:
-          'This flat already has a DG balance for the selected as-of date.',
+          'This flat already has a DG balance for the selected previous cycle date.',
       })
     }
 

@@ -272,14 +272,15 @@ export default defineEventHandler(async (event) => {
   const format = getExportFormat(query)
   const pool = getDatabasePool()
   const sort = getFinanceTransactionSort(query)
-  const isIncomeReportDrilldown = query.source === 'report' &&
-    query.transactionType === 'INCOME' &&
+  const isPostedIncome = query.transactionType === 'INCOME' &&
     query.status === 'POSTED'
+  const isIncomeReportDrilldown = query.source === 'report' && isPostedIncome
+  const isIncomeListingWithDgCollections = !isIncomeReportDrilldown && isPostedIncome
 
   let summary: FinanceTransactionSummary
   let rows: FinanceTransaction[]
 
-  if (isIncomeReportDrilldown) {
+  if (isIncomeReportDrilldown || isIncomeListingWithDgCollections) {
     const result = await getIncomeReportDrilldownTransactions(
       pool,
       authMe.user.societyId,
@@ -288,9 +289,21 @@ export default defineEventHandler(async (event) => {
         page: 1,
         pageSize: financeTransactionExportLimit,
         ...sort,
+        ...(isIncomeListingWithDgCollections
+          ? { billingChargeTypes: ['DG_SET'] as const }
+          : {}),
       },
     )
-    summary = result.summary
+    if (isIncomeListingWithDgCollections) {
+      const filterSql = buildFinanceTransactionFilterSql(authMe.user.societyId, query)
+      const existingSummary = await getFinanceTransactionSummary(pool, filterSql, query)
+      summary = {
+        ...existingSummary,
+        total: result.total,
+      }
+    } else {
+      summary = result.summary
+    }
     rows = result.items
   } else {
     const filterSql = buildFinanceTransactionFilterSql(authMe.user.societyId, query)

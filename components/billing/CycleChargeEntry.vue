@@ -108,6 +108,8 @@ type GenerationResponse = {
     overlapSkippedCount: number
     advanceAppliedCount: number
     advanceAppliedAmount: number
+    notificationJobCount?: number
+    notificationWorkerStarted?: boolean
     dueIds: string[]
     generatedDues: GeneratedDueTarget[]
     skippedDues: GeneratedDueTarget[]
@@ -787,12 +789,8 @@ const buildStandardGenerationProgressSteps = (): GenerationProgressStep[] => [
   },
   {
     id: 'bill-delivery',
-    label: sendBillsAfterGeneration.value
-      ? 'Queue bill delivery'
-      : 'Skip bill delivery',
-    detail: sendBillsAfterGeneration.value
-      ? `Preparing ${formatUnit(selectedBillDeliveryCount.value, 'bill')} for ${billChannels.value.join(', ')}.`
-      : 'Bills will be generated without notifications.',
+    label: 'Queue bill delivery',
+    detail: 'Generated DG Set bills will be queued for owner email delivery by the API.',
     status: 'pending',
     weight: 1,
   },
@@ -1793,7 +1791,7 @@ const openGenerationDialog = () => {
 }
 
 const generateDues = async () => {
-  if (sendBillsAfterGeneration.value) {
+  if (props.mode !== 'DG' && sendBillsAfterGeneration.value) {
     if (billChannels.value.length === 0) {
       toast.add({
         severity: 'warn',
@@ -2039,6 +2037,8 @@ const generateDues = async () => {
     let generated = 0
     let skipped = 0
     let advanceAppliedAmount = 0
+    let notificationJobCount = 0
+    let notificationWorkerStarted = false
 
     for (const [batchIndex, flatIds] of flatIdBatches.entries()) {
       const batchNumber = batchIndex + 1
@@ -2066,6 +2066,8 @@ const generateDues = async () => {
       advanceAppliedAmount = roundChargeValue(
         advanceAppliedAmount + response.data.advanceAppliedAmount,
       )
+      notificationJobCount += response.data.notificationJobCount ?? 0
+      notificationWorkerStarted ||= Boolean(response.data.notificationWorkerStarted)
       billTargets.push(
         ...response.data.generatedDues,
         ...response.data.skippedDues,
@@ -2086,17 +2088,14 @@ const generateDues = async () => {
 
     startGenerationProgressStep(
       'bill-delivery',
-      sendBillsAfterGeneration.value
-        ? `Queueing selected bill notifications for ${billChannels.value.join(', ')}.`
-        : 'Bill delivery is off for this run.',
+      'Checking DG Set bill email queue status.',
     )
-    const sentBills = await sendGeneratedBillNotifications(billTargets)
     lastGeneratedDueIds.value = getUniqueDueIds(billTargets)
     completeGenerationProgressStep(
       'bill-delivery',
-      sentBills
-        ? formatBillDeliveryResult(sentBills)
-        : 'Bill delivery skipped.',
+      notificationJobCount > 0
+        ? `${formatUnit(notificationJobCount, 'email job')} queued${notificationWorkerStarted ? '' : ' (scheduled retry will pick them up)'}.`
+        : 'Bill email queue checked.',
     )
 
     startGenerationProgressStep(
@@ -2113,12 +2112,12 @@ const generateDues = async () => {
       generated,
       skipped,
       advanceAppliedAmount,
-      deliveryJobCount: sentBills?.jobCount ?? 0,
+      deliveryJobCount: notificationJobCount,
       processedFlatCount: selectedFlatIdsForRun.length,
     }
 
     toast.add({
-      severity: billEmailWorkerFailed(sentBills) ? 'warn' : 'success',
+      severity: notificationJobCount > 0 && !notificationWorkerStarted ? 'warn' : 'success',
       summary: 'DG Set bills generated',
       detail:
         [
@@ -2127,9 +2126,9 @@ const generateDues = async () => {
           advanceAppliedAmount > 0
             ? `${formatMoney(advanceAppliedAmount)} advance applied`
             : '',
-          sentBills
-            ? formatBillDeliveryResult(sentBills)
-            : '',
+          notificationJobCount > 0
+            ? `${formatUnit(notificationJobCount, 'email job')} queued${notificationWorkerStarted ? '' : ' (scheduled retry will pick them up)'}`
+            : 'Bill email queue checked',
         ]
           .filter(Boolean)
           .join(', ') + '.',
@@ -2688,10 +2687,8 @@ watch(
         </Message>
 
         <Message v-if="mode === 'DG'" severity="info">
-          Previous DG amount is saved and printed for reference only; it does
-          not change the amount payable. Interest is a financial charge and is
-          added before applicable payments, advance credits, and waivers are
-          deducted.
+          Previous unpaid DG amounts are managed in DG Balances. DG late fees
+          are controlled by the society policy and are off by default.
         </Message>
 
         <AppSkeletonState v-if="loadingCharges" />
@@ -2854,50 +2851,6 @@ watch(
                   {{ getEntryCamAdvanceLabel(row) }}
                 </p>
               </div>
-            </template>
-          </Column>
-          <Column
-            v-if="mode === 'DG'"
-            style="min-width: 10rem"
-          >
-            <template #header>
-              <span class="field-label">
-                Previous DG amount (reference)
-                <AppHelpIcon
-                  text="Reference only. This previous DG amount is saved and printed on the bill, but it does not increase the payable balance or create a receivable. Enter 0 when no reference amount is needed."
-                />
-              </span>
-            </template>
-            <template #body="{ data: row }">
-              <InputNumber
-                v-model="row.previousOutstanding"
-                :min="0"
-                :max-fraction-digits="2"
-                placeholder="0"
-                fluid
-              />
-            </template>
-          </Column>
-          <Column
-            v-if="mode === 'DG'"
-            style="min-width: 9rem"
-          >
-            <template #header>
-              <span class="field-label">
-                Interest
-                <AppHelpIcon
-                  text="Financial charge. This interest amount increases the payable balance. Enter the calculated amount, or 0 when no interest applies."
-                />
-              </span>
-            </template>
-            <template #body="{ data: row }">
-              <InputNumber
-                v-model="row.interestAmount"
-                :min="0"
-                :max-fraction-digits="2"
-                placeholder="0"
-                fluid
-              />
             </template>
           </Column>
           <Column
@@ -3139,7 +3092,7 @@ watch(
           advance flats get a 12 month period.
         </Message>
 
-        <section class="billing-delivery-panel">
+        <section v-if="mode !== 'DG'" class="billing-delivery-panel">
           <label class="admin-toggle-card">
             <span>
               <strong>Send bills after generation</strong>
@@ -3248,13 +3201,6 @@ watch(
               <strong>{{ generationPreview.totalFlats }}</strong>
               <small>{{ generationPreview.skippedExisting }} skipped</small>
             </div>
-            <div v-if="mode === 'DG'">
-              <span>Previous DG reference</span>
-              <strong>{{
-                formatMoney(generationPreview.dgPreviousReferenceAmount ?? 0)
-              }}</strong>
-              <small>Reference only · not included in payable</small>
-            </div>
             <div>
               <span>{{ amountSummaryLabel }}</span>
               <strong>{{ formatMoney(generationChargeTotal) }}</strong>
@@ -3303,63 +3249,60 @@ watch(
           </template>
 
           <section class="billing-delivery-panel">
-            <label class="admin-toggle-card">
-              <span>
-                <strong>{{
-                  mode === 'DG'
-                    ? 'Send DG bill PDFs after generation'
-                    : 'Send bills after generation'
-                }}</strong>
-                <small>{{
-                  mode === 'DG'
-                    ? 'Email is selected by default · owner contacts only'
-                    : 'Owner contacts only'
-                }}</small>
-              </span>
-              <ToggleSwitch
-                v-model="sendBillsAfterGeneration"
-                :disabled="generating"
-              />
-            </label>
-            <div v-if="sendBillsAfterGeneration" class="admin-form-grid">
-              <label>
-                <span class="field-label">
-                  Channels
-                  <AppHelpIcon
-                    text="Email includes the PDF attachment. WhatsApp, push, and in-app messages include the bill link."
-                  />
+            <Message v-if="mode === 'DG'" severity="info">
+              DG Set bill emails are queued automatically for owner contacts after each batch is created.
+            </Message>
+            <template v-else>
+              <label class="admin-toggle-card">
+                <span>
+                  <strong>Send bills after generation</strong>
+                  <small>Owner contacts only</small>
                 </span>
-                <MultiSelect
-                  v-model="billChannels"
-                  :options="billChannelOptions"
-                  option-label="label"
-                  option-value="value"
-                  display="chip"
-                  placeholder="Choose channels"
+                <ToggleSwitch
+                  v-model="sendBillsAfterGeneration"
                   :disabled="generating"
                 />
               </label>
-              <label class="admin-form-grid__full">
-                <span class="field-label">
-                  Bills
-                  <AppHelpIcon
-                    text="Bills are sent from due IDs resolved to owner contacts for the matching flat."
+              <div v-if="sendBillsAfterGeneration" class="admin-form-grid">
+                <label>
+                  <span class="field-label">
+                    Channels
+                    <AppHelpIcon
+                      text="Email includes the PDF attachment. WhatsApp, push, and in-app messages include the bill link."
+                    />
+                  </span>
+                  <MultiSelect
+                    v-model="billChannels"
+                    :options="billChannelOptions"
+                    option-label="label"
+                    option-value="value"
+                    display="chip"
+                    placeholder="Choose channels"
+                    :disabled="generating"
                   />
-                </span>
-                <MultiSelect
-                  v-model="billDeliveryFlatIds"
-                  :options="billDeliveryFlatOptions"
-                  option-label="label"
-                  option-value="value"
-                  filter
-                  display="comma"
-                  :max-selected-labels="3"
-                  selected-items-label="{0} bills selected"
-                  placeholder="Choose bills to send"
-                  :disabled="generating"
-                />
-              </label>
-            </div>
+                </label>
+                <label class="admin-form-grid__full">
+                  <span class="field-label">
+                    Bills
+                    <AppHelpIcon
+                      text="Bills are sent from due IDs resolved to owner contacts for the matching flat."
+                    />
+                  </span>
+                  <MultiSelect
+                    v-model="billDeliveryFlatIds"
+                    :options="billDeliveryFlatOptions"
+                    option-label="label"
+                    option-value="value"
+                    filter
+                    display="comma"
+                    :max-selected-labels="3"
+                    selected-items-label="{0} bills selected"
+                    placeholder="Choose bills to send"
+                    :disabled="generating"
+                  />
+                </label>
+              </div>
+            </template>
           </section>
         </template>
 

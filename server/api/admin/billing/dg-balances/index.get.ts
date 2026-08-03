@@ -77,7 +77,11 @@ export default defineEventHandler(async (event) => {
   const query = parseListQuery(event)
   const pool = getDatabasePool()
   const values: unknown[] = [authMe.user.societyId]
-  const where = ['md.society_id = $1', "bp.charge_type = 'DG_SET'"]
+  const where = [
+    'md.society_id = $1',
+    "bp.charge_type = 'DG_SET'",
+    "md.origin = 'DG_OPENING_BALANCE'",
+  ]
 
   if (query.search) {
     values.push(`%${query.search}%`)
@@ -207,7 +211,9 @@ export default defineEventHandler(async (event) => {
           select md.*
           from maintenance_dues md
           inner join billing_periods bp on bp.id = md.billing_period_id
-          where md.society_id = $1 and bp.charge_type = 'DG_SET'
+          where md.society_id = $1
+            and bp.charge_type = 'DG_SET'
+            and md.origin = 'DG_OPENING_BALANCE'
         ), due_interest as (
           select
             md.id,
@@ -256,6 +262,7 @@ export default defineEventHandler(async (event) => {
           inner join billing_periods bp on bp.id = md.billing_period_id
           where md.society_id = $1
             and bp.charge_type = 'DG_SET'
+            and md.origin = 'DG_OPENING_BALANCE'
             and md.status in ('OPEN', 'PARTIALLY_PAID', 'OVERDUE')
             and md.balance_amount > 0
           group by md.flat_id

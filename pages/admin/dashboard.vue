@@ -33,6 +33,9 @@ type DashboardStats = {
   unpaidFlats: number
   outstandingBalance: number
   riskPercent: number
+  availableDgAdvanceAmount: number
+  appliedDgAdvanceAmount: number
+  dgAdvanceSettledDues: number
 }
 
 type DashboardOverviewResponse = {
@@ -122,6 +125,9 @@ const emptyStats: DashboardStats = {
   unpaidFlats: 0,
   outstandingBalance: 0,
   riskPercent: 0,
+  availableDgAdvanceAmount: 0,
+  appliedDgAdvanceAmount: 0,
+  dgAdvanceSettledDues: 0,
 }
 
 const summary = computed(() => {
@@ -177,6 +183,12 @@ const kpiCards = computed(() => [
     note: `${formatNumber(summary.value.unpaidFlats)} flats · ${formatMoney(summary.value.outstandingBalance)}`,
     isAmount: true,
   },
+  {
+    title: 'DG advance available',
+    value: formatMoney(summary.value.availableDgAdvanceAmount),
+    note: `${formatMoney(summary.value.appliedDgAdvanceAmount)} applied · ${formatNumber(summary.value.dgAdvanceSettledDues)} settled bills`,
+    isAmount: true,
+  },
 ])
 
 const topDefaulters = computed(() => dashboard.value?.topDefaulters ?? [])
@@ -207,7 +219,7 @@ const hasWelcomeName = computed(() => authStore.me?.user?.fullName || authStore.
 
     <div class="surface-grid dashboard-kpis">
       <template v-if="pending">
-        <section v-for="item in 9" :key="`kpi-skeleton-${item}`" class="surface-card">
+        <section v-for="item in kpiCards.length" :key="`kpi-skeleton-${item}`" class="surface-card">
           <AppSkeletonState :lines="2" />
         </section>
       </template>

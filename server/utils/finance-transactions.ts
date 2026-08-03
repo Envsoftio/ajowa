@@ -47,6 +47,7 @@ type IncomeReportDrilldownCamRow = {
   category_id: string
   category_name: string
   category_group: string
+  charge_type: 'CAM' | 'DG_SET'
   billing_period_id: string | null
   billing_period_label: string | null
   title: string
@@ -228,7 +229,7 @@ export const financeTransactionFromRow = (row: FinanceTransactionRow): FinanceTr
 const incomeReportDrilldownTransactionFromCamRow = (
   row: IncomeReportDrilldownCamRow,
 ): FinanceTransaction => ({
-  id: `report-cam-${row.payment_id}`,
+  id: `report-${row.charge_type.toLowerCase()}-${row.payment_id}`,
   societyId: row.society_id,
   detailPath: null,
   transactionType: 'INCOME',
@@ -278,41 +279,40 @@ const sortFinanceTransactions = (
   const direction = sortDirection === 'asc' ? 1 : -1
 
   return [...items].sort((left, right) => {
-    let result: number
+    let primaryResult: number
 
     switch (orderBy) {
       case 't.title':
-        result = compareValues(left.title, right.title)
+        primaryResult = compareValues(left.title, right.title)
         break
       case 't.transaction_type':
-        result = compareValues(left.transactionType, right.transactionType)
+        primaryResult = compareValues(left.transactionType, right.transactionType)
         break
       case 'tc.name':
-        result = compareValues(left.categoryName, right.categoryName)
+        primaryResult = compareValues(left.categoryName, right.categoryName)
         break
       case 't.amount':
-        result = compareValues(left.amount, right.amount)
+        primaryResult = compareValues(left.amount, right.amount)
         break
       case 't.status':
-        result = compareValues(left.status, right.status)
+        primaryResult = compareValues(left.status, right.status)
         break
       case 't.created_at':
-        result = compareValues(left.createdAt, right.createdAt)
+        primaryResult = compareValues(left.createdAt, right.createdAt)
         break
       case 't.transaction_date':
       default:
-        result = compareValues(left.transactionDate, right.transactionDate)
-        if (result === 0) {
-          result = compareValues(left.createdAt, right.createdAt)
-        }
+        primaryResult = compareValues(left.transactionDate, right.transactionDate)
         break
     }
 
-    if (result === 0) {
-      result = compareValues(left.createdAt, right.createdAt)
+    if (primaryResult !== 0) {
+      return primaryResult * direction
     }
 
-    return result * direction
+    // Match the established SQL ordering exactly: the selected column follows
+    // the requested direction, while created_at is always the DESC tie-break.
+    return compareValues(right.createdAt, left.createdAt)
   })
 }
 
@@ -354,17 +354,17 @@ export const getFinanceTransactionSummary = async (
     filterSql.params,
   )
 
-  const camCollectionIncome = await getCamCollectionIncomeSummary(pool, queryText(filterSql.params[0]), query)
+  const billingCollectionIncome = await getBillingCollectionIncomeSummary(pool, queryText(filterSql.params[0]), query)
 
   return {
     total: Number(summary.rows[0]?.count ?? 0),
-    income: Number(summary.rows[0]?.incomeTotal ?? 0) + camCollectionIncome,
+    income: Number(summary.rows[0]?.incomeTotal ?? 0) + billingCollectionIncome,
     expense: Number(summary.rows[0]?.expenseTotal ?? 0),
     missingAttachments: Number(summary.rows[0]?.missingAttachments ?? 0),
   }
 }
 
-const getCamCollectionIncomeSummary = async (
+const getBillingCollectionIncomeSummary = async (
   pool: Pool,
   societyId: string,
   query: Record<string, unknown>,
@@ -399,7 +399,8 @@ const getCamCollectionIncomeSummary = async (
   const where = [
     'p.society_id = $1',
     "p.status = 'VERIFIED'",
-    "bp.charge_type = 'CAM'",
+    "(bp.charge_type <> 'DG_SET' or p.mode <> 'ADVANCE_CREDIT')",
+    "bp.charge_type in ('CAM', 'DG_SET')",
     `not exists (
       select 1
       from transactions source_t
@@ -408,7 +409,10 @@ const getCamCollectionIncomeSummary = async (
         and source_t.society_id = p.society_id
         and source_t.transaction_type = 'INCOME'
         and source_t.status = 'POSTED'
-        and source_tc.code = 'INC-MNT-001'
+        and source_tc.code = case
+          when cc.charge_type = 'DG_SET' then 'INC-MNT-002'
+          else 'INC-MNT-001'
+        end
     )`,
   ]
 
@@ -489,12 +493,24 @@ const getCamCollectionIncomeSummary = async (
 
   const result = await pool.query<{ income_total: string }>(
     `
-      with cam_category as (
-        select id
-        from transaction_categories
-        where code = 'INC-MNT-001'
-          and transaction_type = 'INCOME'
-        limit 1
+      with billing_category as (
+        (
+          select id, 'CAM'::text as charge_type
+          from transaction_categories
+          where code = 'INC-MNT-001'
+            and transaction_type = 'INCOME'
+          limit 1
+        )
+        union all
+        (
+          select id, 'DG_SET'::text as charge_type
+          from transaction_categories
+          where code = 'INC-MNT-002'
+            and transaction_type = 'INCOME'
+            and (society_id = $1 or society_id is null)
+          order by society_id nulls last
+          limit 1
+        )
       ),
       cam_payments as (
         select sum(pa.allocated_amount) as amount
@@ -505,7 +521,7 @@ const getCamCollectionIncomeSummary = async (
         join flats f on f.id = md.flat_id
         join blocks b on b.id = f.block_id
         left join users u on u.id = p.payer_user_id
-        cross join cam_category cc
+        join billing_category cc on cc.charge_type = bp.charge_type::text
         where ${where.join(' and ')}
         group by p.id
         ${amountFilters.length > 0 ? `having ${amountFilters.join(' and ')}` : ''}
@@ -610,6 +626,7 @@ export const getIncomeReportDrilldownTransactions = async (
     pageSize: number
     orderBy: string
     sortDirection: 'asc' | 'desc'
+    billingChargeTypes?: readonly ('CAM' | 'DG_SET')[]
   },
 ): Promise<{
   items: FinanceTransaction[]
@@ -757,18 +774,19 @@ export const getIncomeReportDrilldownTransactions = async (
     regularParams,
   )
 
-  let camItems: FinanceTransaction[] = []
+  let billingCollectionItems: FinanceTransaction[] = []
 
   if (
     attachment !== 'present' &&
     !bankAccountId &&
     !mode
   ) {
-    const camParams: unknown[] = [societyId]
-    const camWhere = [
+    const billingParams: unknown[] = [societyId]
+    const billingWhere = [
       'p.society_id = $1',
       "p.status = 'VERIFIED'",
-      "bp.charge_type = 'CAM'",
+      "(bp.charge_type <> 'DG_SET' or p.mode <> 'ADVANCE_CREDIT')",
+      "bp.charge_type in ('CAM', 'DG_SET')",
       `not exists (
         select 1
         from transactions source_t
@@ -777,76 +795,96 @@ export const getIncomeReportDrilldownTransactions = async (
           and source_t.society_id = p.society_id
           and source_t.transaction_type = 'INCOME'
           and source_t.status = 'POSTED'
-          and source_tc.code = 'INC-MNT-001'
+          and source_tc.code = case
+            when cc.charge_type = 'DG_SET' then 'INC-MNT-002'
+            else 'INC-MNT-001'
+          end
       )`,
     ]
 
+    if (options.billingChargeTypes?.length) {
+      billingParams.push([...options.billingChargeTypes])
+      billingWhere.push(`bp.charge_type = any($${billingParams.length}::text[])`)
+    }
+
     if (categoryId) {
-      camParams.push(categoryId)
-      camWhere.push(`cc.id = $${camParams.length}`)
+      billingParams.push(categoryId)
+      billingWhere.push(`cc.id = $${billingParams.length}`)
     }
     if (billingPeriodId) {
-      camParams.push(billingPeriodId)
-      camWhere.push(`bp.id = $${camParams.length}`)
+      billingParams.push(billingPeriodId)
+      billingWhere.push(`bp.id = $${billingParams.length}`)
     }
     if (dateFrom) {
-      camParams.push(dateFrom)
-      camWhere.push(`p.payment_date >= $${camParams.length}`)
+      billingParams.push(dateFrom)
+      billingWhere.push(`p.payment_date >= $${billingParams.length}`)
     }
     if (dateTo) {
-      camParams.push(dateTo)
-      camWhere.push(`p.payment_date <= $${camParams.length}`)
+      billingParams.push(dateTo)
+      billingWhere.push(`p.payment_date <= $${billingParams.length}`)
     }
     if (search) {
-      camParams.push(`%${search}%`)
-      camWhere.push(`(
-        lower(cc.name) like $${camParams.length}
-        or lower(coalesce(u.full_name, '')) like $${camParams.length}
-        or lower(coalesce(f.flat_number, '')) like $${camParams.length}
-        or lower(coalesce(b.name, '')) like $${camParams.length}
-        or lower(coalesce(p.receipt_number, '')) like $${camParams.length}
-        or lower(coalesce(p.utr_reference, '')) like $${camParams.length}
-        or lower(coalesce(p.bank_reference, '')) like $${camParams.length}
-        or lower(coalesce(bp.label, '')) like $${camParams.length}
-        or lower(coalesce(p.notes, '')) like $${camParams.length}
+      billingParams.push(`%${search}%`)
+      billingWhere.push(`(
+        lower(cc.name) like $${billingParams.length}
+        or lower(coalesce(u.full_name, '')) like $${billingParams.length}
+        or lower(coalesce(f.flat_number, '')) like $${billingParams.length}
+        or lower(coalesce(b.name, '')) like $${billingParams.length}
+        or lower(coalesce(p.receipt_number, '')) like $${billingParams.length}
+        or lower(coalesce(p.utr_reference, '')) like $${billingParams.length}
+        or lower(coalesce(p.bank_reference, '')) like $${billingParams.length}
+        or lower(coalesce(bp.label, '')) like $${billingParams.length}
+        or lower(coalesce(p.notes, '')) like $${billingParams.length}
       )`)
     }
     if (counterparty) {
-      camParams.push(`%${counterparty}%`)
-      camWhere.push(`lower(coalesce(u.full_name, '')) like $${camParams.length}`)
+      billingParams.push(`%${counterparty}%`)
+      billingWhere.push(`lower(coalesce(u.full_name, '')) like $${billingParams.length}`)
     }
     if (voucherNumber) {
-      camParams.push(`%${voucherNumber}%`)
-      camWhere.push(`(
-        lower(coalesce(p.receipt_number, '')) like $${camParams.length}
-        or lower(coalesce(p.utr_reference, '')) like $${camParams.length}
-        or lower(coalesce(p.bank_reference, '')) like $${camParams.length}
+      billingParams.push(`%${voucherNumber}%`)
+      billingWhere.push(`(
+        lower(coalesce(p.receipt_number, '')) like $${billingParams.length}
+        or lower(coalesce(p.utr_reference, '')) like $${billingParams.length}
+        or lower(coalesce(p.bank_reference, '')) like $${billingParams.length}
       )`)
     }
 
     const amountFilters: string[] = []
 
     if (minAmount !== null) {
-      camParams.push(minAmount)
-      amountFilters.push(`sum(pa.allocated_amount) >= $${camParams.length}`)
+      billingParams.push(minAmount)
+      amountFilters.push(`sum(pa.allocated_amount) >= $${billingParams.length}`)
     }
     if (maxAmount !== null) {
-      camParams.push(maxAmount)
-      amountFilters.push(`sum(pa.allocated_amount) <= $${camParams.length}`)
+      billingParams.push(maxAmount)
+      amountFilters.push(`sum(pa.allocated_amount) <= $${billingParams.length}`)
     }
     if (highValueOnly && highValueThreshold > 0) {
-      camParams.push(highValueThreshold)
-      amountFilters.push(`sum(pa.allocated_amount) >= $${camParams.length}`)
+      billingParams.push(highValueThreshold)
+      amountFilters.push(`sum(pa.allocated_amount) >= $${billingParams.length}`)
     }
 
-    const camRows = await pool.query<IncomeReportDrilldownCamRow>(
+    const billingRows = await pool.query<IncomeReportDrilldownCamRow>(
       `
-        with cam_category as (
-          select id, name, category_group
-          from transaction_categories
-          where code = 'INC-MNT-001'
-            and transaction_type = 'INCOME'
-          limit 1
+        with billing_category as (
+          (
+            select id, name, category_group, 'CAM'::text as charge_type
+            from transaction_categories
+            where code = 'INC-MNT-001'
+              and transaction_type = 'INCOME'
+            limit 1
+          )
+          union all
+          (
+            select id, name, category_group, 'DG_SET'::text as charge_type
+            from transaction_categories
+            where code = 'INC-MNT-002'
+              and transaction_type = 'INCOME'
+              and (society_id = $1 or society_id is null)
+            order by society_id nulls last
+            limit 1
+          )
         )
         select
           p.id as payment_id,
@@ -854,11 +892,15 @@ export const getIncomeReportDrilldownTransactions = async (
           cc.id as category_id,
           cc.name as category_name,
           cc.category_group,
+          cc.charge_type,
           case when count(distinct bp.id) = 1 then min(bp.id::text)::uuid else null end as billing_period_id,
           case when count(distinct bp.label) = 1 then min(bp.label) else null end as billing_period_label,
           case
-            when count(distinct bp.label) = 1 then concat('CAM collection - ', min(bp.label))
-            else 'CAM collection - multiple periods'
+            when count(distinct bp.label) = 1 then concat(
+              case when cc.charge_type = 'DG_SET' then 'DG Set collection - ' else 'CAM collection - ' end,
+              min(bp.label)
+            )
+            else concat(case when cc.charge_type = 'DG_SET' then 'DG Set' else 'CAM' end, ' collection - multiple periods')
           end as title,
           coalesce(p.notes, null) as description,
           coalesce(u.full_name, '-') as counterparty_name,
@@ -875,19 +917,19 @@ export const getIncomeReportDrilldownTransactions = async (
         join flats f on f.id = md.flat_id
         join blocks b on b.id = f.block_id
         left join users u on u.id = p.payer_user_id
-        cross join cam_category cc
-        where ${camWhere.join(' and ')}
-        group by p.id, p.society_id, p.payment_date, p.created_at, p.updated_at, cc.id, cc.name, cc.category_group, u.full_name, p.receipt_number, p.utr_reference, p.bank_reference, p.notes
+        join billing_category cc on cc.charge_type = bp.charge_type::text
+        where ${billingWhere.join(' and ')}
+        group by p.id, p.society_id, p.payment_date, p.created_at, p.updated_at, cc.id, cc.name, cc.category_group, cc.charge_type, u.full_name, p.receipt_number, p.utr_reference, p.bank_reference, p.notes
         ${amountFilters.length > 0 ? `having ${amountFilters.join(' and ')}` : ''}
       `,
-      camParams,
+      billingParams,
     )
 
-    camItems = camRows.rows.map(incomeReportDrilldownTransactionFromCamRow)
+    billingCollectionItems = billingRows.rows.map(incomeReportDrilldownTransactionFromCamRow)
   }
 
   const items = sortFinanceTransactions(
-    [...regularRows.rows.map(financeTransactionFromRow), ...camItems],
+    [...regularRows.rows.map(financeTransactionFromRow), ...billingCollectionItems],
     options.orderBy,
     options.sortDirection,
   )

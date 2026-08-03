@@ -18,6 +18,9 @@ type DashboardStatsRow = {
   active_resident_count: string
   outstanding_due_count: string
   overdue_due_count: string
+  available_dg_advance_amount: string
+  applied_dg_advance_amount: string
+  dg_advance_settled_due_count: string
 }
 
 const toNumber = (value: string | number | null | undefined) =>
@@ -152,7 +155,44 @@ export default defineEventHandler(async (event) => {
                     )::date
                   )
               )
-          ) as overdue_due_count
+          ) as overdue_due_count,
+          (
+            select coalesce(sum(rac.current_balance), 0)::text
+            from resident_advance_credits rac
+            where rac.society_id = $1
+              and rac.applicable_charge_type = 'DG_SET'
+              and rac.status = 'ACTIVE'
+              and rac.current_balance > 0
+          ) as available_dg_advance_amount,
+          (
+            select coalesce(sum(pa.allocated_amount), 0)::text
+            from payment_allocations pa
+            inner join payments p on p.id = pa.payment_id
+            inner join maintenance_dues md on md.id = pa.maintenance_due_id
+            inner join billing_periods bp on bp.id = md.billing_period_id
+            where md.society_id = $1
+              and bp.charge_type = 'DG_SET'
+              and p.mode = 'ADVANCE_CREDIT'
+              and p.status = 'VERIFIED'
+          ) as applied_dg_advance_amount,
+          (
+            select count(*)::text
+            from (
+              select md.id
+              from maintenance_dues md
+              inner join billing_periods bp on bp.id = md.billing_period_id
+              inner join payment_allocations pa on pa.maintenance_due_id = md.id
+              inner join payments p on p.id = pa.payment_id
+              where md.society_id = $1
+                and bp.charge_type = 'DG_SET'
+                and md.balance_amount = 0
+                and md.status = 'PAID'
+                and p.mode = 'ADVANCE_CREDIT'
+                and p.status = 'VERIFIED'
+              group by md.id
+              having sum(pa.allocated_amount) > 0
+            ) settled_with_dg_advance
+          ) as dg_advance_settled_due_count
       `,
       [authMe.user.societyId, today],
     ),
@@ -193,6 +233,11 @@ export default defineEventHandler(async (event) => {
         outstandingDues > 0
           ? Math.round((overdueDues / outstandingDues) * 100)
           : 0,
+      availableDgAdvanceAmount: toNumber(
+        stats?.available_dg_advance_amount,
+      ),
+      appliedDgAdvanceAmount: toNumber(stats?.applied_dg_advance_amount),
+      dgAdvanceSettledDues: toNumber(stats?.dg_advance_settled_due_count),
     },
     topDefaulters: defaulters.slice(0, 5),
   })

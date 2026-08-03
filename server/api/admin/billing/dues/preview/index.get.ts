@@ -317,12 +317,7 @@ export const createDueGenerationPreview = async (
           return sum + (Number.isFinite(amount) ? Math.max(0, amount) : 0)
         }, 0)
       : 0
-    const dgFinancialSupplement = period.charge_type === 'DG_SET'
-      ? effectiveCharges.reduce((sum, item) => {
-          const amount = Number(item.interestAmount ?? 0)
-          return sum + (Number.isFinite(amount) ? Math.max(0, amount) : 0)
-        }, 0)
-      : 0
+    const dgFinancialSupplement = 0
     const flatAmount = Math.round(
       (currentChargeAmount + dgFinancialSupplement) * 100,
     ) / 100

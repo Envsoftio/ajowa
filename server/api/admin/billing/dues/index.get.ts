@@ -9,14 +9,19 @@ import {
 } from '~/server/utils/master-data'
 import {
   getVerifiedDuePaymentEvents,
-  resolveBillingDueAmountsForDisplay,
+  resolveDgAwareBillingDueAmountsForDisplay,
   todayDate,
   type DuePaymentEvent,
 } from '~/server/utils/billing'
 import { camAdvanceCoverageLateralSql } from '~/server/utils/cam-advance'
+import { getPreviousDgOutstandingByDueId } from '~/server/utils/dg-outstanding'
 import { setEventHeader } from '~/server/utils/http-event'
 import type { ListQueryParams } from '~/types/api'
-import type { MaintenanceDue, SocietyPolicySettings } from '~/types/domain'
+import type {
+  DgBalanceOrigin,
+  MaintenanceDue,
+  SocietyPolicySettings,
+} from '~/types/domain'
 
 type DueRow = {
   row_kind: 'DUE' | 'CAM_ADVANCE_COVERAGE'
@@ -26,6 +31,7 @@ type DueRow = {
   billing_period_label: string
   billing_period_due_date: string
   billing_period_charge_type: string
+  origin: DgBalanceOrigin | null
   billing_period_start_date: string
   billing_period_end_date: string
   flat_id: string
@@ -45,6 +51,9 @@ type DueRow = {
   waived_amount: string
   late_fee_waived_amount: string
   paid_amount: string
+  cash_paid_amount: string
+  advance_applied_amount: string
+  available_dg_advance_amount: string
   total_amount: string
   balance_amount: string
   status: string
@@ -80,6 +89,7 @@ const combinedDuesSql = `
       bp.label as billing_period_label,
       bp.due_date::text as billing_period_due_date,
       bp.charge_type::text as billing_period_charge_type,
+      md.origin::text as origin,
       bp.start_date::text as billing_period_start_date,
       bp.end_date::text as billing_period_end_date,
       md.flat_id,
@@ -100,6 +110,9 @@ const combinedDuesSql = `
       md.waived_amount::text as waived_amount,
       md.late_fee_waived_amount::text as late_fee_waived_amount,
       md.paid_amount::text as paid_amount,
+      coalesce(payment_summary.cash_paid_amount, 0)::text as cash_paid_amount,
+      coalesce(payment_summary.advance_applied_amount, 0)::text as advance_applied_amount,
+      coalesce(dg_credit.available_amount, 0)::text as available_dg_advance_amount,
       md.total_amount::text as total_amount,
       case
         when coverage.id is not null and md.balance_amount = 0 then '0'
@@ -123,6 +136,27 @@ const combinedDuesSql = `
       ${camAdvanceCoverageLateralSql('f', 'bp')}
     ) coverage on bp.charge_type = 'CAM'
     left join lateral (
+      select
+        coalesce(sum(pa.allocated_amount) filter (
+          where p.status = 'VERIFIED' and p.mode <> 'ADVANCE_CREDIT'
+        ), 0) as cash_paid_amount,
+        coalesce(sum(pa.allocated_amount) filter (
+          where p.status = 'VERIFIED' and p.mode = 'ADVANCE_CREDIT'
+        ), 0) as advance_applied_amount
+      from payment_allocations pa
+      inner join payments p on p.id = pa.payment_id
+      where pa.maintenance_due_id = md.id
+    ) payment_summary on bp.charge_type = 'DG_SET'
+    left join lateral (
+      select coalesce(sum(rac.current_balance), 0) as available_amount
+      from resident_advance_credits rac
+      where rac.society_id = md.society_id
+        and rac.flat_id = md.flat_id
+        and rac.applicable_charge_type = 'DG_SET'
+        and rac.status = 'ACTIVE'
+        and rac.current_balance > 0
+    ) dg_credit on bp.charge_type = 'DG_SET'
+    left join lateral (
       select u.full_name
       from flat_residents fr
       inner join users u on u.id = fr.user_id
@@ -143,6 +177,7 @@ const combinedDuesSql = `
       bp.label as billing_period_label,
       bp.due_date::text as billing_period_due_date,
       bp.charge_type::text as billing_period_charge_type,
+      null::text as origin,
       bp.start_date::text as billing_period_start_date,
       bp.end_date::text as billing_period_end_date,
       f.id as flat_id,
@@ -163,6 +198,9 @@ const combinedDuesSql = `
       '0' as waived_amount,
       '0' as late_fee_waived_amount,
       '0' as paid_amount,
+      '0' as cash_paid_amount,
+      '0' as advance_applied_amount,
+      '0' as available_dg_advance_amount,
       '0' as total_amount,
       '0' as balance_amount,
       'PAID' as status,
@@ -417,7 +455,7 @@ const mapDueRows = (
           nextInstallmentDueDate: null,
           lateFeeDays: 0,
         }
-      : resolveBillingDueAmountsForDisplay(
+      : resolveDgAwareBillingDueAmountsForDisplay(
           {
             dueDate: row.due_date,
             billingPeriodChargeType: row.billing_period_charge_type,
@@ -438,6 +476,7 @@ const mapDueRows = (
           today,
           settings.graceDays,
           settings.lateFeePerDay,
+          settings,
         )
 
     return {
@@ -446,7 +485,10 @@ const mapDueRows = (
       billingPeriodId: row.billing_period_id,
       billingPeriodLabel: row.billing_period_label,
       billingPeriodDueDate: row.billing_period_due_date,
-      billingPeriodChargeType: row.billing_period_charge_type as NonNullable<MaintenanceDue['billingPeriodChargeType']>,
+      billingPeriodChargeType: row.billing_period_charge_type as NonNullable<
+        MaintenanceDue['billingPeriodChargeType']
+      >,
+      origin: row.origin,
       billingPeriodStartDate: row.billing_period_start_date,
       billingPeriodEndDate: row.billing_period_end_date,
       flatId: row.flat_id,
@@ -469,6 +511,9 @@ const mapDueRows = (
       lateFeeAmount: computed.lateFeeAmount,
       waivedAmount,
       paidAmount,
+      cashPaidAmount: Number(row.cash_paid_amount),
+      advanceAppliedAmount: Number(row.advance_applied_amount),
+      availableDgAdvanceAmount: Number(row.available_dg_advance_amount),
       totalAmount: computed.totalAmount,
       balanceAmount: computed.balanceAmount,
       status: computed.status,
@@ -484,6 +529,46 @@ const mapDueRows = (
       updatedAt: row.updated_at,
     }
   })
+
+const enrichGeneratedDgRows = async (
+  pool: ReturnType<typeof getDatabasePool>,
+  societyId: string,
+  items: MaintenanceDue[],
+  today: string,
+  settings: SocietyPolicySettings,
+) => {
+  const generatedDgDueIds = items
+    .filter(
+      (item) =>
+        item.billingPeriodChargeType === 'DG_SET' &&
+        item.origin !== 'DG_OPENING_BALANCE' &&
+        !item.isAdvanceCoverageRow,
+    )
+    .map((item) => item.id)
+
+  if (generatedDgDueIds.length === 0) return items
+
+  const generatedDgDueIdSet = new Set(generatedDgDueIds)
+
+  const previousByDueId = await getPreviousDgOutstandingByDueId(
+    pool,
+    societyId,
+    generatedDgDueIds,
+    today,
+    settings,
+  )
+
+  return items.map((item) => {
+    if (!generatedDgDueIdSet.has(item.id)) return item
+
+    const previous = previousByDueId.get(item.id) ?? { amount: 0, count: 0 }
+    return {
+      ...item,
+      previousDgOutstandingAmount: previous.amount,
+      previousDgOutstandingCount: previous.count,
+    }
+  })
+}
 
 const billTypeLabel = (value: MaintenanceDue['billingPeriodChargeType']) => {
   if (value === 'CAM') return 'CAM'
@@ -529,6 +614,15 @@ const advanceStatusLabel = (due: MaintenanceDue) => {
   if (due.isAdvanceCoverageRow) return 'Coverage marker'
   if (due.isCamAdvanceCovered) return 'Covered'
   if (camAdvanceAdjustmentAmount(due) > 0) return 'Advance deducted'
+  if (
+    due.billingPeriodChargeType === 'DG_SET' &&
+    Number(due.advanceAppliedAmount ?? 0) > 0
+  ) {
+    return `DG advance applied: ${Number(due.advanceAppliedAmount).toFixed(2)}`
+  }
+  if (due.billingPeriodChargeType === 'DG_SET') {
+    return `DG advance available: ${Number(due.availableDgAdvanceAmount ?? 0).toFixed(2)}`
+  }
   if (due.billingPeriodChargeType === 'CAM') return 'Billable'
   return 'Not CAM'
 }
@@ -550,7 +644,7 @@ const chargeBreakdownText = (due: MaintenanceDue) =>
     })
     .join('; ')
 
-const mapDueWorkbookRow = (due: MaintenanceDue) => ({
+const mapDueWorkbookRow = (due: MaintenanceDue, includeDgSource: boolean) => ({
   'Due ID': due.isAdvanceCoverageRow ? '' : due.id,
   'Row type': due.isAdvanceCoverageRow ? 'CAM advance coverage marker' : 'Due',
   Block: due.blockName,
@@ -559,6 +653,16 @@ const mapDueWorkbookRow = (due: MaintenanceDue) => ({
   'Billing contact': due.primaryResidentName ?? '',
   Period: due.billingPeriodLabel,
   'Bill type': billTypeLabel(due.billingPeriodChargeType),
+  ...(includeDgSource
+    ? {
+        Source:
+          due.origin === 'DG_OPENING_BALANCE'
+            ? 'DG carried-forward balance'
+            : due.billingPeriodChargeType === 'DG_SET'
+              ? 'DG Charges bill'
+              : '',
+      }
+    : {}),
   'Period start': due.billingPeriodStartDate ?? '',
   'Period end': due.billingPeriodEndDate ?? '',
   'Due date': due.dueDate,
@@ -585,9 +689,12 @@ const buildDueWorkbook = (
   query: ListQueryParams,
 ) => {
   const workbook = XLSX.utils.book_new()
+  const includeDgSource = items.some(
+    (item) => item.billingPeriodChargeType === 'DG_SET',
+  )
   const worksheet = XLSX.utils.json_to_sheet(
     items.length
-      ? items.map(mapDueWorkbookRow)
+      ? items.map((item) => mapDueWorkbookRow(item, includeDgSource))
       : [{ Note: 'No dues found for the selected filters.' }],
   )
   worksheet['!cols'] = [
@@ -599,6 +706,7 @@ const buildDueWorkbook = (
     { wch: 26 },
     { wch: 24 },
     { wch: 12 },
+    ...(includeDgSource ? [{ wch: 24 }] : []),
     { wch: 12 },
     { wch: 12 },
     { wch: 12 },
@@ -703,11 +811,18 @@ export default defineEventHandler(async (event) => {
         .filter((row) => row.row_kind === 'DUE')
         .map((row) => row.id),
     )
-    const items = mapDueRows(
+    const mappedItems = mapDueRows(
       dataResult.rows,
       settings,
       today,
       paymentEventsByDueId,
+    )
+    const items = await enrichGeneratedDgRows(
+      pool,
+      authMe.user.societyId,
+      mappedItems,
+      today,
+      settings,
     )
     const total = Number(countResult.rows[0]?.count ?? 0)
 
@@ -747,12 +862,24 @@ export default defineEventHandler(async (event) => {
       .filter((row) => row.row_kind === 'DUE')
       .map((row) => row.id),
   )
-  const items = mapDueRows(
+  const mappedItems = mapDueRows(
     dataResult.rows,
     settings,
     today,
     paymentEventsByDueId,
   )
+  const items = await enrichGeneratedDgRows(
+    pool,
+    authMe.user.societyId,
+    mappedItems,
+    today,
+    settings,
+  )
 
-  return createPaginatedSuccess(event, items, Number(countResult.rows[0]?.count ?? 0), query)
+  return createPaginatedSuccess(
+    event,
+    items,
+    Number(countResult.rows[0]?.count ?? 0),
+    query,
+  )
 })

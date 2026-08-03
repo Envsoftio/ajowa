@@ -1,6 +1,6 @@
 import * as XLSX from 'xlsx/xlsx.mjs'
 import {
-  computeBillingDueAmounts,
+  computeDgAwareBillingDueAmounts,
   getVerifiedDuePaymentEvents,
   todayDate,
 } from '~/server/utils/billing'
@@ -367,7 +367,7 @@ export const listDefaulters = async ({
   for (const row of result.rows) {
     const existing = userMap.get(row.user_id)
     const chargeBreakdown = Array.isArray(row.charge_breakdown) ? row.charge_breakdown : []
-    const computed = computeBillingDueAmounts(
+    const computed = computeDgAwareBillingDueAmounts(
       {
         dueDate: row.due_date,
         billingPeriodChargeType: row.billing_period_charge_type,
@@ -385,6 +385,7 @@ export const listDefaulters = async ({
       today,
       settings.graceDays,
       settings.lateFeePerDay,
+      settings,
     )
 
     const daysOverdue = computed.lateFeeDays

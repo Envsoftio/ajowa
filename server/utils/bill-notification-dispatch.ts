@@ -16,6 +16,70 @@ export const getBillEmailNotificationWorkerSecret = () =>
   process.env.BETTER_AUTH_SECRET ??
   ''
 
+const getBillEmailNotificationWorkerEndpoint = () => {
+  const siteUrl = process.env.DEPLOY_PRIME_URL ?? process.env.URL
+  return siteUrl
+    ? new URL(BILL_EMAIL_NOTIFICATION_WORKER_PATH, siteUrl).toString()
+    : null
+}
+
+export const invokeBillEmailNotificationWorker = async (societyId: string) => {
+  const workerSecret = getBillEmailNotificationWorkerSecret()
+
+  if (!workerSecret && process.env.NETLIFY === 'true') {
+    return false
+  }
+
+  const headers: HeadersInit = {
+    'content-type': 'application/json',
+  }
+
+  if (workerSecret) {
+    headers[BILL_EMAIL_NOTIFICATION_WORKER_SECRET_HEADER] = workerSecret
+  }
+
+  const workerEndpoint = workerSecret ? getBillEmailNotificationWorkerEndpoint() : null
+  if (workerSecret && !workerEndpoint && process.env.NETLIFY === 'true') {
+    return false
+  }
+
+  if (workerSecret && workerEndpoint) {
+    try {
+      const response = await fetch(workerEndpoint, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ societyId }),
+        signal: AbortSignal.timeout(5_000),
+      })
+
+      if (response.ok || response.status === 202) {
+        return true
+      }
+
+      if (process.env.NETLIFY === 'true') {
+        return false
+      }
+    } catch {
+      if (process.env.NETLIFY === 'true') {
+        return false
+      }
+    }
+  }
+
+  void drainQueuedBillEmails(societyId).catch((error) => {
+    console.error(
+      JSON.stringify({
+        level: 'error',
+        message: 'Local bill email notification worker failed.',
+        societyId,
+        cause: error instanceof Error ? error.message : String(error),
+      }),
+    )
+  })
+
+  return true
+}
+
 export const dispatchQueuedBillEmailBatch = async (societyId: string) => {
   const client = await getDatabasePool().connect()
 

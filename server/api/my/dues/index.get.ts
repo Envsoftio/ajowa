@@ -3,12 +3,12 @@ import { requireActiveUser } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
 import {
   getVerifiedDuePaymentEvents,
-  resolveBillingDueAmountsForDisplay,
+  resolveDgAwareBillingDueAmountsForDisplay,
   todayDate,
 } from '~/server/utils/billing'
 import { normalizeSocietySettings } from '~/server/utils/master-data'
 import { camAdvanceCoverageLateralSql } from '~/server/utils/cam-advance'
-import type { MaintenanceDue } from '~/types/domain'
+import type { DgBalanceOrigin, MaintenanceDue } from '~/types/domain'
 
 type DueRow = {
   row_kind: 'DUE' | 'CAM_ADVANCE_COVERAGE'
@@ -18,6 +18,7 @@ type DueRow = {
   billing_period_label: string
   billing_period_due_date: string
   billing_period_charge_type: string
+  origin: DgBalanceOrigin | null
   billing_period_start_date: string
   billing_period_end_date: string
   flat_id: string
@@ -36,6 +37,9 @@ type DueRow = {
   waived_amount: string
   late_fee_waived_amount: string
   paid_amount: string
+  cash_paid_amount: string
+  advance_applied_amount: string
+  available_dg_advance_amount: string
   total_amount: string
   balance_amount: string
   status: string
@@ -76,6 +80,7 @@ export default defineEventHandler(async (event) => {
           bp.label as billing_period_label,
           bp.due_date::text as billing_period_due_date,
           bp.charge_type::text as billing_period_charge_type,
+          md.origin::text as origin,
           bp.start_date::text as billing_period_start_date,
           bp.end_date::text as billing_period_end_date,
           md.flat_id,
@@ -95,6 +100,9 @@ export default defineEventHandler(async (event) => {
           md.waived_amount::text as waived_amount,
           md.late_fee_waived_amount::text as late_fee_waived_amount,
           md.paid_amount::text as paid_amount,
+          coalesce(payment_summary.cash_paid_amount, 0)::text as cash_paid_amount,
+          coalesce(payment_summary.advance_applied_amount, 0)::text as advance_applied_amount,
+          coalesce(dg_credit.available_amount, 0)::text as available_dg_advance_amount,
           md.total_amount::text as total_amount,
           case
             when coverage.id is not null and md.balance_amount = 0 then '0'
@@ -119,6 +127,27 @@ export default defineEventHandler(async (event) => {
         left join lateral (
           ${camAdvanceCoverageLateralSql('f', 'bp')}
         ) coverage on bp.charge_type = 'CAM'
+        left join lateral (
+          select
+            coalesce(sum(pa.allocated_amount) filter (
+              where p.status = 'VERIFIED' and p.mode <> 'ADVANCE_CREDIT'
+            ), 0) as cash_paid_amount,
+            coalesce(sum(pa.allocated_amount) filter (
+              where p.status = 'VERIFIED' and p.mode = 'ADVANCE_CREDIT'
+            ), 0) as advance_applied_amount
+          from payment_allocations pa
+          inner join payments p on p.id = pa.payment_id
+          where pa.maintenance_due_id = md.id
+        ) payment_summary on bp.charge_type = 'DG_SET'
+        left join lateral (
+          select coalesce(sum(rac.current_balance), 0) as available_amount
+          from resident_advance_credits rac
+          where rac.society_id = md.society_id
+            and rac.flat_id = md.flat_id
+            and rac.applicable_charge_type = 'DG_SET'
+            and rac.status = 'ACTIVE'
+            and rac.current_balance > 0
+        ) dg_credit on bp.charge_type = 'DG_SET'
         where md.society_id = $1
           and md.flat_id = any($3::uuid[])
 
@@ -132,6 +161,7 @@ export default defineEventHandler(async (event) => {
           bp.label as billing_period_label,
           bp.due_date::text as billing_period_due_date,
           bp.charge_type::text as billing_period_charge_type,
+          null::text as origin,
           bp.start_date::text as billing_period_start_date,
           bp.end_date::text as billing_period_end_date,
           f.id as flat_id,
@@ -151,6 +181,9 @@ export default defineEventHandler(async (event) => {
           '0' as waived_amount,
           '0' as late_fee_waived_amount,
           '0' as paid_amount,
+          '0' as cash_paid_amount,
+          '0' as advance_applied_amount,
+          '0' as available_dg_advance_amount,
           '0' as total_amount,
           '0' as balance_amount,
           'PAID' as status,
@@ -223,7 +256,7 @@ export default defineEventHandler(async (event) => {
           nextInstallmentDueDate: null,
           lateFeeDays: 0,
         }
-      : resolveBillingDueAmountsForDisplay(
+      : resolveDgAwareBillingDueAmountsForDisplay(
           {
             dueDate: row.due_date,
             billingPeriodChargeType: row.billing_period_charge_type,
@@ -244,6 +277,7 @@ export default defineEventHandler(async (event) => {
           today,
           settings.graceDays,
           settings.lateFeePerDay,
+          settings,
         )
 
     return {
@@ -253,6 +287,7 @@ export default defineEventHandler(async (event) => {
       billingPeriodLabel: row.billing_period_label,
       billingPeriodDueDate: row.billing_period_due_date,
       billingPeriodChargeType: row.billing_period_charge_type as NonNullable<MaintenanceDue['billingPeriodChargeType']>,
+      origin: row.origin,
       billingPeriodStartDate: row.billing_period_start_date,
       billingPeriodEndDate: row.billing_period_end_date,
       flatId: row.flat_id,
@@ -275,6 +310,9 @@ export default defineEventHandler(async (event) => {
       lateFeeAmount: computed.lateFeeAmount,
       waivedAmount,
       paidAmount,
+      cashPaidAmount: Number(row.cash_paid_amount),
+      advanceAppliedAmount: Number(row.advance_applied_amount),
+      availableDgAdvanceAmount: Number(row.available_dg_advance_amount),
       totalAmount: computed.totalAmount,
       balanceAmount: computed.balanceAmount,
       status: computed.status,

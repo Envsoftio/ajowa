@@ -8,7 +8,19 @@ definePageMeta({
 })
 
 type DuesResponse = { ok: true; data: MaintenanceDue[] }
-type SummaryCardKey = 'balance' | 'total' | 'flats'
+type DgAdvanceSummaryResponse = {
+  ok: true
+  data: {
+    items: Array<{
+      flatId: string
+      flatNumber: string
+      blockName: string
+      availableAmount: number
+    }>
+    totalAvailable: number
+  }
+}
+type SummaryCardKey = 'balance' | 'total' | 'advance' | 'flats'
 
 const api = useApi()
 const authStore = useAuthStore()
@@ -19,11 +31,47 @@ const formatMoney = (value: number) =>
 const formatDate = (value: string | null | undefined) =>
   value ? new Date(`${value}T00:00:00`).toLocaleDateString('en-IN', { dateStyle: 'medium' }) : '-'
 
-const { data, pending, refresh } = await useAsyncData('my-dues', () => api<DuesResponse>('/api/my/dues'))
+const {
+  data: duesData,
+  pending,
+  refresh: refreshDues,
+} = await useAsyncData('my-dues', () => api<DuesResponse>('/api/my/dues'))
+const {
+  data: dgAdvanceData,
+  refresh: refreshDgAdvances,
+} = useLazyAsyncData('my-dg-advances', () =>
+  api<DgAdvanceSummaryResponse>('/api/my/dg-advances').catch(() => ({
+      ok: true as const,
+      data: {
+        items: [],
+        totalAvailable: 0,
+      },
+    })),
+)
 
-const dues = computed(() => data.value?.data ?? [])
+const refresh = async () => {
+  void refreshDgAdvances().catch(() => undefined)
+  await refreshDues()
+}
+
+const dues = computed(() => duesData.value?.data ?? [])
+const dgAdvanceSummary = computed(() => dgAdvanceData.value?.data ?? {
+  items: [],
+  totalAvailable: 0,
+})
+const dgAdvanceByFlat = computed(() => new Map(
+  dgAdvanceSummary.value.items.map((item) => [item.flatId, item.availableAmount]),
+))
 
 const isCamDue = (due: MaintenanceDue) => due.billingPeriodChargeType === 'CAM'
+const isDgDue = (due: MaintenanceDue) => due.billingPeriodChargeType === 'DG_SET'
+const isCarriedForwardDgBalance = (due: MaintenanceDue) =>
+  due.origin === 'DG_OPENING_BALANCE'
+const dueSourceLabel = (due: MaintenanceDue) => {
+  if (isCarriedForwardDgBalance(due)) return 'Carried-forward DG balance'
+  if (isDgDue(due)) return 'DG Charges bill'
+  return null
+}
 const hasActionableBalance = (due: MaintenanceDue) => due.balanceAmount > 0 && !due.isCamAdvanceCovered
 const camAdvanceAdjustmentAmount = (due: MaintenanceDue) =>
   due.chargeBreakdown.reduce((sum, item) => {
@@ -40,6 +88,8 @@ const camAdvanceAdjustmentNote = (due: MaintenanceDue) =>
 const advanceStatusKind = (due: MaintenanceDue) => {
   if (due.isCamAdvanceCovered) return 'covered'
   if (hasCamAdvanceAdjustment(due)) return 'billable'
+  if (isDgDue(due) && Number(due.advanceAppliedAmount ?? 0) > 0) return 'covered'
+  if (isDgDue(due)) return 'billable'
   if (isCamDue(due)) return 'billable'
   return 'not-cam'
 }
@@ -47,6 +97,8 @@ const advanceStatusKind = (due: MaintenanceDue) => {
 const advanceStatusLabel = (due: MaintenanceDue) => {
   if (due.isCamAdvanceCovered) return 'Covered'
   if (hasCamAdvanceAdjustment(due)) return 'Advance deducted'
+  if (isDgDue(due) && Number(due.advanceAppliedAmount ?? 0) > 0) return 'DG advance applied'
+  if (isDgDue(due)) return 'No DG advance applied'
   if (isCamDue(due)) return 'Billable'
   return 'Not CAM'
 }
@@ -58,6 +110,15 @@ const advanceStatusDetail = (due: MaintenanceDue) => {
   if (hasCamAdvanceAdjustment(due)) {
     const note = camAdvanceAdjustmentNote(due)
     return `${formatMoney(camAdvanceAdjustmentAmount(due))} advance deducted${note ? ` (${note})` : ''}. Remaining due is payable.`
+  }
+  if (isDgDue(due) && Number(due.advanceAppliedAmount ?? 0) > 0) {
+    return `${formatMoney(Number(due.advanceAppliedAmount))} DG advance applied to this bill.`
+  }
+  if (isDgDue(due)) {
+    const available = Number(due.availableDgAdvanceAmount ?? 0)
+    return available > 0
+      ? `${formatMoney(available)} remains available for future DG bills.`
+      : 'No DG advance was applied to this bill.'
   }
   if (isCamDue(due)) return 'No advance coverage for this CAM period.'
   return 'Advance coverage applies only to CAM bills.'
@@ -93,13 +154,16 @@ const toggleSummaryHelp = (key: SummaryCardKey) => {
 const summaryHelpIds: Record<SummaryCardKey, string> = {
   balance: 'my-dues-summary-help-balance',
   total: 'my-dues-summary-help-total',
+  advance: 'my-dues-summary-help-advance',
   flats: 'my-dues-summary-help-flats',
 }
 const isBalanceHelpOpen = computed(() => isSummaryHelpOpen('balance'))
 const isTotalHelpOpen = computed(() => isSummaryHelpOpen('total'))
+const isAdvanceHelpOpen = computed(() => isSummaryHelpOpen('advance'))
 const isFlatsHelpOpen = computed(() => isSummaryHelpOpen('flats'))
 const toggleBalanceHelp = () => toggleSummaryHelp('balance')
 const toggleTotalHelp = () => toggleSummaryHelp('total')
+const toggleAdvanceHelp = () => toggleSummaryHelp('advance')
 const toggleFlatsHelp = () => toggleSummaryHelp('flats')
 
 const flatGroups = computed(() => {
@@ -111,6 +175,7 @@ const flatGroups = computed(() => {
       relationshipType: string
       totalBalance: number
       openCount: number
+      availableDgAdvance: number
       rows: MaintenanceDue[]
     }
   >()
@@ -128,6 +193,7 @@ const flatGroups = computed(() => {
         relationshipType: due.relationshipType ?? 'RESIDENT',
         totalBalance: due.isCamAdvanceCovered ? 0 : due.balanceAmount,
         openCount: hasActionableBalance(due) ? 1 : 0,
+        availableDgAdvance: dgAdvanceByFlat.value.get(due.flatId) ?? 0,
         rows: [due],
       })
     }
@@ -170,6 +236,29 @@ const openBreakdown = (due: MaintenanceDue) => {
         >
           {{ summary.overdueCount }} overdue bills across linked flats.
           {{ summary.advanceCoveredCount }} CAM advance-covered records are already covered.
+        </p>
+      </section>
+      <section class="surface-card resident-summary-card">
+        <div class="resident-summary-card__topline">
+          <p class="eyebrow">DG advance available</p>
+          <button
+            type="button"
+            class="resident-summary-card__help-button"
+            :aria-expanded="isAdvanceHelpOpen"
+            :aria-controls="summaryHelpIds.advance"
+            aria-label="Show DG advance help"
+            @click="toggleAdvanceHelp"
+          >
+            <i class="pi pi-info-circle" aria-hidden="true" />
+          </button>
+        </div>
+        <h3>{{ formatMoney(dgAdvanceSummary.totalAvailable) }}</h3>
+        <p
+          :id="summaryHelpIds.advance"
+          class="resident-summary-card__help-text"
+          :class="{ 'is-open': isAdvanceHelpOpen }"
+        >
+          Unused credit reserved for future DG bills. It is not deducted twice from an existing bill.
         </p>
       </section>
       <section class="surface-card resident-summary-card">
@@ -251,7 +340,10 @@ const openBreakdown = (due: MaintenanceDue) => {
           <header class="resident-due-group__header">
             <div>
               <h2>{{ group.label }}</h2>
-              <p>{{ group.relationshipType }} · {{ group.openCount }} open dues</p>
+              <p>
+                {{ group.relationshipType }} · {{ group.openCount }} open dues ·
+                {{ formatMoney(group.availableDgAdvance) }} DG advance available
+              </p>
             </div>
             <strong>{{ formatMoney(group.totalBalance) }}</strong>
           </header>
@@ -260,6 +352,7 @@ const openBreakdown = (due: MaintenanceDue) => {
             <Column field="billingPeriodLabel" header="Period">
               <template #body="{ data: row }">
                 <strong>{{ row.billingPeriodLabel }}</strong>
+                <p v-if="dueSourceLabel(row)" class="table-muted">{{ dueSourceLabel(row) }}</p>
                 <p class="table-muted">Due {{ formatDate(row.dueDate) }}</p>
                 <p
                   v-if="row.penaltyFreeUntilDate && row.penaltyFreeUntilDate > row.dueDate"
@@ -355,6 +448,7 @@ const openBreakdown = (due: MaintenanceDue) => {
               <div class="list-card__header resident-due-card__header">
                 <div>
                   <h3>{{ row.billingPeriodLabel }}</h3>
+                  <p v-if="dueSourceLabel(row)">{{ dueSourceLabel(row) }}</p>
                   <p>Due {{ formatDate(row.dueDate) }}</p>
                   <p v-if="row.penaltyFreeUntilDate && row.penaltyFreeUntilDate > row.dueDate">
                     No late fee through {{ formatDate(row.penaltyFreeUntilDate) }}

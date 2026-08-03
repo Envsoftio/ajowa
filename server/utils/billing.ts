@@ -10,9 +10,16 @@ import { normalizeSocietySettings } from './master-data'
 import { createPdfBuffer, getSocietyStampImageForPdf } from './pdf'
 import { downloadPrivateFile } from './storage'
 import {
+  getDgBillCurrentChargeLabel,
   resolveBillPdfAmountAllocation,
   resolveDgBillAmountSummary,
+  resolveDgBillPreviousReferenceAmount,
 } from './dg-bill-amounts'
+import {
+  disabledDgLateFeePolicy,
+  resolveEffectiveLateFeePolicy,
+  type DgLateFeePolicy,
+} from '../../shared/dg-late-fee'
 
 export const chargeBreakdownItemSchema = z.object({
   label: z.string().trim().min(1).max(200),
@@ -336,6 +343,8 @@ export type BillingDueComputation = ComputedDueAmounts & {
   penaltyFreeUntilDate: string | null
   lateFeeDays: number
 }
+
+export type { DgLateFeePolicy } from '../../shared/dg-late-fee'
 
 const formatBillingDateInput = (date: Date) => date.toISOString().slice(0, 10)
 
@@ -1041,6 +1050,42 @@ export const computeBillingDueAmounts = (
   }
 }
 
+export const computeDgAwareBillingDueAmounts = (
+  due: BillingDueAmountInput,
+  today: string,
+  graceDays: number,
+  lateFeePerDay: number,
+  dgLateFeePolicy: DgLateFeePolicy = disabledDgLateFeePolicy,
+): BillingDueComputation => {
+  if (due.billingPeriodChargeType !== 'DG_SET') {
+    return computeBillingDueAmounts(due, today, graceDays, lateFeePerDay)
+  }
+
+  const effectivePolicy = resolveEffectiveLateFeePolicy({
+    chargeType: 'DG_SET',
+    graceDays,
+    lateFeePerDay,
+    dgPolicy: dgLateFeePolicy,
+  })
+  const computed = computeBillingDueAmounts(
+    due,
+    today,
+    effectivePolicy.graceDays,
+    effectivePolicy.lateFeePerDay,
+  )
+
+  if (dgLateFeePolicy.dgLateFeeEnabled) {
+    return computed
+  }
+
+  return {
+    ...computed,
+    nextInstallmentDueDate: null,
+    effectiveLateFeeStartsOn: null,
+    penaltyFreeUntilDate: null,
+  }
+}
+
 export const resolveBillingDueAmountsForDisplay = (
   due: StoredBillingDueAmountInput,
   today: string,
@@ -1052,6 +1097,43 @@ export const resolveBillingDueAmountsForDisplay = (
     today,
     graceDays,
     lateFeePerDay,
+  )
+
+  if (!['PAID', 'WAIVED', 'CANCELLED'].includes(due.storedStatus)) {
+    return computed
+  }
+
+  return {
+    ...computed,
+    lateFeeAmount: due.lateFeeAmount,
+    totalAmount: due.totalAmount,
+    balanceAmount: due.balanceAmount,
+    status: due.storedStatus as import('~/types/domain').DueStatus,
+  }
+}
+
+export const resolveDgAwareBillingDueAmountsForDisplay = (
+  due: StoredBillingDueAmountInput,
+  today: string,
+  graceDays: number,
+  lateFeePerDay: number,
+  dgLateFeePolicy: DgLateFeePolicy = disabledDgLateFeePolicy,
+): BillingDueComputation => {
+  if (due.billingPeriodChargeType !== 'DG_SET') {
+    return resolveBillingDueAmountsForDisplay(
+      due,
+      today,
+      graceDays,
+      lateFeePerDay,
+    )
+  }
+
+  const computed = computeDgAwareBillingDueAmounts(
+    due,
+    today,
+    graceDays,
+    lateFeePerDay,
+    dgLateFeePolicy,
   )
 
   if (!['PAID', 'WAIVED', 'CANCELLED'].includes(due.storedStatus)) {
@@ -1293,6 +1375,7 @@ type MaintenanceBillDueRow = {
   billing_period_id: string
   billing_period_label: string
   billing_period_charge_type: string
+  origin: string
   period_start_date: string
   period_end_date: string
   due_date: string
@@ -1843,6 +1926,7 @@ export const getMaintenanceBillData = async (
         md.billing_period_id,
         bp.label as billing_period_label,
         bp.charge_type::text as billing_period_charge_type,
+        md.origin::text as origin,
         bp.start_date::text as period_start_date,
         bp.end_date::text as period_end_date,
         md.due_date::text,
@@ -1957,13 +2041,49 @@ export const getMaintenanceBillData = async (
   const currentChargeBreakdown = Array.isArray(due.charge_breakdown)
     ? due.charge_breakdown as ChargeBreakdownItem[]
     : []
-  const currentPaymentEvents = await getVerifiedDuePaymentEvents(queryable, [
-    due.id,
+  const hasDgBillingComponent =
+    due.billing_period_charge_type === 'DG_SET' ||
+    currentChargeBreakdown.some(isDgSetCharge)
+  const [currentPaymentEvents, dgFinancialContext] = await Promise.all([
+    getVerifiedDuePaymentEvents(queryable, [due.id]),
+    hasDgBillingComponent
+      ? Promise.all([
+          queryable.query<{ advance_applied_amount: string }>(
+            `
+              select coalesce(sum(pa.allocated_amount) filter (
+                where p.mode = 'ADVANCE_CREDIT' and p.status = 'VERIFIED'
+              ), 0)::text as advance_applied_amount
+              from payment_allocations pa
+              inner join payments p on p.id = pa.payment_id
+              where pa.maintenance_due_id = $1
+            `,
+            [due.id],
+          ),
+          queryable.query<{ available_amount: string }>(
+            `
+              select coalesce(sum(current_balance), 0)::text as available_amount
+              from resident_advance_credits
+              where society_id = $1
+                and flat_id = $2
+                and applicable_charge_type = 'DG_SET'
+                and status = 'ACTIVE'
+                and current_balance > 0
+            `,
+            [due.society_id, due.flat_id],
+          ),
+        ])
+      : Promise.resolve(null),
   ])
+  const currentAdvanceAppliedAmount = roundBillMoney(
+    Number(dgFinancialContext?.[0].rows[0]?.advance_applied_amount ?? 0),
+  )
+  const availableDgAdvanceAmount = roundBillMoney(
+    Number(dgFinancialContext?.[1].rows[0]?.available_amount ?? 0),
+  )
   const hasFullCamAdvanceCoverage =
     due.billing_period_charge_type === 'CAM' &&
     Boolean(due.cam_advance_coverage_id)
-  const computedCurrentAmounts = resolveBillingDueAmountsForDisplay(
+  const computedCurrentAmounts = resolveDgAwareBillingDueAmountsForDisplay(
     {
       dueDate: due.due_date,
       billingPeriodChargeType: due.billing_period_charge_type,
@@ -1984,6 +2104,7 @@ export const getMaintenanceBillData = async (
     todayDate(),
     settings.graceDays,
     settings.lateFeePerDay,
+    settings,
   )
   const currentAmounts = hasFullCamAdvanceCoverage
     ? {
@@ -2043,7 +2164,7 @@ export const getMaintenanceBillData = async (
       const previousChargeBreakdown = Array.isArray(previousDue.charge_breakdown)
         ? previousDue.charge_breakdown as ChargeBreakdownItem[]
         : []
-      const computed = computeBillingDueAmounts(
+      const computed = computeDgAwareBillingDueAmounts(
         {
           dueDate: previousDue.due_date,
           billingPeriodChargeType: previousDue.billing_period_charge_type,
@@ -2061,18 +2182,22 @@ export const getMaintenanceBillData = async (
         todayDate(),
         settings.graceDays,
         settings.lateFeePerDay,
+        settings,
       )
 
       totals.all += computed.balanceAmount
       if (previousDue.billing_period_charge_type === 'DG_SET') {
         totals.dg += computed.balanceAmount
+      } else {
+        totals.nonDg += computed.balanceAmount
       }
       return totals
     },
-    { all: 0, dg: 0 },
+    { all: 0, dg: 0, nonDg: 0 },
   )
   const previousOutstanding = roundBillMoney(previousBalances.all)
   const previousDgOutstanding = roundBillMoney(previousBalances.dg)
+  const previousNonDgOutstanding = roundBillMoney(previousBalances.nonDg)
 
   let chargeBreakdown = normalizeBillChargeBreakdown(due.charge_breakdown, Number(due.base_amount))
   if (
@@ -2111,6 +2236,9 @@ export const getMaintenanceBillData = async (
     chargeBreakdown,
     previousOutstanding,
     previousDgOutstanding,
+    previousNonDgOutstanding,
+    currentAdvanceAppliedAmount,
+    availableDgAdvanceAmount,
     currentAmounts,
     currentTiming,
     currentBalance,
@@ -2125,11 +2253,14 @@ export const generateMaintenanceBillPdf = async (
   const bill = await getMaintenanceBillData(dueId, access)
   const {
     due,
+    settings,
     chargeBreakdown,
     currentAmounts,
     currentTiming,
-    previousOutstanding,
+    previousNonDgOutstanding: previousOutstanding,
     previousDgOutstanding,
+    currentAdvanceAppliedAmount,
+    availableDgAdvanceAmount,
     fileName,
   } = bill
   const flatLabel = `${due.block_name} ${due.flat_number}`
@@ -2563,22 +2694,29 @@ export const generateMaintenanceBillPdf = async (
       currentDueBalanceAmount: currentAmounts.balanceAmount,
       previousOutstandingAmount: previousDgOutstanding,
     })
+    const legacyDgReferenceAmount = dgCharges.reduce(
+      (sum, charge) => sum + Number(charge.previousOutstanding ?? 0),
+      0,
+    )
     const dgAmounts = resolveDgBillAmountSummary({
       currentChargeAmount: dgAmount,
       previousOutstandingAmount: previousDgOutstanding,
-      previousReferenceAmount: dgCharges.reduce(
-        (sum, charge) => sum + Number(charge.previousOutstanding ?? 0),
-        0,
-      ),
+      previousReferenceAmount: resolveDgBillPreviousReferenceAmount({
+        previousOutstandingAmount: previousDgOutstanding,
+        legacyReferenceAmount: legacyDgReferenceAmount,
+      }),
       interestAmount: dgInterestAmount,
       lateFeeAmount: isStandaloneDgBill ? currentAmounts.lateFeeAmount : 0,
       paidAmount: isStandaloneDgBill ? Number(due.paid_amount) : 0,
+      advanceAppliedAmount: isStandaloneDgBill
+        ? currentAdvanceAppliedAmount
+        : 0,
+      availableAdvanceAmount: availableDgAdvanceAmount,
       waivedAmount: isStandaloneDgBill ? Number(due.waived_amount) : 0,
       balanceAmount: pdfAmountAllocation.dgSectionBalanceAmount ?? 0,
     })
     const previousDgReferenceAmount = dgAmounts.previousReferenceAmount
     const previousDgOutstandingAmount = dgAmounts.previousOutstandingAmount
-    const displayedDgInterestAmount = dgAmounts.interestAmount
     const dgNetPayable = dgAmounts.netPayable
     const tariffRateLabel = primaryCharge.tariffRateLabel
       ?? (ratePerUnit != null ? `Rs.${formatBillPlainNumber(ratePerUnit)}/Unit` : '-')
@@ -2722,7 +2860,7 @@ export const generateMaintenanceBillPdf = async (
                           { text: 'AMOUNT (Rs.)', style: 'dgTableHeaderRight' },
                         ],
                         [
-                          { text: 'CURRENT DG SET CHARGES', style: 'dgValueBold' },
+                          { text: getDgBillCurrentChargeLabel(due.origin), style: 'dgValueBold' },
                           { text: optionalNumber(consumedUnits), style: 'dgValueRight' },
                           { text: tariffRateLabel, style: 'dgValueRight' },
                           { text: formatBillPlainNumber(dgAmounts.currentChargeAmount), style: 'dgValueRight' },
@@ -2743,12 +2881,6 @@ export const generateMaintenanceBillPdf = async (
                               { text: formatBillPlainNumber(previousDgReferenceAmount), style: 'dgValueRight' },
                             ]]
                           : []),
-                        [
-                          { text: 'INTEREST CHARGE', style: 'dgValueBold' },
-                          { text: '', style: 'dgValueRight' },
-                          { text: '', style: 'dgValueRight' },
-                          { text: formatBillPlainNumber(displayedDgInterestAmount), style: 'dgValueRight' },
-                        ],
                         ...(dgAmounts.lateFeeAmount > 0
                           ? [[
                               { text: 'LATE PAYMENT CHARGES', style: 'dgValueBold' },
@@ -2763,12 +2895,20 @@ export const generateMaintenanceBillPdf = async (
                           { text: '', style: 'dgValueRight' },
                           { text: formatBillPlainNumber(dgAmounts.grossAmount), style: 'dgValueRight' },
                         ],
-                        ...(dgAmounts.paidOrAdvanceAmount > 0
+                        ...(dgAmounts.cashPaidAmount > 0
                           ? [[
-                              { text: 'LESS: PAYMENTS / ADVANCE APPLIED', style: 'dgValueBold' },
+                              { text: 'LESS: CASH / ONLINE PAYMENTS', style: 'dgValueBold' },
                               { text: '', style: 'dgValueRight' },
                               { text: '', style: 'dgValueRight' },
-                              { text: `-${formatBillPlainNumber(dgAmounts.paidOrAdvanceAmount)}`, style: 'dgValueRight' },
+                              { text: `-${formatBillPlainNumber(dgAmounts.cashPaidAmount)}`, style: 'dgValueRight' },
+                            ]]
+                          : []),
+                        ...(dgAmounts.advanceAppliedAmount > 0
+                          ? [[
+                              { text: 'LESS: DG ADVANCE APPLIED', style: 'dgValueBold' },
+                              { text: '', style: 'dgValueRight' },
+                              { text: '', style: 'dgValueRight' },
+                              { text: `-${formatBillPlainNumber(dgAmounts.advanceAppliedAmount)}`, style: 'dgValueRight' },
                             ]]
                           : []),
                         ...(dgAmounts.waivedAmount > 0
@@ -2785,6 +2925,14 @@ export const generateMaintenanceBillPdf = async (
                           {},
                           { text: formatBillPlainNumber(dgNetPayable), style: 'dgTotalValue' },
                         ],
+                        ...(dgAmounts.availableAdvanceAmount > 0
+                          ? [[
+                              { text: 'DG ADVANCE AVAILABLE FOR FUTURE BILLS (NOT DEDUCTED AGAIN)', style: 'dgValueBold', colSpan: 3 },
+                              {},
+                              {},
+                              { text: formatBillPlainNumber(dgAmounts.availableAdvanceAmount), style: 'dgValueRight' },
+                            ]]
+                          : []),
                       ],
                     },
                     layout: dgDenseGridLayout,
@@ -2794,7 +2942,7 @@ export const generateMaintenanceBillPdf = async (
                       {
                         text: [
                           { text: 'TERMS & CONDITION: -\n', bold: true, italics: true },
-                          `In-case the user fails to pay the bill on or before due date indicated in bill, this will be deemed to be a notice and maintenance services to the user shall without prejudice to the right of ${due.society_name} management to recover such charges as of the bill by suit, be disconnected after the expiry of ten days of the due date mentioned in the bill without any further notice to the user. Services shall not be resume unless until the amount shown in the bill together with late fee for the billing period not paid by user.\n\n`,
+                          `If the user fails to pay the bill on or before the due date, this bill will be treated as notice. Without prejudice to ${due.society_name}'s right to recover the billed amount, maintenance services may be disconnected ten days after the due date without further notice. Services will resume only after the billed amount${settings.dgLateFeeEnabled ? ' together with the applicable configured late fee' : ''} is paid.\n\n`,
                           'A charge of Rs. 1000/- shall be levied in case of every dishonoured Cheque.\n',
           `Payment will be accepted by Account payee Cheque/Draft only in favour of "${(societyBankAccounts[0] ?? null)?.accountName ?? due.society_name}"\n`,
                           'Payment can be made by Cash/IMPS/NEFT/RTGS/QR Scanner at the following: -',
@@ -2968,7 +3116,9 @@ export const generateMaintenanceBillPdf = async (
     maintenanceSectionTotal,
     mixedDgComponentAmount: roundBillMoney(dgAmount + dgInterestAmount),
     currentDueBalanceAmount: currentAmounts.balanceAmount,
-    previousOutstandingAmount: previousOutstanding,
+    previousOutstandingAmount: dgCharges.length > 0
+      ? previousDgOutstanding
+      : previousOutstanding,
   })
 
   return {

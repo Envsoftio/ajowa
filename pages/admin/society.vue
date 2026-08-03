@@ -74,6 +74,9 @@ const form = reactive({
     highValueThreshold: 10000,
     graceDays: 0,
     lateFeePerDay: 50,
+    dgLateFeeEnabled: false,
+    dgGraceDays: 0,
+    dgLateFeePerDay: 50,
   },
 })
 
@@ -182,6 +185,8 @@ type SocietyField =
   | 'settings.highValueThreshold'
   | 'settings.graceDays'
   | 'settings.lateFeePerDay'
+  | 'settings.dgGraceDays'
+  | 'settings.dgLateFeePerDay'
 
 const fieldErrors = ref<Partial<Record<SocietyField, string>>>({})
 
@@ -611,6 +616,16 @@ const validateProfileForm = () => {
     form.settings.lateFeePerDay,
     'Late fee per day',
   )
+  requireNonNegativeInteger(
+    'settings.dgGraceDays',
+    form.settings.dgGraceDays,
+    'DG grace days',
+  )
+  requireNonNegativeNumber(
+    'settings.dgLateFeePerDay',
+    form.settings.dgLateFeePerDay,
+    'DG late fee per day',
+  )
 
   const firstError = Object.values(fieldErrors.value)[0]
 
@@ -652,6 +667,12 @@ const buildPayload = () => ({
     ),
     graceDays: nonNegativeInteger(form.settings.graceDays, 0),
     lateFeePerDay: nonNegativeNumber(form.settings.lateFeePerDay, 50),
+    dgLateFeeEnabled: Boolean(form.settings.dgLateFeeEnabled),
+    dgGraceDays: nonNegativeInteger(form.settings.dgGraceDays, 0),
+    dgLateFeePerDay: nonNegativeNumber(
+      form.settings.dgLateFeePerDay,
+      50,
+    ),
   },
 })
 
@@ -952,9 +973,48 @@ const submitBankDetails = async () => {
               >{{ fieldError('settings.lateFeePerDay') }}</small
             >
           </label>
+          <label>
+            <span>DG grace days</span>
+            <InputNumber
+              v-model="form.settings.dgGraceDays"
+              :min="0"
+              input-id="dg-grace-days"
+              fluid
+              :disabled="!form.settings.dgLateFeeEnabled"
+              :invalid="Boolean(fieldError('settings.dgGraceDays'))"
+            />
+            <small
+              v-if="fieldError('settings.dgGraceDays')"
+              class="field-error"
+              >{{ fieldError('settings.dgGraceDays') }}</small
+            >
+          </label>
+          <label>
+            <span>DG late fee per day</span>
+            <InputNumber
+              v-model="form.settings.dgLateFeePerDay"
+              :min="0"
+              input-id="dg-late-fee-per-day"
+              fluid
+              :disabled="!form.settings.dgLateFeeEnabled"
+              :invalid="Boolean(fieldError('settings.dgLateFeePerDay'))"
+            />
+            <small
+              v-if="fieldError('settings.dgLateFeePerDay')"
+              class="field-error"
+              >{{ fieldError('settings.dgLateFeePerDay') }}</small
+            >
+          </label>
         </div>
 
         <div class="admin-toggle-grid">
+          <label class="admin-toggle-card">
+            <span>
+              Apply late fees to DG bills
+              <small>Off by default; due dates still support aging.</small>
+            </span>
+            <ToggleSwitch v-model="form.settings.dgLateFeeEnabled" />
+          </label>
           <label class="admin-toggle-card">
             <span>Tenant payments enabled</span>
             <ToggleSwitch v-model="form.settings.tenantPaymentsEnabled" />

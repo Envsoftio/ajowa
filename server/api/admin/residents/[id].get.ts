@@ -93,12 +93,16 @@ type PaymentRow = {
 type DueRow = {
   id: string
   billing_period_label: string
+  billing_period_charge_type: import('~/types/domain').BillingPeriodChargeType
+  origin: import('~/types/domain').DgBalanceOrigin | null
   flat_id: string
   flat_number: string
   block_name: string
   due_date: string
   total_amount: string
   paid_amount: string
+  advance_applied_amount: string
+  available_dg_advance_amount: string
   balance_amount: string
   status: string
   created_at: string
@@ -206,12 +210,16 @@ const mapPayment = (row: PaymentRow): ResidentPaymentSummary => ({
 const mapDue = (row: DueRow): ResidentDueSummary => ({
   id: row.id,
   billingPeriodLabel: row.billing_period_label,
+  billingPeriodChargeType: row.billing_period_charge_type,
+  origin: row.origin,
   flatId: row.flat_id,
   flatNumber: row.flat_number,
   blockName: row.block_name,
   dueDate: row.due_date,
   totalAmount: Number(row.total_amount),
   paidAmount: Number(row.paid_amount),
+  advanceAppliedAmount: Number(row.advance_applied_amount),
+  availableDgAdvanceAmount: Number(row.available_dg_advance_amount),
   balanceAmount: Number(row.balance_amount),
   status: row.status,
   createdAt: row.created_at,
@@ -263,6 +271,7 @@ export default defineEventHandler(async (event) => {
     paymentsResult,
     serviceRequestsResult,
     accessLogsResult,
+    dgAdvanceResult,
     professionProfile,
   ] = await Promise.all([
     pool.query<ResidentRow>(
@@ -397,12 +406,16 @@ export default defineEventHandler(async (event) => {
         select
           md.id,
           bp.label as billing_period_label,
+          bp.charge_type::text as billing_period_charge_type,
+          md.origin::text as origin,
           md.flat_id,
           f.flat_number,
           b.name as block_name,
           md.due_date::text,
           md.total_amount::text,
           md.paid_amount::text,
+          coalesce(payment_summary.advance_applied_amount, 0)::text as advance_applied_amount,
+          coalesce(dg_credit.available_amount, 0)::text as available_dg_advance_amount,
           md.balance_amount::text,
           md.status::text,
           md.created_at::text,
@@ -411,6 +424,23 @@ export default defineEventHandler(async (event) => {
         inner join billing_periods bp on bp.id = md.billing_period_id
         inner join flats f on f.id = md.flat_id
         inner join blocks b on b.id = f.block_id
+        left join lateral (
+          select coalesce(sum(pa.allocated_amount), 0) as advance_applied_amount
+          from payment_allocations pa
+          inner join payments p on p.id = pa.payment_id
+          where pa.maintenance_due_id = md.id
+            and p.status = 'VERIFIED'
+            and p.mode = 'ADVANCE_CREDIT'
+        ) payment_summary on bp.charge_type = 'DG_SET'
+        left join lateral (
+          select coalesce(sum(rac.current_balance), 0) as available_amount
+          from resident_advance_credits rac
+          where rac.society_id = md.society_id
+            and rac.flat_id = md.flat_id
+            and rac.applicable_charge_type = 'DG_SET'
+            and rac.status = 'ACTIVE'
+            and rac.current_balance > 0
+        ) dg_credit on bp.charge_type = 'DG_SET'
         where md.society_id = $2
           and exists (
             select 1
@@ -530,6 +560,24 @@ export default defineEventHandler(async (event) => {
       `,
       [id, authMe.user.societyId],
     ),
+    pool.query<{ available_amount: string }>(
+      `
+        select coalesce(sum(rac.current_balance), 0)::text as available_amount
+        from resident_advance_credits rac
+        where rac.society_id = $2
+          and rac.applicable_charge_type = 'DG_SET'
+          and rac.status = 'ACTIVE'
+          and rac.current_balance > 0
+          and exists (
+            select 1
+            from flat_residents fr
+            where fr.user_id = $1
+              and fr.flat_id = rac.flat_id
+              and fr.is_active = true
+          )
+      `,
+      [id, authMe.user.societyId],
+    ),
     getResidentProfessionProfile(pool, authMe.user.societyId, id),
   ])
 
@@ -570,6 +618,7 @@ export default defineEventHandler(async (event) => {
     ownershipProofPath: row.ownership_proof_path,
     leaseAgreementPath: row.lease_agreement_path,
     preferredNotificationChannels: row.preferred_notification_channels,
+    availableDgAdvanceAmount: Number(dgAdvanceResult.rows[0]?.available_amount ?? 0),
     relationships: relationshipsResult.rows.map(mapRelationship),
     flatOccupants: flatOccupantsResult.rows.map(mapRelationship),
     dues: duesResult.rows.map(mapDue),

@@ -33,6 +33,9 @@ const DEFAULT_POLICY = {
   highValueThreshold: 10000,
   graceDays: 0,
   lateFeePerDay: 50,
+  dgLateFeeEnabled: false,
+  dgGraceDays: 0,
+  dgLateFeePerDay: 50,
 } satisfies SocietyProfile['settings']
 
 const route = useRoute()
