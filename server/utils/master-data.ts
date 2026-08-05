@@ -145,6 +145,11 @@ export const flatSchema = z.object({
   isActive: z.boolean().default(true),
 })
 
+export const nullableDateSchema = z.preprocess(
+  trimNullableText,
+  z.string().date().nullable().optional(),
+)
+
 export const residentRelationshipSchema = z
   .object({
     id: z.string().uuid().optional(),
@@ -154,11 +159,11 @@ export const residentRelationshipSchema = z
     isBillingContact: z.boolean().default(false),
     canLogin: z.boolean().default(true),
     isActive: z.boolean().default(true),
-    ownershipStartDate: z.string().date().nullable().optional(),
-    leaseStartDate: z.string().date().nullable().optional(),
-    leaseEndDate: z.string().date().nullable().optional(),
-    contractStartDate: z.string().date().nullable().optional(),
-    contractEndDate: z.string().date().nullable().optional(),
+    ownershipStartDate: nullableDateSchema,
+    leaseStartDate: nullableDateSchema,
+    leaseEndDate: nullableDateSchema,
+    contractStartDate: nullableDateSchema,
+    contractEndDate: nullableDateSchema,
     occupancyStatus: z.enum(occupancyStatuses).nullable().optional(),
     accessScope: z.enum(accessScopes).nullable().optional(),
     relationshipNote: z.string().trim().max(300).nullable().optional(),
@@ -192,6 +197,7 @@ export const residentRelationshipSchema = z
       }
     }
   })
+
 
 
 export const professionSchema = z.object({
@@ -644,3 +650,70 @@ export const validatePayload = <T>(
   schema: z.ZodType<T, z.ZodTypeDef, unknown>,
   value: unknown,
 ) => validateInput(schema, value)
+
+type PgError = Error & {
+  code?: string
+  constraint?: string
+}
+
+export const isPgError = (error: unknown): error is PgError =>
+  error instanceof Error && 'code' in error
+
+export const handlePgResidentError = (error: unknown): never => {
+  if (isPgError(error)) {
+    if (error.code === '23505') {
+      const constraint = error.constraint ?? ''
+      if (constraint.includes('one_primary_contact')) {
+        throw new AppError({
+          code: 'CONFLICT',
+          statusCode: 409,
+          message:
+            'This flat already has an active primary contact. Uncheck "Primary contact" for this resident or change the existing contact.',
+        })
+      }
+      if (constraint.includes('one_billing_contact')) {
+        throw new AppError({
+          code: 'CONFLICT',
+          statusCode: 409,
+          message:
+            'This flat already has an active billing contact. Uncheck "Billing contact" for this resident or change the existing contact.',
+        })
+      }
+      if (constraint.includes('one_active_tenant')) {
+        throw new AppError({
+          code: 'CONFLICT',
+          statusCode: 409,
+          message:
+            'This flat already has an active tenant. Please end or deactivate the existing tenant relationship first.',
+        })
+      }
+      if (constraint.includes('email')) {
+        throw new AppError({
+          code: 'CONFLICT',
+          statusCode: 409,
+          message: 'A resident with this email already exists in the society.',
+        })
+      }
+      throw new AppError({
+        code: 'CONFLICT',
+        statusCode: 409,
+        message: 'A duplicate resident or relationship record already exists.',
+      })
+    }
+
+    if (
+      error.code === '23514' &&
+      error.constraint === 'users_login_requires_auth_email'
+    ) {
+      throw new AppError({
+        code: 'VALIDATION_ERROR',
+        statusCode: 400,
+        message:
+          'A login-enabled resident must have a real email and auth account.',
+      })
+    }
+  }
+
+  throw error
+}
+

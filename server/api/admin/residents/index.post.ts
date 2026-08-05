@@ -15,7 +15,9 @@ import {
 } from '~/server/utils/invite-email'
 import {
   ensureResidentRelationshipsAreValid,
+  handlePgResidentError,
   residentSchema,
+  validatePayload,
   writeMasterAudit,
 } from '~/server/utils/master-data'
 import { upsertResidentProfessionProfile } from '~/server/utils/professions'
@@ -197,7 +199,7 @@ const insertInviteIfRequested = async ({
 export default defineEventHandler(async (event) => {
   const authMe = await requireRole(event, ['ADMIN', 'MANAGER'])
   const rawBody = await readJsonBody<Record<string, unknown>>(event)
-  const body = residentSchema.parse({ ...rawBody, role: 'RESIDENT' })
+  const body = validatePayload(residentSchema, { ...rawBody, role: 'RESIDENT' })
   ensureResidentRelationshipsAreValid(body)
   const pool = getDatabasePool()
   const client = await pool.connect()
@@ -431,7 +433,7 @@ export default defineEventHandler(async (event) => {
     if (!committed) {
       await client.query('rollback')
     }
-    throw error
+    handlePgResidentError(error)
   } finally {
     client.release()
   }

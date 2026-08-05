@@ -9,6 +9,7 @@ import { getDatabasePool } from '~/server/utils/database'
 import { AppError } from '~/server/utils/errors'
 import {
   ensureResidentRelationshipsAreValid,
+  handlePgResidentError,
   readUuidParam,
   residentSchema,
   writeMasterAudit,
@@ -353,29 +354,7 @@ export default defineEventHandler(async (event) => {
     return createApiSuccess(event, { id, updated: true })
   } catch (error) {
     await client.query('rollback')
-
-    if (isPgError(error) && error.code === '23505') {
-      throw new AppError({
-        code: 'CONFLICT',
-        statusCode: 409,
-        message: 'This email is already linked to another account.',
-      })
-    }
-
-    if (
-      isPgError(error) &&
-      error.code === '23514' &&
-      error.constraint === 'users_login_requires_auth_email'
-    ) {
-      throw new AppError({
-        code: 'VALIDATION_ERROR',
-        statusCode: 400,
-        message:
-          'A login-enabled resident must have a real email and auth account.',
-      })
-    }
-
-    throw error
+    handlePgResidentError(error)
   } finally {
     client.release()
   }

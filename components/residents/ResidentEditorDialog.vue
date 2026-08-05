@@ -355,15 +355,19 @@ const onRelationshipTypeChange = (relationship: ResidentRelationshipForm) => {
       relationship.occupancyStatus = 'TENANTED'
     }
     relationship.accessScope = 'TENANCY'
+    relationship.isPrimaryContact = false
+    relationship.isBillingContact = false
+  } else if (relationship.relationshipType === 'FAMILY_MEMBER') {
+    relationship.accessScope = 'HOUSEHOLD'
+    relationship.leaseStartDate = ''
+    relationship.leaseEndDate = ''
+    relationship.isPrimaryContact = false
+    relationship.isBillingContact = false
   } else if (relationship.relationshipType === 'OWNER') {
     if (relationship.occupancyStatus === 'TENANTED') {
       relationship.occupancyStatus = 'SELF_OCCUPIED'
     }
     relationship.accessScope = 'OWNERSHIP'
-    relationship.leaseStartDate = ''
-    relationship.leaseEndDate = ''
-  } else if (relationship.relationshipType === 'FAMILY_MEMBER') {
-    relationship.accessScope = 'HOUSEHOLD'
     relationship.leaseStartDate = ''
     relationship.leaseEndDate = ''
   }
@@ -1303,6 +1307,8 @@ const submit = async () => {
       await api(`/api/admin/residents/${savedResidentId}`, {
         method: 'PATCH',
         body: payload,
+        errorFallback:
+          'Unable to update resident. Please check the form details.',
       })
     } else {
       const response = await api<{ ok: true; data: ResidentSaveResponse }>(
@@ -1310,6 +1316,8 @@ const submit = async () => {
         {
           method: 'POST',
           body: payload,
+          errorFallback:
+            'Unable to create resident. Please check the form details.',
         },
       )
       savedResidentId = response.data.id
@@ -1354,6 +1362,18 @@ const submit = async () => {
     })
     emit('saved', { residentId: savedResidentId, created: createdResident })
     closeDialog()
+  } catch (error: unknown) {
+    const fetchError = error as {
+      data?: { data?: { fieldErrors?: Record<string, string[]> } }
+    }
+    const fieldErrors = fetchError?.data?.data?.fieldErrors
+    if (fieldErrors) {
+      for (const [key, msgs] of Object.entries(fieldErrors)) {
+        if (msgs?.[0]) {
+          formErrors[key] = msgs[0]
+        }
+      }
+    }
   } finally {
     saving.value = false
   }
