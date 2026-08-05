@@ -491,6 +491,7 @@ const clearAllProfessionProofSelections = () => {
 }
 
 const resetForm = () => {
+  clearErrors()
   clearAllResidentFileSelections()
   clearAllProfessionProofSelections()
   loadedResidentId.value = ''
@@ -1090,7 +1091,181 @@ const buildProfessionProfilePayload = () => {
   }
 }
 
+const formErrors = reactive<Record<string, string>>({})
+
+const clearErrors = () => {
+  Object.keys(formErrors).forEach((key) => delete formErrors[key])
+}
+
+const getFieldError = (path: string): string => formErrors[path] ?? ''
+
+const toDate = (val: string | null | undefined): Date | null => {
+  if (!val) return null
+  const d = new Date(val + 'T00:00:00')
+  return isNaN(d.getTime()) ? null : d
+}
+
+const toDateString = (val: unknown): string => {
+  if (!val) return ''
+  if (val instanceof Date) {
+    if (isNaN(val.getTime())) return ''
+    const y = val.getFullYear()
+    const m = String(val.getMonth() + 1).padStart(2, '0')
+    const d = String(val.getDate()).padStart(2, '0')
+    return `${y}-${m}-${d}`
+  }
+  if (typeof val === 'string') {
+    return val
+  }
+  return ''
+}
+
+const onRelationshipTypeChange = (relationship: ResidentRelationshipForm) => {
+  if (relationship.relationshipType === 'TENANT') {
+    if (relationship.occupancyStatus === 'SELF_OCCUPIED') {
+      relationship.occupancyStatus = 'TENANTED'
+    }
+    relationship.accessScope = 'TENANCY'
+  } else if (relationship.relationshipType === 'OWNER') {
+    if (relationship.occupancyStatus === 'TENANTED') {
+      relationship.occupancyStatus = 'SELF_OCCUPIED'
+    }
+    relationship.accessScope = 'OWNERSHIP'
+    relationship.leaseStartDate = ''
+    relationship.leaseEndDate = ''
+  } else if (relationship.relationshipType === 'FAMILY_MEMBER') {
+    relationship.accessScope = 'HOUSEHOLD'
+    relationship.leaseStartDate = ''
+    relationship.leaseEndDate = ''
+  }
+}
+
+const validateLocalForm = (): boolean => {
+  clearErrors()
+
+  if (!form.fullName.trim()) {
+    formErrors['fullName'] = 'Full name is required.'
+  }
+
+  if (!isEditing.value || form.canLogin) {
+    if (!form.email.trim()) {
+      formErrors['email'] = 'Email is required.'
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) {
+      formErrors['email'] = 'Enter a valid email address.'
+    }
+  } else if (
+    form.email.trim() &&
+    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())
+  ) {
+    formErrors['email'] = 'Enter a valid email address.'
+  }
+
+  if (!isEditing.value) {
+    if (!form.mobileNumber.trim()) {
+      formErrors['mobileNumber'] = 'Mobile number is required.'
+    } else if (
+      form.mobileNumber.trim().length < 8 ||
+      form.mobileNumber.trim().length > 20
+    ) {
+      formErrors['mobileNumber'] =
+        'Mobile number must be between 8 and 20 digits.'
+    }
+  }
+
+  if (
+    form.professionProfile.isPublic &&
+    !form.professionProfile.professionConsentSource
+  ) {
+    formErrors['professionConsentSource'] =
+      'Consent source is required when visible to members.'
+  }
+
+  if (form.professionProfile.sharePhone) {
+    if (!form.professionProfile.phoneSource) {
+      formErrors['phoneSource'] = 'Phone source is required.'
+    }
+    if (
+      form.professionProfile.phoneSource === 'CUSTOM' &&
+      !form.professionProfile.publicPhone.trim()
+    ) {
+      formErrors['publicPhone'] = 'Public phone is required.'
+    }
+  }
+
+  if (form.professionProfile.shareEmail) {
+    if (!form.professionProfile.emailSource) {
+      formErrors['emailSource'] = 'Email source is required.'
+    }
+    if (
+      form.professionProfile.emailSource === 'CUSTOM' &&
+      !form.professionProfile.publicEmail.trim()
+    ) {
+      formErrors['publicEmail'] = 'Public email is required.'
+    }
+  }
+
+  if (
+    (form.professionProfile.sharePhone || form.professionProfile.shareEmail) &&
+    !form.professionProfile.contactConsentSource
+  ) {
+    formErrors['contactConsentSource'] = 'Contact consent source is required.'
+  }
+
+  form.relationships.forEach((rel, index) => {
+    if (!rel.flatId) {
+      formErrors[`relationships.${index}.flatId`] = 'Flat is required.'
+    }
+    if (!rel.relationshipType) {
+      formErrors[`relationships.${index}.relationshipType`] =
+        'Relationship type is required.'
+    }
+    if (!rel.occupancyStatus) {
+      formErrors[`relationships.${index}.occupancyStatus`] =
+        'Occupancy status is required.'
+    }
+    if (!rel.accessScope) {
+      formErrors[`relationships.${index}.accessScope`] =
+        'Access scope is required.'
+    }
+    if (rel.relationshipType === 'TENANT') {
+      if (!rel.leaseStartDate) {
+        formErrors[`relationships.${index}.leaseStartDate`] =
+          'Lease start date is required for tenants.'
+      }
+      if (!rel.leaseEndDate) {
+        formErrors[`relationships.${index}.leaseEndDate`] =
+          'Lease end date is required for tenants.'
+      }
+      if (
+        rel.leaseStartDate &&
+        rel.leaseEndDate &&
+        rel.leaseEndDate < rel.leaseStartDate
+      ) {
+        formErrors[`relationships.${index}.leaseEndDate`] =
+          'Lease end date must be on or after lease start date.'
+      }
+    }
+  })
+
+  const isValid = Object.keys(formErrors).length === 0
+
+  if (!isValid) {
+    toast.add({
+      severity: 'warn',
+      summary: 'Validation error',
+      detail: 'Please fix all highlighted errors before saving.',
+      life: 6000,
+    })
+  }
+
+  return isValid
+}
+
 const submit = async () => {
+  if (!validateLocalForm()) {
+    return
+  }
+
   saving.value = true
 
   try {
@@ -1212,25 +1387,35 @@ onBeforeUnmount(() => {
       v-else
       class="admin-form-layout"
       style="padding: 1.5rem 0.5rem 0; max-height: 75vh; overflow-y: auto"
+      novalidate
       @submit.prevent="submit"
     >
       <section class="admin-form-subsection">
         <h3>Account</h3>
         <div class="admin-form-grid">
           <label>
-            <span>Full name</span>
-            <InputText v-model="form.fullName" required />
+            <span>Full name <span class="required-marker">*</span></span>
+            <InputText
+              v-model="form.fullName"
+              :invalid="Boolean(getFieldError('fullName'))"
+            />
+            <small v-if="getFieldError('fullName')" class="field-error">{{
+              getFieldError('fullName')
+            }}</small>
           </label>
           <label>
-            <span>Email</span>
+            <span>Email <span v-if="!isEditing || form.canLogin" class="required-marker">*</span></span>
             <InputText
               v-model="form.email"
               type="email"
-              :required="!isEditing || form.canLogin"
+              :invalid="Boolean(getFieldError('email'))"
             />
+            <small v-if="getFieldError('email')" class="field-error">{{
+              getFieldError('email')
+            }}</small>
           </label>
           <label>
-            <span>Notification preset</span>
+            <span>Notification preset <span class="required-marker">*</span></span>
             <Select
               v-model="form.preferredNotificationChannels"
               :options="[
@@ -1241,7 +1426,6 @@ onBeforeUnmount(() => {
                 'EMAIL',
                 'WHATSAPP',
               ]"
-              required
             />
           </label>
         </div>
@@ -1251,8 +1435,14 @@ onBeforeUnmount(() => {
         <h3>Identity and communication</h3>
         <div class="admin-form-grid">
           <label>
-            <span>Mobile</span>
-            <InputText v-model="form.mobileNumber" :required="!isEditing" />
+            <span>Mobile <span v-if="!isEditing" class="required-marker">*</span></span>
+            <InputText
+              v-model="form.mobileNumber"
+              :invalid="Boolean(getFieldError('mobileNumber'))"
+            />
+            <small v-if="getFieldError('mobileNumber')" class="field-error">{{
+              getFieldError('mobileNumber')
+            }}</small>
           </label>
           <label>
             <span>WhatsApp</span>
@@ -1388,7 +1578,7 @@ onBeforeUnmount(() => {
             />
           </label>
           <label>
-            <span>Profession consent source</span>
+            <span>Profession consent source <span v-if="form.professionProfile.isPublic" class="required-marker">*</span></span>
             <Select
               v-model="form.professionProfile.professionConsentSource"
               :options="consentSourceOptions"
@@ -1396,9 +1586,12 @@ onBeforeUnmount(() => {
               option-value="value"
               placeholder="Consent source"
               show-clear
-              :required="form.professionProfile.isPublic"
               :disabled="!form.professionProfile.professionId"
+              :invalid="Boolean(getFieldError('professionConsentSource'))"
             />
+            <small v-if="getFieldError('professionConsentSource')" class="field-error">{{
+              getFieldError('professionConsentSource')
+            }}</small>
           </label>
           <label>
             <span>Profession consent note</span>
@@ -1512,18 +1705,21 @@ onBeforeUnmount(() => {
           style="margin-top: 1rem"
         >
           <label v-if="form.professionProfile.sharePhone">
-            <span>Phone source</span>
+            <span>Phone source <span class="required-marker">*</span></span>
             <Select
               v-model="form.professionProfile.phoneSource"
               :options="phoneSourceOptions"
               option-label="label"
               option-value="value"
               placeholder="Phone source"
-              required
+              :invalid="Boolean(getFieldError('phoneSource'))"
             />
+            <small v-if="getFieldError('phoneSource')" class="field-error">{{
+              getFieldError('phoneSource')
+            }}</small>
           </label>
           <label v-if="form.professionProfile.sharePhone">
-            <span>Public phone</span>
+            <span>Public phone <span v-if="form.professionProfile.phoneSource === 'CUSTOM'" class="required-marker">*</span></span>
             <InputText
               v-model="form.professionProfile.publicPhone"
               :placeholder="
@@ -1534,22 +1730,28 @@ onBeforeUnmount(() => {
               :disabled="
                 form.professionProfile.phoneSource === 'REGISTERED_MOBILE'
               "
-              :required="form.professionProfile.phoneSource === 'CUSTOM'"
+              :invalid="Boolean(getFieldError('publicPhone'))"
             />
+            <small v-if="getFieldError('publicPhone')" class="field-error">{{
+              getFieldError('publicPhone')
+            }}</small>
           </label>
           <label v-if="form.professionProfile.shareEmail">
-            <span>Email source</span>
+            <span>Email source <span class="required-marker">*</span></span>
             <Select
               v-model="form.professionProfile.emailSource"
               :options="emailSourceOptions"
               option-label="label"
               option-value="value"
               placeholder="Email source"
-              required
+              :invalid="Boolean(getFieldError('emailSource'))"
             />
+            <small v-if="getFieldError('emailSource')" class="field-error">{{
+              getFieldError('emailSource')
+            }}</small>
           </label>
           <label v-if="form.professionProfile.shareEmail">
-            <span>Public email</span>
+            <span>Public email <span v-if="form.professionProfile.emailSource === 'CUSTOM'" class="required-marker">*</span></span>
             <InputText
               v-model="form.professionProfile.publicEmail"
               type="email"
@@ -1561,11 +1763,14 @@ onBeforeUnmount(() => {
               :disabled="
                 form.professionProfile.emailSource === 'REGISTERED_EMAIL'
               "
-              :required="form.professionProfile.emailSource === 'CUSTOM'"
+              :invalid="Boolean(getFieldError('publicEmail'))"
             />
+            <small v-if="getFieldError('publicEmail')" class="field-error">{{
+              getFieldError('publicEmail')
+            }}</small>
           </label>
           <label>
-            <span>Contact consent source</span>
+            <span>Contact consent source <span v-if="form.professionProfile.sharePhone || form.professionProfile.shareEmail" class="required-marker">*</span></span>
             <Select
               v-model="form.professionProfile.contactConsentSource"
               :options="consentSourceOptions"
@@ -1573,11 +1778,11 @@ onBeforeUnmount(() => {
               option-value="value"
               placeholder="Consent source"
               show-clear
-              :required="
-                form.professionProfile.sharePhone ||
-                form.professionProfile.shareEmail
-              "
+              :invalid="Boolean(getFieldError('contactConsentSource'))"
             />
+            <small v-if="getFieldError('contactConsentSource')" class="field-error">{{
+              getFieldError('contactConsentSource')
+            }}</small>
           </label>
           <label>
             <span>Contact consent note</span>
@@ -1680,59 +1885,97 @@ onBeforeUnmount(() => {
         >
           <div class="admin-form-grid">
             <label>
-              <span>Flat</span>
+              <span>Flat <span class="required-marker">*</span></span>
               <Select
                 v-model="relationship.flatId"
                 :options="flatOptions"
                 option-label="label"
                 option-value="value"
-                required
+                :invalid="Boolean(getFieldError(`relationships.${index}.flatId`))"
               />
+              <small v-if="getFieldError(`relationships.${index}.flatId`)" class="field-error">{{
+                getFieldError(`relationships.${index}.flatId`)
+              }}</small>
             </label>
             <label>
-              <span>Relationship type</span>
+              <span>Relationship type <span class="required-marker">*</span></span>
               <Select
                 v-model="relationship.relationshipType"
                 :options="['OWNER', 'TENANT', 'FAMILY_MEMBER']"
-                required
+                :invalid="Boolean(getFieldError(`relationships.${index}.relationshipType`))"
+                @change="onRelationshipTypeChange(relationship)"
               />
+              <small v-if="getFieldError(`relationships.${index}.relationshipType`)" class="field-error">{{
+                getFieldError(`relationships.${index}.relationshipType`)
+              }}</small>
             </label>
             <label>
-              <span>Occupancy status</span>
+              <span>Occupancy status <span class="required-marker">*</span></span>
               <Select
                 v-model="relationship.occupancyStatus"
                 :options="['SELF_OCCUPIED', 'TENANTED', 'VACANT']"
-                required
+                :invalid="Boolean(getFieldError(`relationships.${index}.occupancyStatus`))"
               />
+              <small v-if="getFieldError(`relationships.${index}.occupancyStatus`)" class="field-error">{{
+                getFieldError(`relationships.${index}.occupancyStatus`)
+              }}</small>
             </label>
             <label>
-              <span>Access scope</span>
+              <span>Access scope <span class="required-marker">*</span></span>
               <Select
                 v-model="relationship.accessScope"
                 :options="['OWNERSHIP', 'TENANCY', 'HOUSEHOLD']"
-                required
+                :invalid="Boolean(getFieldError(`relationships.${index}.accessScope`))"
               />
+              <small v-if="getFieldError(`relationships.${index}.accessScope`)" class="field-error">{{
+                getFieldError(`relationships.${index}.accessScope`)
+              }}</small>
             </label>
             <label>
               <span>Ownership start</span>
-              <InputText
-                v-model="relationship.ownershipStartDate"
+              <DatePicker
+                :model-value="toDate(relationship.ownershipStartDate)"
+                date-format="yy-mm-dd"
                 placeholder="YYYY-MM-DD"
+                show-icon
+                fluid
+                show-clear
+                @update:model-value="(val) => (relationship.ownershipStartDate = toDateString(val))"
               />
             </label>
             <label>
-              <span>Lease start</span>
-              <InputText
-                v-model="relationship.leaseStartDate"
+              <span>Lease start <span v-if="relationship.relationshipType === 'TENANT'" class="required-marker">*</span></span>
+              <DatePicker
+                :model-value="toDate(relationship.leaseStartDate)"
+                date-format="yy-mm-dd"
                 placeholder="YYYY-MM-DD"
+                show-icon
+                fluid
+                show-clear
+                :disabled="relationship.relationshipType !== 'TENANT'"
+                :invalid="Boolean(getFieldError(`relationships.${index}.leaseStartDate`))"
+                @update:model-value="(val) => (relationship.leaseStartDate = toDateString(val))"
               />
+              <small v-if="getFieldError(`relationships.${index}.leaseStartDate`)" class="field-error">{{
+                getFieldError(`relationships.${index}.leaseStartDate`)
+              }}</small>
             </label>
             <label>
-              <span>Lease end</span>
-              <InputText
-                v-model="relationship.leaseEndDate"
+              <span>Lease end <span v-if="relationship.relationshipType === 'TENANT'" class="required-marker">*</span></span>
+              <DatePicker
+                :model-value="toDate(relationship.leaseEndDate)"
+                date-format="yy-mm-dd"
                 placeholder="YYYY-MM-DD"
+                show-icon
+                fluid
+                show-clear
+                :disabled="relationship.relationshipType !== 'TENANT'"
+                :invalid="Boolean(getFieldError(`relationships.${index}.leaseEndDate`))"
+                @update:model-value="(val) => (relationship.leaseEndDate = toDateString(val))"
               />
+              <small v-if="getFieldError(`relationships.${index}.leaseEndDate`)" class="field-error">{{
+                getFieldError(`relationships.${index}.leaseEndDate`)
+              }}</small>
             </label>
             <label class="admin-form-grid__full">
               <span>Relationship note</span>
@@ -1787,19 +2030,17 @@ onBeforeUnmount(() => {
             <InputText v-model="form.governmentIdNumber" />
           </label>
           <label>
-            <span>KYC status</span>
+            <span>KYC status <span class="required-marker">*</span></span>
             <Select
               v-model="form.kycStatus"
               :options="['PENDING', 'VERIFIED', 'REJECTED', 'NOT_REQUIRED']"
-              required
             />
           </label>
           <label>
-            <span>Police verification</span>
+            <span>Police verification <span class="required-marker">*</span></span>
             <Select
               v-model="form.policeVerificationStatus"
               :options="['PENDING', 'VERIFIED', 'REJECTED', 'NOT_REQUIRED']"
-              required
             />
           </label>
           <div class="admin-form-grid__full resident-file-list">
@@ -1889,7 +2130,6 @@ onBeforeUnmount(() => {
             <span>Send onboarding invite</span>
             <ToggleSwitch v-model="form.sendInvite" />
           </label>
-        </div>
       </section>
 
       <div

@@ -145,23 +145,54 @@ export const flatSchema = z.object({
   isActive: z.boolean().default(true),
 })
 
-export const residentRelationshipSchema = z.object({
-  id: z.string().uuid().optional(),
-  flatId: z.string().uuid(),
-  relationshipType: z.enum(relationshipTypes),
-  isPrimaryContact: z.boolean().default(false),
-  isBillingContact: z.boolean().default(false),
-  canLogin: z.boolean().default(true),
-  isActive: z.boolean().default(true),
-  ownershipStartDate: z.string().date().nullable().optional(),
-  leaseStartDate: z.string().date().nullable().optional(),
-  leaseEndDate: z.string().date().nullable().optional(),
-  contractStartDate: z.string().date().nullable().optional(),
-  contractEndDate: z.string().date().nullable().optional(),
-  occupancyStatus: z.enum(occupancyStatuses).nullable().optional(),
-  accessScope: z.enum(accessScopes).nullable().optional(),
-  relationshipNote: z.string().trim().max(300).nullable().optional(),
-})
+export const residentRelationshipSchema = z
+  .object({
+    id: z.string().uuid().optional(),
+    flatId: z.string().uuid(),
+    relationshipType: z.enum(relationshipTypes),
+    isPrimaryContact: z.boolean().default(false),
+    isBillingContact: z.boolean().default(false),
+    canLogin: z.boolean().default(true),
+    isActive: z.boolean().default(true),
+    ownershipStartDate: z.string().date().nullable().optional(),
+    leaseStartDate: z.string().date().nullable().optional(),
+    leaseEndDate: z.string().date().nullable().optional(),
+    contractStartDate: z.string().date().nullable().optional(),
+    contractEndDate: z.string().date().nullable().optional(),
+    occupancyStatus: z.enum(occupancyStatuses).nullable().optional(),
+    accessScope: z.enum(accessScopes).nullable().optional(),
+    relationshipNote: z.string().trim().max(300).nullable().optional(),
+  })
+  .superRefine((relationship, ctx) => {
+    if (relationship.relationshipType === 'TENANT') {
+      if (!relationship.leaseStartDate) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['leaseStartDate'],
+          message: 'Lease start date is required for tenant relationships.',
+        })
+      }
+      if (!relationship.leaseEndDate) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['leaseEndDate'],
+          message: 'Lease end date is required for tenant relationships.',
+        })
+      }
+      if (
+        relationship.leaseStartDate &&
+        relationship.leaseEndDate &&
+        relationship.leaseEndDate < relationship.leaseStartDate
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['leaseEndDate'],
+          message: 'Lease end date must be on or after lease start date.',
+        })
+      }
+    }
+  })
+
 
 export const professionSchema = z.object({
   name: z.string().trim().min(2).max(120),
@@ -474,6 +505,26 @@ export const ensureResidentRelationshipsAreValid = (input: {
   const activeTenantCounts = new Map<string, number>()
 
   for (const relationship of input.relationships) {
+    if (relationship.relationshipType === 'TENANT') {
+      if (!relationship.leaseStartDate || !relationship.leaseEndDate) {
+        throw new AppError({
+          code: 'VALIDATION_ERROR',
+          statusCode: 400,
+          message: 'Lease start date and lease end date are required for tenant relationships.',
+        })
+      }
+      if (relationship.leaseEndDate < relationship.leaseStartDate) {
+        throw new AppError({
+          code: 'VALIDATION_ERROR',
+          statusCode: 400,
+          message: 'Lease end date must be on or after lease start date.',
+        })
+      }
+    } else {
+      relationship.leaseStartDate = null
+      relationship.leaseEndDate = null
+    }
+
     if (relationship.isPrimaryContact && relationship.isActive) {
       primaryContactCounts.set(
         relationship.flatId,
