@@ -2130,6 +2130,7 @@ onBeforeUnmount(() => {
             <span>Send onboarding invite</span>
             <ToggleSwitch v-model="form.sendInvite" />
           </label>
+        </div>
       </section>
 
       <div
