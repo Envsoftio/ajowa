@@ -166,6 +166,7 @@ const combinedDuesSql = `
       limit 1
     ) u on true
     where md.society_id = $1
+      and md.origin = 'GENERATED_BILL'
 
     union all
 
@@ -559,12 +560,15 @@ const enrichGeneratedDgRows = async (
   )
 
   return items.map((item) => {
-    if (!generatedDgDueIdSet.has(item.id)) return item
-
-    const previous = previousByDueId.get(item.id) ?? { amount: 0, count: 0 }
+    const previous = previousByDueId.get(item.id) ?? {
+      amount: 0,
+      initialAmount: 0,
+      count: 0,
+    }
     return {
       ...item,
-      previousDgOutstandingAmount: previous.amount,
+      previousDgOutstandingAmount: previous.initialAmount,
+      previousDgBalanceAmount: previous.amount,
       previousDgOutstandingCount: previous.count,
     }
   })

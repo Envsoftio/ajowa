@@ -15,6 +15,9 @@ export type DgDueStatementSummary = {
   currentChargeAmount: number
   currentBalanceAmount: number
   previousOutstandingAmount: number
+  previousBalanceAmount: number
+  combinedTotalAmount: number
+  combinedPaidAmount: number
   combinedPayableAmount: number
   advanceAppliedAmount: number
   availableAdvanceAmount: number
@@ -47,21 +50,46 @@ export const buildDgBalanceSummary = (
 }
 
 export const buildDgDueStatementSummary = (
-  input: Omit<DgDueStatementSummary, 'combinedPayableAmount'>,
+  input: Omit<
+    DgDueStatementSummary,
+    'combinedTotalAmount' | 'combinedPaidAmount' | 'combinedPayableAmount'
+  > & { previousBalanceAmount?: number },
 ): DgDueStatementSummary => {
   const currentChargeAmount = money(Math.max(0, input.currentChargeAmount))
   const currentBalanceAmount = money(Math.max(0, input.currentBalanceAmount))
   const previousOutstandingAmount = money(
     Math.max(0, input.previousOutstandingAmount),
   )
+  const previousBalanceAmount = money(
+    Math.max(
+      0,
+      input.previousBalanceAmount ?? previousOutstandingAmount,
+    ),
+  )
+
+  const currentPaidAmount = money(
+    Math.max(0, currentChargeAmount - currentBalanceAmount),
+  )
+  const previousPaidAmount = money(
+    Math.max(0, previousOutstandingAmount - previousBalanceAmount),
+  )
+
+  const combinedTotalAmount = money(
+    currentChargeAmount + previousOutstandingAmount,
+  )
+  const combinedPaidAmount = money(currentPaidAmount + previousPaidAmount)
+  const combinedPayableAmount = money(
+    currentBalanceAmount + previousBalanceAmount,
+  )
 
   return {
     currentChargeAmount,
     currentBalanceAmount,
     previousOutstandingAmount,
-    combinedPayableAmount: money(
-      currentBalanceAmount + previousOutstandingAmount,
-    ),
+    previousBalanceAmount,
+    combinedTotalAmount,
+    combinedPaidAmount,
+    combinedPayableAmount,
     advanceAppliedAmount: money(Math.max(0, input.advanceAppliedAmount)),
     availableAdvanceAmount: money(Math.max(0, input.availableAdvanceAmount)),
   }

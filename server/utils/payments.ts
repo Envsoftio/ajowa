@@ -447,7 +447,19 @@ const selectAllocatableDues = async (
       })
     }
     params.push(input.selectedDueIds)
-    filters.push(`md.id = any($${params.length}::uuid[])`)
+    filters.push(`(
+      md.id = any($${params.length}::uuid[])
+      or exists (
+        select 1
+        from maintenance_dues target_md
+        inner join billing_periods target_bp on target_bp.id = target_md.billing_period_id
+        where target_md.id = any($${params.length}::uuid[])
+          and target_bp.charge_type = 'DG_SET'
+          and bp.charge_type = 'DG_SET'
+          and md.flat_id = target_md.flat_id
+          and bp.start_date <= target_bp.start_date
+      )
+    )`)
   }
 
   const limitClause =

@@ -298,12 +298,26 @@ const canSendBill = (due: MaintenanceDue) =>
   !due.isAdvanceCoverageRow &&
   !due.isCamAdvanceCovered && due.status !== 'CANCELLED'
 
-const canRecordPayment = (due: MaintenanceDue) =>
-  canManageBilling.value &&
-  due.balanceAmount > 0 &&
-  !due.isAdvanceCoverageRow &&
-  !due.isCamAdvanceCovered &&
-  !['PAID', 'WAIVED', 'CANCELLED'].includes(due.status)
+const canRecordPayment = (due: MaintenanceDue) => {
+  if (
+    !canManageBilling.value ||
+    due.isAdvanceCoverageRow ||
+    due.isCamAdvanceCovered ||
+    ['PAID', 'WAIVED', 'CANCELLED'].includes(due.status)
+  ) {
+    return false
+  }
+
+  if (due.billingPeriodChargeType === 'DG_SET') {
+    const previousOutstanding = Number(due.previousDgOutstandingAmount ?? 0)
+    const combinedPayable = Math.max(0, due.balanceAmount + previousOutstanding)
+    return combinedPayable > 0
+  }
+
+  return due.balanceAmount > 0
+}
+
+
 
 const canWaiveDue = (due: MaintenanceDue) =>
   canManageDues.value && !due.isAdvanceCoverageRow && !due.isCamAdvanceCovered && !['PAID', 'CANCELLED'].includes(due.status)
@@ -327,15 +341,24 @@ const canEditDue = (due: MaintenanceDue) =>
   !due.isCamAdvanceCovered &&
   !['PAID', 'WAIVED', 'CANCELLED'].includes(due.status)
 
-const getRecordPaymentRoute = (due: MaintenanceDue) => ({
-  path: '/admin/payments/new',
-  query: {
-    flatId: due.flatId,
-    dueId: due.id,
-    billingPeriodId: due.billingPeriodId,
-    amount: String(due.balanceAmount),
-  },
-})
+const getRecordPaymentRoute = (due: MaintenanceDue) => {
+  const isDg = due.billingPeriodChargeType === 'DG_SET'
+  const previousOutstanding = isDg
+    ? Number(due.previousDgOutstandingAmount ?? 0)
+    : 0
+  const combinedPayable = Math.max(0, due.balanceAmount + previousOutstanding)
+
+  return {
+    path: '/admin/payments/new',
+    query: {
+      flatId: due.flatId,
+      dueId: due.id,
+      billingPeriodId: due.billingPeriodId,
+      amount: String(isDg ? combinedPayable : due.balanceAmount),
+      isDgCombined: isDg && previousOutstanding > 0 ? 'true' : undefined,
+    },
+  }
+}
 
 const isCamDue = (due: MaintenanceDue) => due.billingPeriodChargeType === 'CAM'
 const isDgDue = (due: MaintenanceDue) => due.billingPeriodChargeType === 'DG_SET'
@@ -346,13 +369,16 @@ const getDgStatementSummary = (due: MaintenanceDue) =>
     currentChargeAmount: due.baseAmount,
     currentBalanceAmount: due.balanceAmount,
     previousOutstandingAmount: Number(due.previousDgOutstandingAmount ?? 0),
+    previousBalanceAmount: Number(
+      due.previousDgBalanceAmount ?? due.previousDgOutstandingAmount ?? 0,
+    ),
     advanceAppliedAmount: Number(due.advanceAppliedAmount ?? 0),
     availableAdvanceAmount: Number(due.availableDgAdvanceAmount ?? 0),
   })
 const previousDgOutstandingNote = (due: MaintenanceDue) => {
   const count = Number(due.previousDgOutstandingCount ?? 0)
   if (count <= 0) return 'No earlier DG due remains outstanding.'
-  return `From ${count} earlier DG due${count === 1 ? '' : 's'}; record its payment on the original DG due row. It is not copied into this bill.`
+  return `Includes ${count} earlier unpaid DG due${count === 1 ? '' : 's'}. Recording payment from this bill pays prior DG dues first.`
 }
 const isCoverageRow = (due: MaintenanceDue) => Boolean(due.isAdvanceCoverageRow)
 const billTypeLabel = (due: MaintenanceDue) => {
@@ -449,8 +475,17 @@ const getRecordPaymentTitle = (due: MaintenanceDue) => {
   if (isCoverageRow(due))
     return 'No payment needed. This is a CAM coverage marker, not a payable due.'
   if (due.isCamAdvanceCovered) return 'No payment needed. CAM advance covers this period.'
-  if (due.balanceAmount <= 0) return 'No balance pending.'
-  if (['PAID', 'WAIVED', 'CANCELLED'].includes(due.status)) return 'Payment is unavailable for this status.'
+
+  const isDg = due.billingPeriodChargeType === 'DG_SET'
+  const previousOutstanding = isDg
+    ? Number(due.previousDgOutstandingAmount ?? 0)
+    : 0
+  const combinedPayable = Math.max(0, due.balanceAmount + previousOutstanding)
+
+  if (combinedPayable <= 0 || due.status === 'PAID') {
+    return 'No balance pending. Payment is already recorded.'
+  }
+  if (['WAIVED', 'CANCELLED'].includes(due.status)) return 'Payment is unavailable for this status.'
   return 'Record payment'
 }
 
@@ -1761,12 +1796,16 @@ watch(
                   <dd>{{ formatDgMoney(getDgStatementSummary(row).currentChargeAmount) }}</dd>
                 </div>
                 <div>
-                  <dt>Current DG remaining</dt>
-                  <dd>{{ formatDgMoney(getDgStatementSummary(row).currentBalanceAmount) }}</dd>
-                </div>
-                <div>
                   <dt>Previous DG outstanding</dt>
                   <dd>{{ formatDgMoney(getDgStatementSummary(row).previousOutstandingAmount) }}</dd>
+                </div>
+                <div>
+                  <dt>Combined DG total</dt>
+                  <dd>{{ formatDgMoney(getDgStatementSummary(row).combinedTotalAmount) }}</dd>
+                </div>
+                <div>
+                  <dt>Combined DG paid</dt>
+                  <dd>{{ formatDgMoney(getDgStatementSummary(row).combinedPaidAmount) }}</dd>
                 </div>
                 <div class="billing-dg-statement__total">
                   <dt>Combined DG payable</dt>
@@ -1941,12 +1980,16 @@ watch(
                 <dd>{{ formatDgMoney(getDgStatementSummary(due).currentChargeAmount) }}</dd>
               </div>
               <div>
-                <dt>Current DG remaining</dt>
-                <dd>{{ formatDgMoney(getDgStatementSummary(due).currentBalanceAmount) }}</dd>
-              </div>
-              <div>
                 <dt>Previous DG outstanding</dt>
                 <dd>{{ formatDgMoney(getDgStatementSummary(due).previousOutstandingAmount) }}</dd>
+              </div>
+              <div>
+                <dt>Combined DG total</dt>
+                <dd>{{ formatDgMoney(getDgStatementSummary(due).combinedTotalAmount) }}</dd>
+              </div>
+              <div>
+                <dt>Combined DG paid</dt>
+                <dd>{{ formatDgMoney(getDgStatementSummary(due).combinedPaidAmount) }}</dd>
               </div>
               <div class="billing-dg-statement__total">
                 <dt>Combined DG payable</dt>
@@ -2096,9 +2139,19 @@ watch(
             </template>
           </Column>
         </AppDataTable>
-        <div class="billing-total-line">
-          <span>Computed balance</span>
-          <strong>{{ formatMoney(selectedDue.balanceAmount) }}</strong>
+        <div class="billing-generation-summary">
+          <div>
+            <span>Total billed</span>
+            <strong>{{ formatMoney(selectedDue.totalAmount) }}</strong>
+          </div>
+          <div>
+            <span>Amount paid</span>
+            <strong>{{ formatMoney(selectedDue.paidAmount) }}</strong>
+          </div>
+          <div>
+            <span>Remaining balance</span>
+            <strong>{{ formatMoney(selectedDue.balanceAmount) }}</strong>
+          </div>
         </div>
       </div>
     </Dialog>

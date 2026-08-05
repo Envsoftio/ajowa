@@ -23,6 +23,7 @@ type PreviousDgDueCandidateRow = {
 
 export type PreviousDgOutstandingSummary = {
   amount: number
+  initialAmount: number
   count: number
 }
 
@@ -73,11 +74,16 @@ export const buildPreviousDgOutstandingByDueId = (
       computedBalances.set(row.prior_due_id, priorBalance)
     }
 
-    if (priorBalance <= 0) continue
+    const priorBase = roundDgMoney(Number(row.prior_base_amount))
 
-    const current = summaries.get(row.current_due_id) ?? { amount: 0, count: 0 }
+    const current = summaries.get(row.current_due_id) ?? {
+      amount: 0,
+      initialAmount: 0,
+      count: 0,
+    }
     summaries.set(row.current_due_id, {
       amount: roundDgMoney(current.amount + priorBalance),
+      initialAmount: roundDgMoney(current.initialAmount + priorBase),
       count: current.count + 1,
     })
   }
@@ -127,7 +133,7 @@ export const getPreviousDgOutstandingByDueId = async (
         and current_md.origin = 'GENERATED_BILL'
         and prior_bp.charge_type = 'DG_SET'
         and prior_bp.start_date < current_bp.start_date
-        and prior_md.status not in ('PAID', 'WAIVED', 'CANCELLED')
+        and prior_md.status <> 'CANCELLED'
       order by current_md.id, prior_bp.start_date, prior_md.id
     `,
     [societyId, uniqueDueIds],

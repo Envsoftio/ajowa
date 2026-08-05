@@ -304,10 +304,21 @@ const autoDepositAccountId = computed(() => {
 
 const openDues = computed(() => duesData.value?.data.items ?? [])
 const dueOptions = computed(() =>
-  openDues.value.map((due) => ({
-    label: `${due.billingPeriodLabel} · ${formatMoney(due.balanceAmount)} balance`,
-    value: due.id,
-  })),
+  openDues.value.map((due) => {
+    const isDg = due.billingPeriodChargeType === 'DG_SET'
+    const prevOutstanding = isDg
+      ? Number(due.previousDgOutstandingAmount ?? 0)
+      : 0
+    const combinedPayable = Math.max(0, due.balanceAmount + prevOutstanding)
+    const labelText =
+      isDg && prevOutstanding > 0
+        ? `${due.billingPeriodLabel} · ${formatMoney(combinedPayable)} combined payable (Current: ${formatMoney(due.balanceAmount)}, Prior: ${formatMoney(prevOutstanding)})`
+        : `${due.billingPeriodLabel} · ${formatMoney(due.balanceAmount)} balance`
+    return {
+      label: labelText,
+      value: due.id,
+    }
+  }),
 )
 
 const routeDuePrefillApplied = ref(false)
@@ -322,13 +333,32 @@ const applyRouteDuePrefill = () => {
       : due.billingPeriodId === initialBillingPeriodId,
   )
 
-  if (!matchingDue) return
+  if (!matchingDue) {
+    routeDuePrefillApplied.value = true
+    return
+  }
 
   form.allocationMode = 'SELECTED_PERIODS'
-  form.selectedDueIds = [matchingDue.id]
-  if (!form.amount) {
-    form.amount = String(matchingDue.balanceAmount)
+
+  if (matchingDue.billingPeriodChargeType === 'DG_SET') {
+    const openDgDues = openDues.value.filter(
+      (due) => due.billingPeriodChargeType === 'DG_SET' && due.balanceAmount > 0,
+    )
+    form.selectedDueIds = openDgDues.map((due) => due.id)
+    const combinedPayable = openDgDues.reduce(
+      (sum, due) => sum + Number(due.balanceAmount),
+      0,
+    )
+    if (combinedPayable > 0 && (!form.amount || route.query.isDgCombined === 'true')) {
+      form.amount = String(combinedPayable)
+    }
+  } else {
+    form.selectedDueIds = [matchingDue.id]
+    if (matchingDue.balanceAmount > 0 && !form.amount) {
+      form.amount = String(matchingDue.balanceAmount)
+    }
   }
+
   routeDuePrefillApplied.value = true
 }
 
@@ -790,6 +820,9 @@ const resetForm = () => {
               <small v-if="fieldError('account')" class="field-error">{{ fieldError('account') }}</small>
             </label>
           </div>
+          <Message v-if="initialDueId && routeDuePrefillApplied && !form.selectedDueIds.length" severity="info">
+            This billing period is already fully paid (Receipt registered). No outstanding balance remains for this bill.
+          </Message>
           <Message v-if="multiMonthPartialDue" severity="info">
             {{ multiMonthPartialDue.billingPeriodLabel }} is a
             {{ getDueMonthSpan(multiMonthPartialDue) }}-month CAM bill.

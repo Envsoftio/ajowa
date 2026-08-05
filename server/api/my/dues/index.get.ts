@@ -150,6 +150,7 @@ export default defineEventHandler(async (event) => {
         ) dg_credit on bp.charge_type = 'DG_SET'
         where md.society_id = $1
           and md.flat_id = any($3::uuid[])
+          and md.origin = 'GENERATED_BILL'
 
         union all
 

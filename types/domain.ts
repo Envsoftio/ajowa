@@ -905,6 +905,7 @@ export type MaintenanceDue = AuditFields & {
   advanceAppliedAmount?: number
   availableDgAdvanceAmount?: number
   previousDgOutstandingAmount?: number
+  previousDgBalanceAmount?: number
   previousDgOutstandingCount?: number
   totalAmount: number
   balanceAmount: number
