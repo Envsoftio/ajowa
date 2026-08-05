@@ -320,6 +320,177 @@ const defaultProfessionProfile = (
   ...overrides,
 })
 
+const formErrors = reactive<Record<string, string>>({})
+
+const clearErrors = () => {
+  Object.keys(formErrors).forEach((key) => delete formErrors[key])
+}
+
+const getFieldError = (path: string): string => formErrors[path] ?? ''
+
+const toDate = (val: string | null | undefined): Date | null => {
+  if (!val) return null
+  const d = new Date(val + 'T00:00:00')
+  return isNaN(d.getTime()) ? null : d
+}
+
+const toDateString = (val: unknown): string => {
+  if (!val) return ''
+  if (val instanceof Date) {
+    if (isNaN(val.getTime())) return ''
+    const y = val.getFullYear()
+    const m = String(val.getMonth() + 1).padStart(2, '0')
+    const d = String(val.getDate()).padStart(2, '0')
+    return `${y}-${m}-${d}`
+  }
+  if (typeof val === 'string') {
+    return val
+  }
+  return ''
+}
+
+const onRelationshipTypeChange = (relationship: ResidentRelationshipForm) => {
+  if (relationship.relationshipType === 'TENANT') {
+    if (relationship.occupancyStatus === 'SELF_OCCUPIED') {
+      relationship.occupancyStatus = 'TENANTED'
+    }
+    relationship.accessScope = 'TENANCY'
+  } else if (relationship.relationshipType === 'OWNER') {
+    if (relationship.occupancyStatus === 'TENANTED') {
+      relationship.occupancyStatus = 'SELF_OCCUPIED'
+    }
+    relationship.accessScope = 'OWNERSHIP'
+    relationship.leaseStartDate = ''
+    relationship.leaseEndDate = ''
+  } else if (relationship.relationshipType === 'FAMILY_MEMBER') {
+    relationship.accessScope = 'HOUSEHOLD'
+    relationship.leaseStartDate = ''
+    relationship.leaseEndDate = ''
+  }
+}
+
+const validateLocalForm = (): boolean => {
+  clearErrors()
+
+  if (!form.fullName.trim()) {
+    formErrors['fullName'] = 'Full name is required.'
+  }
+
+  if (!isEditing.value || form.canLogin) {
+    if (!form.email.trim()) {
+      formErrors['email'] = 'Email is required.'
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) {
+      formErrors['email'] = 'Enter a valid email address.'
+    }
+  } else if (
+    form.email.trim() &&
+    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())
+  ) {
+    formErrors['email'] = 'Enter a valid email address.'
+  }
+
+  if (!isEditing.value) {
+    if (!form.mobileNumber.trim()) {
+      formErrors['mobileNumber'] = 'Mobile number is required.'
+    } else if (
+      form.mobileNumber.trim().length < 8 ||
+      form.mobileNumber.trim().length > 20
+    ) {
+      formErrors['mobileNumber'] =
+        'Mobile number must be between 8 and 20 digits.'
+    }
+  }
+
+  if (
+    form.professionProfile.isPublic &&
+    !form.professionProfile.professionConsentSource
+  ) {
+    formErrors['professionConsentSource'] =
+      'Consent source is required when visible to members.'
+  }
+
+  if (form.professionProfile.sharePhone) {
+    if (!form.professionProfile.phoneSource) {
+      formErrors['phoneSource'] = 'Phone source is required.'
+    }
+    if (
+      form.professionProfile.phoneSource === 'CUSTOM' &&
+      !form.professionProfile.publicPhone.trim()
+    ) {
+      formErrors['publicPhone'] = 'Public phone is required.'
+    }
+  }
+
+  if (form.professionProfile.shareEmail) {
+    if (!form.professionProfile.emailSource) {
+      formErrors['emailSource'] = 'Email source is required.'
+    }
+    if (
+      form.professionProfile.emailSource === 'CUSTOM' &&
+      !form.professionProfile.publicEmail.trim()
+    ) {
+      formErrors['publicEmail'] = 'Public email is required.'
+    }
+  }
+
+  if (
+    (form.professionProfile.sharePhone || form.professionProfile.shareEmail) &&
+    !form.professionProfile.contactConsentSource
+  ) {
+    formErrors['contactConsentSource'] = 'Contact consent source is required.'
+  }
+
+  form.relationships.forEach((rel, index) => {
+    if (!rel.flatId) {
+      formErrors[`relationships.${index}.flatId`] = 'Flat is required.'
+    }
+    if (!rel.relationshipType) {
+      formErrors[`relationships.${index}.relationshipType`] =
+        'Relationship type is required.'
+    }
+    if (!rel.occupancyStatus) {
+      formErrors[`relationships.${index}.occupancyStatus`] =
+        'Occupancy status is required.'
+    }
+    if (!rel.accessScope) {
+      formErrors[`relationships.${index}.accessScope`] =
+        'Access scope is required.'
+    }
+    if (rel.relationshipType === 'TENANT') {
+      if (!rel.leaseStartDate) {
+        formErrors[`relationships.${index}.leaseStartDate`] =
+          'Lease start date is required for tenants.'
+      }
+      if (!rel.leaseEndDate) {
+        formErrors[`relationships.${index}.leaseEndDate`] =
+          'Lease end date is required for tenants.'
+      }
+      if (
+        rel.leaseStartDate &&
+        rel.leaseEndDate &&
+        rel.leaseEndDate < rel.leaseStartDate
+      ) {
+        formErrors[`relationships.${index}.leaseEndDate`] =
+          'Lease end date must be on or after lease start date.'
+      }
+    }
+  })
+
+  const isValid = Object.keys(formErrors).length === 0
+
+  if (!isValid) {
+    toast.add({
+      severity: 'warn',
+      summary: 'Validation error',
+      detail: 'Please fix all highlighted errors before saving.',
+      life: 6000,
+    })
+  }
+
+  return isValid
+}
+
+
 const form = reactive<ResidentForm>({
   role: 'RESIDENT',
   fullName: '',
@@ -1086,180 +1257,9 @@ const buildProfessionProfilePayload = () => {
         : null,
     contactConsentSource: profile.contactConsentSource || null,
     contactConsentProofFilePath: profile.contactConsentProofFilePath || null,
-    contactConsentNote: profile.contactConsentNote || null,
-    revocationReason: profile.revocationReason || null,
   }
 }
 
-const formErrors = reactive<Record<string, string>>({})
-
-const clearErrors = () => {
-  Object.keys(formErrors).forEach((key) => delete formErrors[key])
-}
-
-const getFieldError = (path: string): string => formErrors[path] ?? ''
-
-const toDate = (val: string | null | undefined): Date | null => {
-  if (!val) return null
-  const d = new Date(val + 'T00:00:00')
-  return isNaN(d.getTime()) ? null : d
-}
-
-const toDateString = (val: unknown): string => {
-  if (!val) return ''
-  if (val instanceof Date) {
-    if (isNaN(val.getTime())) return ''
-    const y = val.getFullYear()
-    const m = String(val.getMonth() + 1).padStart(2, '0')
-    const d = String(val.getDate()).padStart(2, '0')
-    return `${y}-${m}-${d}`
-  }
-  if (typeof val === 'string') {
-    return val
-  }
-  return ''
-}
-
-const onRelationshipTypeChange = (relationship: ResidentRelationshipForm) => {
-  if (relationship.relationshipType === 'TENANT') {
-    if (relationship.occupancyStatus === 'SELF_OCCUPIED') {
-      relationship.occupancyStatus = 'TENANTED'
-    }
-    relationship.accessScope = 'TENANCY'
-  } else if (relationship.relationshipType === 'OWNER') {
-    if (relationship.occupancyStatus === 'TENANTED') {
-      relationship.occupancyStatus = 'SELF_OCCUPIED'
-    }
-    relationship.accessScope = 'OWNERSHIP'
-    relationship.leaseStartDate = ''
-    relationship.leaseEndDate = ''
-  } else if (relationship.relationshipType === 'FAMILY_MEMBER') {
-    relationship.accessScope = 'HOUSEHOLD'
-    relationship.leaseStartDate = ''
-    relationship.leaseEndDate = ''
-  }
-}
-
-const validateLocalForm = (): boolean => {
-  clearErrors()
-
-  if (!form.fullName.trim()) {
-    formErrors['fullName'] = 'Full name is required.'
-  }
-
-  if (!isEditing.value || form.canLogin) {
-    if (!form.email.trim()) {
-      formErrors['email'] = 'Email is required.'
-    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) {
-      formErrors['email'] = 'Enter a valid email address.'
-    }
-  } else if (
-    form.email.trim() &&
-    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())
-  ) {
-    formErrors['email'] = 'Enter a valid email address.'
-  }
-
-  if (!isEditing.value) {
-    if (!form.mobileNumber.trim()) {
-      formErrors['mobileNumber'] = 'Mobile number is required.'
-    } else if (
-      form.mobileNumber.trim().length < 8 ||
-      form.mobileNumber.trim().length > 20
-    ) {
-      formErrors['mobileNumber'] =
-        'Mobile number must be between 8 and 20 digits.'
-    }
-  }
-
-  if (
-    form.professionProfile.isPublic &&
-    !form.professionProfile.professionConsentSource
-  ) {
-    formErrors['professionConsentSource'] =
-      'Consent source is required when visible to members.'
-  }
-
-  if (form.professionProfile.sharePhone) {
-    if (!form.professionProfile.phoneSource) {
-      formErrors['phoneSource'] = 'Phone source is required.'
-    }
-    if (
-      form.professionProfile.phoneSource === 'CUSTOM' &&
-      !form.professionProfile.publicPhone.trim()
-    ) {
-      formErrors['publicPhone'] = 'Public phone is required.'
-    }
-  }
-
-  if (form.professionProfile.shareEmail) {
-    if (!form.professionProfile.emailSource) {
-      formErrors['emailSource'] = 'Email source is required.'
-    }
-    if (
-      form.professionProfile.emailSource === 'CUSTOM' &&
-      !form.professionProfile.publicEmail.trim()
-    ) {
-      formErrors['publicEmail'] = 'Public email is required.'
-    }
-  }
-
-  if (
-    (form.professionProfile.sharePhone || form.professionProfile.shareEmail) &&
-    !form.professionProfile.contactConsentSource
-  ) {
-    formErrors['contactConsentSource'] = 'Contact consent source is required.'
-  }
-
-  form.relationships.forEach((rel, index) => {
-    if (!rel.flatId) {
-      formErrors[`relationships.${index}.flatId`] = 'Flat is required.'
-    }
-    if (!rel.relationshipType) {
-      formErrors[`relationships.${index}.relationshipType`] =
-        'Relationship type is required.'
-    }
-    if (!rel.occupancyStatus) {
-      formErrors[`relationships.${index}.occupancyStatus`] =
-        'Occupancy status is required.'
-    }
-    if (!rel.accessScope) {
-      formErrors[`relationships.${index}.accessScope`] =
-        'Access scope is required.'
-    }
-    if (rel.relationshipType === 'TENANT') {
-      if (!rel.leaseStartDate) {
-        formErrors[`relationships.${index}.leaseStartDate`] =
-          'Lease start date is required for tenants.'
-      }
-      if (!rel.leaseEndDate) {
-        formErrors[`relationships.${index}.leaseEndDate`] =
-          'Lease end date is required for tenants.'
-      }
-      if (
-        rel.leaseStartDate &&
-        rel.leaseEndDate &&
-        rel.leaseEndDate < rel.leaseStartDate
-      ) {
-        formErrors[`relationships.${index}.leaseEndDate`] =
-          'Lease end date must be on or after lease start date.'
-      }
-    }
-  })
-
-  const isValid = Object.keys(formErrors).length === 0
-
-  if (!isValid) {
-    toast.add({
-      severity: 'warn',
-      summary: 'Validation error',
-      detail: 'Please fix all highlighted errors before saving.',
-      life: 6000,
-    })
-  }
-
-  return isValid
-}
 
 const submit = async () => {
   if (!validateLocalForm()) {
