@@ -277,7 +277,6 @@ export default defineEventHandler(async (event) => {
         body.isWhatsappSameAsMobile,
         body.profileImagePath ?? null,
         body.canLogin,
-        false,
         body.isActive,
         body.kycStatus,
         body.policeVerificationStatus,
