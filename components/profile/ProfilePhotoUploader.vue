@@ -185,11 +185,11 @@ const createRoundedProfileImage = async () => {
   context.restore()
 
   const attempts = [
-    { type: 'image/webp' as const, quality: 0.82 },
-    { type: 'image/webp' as const, quality: 0.72 },
-    { type: 'image/webp' as const, quality: 0.62 },
-    { type: 'image/jpeg' as const, quality: 0.82 },
-    { type: 'image/jpeg' as const, quality: 0.72 },
+    { type: 'image/webp' as const, quality: 0.76 },
+    { type: 'image/webp' as const, quality: 0.68 },
+    { type: 'image/webp' as const, quality: 0.60 },
+    { type: 'image/jpeg' as const, quality: 0.76 },
+    { type: 'image/jpeg' as const, quality: 0.68 },
   ]
 
   for (const attempt of attempts) {
