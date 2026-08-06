@@ -223,20 +223,24 @@ export const uploadFamilyMemberPhoto = async ({
     throw createError({ statusCode: 400, statusMessage: 'Family member photo must be 1 MB or smaller.' })
   }
 
+  const storageObjectKey = getFamilyMemberPhotoStorageObjectKey(userId, filePart.filename)
   const fileResult = await client.query<{ file_id: string | null }>(
     `
       select fo.id as file_id
-      from users u
-      left join file_objects fo
-        on fo.storage_object_key = u.profile_image_path
-        and fo.storage_target_key = 'resident_documents'
-      where u.id = $1
+      from file_objects fo
+      left join users u on u.id = $2
+      where fo.storage_object_key = $1
+         or fo.storage_object_key = u.profile_image_path
+         or (fo.related_record_type = 'users' and fo.related_record_id = $2 and fo.storage_target_key = 'resident_documents')
+      order by
+        case when fo.storage_object_key = $1 then 0 else 1 end,
+        case when fo.upload_status = 'READY' then 0 else 1 end,
+        fo.updated_at desc
       limit 1
     `,
-    [userId],
+    [storageObjectKey, userId],
   )
 
-  const storageObjectKey = getFamilyMemberPhotoStorageObjectKey(userId, filePart.filename)
   const checksum = createHash('sha256').update(filePart.data).digest('hex')
   const fileInput = {
     storageTargetKey: 'resident_documents',

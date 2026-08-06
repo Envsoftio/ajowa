@@ -596,6 +596,19 @@ const insertPendingFileRecord = async (
           updated_at
         )
         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'PENDING', null, $9, $9)
+        on conflict (storage_object_key) do update set
+          storage_target_key = excluded.storage_target_key,
+          original_file_name = excluded.original_file_name,
+          mime_type = excluded.mime_type,
+          size_bytes = excluded.size_bytes,
+          checksum = excluded.checksum,
+          uploaded_by = excluded.uploaded_by,
+          uploaded_at = excluded.uploaded_at,
+          related_record_type = excluded.related_record_type,
+          related_record_id = excluded.related_record_id,
+          upload_status = 'PENDING',
+          last_error = null,
+          updated_at = excluded.updated_at
         returning ${fileRecordColumns}
       `,
       [
@@ -767,7 +780,8 @@ export const uploadPrivateFile = async (
   const fileId = randomUUID()
   const dbClient = options?.dbClient
 
-  await insertPendingFileRecord(fileId, validInput, dbClient)
+  const pendingRecord = await insertPendingFileRecord(fileId, validInput, dbClient)
+  const targetFileId = pendingRecord.id
 
   try {
     if (shouldUseResumableStorageUpload(validInput)) {
@@ -778,7 +792,7 @@ export const uploadPrivateFile = async (
         .from(storageTarget.providerContainer)
         .upload(validInput.storageObjectKey, validInput.body, {
           contentType: validInput.mimeType,
-          upsert: false,
+          upsert: true,
         })
 
       if (error) {
@@ -790,7 +804,7 @@ export const uploadPrivateFile = async (
       }
     }
 
-    const readyRecord = await updateFileRecord(fileId, {
+    const readyRecord = await updateFileRecord(targetFileId, {
       upload_status: 'READY',
       uploaded_at: new Date().toISOString(),
       last_error: null,
@@ -805,7 +819,7 @@ export const uploadPrivateFile = async (
       validInput.storageTargetKey,
       validInput.storageObjectKey,
     )
-    await markFileRecordFailedQuietly(fileId, message, dbClient)
+    await markFileRecordFailedQuietly(targetFileId, message, dbClient)
 
     throw error
   }

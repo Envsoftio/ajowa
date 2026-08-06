@@ -34,6 +34,7 @@ export default defineEventHandler(async (event) => {
   }
 
   const pool = getDatabasePool()
+  const storageObjectKey = getProfilePhotoStorageObjectKey(authMe.user.id, filePart.filename)
   const residentResult = await pool.query<{
     full_name: string
     profile_image_path: string | null
@@ -46,15 +47,22 @@ export default defineEventHandler(async (event) => {
         fo.id as file_id
       from users u
       left join file_objects fo
-        on fo.storage_object_key = u.profile_image_path
-        and fo.storage_target_key = 'resident_documents'
+        on (
+          fo.storage_object_key = $3
+          or fo.storage_object_key = u.profile_image_path
+          or (fo.related_record_type = 'users' and fo.related_record_id = u.id and fo.storage_target_key = 'resident_documents')
+        )
       where u.id = $1
         and u.society_id = $2
         and u.role = 'RESIDENT'
         and u.deleted_at is null
+      order by
+        case when fo.storage_object_key = $3 then 0 else 1 end,
+        case when fo.upload_status = 'READY' then 0 else 1 end,
+        fo.updated_at desc
       limit 1
     `,
-    [authMe.user.id, authMe.user.societyId],
+    [authMe.user.id, authMe.user.societyId, storageObjectKey],
   )
   const resident = residentResult.rows[0]
 
@@ -66,7 +74,6 @@ export default defineEventHandler(async (event) => {
     })
   }
 
-  const storageObjectKey = getProfilePhotoStorageObjectKey(authMe.user.id, filePart.filename)
   const checksum = createHash('sha256').update(filePart.data).digest('hex')
   const fileInput = {
     storageTargetKey: 'resident_documents',
