@@ -654,6 +654,7 @@ export const validatePayload = <T>(
 type PgError = Error & {
   code?: string
   constraint?: string
+  column?: string
 }
 
 export const isPgError = (error: unknown): error is PgError =>
@@ -701,19 +702,55 @@ export const handlePgResidentError = (error: unknown): never => {
       })
     }
 
-    if (
-      error.code === '23514' &&
-      error.constraint === 'users_login_requires_auth_email'
-    ) {
+    if (error.code === 'P0001') {
       throw new AppError({
         code: 'VALIDATION_ERROR',
         statusCode: 400,
-        message:
-          'A login-enabled resident must have a real email and auth account.',
+        message: error.message || 'Tenant relationship dates are invalid.',
       })
     }
+
+    if (error.code === '23514') {
+      if (error.constraint === 'users_login_requires_auth_email') {
+        throw new AppError({
+          code: 'VALIDATION_ERROR',
+          statusCode: 400,
+          message:
+            'A login-enabled resident must have a real email and auth account.',
+        })
+      }
+      throw new AppError({
+        code: 'VALIDATION_ERROR',
+        statusCode: 400,
+        message: error.message || 'Validation constraint failed for resident details.',
+      })
+    }
+
+    if (error.code === '23503') {
+      throw new AppError({
+        code: 'VALIDATION_ERROR',
+        statusCode: 400,
+        message: 'Selected flat or referenced record does not exist.',
+      })
+    }
+
+    if (error.code === '23502') {
+      const col = error.column ? ` (${error.column})` : ''
+      throw new AppError({
+        code: 'VALIDATION_ERROR',
+        statusCode: 400,
+        message: `Required database field is missing${col}.`,
+      })
+    }
+
+    throw new AppError({
+      code: 'INTERNAL_ERROR',
+      statusCode: 500,
+      message: error.message || 'Database error occurred while saving resident.',
+    })
   }
 
   throw error
 }
+
 

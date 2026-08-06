@@ -344,7 +344,18 @@ const toDateString = (val: unknown): string => {
     return `${y}-${m}-${d}`
   }
   if (typeof val === 'string') {
-    return val
+    const trimmed = val.trim()
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+      return trimmed
+    }
+    const parsed = new Date(trimmed)
+    if (!isNaN(parsed.getTime())) {
+      const y = parsed.getFullYear()
+      const m = String(parsed.getMonth() + 1).padStart(2, '0')
+      const d = String(parsed.getDate()).padStart(2, '0')
+      return `${y}-${m}-${d}`
+    }
+    return trimmed
   }
   return ''
 }
@@ -1364,9 +1375,13 @@ const submit = async () => {
     closeDialog()
   } catch (error: unknown) {
     const fetchError = error as {
-      data?: { data?: { fieldErrors?: Record<string, string[]> } }
+      data?: {
+        data?: { fieldErrors?: Record<string, string[]> }
+        fieldErrors?: Record<string, string[]>
+      }
     }
-    const fieldErrors = fetchError?.data?.data?.fieldErrors
+    const fieldErrors =
+      fetchError?.data?.data?.fieldErrors ?? fetchError?.data?.fieldErrors
     if (fieldErrors) {
       for (const [key, msgs] of Object.entries(fieldErrors)) {
         if (msgs?.[0]) {

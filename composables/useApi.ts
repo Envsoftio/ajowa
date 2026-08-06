@@ -36,6 +36,7 @@ const getActionableErrorMessage = (message: unknown) => {
 
 const humanizeFieldName = (field: string) =>
   field
+    .replace(/relationships\.\d+\./gi, '')
     .replace(/([a-z])([A-Z])/g, '$1 $2')
     .replace(/[._-]+/g, ' ')
     .trim()

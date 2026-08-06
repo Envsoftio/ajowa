@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   ensureResidentRelationshipsAreValid,
+  handlePgResidentError,
   residentRelationshipSchema,
 } from '../server/utils/master-data.ts'
 
@@ -96,3 +97,29 @@ test('ensureResidentRelationshipsAreValid sanitizes non-tenant lease dates and v
     (err) => err.statusCode === 400 && err.message.includes('Lease start date and lease end date are required for tenant relationships.'),
   )
 })
+
+test('handlePgResidentError converts P0001 trigger exceptions into AppError', () => {
+  const triggerError = new Error('tenant relationships require lease_start_date and lease_end_date')
+  triggerError.code = 'P0001'
+
+  assert.throws(
+    () => handlePgResidentError(triggerError),
+    (err) =>
+      err.statusCode === 400 &&
+      err.message === 'tenant relationships require lease_start_date and lease_end_date',
+  )
+})
+
+test('handlePgResidentError converts active tenant 23505 duplicate into AppError', () => {
+  const duplicateError = new Error('duplicate key value violates unique constraint')
+  duplicateError.code = '23505'
+  duplicateError.constraint = 'flat_residents_one_active_tenant_household_idx'
+
+  assert.throws(
+    () => handlePgResidentError(duplicateError),
+    (err) =>
+      err.statusCode === 409 &&
+      err.message.includes('This flat already has an active tenant.'),
+  )
+})
+
