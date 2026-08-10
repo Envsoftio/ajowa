@@ -32,6 +32,7 @@ type TransactionRow = {
   amount: string
   status: FinanceTransaction['status']
   journal_voucher_number: string | null
+  tenant_move_case_id: string | null
   expense_payment_count: string
   expense_payment_total: string
   latest_expense_payment_date: string | null
@@ -140,6 +141,7 @@ const mapTransaction = (row: TransactionRow): FinanceTransaction => ({
   amount: Number(row.amount),
   status: row.status,
   journalVoucherNumber: row.journal_voucher_number,
+  tenantMoveCaseId: row.tenant_move_case_id,
   expensePaymentCount: Number(row.expense_payment_count ?? 0),
   expensePaymentTotal: Number(row.expense_payment_total ?? 0),
   latestExpensePaymentDate: row.latest_expense_payment_date,
@@ -200,6 +202,7 @@ export default defineEventHandler(async (event) => {
         t.amount::text,
         t.status::text,
         je.voucher_number as journal_voucher_number,
+        tenant_settlement.move_case_id as tenant_move_case_id,
         coalesce(ep_counts.payment_count, 0)::text as expense_payment_count,
         coalesce(ep_counts.payment_total, 0)::text as expense_payment_total,
         ep_counts.latest_payment_date::text as latest_expense_payment_date,
@@ -216,6 +219,8 @@ export default defineEventHandler(async (event) => {
       left join society_bank_accounts ba on ba.id = t.bank_account_id
       left join billing_periods bp on bp.id = t.billing_period_id
       left join journal_entries je on je.transaction_id = t.id and je.status = 'POSTED'
+      left join tenant_deposit_settlements tenant_settlement
+        on tenant_settlement.income_transaction_id = t.id
       left join (
         select
           transaction_id,

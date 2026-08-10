@@ -13,7 +13,9 @@ const options = computed(() =>
   props.categories
     .filter(
       (category) =>
-        category.transactionType === props.transactionType && category.isActive,
+        category.transactionType === props.transactionType &&
+        category.isActive &&
+        category.accountHeadAllowsManualEntries !== false,
     )
     .map((category) => ({
       label: `${category.categoryGroup} - ${category.name}`,

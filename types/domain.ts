@@ -1083,6 +1083,7 @@ export type FinanceCategory = AuditFields & {
   accountHeadCode: string | null
   accountHeadName: string | null
   accountHeadType: AccountHeadType | null
+  accountHeadAllowsManualEntries: boolean | null
   transactionCount: number
   requiresAttachment: boolean
   isSystem: boolean
@@ -1109,6 +1110,7 @@ export type FinanceTransaction = AuditFields & {
   amount: number
   status: FinanceLifecycleStatus
   journalVoucherNumber: string | null
+  tenantMoveCaseId?: string | null
   expensePaymentCount?: number
   expensePaymentTotal?: number
   latestExpensePaymentDate?: string | null

@@ -104,6 +104,9 @@ const checkingQrStatus = ref(false)
 const qrStatus = ref<AdminQrStatusResponse | null>(null)
 const qrStatusError = ref('')
 const canCheckQrStatus = computed(() => authStore.me?.user.role === 'ADMIN')
+const canManageTenantMoves = computed(() =>
+  authStore.me?.user.permissions.includes('finance.manage') ?? false,
+)
 const displayValue = (value: string | null | undefined) => value || '-'
 const relationshipSeverity = (type: string) => {
   if (type === 'OWNER') return 'success'
@@ -925,6 +928,23 @@ const saveResidentNotes = async () => {
             >
               {{ displayRelationshipNote(relationship.relationshipNote) }}
             </p>
+            <Button
+              v-if="
+                canManageTenantMoves &&
+                relationship.relationshipType === 'TENANT' &&
+                relationship.isActive
+              "
+              as="router-link"
+              :to="{
+                path: '/admin/finance/tenant-moves',
+                query: { relationshipId: relationship.id },
+              }"
+              label="Record move-in or deposit"
+              icon="pi pi-sign-in"
+              severity="secondary"
+              outlined
+              size="small"
+            />
           </article>
         </div>
       </section>

@@ -271,6 +271,11 @@ export const shellNavigation: Record<AppShellType, AppNavGroup[]> = {
           to: '/admin/finance/transactions',
           icon: 'pi pi-receipt',
         },
+        {
+          label: 'Tenant Moves',
+          to: '/admin/finance/tenant-moves',
+          icon: 'pi pi-sign-out',
+        },
       ],
     },
     {

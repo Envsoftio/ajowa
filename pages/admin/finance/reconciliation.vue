@@ -15,6 +15,8 @@ type ReconciliationResponse = {
       unbalancedPosted: number
       transactionsWithoutJournal: number
       paymentsWithoutJournal: number
+      tenantDepositReceiptsWithoutJournal: number
+      tenantDepositSettlementsWithoutJournal: number
     }
   }
 }
@@ -32,6 +34,8 @@ const health = computed(
       unbalancedPosted: 0,
       transactionsWithoutJournal: 0,
       paymentsWithoutJournal: 0,
+      tenantDepositReceiptsWithoutJournal: 0,
+      tenantDepositSettlementsWithoutJournal: 0,
     },
 )
 const totalDebit = computed(() =>
@@ -67,6 +71,8 @@ const formatMoney = (value: number) =>
             health.unbalancedPosted +
             health.transactionsWithoutJournal +
             health.paymentsWithoutJournal
+            + health.tenantDepositReceiptsWithoutJournal
+            + health.tenantDepositSettlementsWithoutJournal
           }}
         </h3>
         <p>
@@ -127,6 +133,14 @@ const formatMoney = (value: number) =>
         <section class="surface-card">
           <p class="eyebrow">Payments missing journals</p>
           <h3>{{ health.paymentsWithoutJournal }}</h3>
+        </section>
+        <section class="surface-card">
+          <p class="eyebrow">Deposit receipts missing journals</p>
+          <h3>{{ health.tenantDepositReceiptsWithoutJournal }}</h3>
+        </section>
+        <section class="surface-card">
+          <p class="eyebrow">Deposit settlements missing journals</p>
+          <h3>{{ health.tenantDepositSettlementsWithoutJournal }}</h3>
         </section>
       </div>
 

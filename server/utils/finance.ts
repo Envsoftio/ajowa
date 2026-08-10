@@ -180,6 +180,7 @@ export type CategoryRow = {
   account_head_code: string | null
   account_head_name: string | null
   account_head_type: AccountHead['headType'] | null
+  account_head_allows_manual_entries: boolean | null
   transaction_count: string
   requires_attachment: boolean
   is_system: boolean
@@ -302,6 +303,7 @@ export const mapCategoryRow = (row: CategoryRow): FinanceCategory => ({
   accountHeadCode: row.account_head_code,
   accountHeadName: row.account_head_name,
   accountHeadType: row.account_head_type,
+  accountHeadAllowsManualEntries: row.account_head_allows_manual_entries,
   transactionCount: Number(row.transaction_count ?? 0),
   requiresAttachment: row.requires_attachment,
   isSystem: row.is_system,
@@ -962,9 +964,16 @@ export const reverseFinanceTransaction = async (
     billing_period_id: string | null
     entry_date: string
     description: string | null
+    tenant_deposit_settlement_id: string | null
   }>(
     `
-      select id, voucher_number, billing_period_id, entry_date::text, description
+      select
+        id,
+        voucher_number,
+        billing_period_id,
+        entry_date::text,
+        description,
+        tenant_deposit_settlement_id
       from journal_entries
       where transaction_id = $1 and society_id = $2 and status = 'POSTED'
       for update
@@ -974,6 +983,14 @@ export const reverseFinanceTransaction = async (
   const original = entryResult.rows[0]
   if (!original) {
     throw new AppError({ code: 'CONFLICT', statusCode: 409, message: 'Posted journal entry was not found.' })
+  }
+  if (original.tenant_deposit_settlement_id) {
+    throw new AppError({
+      code: 'CONFLICT',
+      statusCode: 409,
+      message:
+        'Tenant deposit settlements must be corrected from the tenant move workflow so the refund and tenancy state remain consistent.',
+    })
   }
 
   const alreadyReversed = await client.query<{ id: string }>(

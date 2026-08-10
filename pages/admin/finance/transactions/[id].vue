@@ -148,8 +148,12 @@ const canRecordExpensePayment = computed(
     transaction.value.status === 'POSTED' &&
     expensePayments.value.length === 0,
 )
+const canEditTransaction = computed(() => !transaction.value?.tenantMoveCaseId)
 const canReverseTransaction = computed(
-  () => authStore.me?.user.role === 'ADMIN' && transaction.value?.status === 'POSTED',
+  () =>
+    authStore.me?.user.role === 'ADMIN' &&
+    transaction.value?.status === 'POSTED' &&
+    !transaction.value.tenantMoveCaseId,
 )
 
 const onUpdated = async (payload: { attachmentUploaded: boolean }) => {
@@ -286,7 +290,7 @@ const reverseTransaction = async () => {
           </div>
           <div class="list-page__exports">
             <Button
-              v-if="!editing"
+              v-if="!editing && canEditTransaction"
               label="Edit"
               icon="pi pi-pencil"
               @click="editing = true"
@@ -315,6 +319,15 @@ const reverseTransaction = async () => {
               outlined
               :loading="reversing"
               @click="reverseTransaction"
+            />
+            <Button
+              v-if="!editing && transaction.tenantMoveCaseId"
+              as="router-link"
+              :to="`/admin/finance/tenant-moves?caseId=${transaction.tenantMoveCaseId}`"
+              label="View tenant move"
+              icon="pi pi-home"
+              severity="secondary"
+              outlined
             />
             <Button
               as="router-link"

@@ -14,6 +14,7 @@ export const reportTypes = [
   'collection',
   'defaulter',
   'dg-balance',
+  'tenant-deposits',
   'income-expense',
   'profit-loss',
   'category-expense',
@@ -95,6 +96,7 @@ export const reportLabels: Record<ReportType, string> = {
   collection: 'Collection Report',
   defaulter: 'Defaulter List',
   'dg-balance': 'DG Balance and Reconciliation Report',
+  'tenant-deposits': 'Tenant Security Deposit Report',
   'income-expense': 'Income and Expense Report',
   'profit-loss': 'P&L Statement',
   'category-expense': 'Category-wise Expense Breakdown',
@@ -492,6 +494,61 @@ const getBillingReconciliation = async (societyId: string, startDate: string, en
       expected: money(row.due_balance),
       actual: money(row.defaulter_balance),
       variance: 0,
+    },
+  ]
+}
+
+const getTenantDepositReconciliation = async (societyId: string) => {
+  const result = await getDatabasePool().query<{
+    register_balance: string
+    ledger_balance: string
+  }>(
+    `
+      with register_balance as (
+        select
+          coalesce((
+            select sum(receipt.amount)
+            from tenant_deposit_receipts receipt
+            where receipt.society_id = $1
+          ), 0)
+          - coalesce((
+            select sum(settlement.received_amount)
+            from tenant_deposit_settlements settlement
+            where settlement.society_id = $1
+          ), 0) as balance
+      ),
+      ledger_balance as (
+        select coalesce(sum(
+          case
+            when line.line_type = 'CREDIT' then line.amount
+            else -line.amount
+          end
+        ), 0) as balance
+        from account_heads head
+        left join journal_lines line on line.account_head_id = head.id
+        left join journal_entries entry
+          on entry.id = line.journal_entry_id
+          and entry.society_id = $1
+          and entry.status = 'POSTED'
+        where head.code = 'LIAB-TEN-DEP'
+          and entry.id is not null
+      )
+      select
+        register_balance.balance::text as register_balance,
+        ledger_balance.balance::text as ledger_balance
+      from register_balance cross join ledger_balance
+    `,
+    [societyId],
+  )
+  const expected = money(result.rows[0]?.register_balance)
+  const actual = money(result.rows[0]?.ledger_balance)
+
+  return [
+    {
+      label: 'Current held-deposit register against liability ledger',
+      expected,
+      actual,
+      variance: money(actual - expected),
     },
   ]
 }
@@ -1244,6 +1301,143 @@ const buildGateAccessReport = async ({ societyId, filters, exportMode }: ReportQ
   }
 }
 
+const buildTenantDepositReport = async ({
+  societyId,
+  filters,
+  exportMode,
+}: ReportQueryContext) => {
+  const params: unknown[] = [societyId, filters.startDate, filters.endDate]
+  const where = [
+    'tmc.society_id = $1',
+    'tmc.move_in_date <= $3',
+    '(tds.settlement_date is null or tds.settlement_date >= $2)',
+  ]
+  if (filters.flatId) {
+    params.push(filters.flatId)
+    where.push(`tmc.flat_id = $${params.length}`)
+  }
+  if (filters.status) {
+    params.push(filters.status)
+    where.push(`tmc.status = $${params.length}`)
+  }
+  addSearch(
+    params,
+    where,
+    ['u.full_name', 'u.mobile_number', 'f.flat_number', 'b.name'],
+    filters.search,
+  )
+  params.push(withLimit(filters, exportMode))
+
+  const result = await getDatabasePool().query<Record<string, string | null>>(
+    `
+      with receipt_totals as (
+        select move_case_id, sum(amount) as received_amount
+        from tenant_deposit_receipts
+        group by move_case_id
+      ),
+      active_deductions as (
+        select
+          move_case_id,
+          sum(amount) filter (where deduction_type = 'DAMAGE' and voided_at is null) as damage_amount,
+          sum(amount) filter (where deduction_type = 'PENALTY' and voided_at is null) as penalty_amount
+        from tenant_deposit_deductions
+        group by move_case_id
+      )
+      select
+        tmc.move_in_date::text as "moveInDate",
+        tmc.actual_move_out_date::text as "moveOutDate",
+        u.full_name as tenant,
+        concat(b.name, ' ', f.flat_number) as flat,
+        tmc.status,
+        tmc.expected_deposit_amount::text as "expectedAmount",
+        coalesce(rt.received_amount, 0)::text as "receivedAmount",
+        coalesce(ad.damage_amount, 0)::text as "damageDeduction",
+        coalesce(ad.penalty_amount, 0)::text as "penaltyDeduction",
+        coalesce(tds.refund_amount, 0)::text as "refundAmount",
+        case
+          when tds.id is null then coalesce(rt.received_amount, 0)
+          else greatest(coalesce(rt.received_amount, 0) - tds.received_amount, 0)
+        end::text as "heldAmount",
+        coalesce(tds.reference_number, '-') as reference,
+        coalesce(je.voucher_number, '-') as voucher
+      from tenant_move_cases tmc
+      join users u on u.id = tmc.tenant_user_id
+      join flats f on f.id = tmc.flat_id
+      join blocks b on b.id = f.block_id
+      left join receipt_totals rt on rt.move_case_id = tmc.id
+      left join active_deductions ad on ad.move_case_id = tmc.id
+      left join tenant_deposit_settlements tds on tds.move_case_id = tmc.id
+      left join journal_entries je
+        on je.tenant_deposit_settlement_id = tds.id and je.status = 'POSTED'
+      where ${where.join(' and ')}
+      order by tmc.move_in_date desc, tmc.created_at desc
+      limit $${params.length}
+    `,
+    params,
+  )
+  const moneyKeys = [
+    'expectedAmount',
+    'receivedAmount',
+    'damageDeduction',
+    'penaltyDeduction',
+    'refundAmount',
+    'heldAmount',
+  ]
+  const rows: Array<Record<string, unknown>> = result.rows.map((source) => {
+    const row: Record<string, unknown> = { ...source }
+    for (const key of moneyKeys) row[key] = money(source[key])
+    return row
+  })
+  const totalReceived = rows.reduce(
+    (sum, row) => sum + Number(row.receivedAmount),
+    0,
+  )
+  const totalDeductions = rows.reduce(
+    (sum, row) =>
+      sum + Number(row.damageDeduction) + Number(row.penaltyDeduction),
+    0,
+  )
+  const totalRefunded = rows.reduce(
+    (sum, row) => sum + Number(row.refundAmount),
+    0,
+  )
+  const totalHeld = rows.reduce(
+    (sum, row) => sum + Number(row.heldAmount),
+    0,
+  )
+
+  return {
+    columns: [
+      { key: 'moveInDate', label: 'Move-in', type: 'date' },
+      { key: 'moveOutDate', label: 'Move-out', type: 'date' },
+      { key: 'tenant', label: 'Tenant' },
+      { key: 'flat', label: 'Flat' },
+      { key: 'status', label: 'Status' },
+      { key: 'expectedAmount', label: 'Expected', type: 'money' },
+      { key: 'receivedAmount', label: 'Received', type: 'money' },
+      { key: 'damageDeduction', label: 'Damage', type: 'money' },
+      { key: 'penaltyDeduction', label: 'Penalty', type: 'money' },
+      { key: 'refundAmount', label: 'Refunded', type: 'money' },
+      { key: 'heldAmount', label: 'Held liability', type: 'money' },
+      { key: 'reference', label: 'Refund reference' },
+      { key: 'voucher', label: 'Settlement voucher' },
+    ] satisfies ReportColumn[],
+    rows,
+    summary: {
+      totalReceived,
+      totalHeld,
+      totalDeductions,
+      totalRefunded,
+      caseCount: rows.length,
+    },
+    chart: [
+      { label: 'Held', value: totalHeld, color: chartColor(0) },
+      { label: 'Refunded', value: totalRefunded, color: chartColor(2) },
+      { label: 'Deductions', value: totalDeductions, color: chartColor(4) },
+    ],
+  }
+}
+
 const buildServiceRequestReport = async ({ societyId, filters, exportMode }: ReportQueryContext) => {
   const params: unknown[] = [societyId, filters.startDate, filters.endDate]
   const where = ['sr.society_id = $1', 'sr.created_at::date between $2 and $3']
@@ -1365,6 +1559,7 @@ const buildPayload = async (context: ReportQueryContext): Promise<ReportPayload>
   if (context.filters.reportType === 'collection') return buildCollectionReport(context)
   if (context.filters.reportType === 'defaulter') return buildDefaulterReport(context)
   if (context.filters.reportType === 'dg-balance') return buildDgBalanceReport(context)
+  if (context.filters.reportType === 'tenant-deposits') return buildTenantDepositReport(context)
   if (context.filters.reportType === 'profit-loss') return buildProfitLossReport(context)
   if (
     ['income-expense', 'income-only', 'expense-only', 'category-expense', 'vendor-expense', 'attachment-missing', 'pending-review'].includes(
@@ -1384,7 +1579,9 @@ export const buildReport = async (context: ReportQueryContext): Promise<ReportDa
   const reconciliation =
     context.filters.reportType === 'collection' || context.filters.reportType === 'defaulter'
       ? await getBillingReconciliation(context.societyId, context.filters.startDate, context.filters.endDate)
-      : []
+      : context.filters.reportType === 'tenant-deposits'
+        ? await getTenantDepositReconciliation(context.societyId)
+        : []
   const performanceMs = Math.round(performance.now() - started)
 
   return {

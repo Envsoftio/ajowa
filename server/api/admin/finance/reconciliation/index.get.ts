@@ -40,6 +40,8 @@ export default defineEventHandler(async (event) => {
     unbalanced_posted: string
     transactions_without_journal: string
     payments_without_journal: string
+    tenant_deposit_receipts_without_journal: string
+    tenant_deposit_settlements_without_journal: string
   }>(
     `
       with posted_totals as (
@@ -65,7 +67,23 @@ export default defineEventHandler(async (event) => {
           from payments p
           left join journal_entries je on je.payment_id = p.id and je.status = 'POSTED'
           where p.society_id = $1 and p.status = 'VERIFIED' and je.id is null
-        ) as payments_without_journal
+        ) as payments_without_journal,
+        (
+          select count(*)::text
+          from tenant_deposit_receipts receipt
+          left join journal_entries je
+            on je.tenant_deposit_receipt_id = receipt.id and je.status = 'POSTED'
+          where receipt.society_id = $1 and je.id is null
+        ) as tenant_deposit_receipts_without_journal,
+        (
+          select count(*)::text
+          from tenant_deposit_settlements settlement
+          left join journal_entries je
+            on je.tenant_deposit_settlement_id = settlement.id and je.status = 'POSTED'
+          where settlement.society_id = $1
+            and settlement.received_amount > 0
+            and je.id is null
+        ) as tenant_deposit_settlements_without_journal
     `,
     [authMe.user.societyId],
   )
@@ -77,6 +95,12 @@ export default defineEventHandler(async (event) => {
       unbalancedPosted: Number(healthRow?.unbalanced_posted ?? 0),
       transactionsWithoutJournal: Number(healthRow?.transactions_without_journal ?? 0),
       paymentsWithoutJournal: Number(healthRow?.payments_without_journal ?? 0),
+      tenantDepositReceiptsWithoutJournal: Number(
+        healthRow?.tenant_deposit_receipts_without_journal ?? 0,
+      ),
+      tenantDepositSettlementsWithoutJournal: Number(
+        healthRow?.tenant_deposit_settlements_without_journal ?? 0,
+      ),
     },
   })
 })

@@ -28,6 +28,7 @@ type FlatsResponse = { ok: true; data: { items: FlatSummary[] } }
 type ResidentsResponse = { ok: true; data: { items: ResidentSummary[] } }
 
 const api = useApi()
+const route = useRoute()
 const { formatMoney, formatDate, formatDateTime } = useFinanceFormatters()
 
 const reportOptions = [
@@ -38,7 +39,20 @@ const reportOptions = [
   { label: 'Category expenses', value: 'category-expense', excel: true },
   { label: 'Vendor expenses', value: 'vendor-expense', excel: true },
   { label: 'DG balances', value: 'dg-balance', excel: true },
+  { label: 'Tenant security deposits', value: 'tenant-deposits', excel: true },
   { label: 'Missing attachments', value: 'attachment-missing', excel: true },
+]
+const requestedReportType =
+  typeof route.query.reportType === 'string' &&
+  reportOptions.some((option) => option.value === route.query.reportType)
+    ? route.query.reportType
+    : 'expense-summary'
+const tenantMoveStatusOptions = [
+  { label: 'All statuses', value: '' },
+  { label: 'Occupied', value: 'OCCUPIED' },
+  { label: 'Refund pending', value: 'REFUND_PENDING' },
+  { label: 'Closed', value: 'CLOSED' },
+  { label: 'Cancelled', value: 'CANCELLED' },
 ]
 const periodOptions = [
   { label: 'Monthly', value: 'MONTHLY' },
@@ -67,7 +81,7 @@ const filters = reactive<{
   status: string
   search: string
 }>({
-  reportType: 'expense-summary',
+  reportType: requestedReportType,
   periodMode: 'YEARLY',
   startDate: firstDay,
   endDate: lastDay,
@@ -79,6 +93,9 @@ const filters = reactive<{
 })
 
 usePersistentReactiveState('admin-finance-reports-filters', filters)
+if (typeof route.query.reportType === 'string') {
+  filters.reportType = requestedReportType
+}
 
 const setRangeByPeriodMode = (periodMode: CalendarPeriodMode) => {
   const currentMonthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1)
@@ -108,14 +125,15 @@ watch(() => filters.periodMode, (periodMode) => {
   setRangeByPeriodMode(periodMode)
 })
 
-const showFlatFilter = computed(() => ['collection', 'defaulter', 'resident-payment-ledger', 'dg-balance'].includes(filters.reportType))
+const showFlatFilter = computed(() => ['collection', 'defaulter', 'resident-payment-ledger', 'dg-balance', 'tenant-deposits'].includes(filters.reportType))
 const showOwnerFilter = computed(() => filters.reportType === 'resident-payment-ledger')
+const showStatusFilter = computed(() => filters.reportType === 'tenant-deposits')
 
 const query = computed(() => ({
   ...filters,
   flatId: showFlatFilter.value ? filters.flatId ?? undefined : undefined,
   ownerUserId: showOwnerFilter.value ? filters.ownerUserId ?? undefined : undefined,
-  status: filters.status || undefined,
+  status: showStatusFilter.value ? filters.status || undefined : undefined,
   search: filters.search || undefined,
 }))
 
@@ -326,12 +344,20 @@ const exportUrl = (format: 'pdf' | 'xlsx') => {
           <span>Owner</span>
           <Select v-model="filters.ownerUserId" :options="ownerOptions" option-label="label" option-value="value" show-clear filter />
         </label>
+        <label v-if="showStatusFilter">
+          <span>Status</span>
+          <Select v-model="filters.status" :options="tenantMoveStatusOptions" option-label="label" option-value="value" />
+        </label>
         <label class="list-page__search">
           <span>Search</span>
           <InputText v-model="filters.search" />
         </label>
         <Button icon="pi pi-refresh" severity="secondary" outlined title="Refresh" @click="() => refresh()" />
       </div>
+
+      <Message v-if="filters.reportType === 'tenant-deposits'" severity="info" :closable="false">
+        The range includes tenant move cases active at any point in that period; amounts show their current posted deposit, deduction, and refund totals.
+      </Message>
 
       <div class="report-workbook__metrics">
         <div v-for="[key, value] in summaryEntries" :key="key" class="report-workbook__metric">
