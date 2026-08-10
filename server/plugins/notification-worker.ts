@@ -4,7 +4,7 @@ export default defineNitroPlugin(() => {
       JSON.stringify({
         level: 'warn',
         message:
-          'Automatic notification processing is disabled. Use /api/admin/notifications/process to send queued notifications.',
+          'Legacy in-process notification handling is disabled. Use /api/admin/notifications/process for generic queued notifications.',
       }),
     )
   }

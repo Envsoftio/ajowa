@@ -6,12 +6,12 @@ import { AppError } from './errors'
 import { getDatabasePool } from './database'
 import { parseListQuery } from './master-data'
 import {
-  dispatchNotificationJobs,
   enqueueNotificationForUsers,
   resolveNotificationAudience,
-  type NotificationChannel,
   type NotificationUser,
 } from './notifications'
+import { invokeServiceRequestNotificationWorkers } from './service-request-notification-dispatch'
+import { settleSequentially } from './settle-sequentially'
 import {
   createStorageObjectKey,
   downloadPrivateFile,
@@ -39,7 +39,6 @@ import {
 import type { serviceRequestCreateSchema } from '~/shared/service-request-validation'
 
 const commentVisibilities = ['INTERNAL_NOTE', 'RESIDENT_VISIBLE'] as const
-const immediateServiceRequestNotificationLimit = 250
 
 type TicketScope = 'admin' | 'resident' | 'service'
 type BackgroundWaitUntil = (promise: Promise<unknown>) => void
@@ -908,108 +907,6 @@ const logServiceRequestNotificationQueueResult = (
   )
 }
 
-type ServiceRequestNotificationDispatchOptions = {
-  channel?: NotificationChannel | null
-}
-
-const processImmediateServiceRequestNotifications = async (
-  client: PoolClient,
-  serviceRequestId: string,
-  results: PromiseSettledResult<ServiceRequestNotificationQueueResult>[],
-  options: ServiceRequestNotificationDispatchOptions = {},
-) => {
-  const eventIds = new Set<string>()
-  const channel = options.channel === undefined ? null : options.channel
-
-  for (const result of results) {
-    if (result.status === 'rejected') {
-      warnNotificationFailure(serviceRequestId, result.reason)
-      continue
-    }
-
-    if (result.value.jobCount > 0) {
-      for (const eventId of result.value.eventIds ?? [result.value.eventId]) {
-        if (eventId) {
-          eventIds.add(eventId)
-        }
-      }
-    }
-  }
-
-  if (eventIds.size === 0) {
-    return
-  }
-
-  const allowedEvents = await client.query<{ id: string }>(
-    `
-      select id
-      from notification_events
-      where id = any($1::uuid[])
-        and event_key = 'service_request.updated'
-        and source_table = 'service_requests'
-        and source_id = $2
-    `,
-    [[...eventIds], serviceRequestId],
-  )
-  const allowedEventIds = new Set(allowedEvents.rows.map((row) => row.id))
-
-  for (const eventId of eventIds) {
-    if (!allowedEventIds.has(eventId)) {
-      console.warn(
-        JSON.stringify({
-          level: 'warn',
-          message:
-            'Skipped immediate notification dispatch for non-service-request event.',
-          serviceRequestId,
-          eventId,
-        }),
-      )
-      continue
-    }
-
-    try {
-      let claimed = 0
-      let sent = 0
-      let failed = 0
-      let retried = 0
-      let skipped = 0
-
-      do {
-        const dispatchResult = await dispatchNotificationJobs(client, {
-          eventId,
-          limit: immediateServiceRequestNotificationLimit,
-          ...(channel ? { channel } : {}),
-          lockTimeoutMinutes: 1,
-        })
-
-        claimed = dispatchResult.claimed
-        sent += dispatchResult.sent
-        failed += dispatchResult.failed
-        retried += dispatchResult.retried
-        skipped += dispatchResult.skipped
-      } while (claimed === immediateServiceRequestNotificationLimit)
-
-      if (failed > 0 || retried > 0) {
-        console.warn(
-          JSON.stringify({
-            level: 'warn',
-            message:
-              'Service request notification dispatch completed with failed jobs.',
-            serviceRequestId,
-            eventId,
-            sent,
-            failed,
-            retried,
-            skipped,
-          }),
-        )
-      }
-    } catch (error) {
-      warnNotificationFailure(serviceRequestId, error)
-    }
-  }
-}
-
 type ServiceRequestNotificationFactory = (
   client: PoolClient,
 ) => Promise<PromiseSettledResult<ServiceRequestNotificationQueueResult>[]>
@@ -1018,17 +915,48 @@ const enqueueAndDispatchServiceRequestNotificationsWithFreshClient = async (
   serviceRequestId: string,
   factory: ServiceRequestNotificationFactory,
 ) => {
-  const client = await getDatabasePool().connect()
+  const notifications = await (async () => {
+    const client = await getDatabasePool().connect()
 
-  try {
-    const notifications = await factory(client)
-    await processImmediateServiceRequestNotifications(
-      client,
-      serviceRequestId,
-      notifications,
+    try {
+      return await factory(client)
+    } finally {
+      client.release()
+    }
+  })()
+
+  const eventIds = new Set<string>()
+
+  for (const result of notifications) {
+    if (result.status === 'rejected') {
+      warnNotificationFailure(serviceRequestId, result.reason)
+      continue
+    }
+
+    if (result.value.jobCount === 0) {
+      continue
+    }
+
+    for (const eventId of result.value.eventIds ?? [result.value.eventId]) {
+      if (eventId) {
+        eventIds.add(eventId)
+      }
+    }
+  }
+
+  if (
+    eventIds.size > 0 &&
+    !(await invokeServiceRequestNotificationWorkers([...eventIds]))
+  ) {
+    console.warn(
+      JSON.stringify({
+        level: 'warn',
+        message:
+          'Service request notification worker could not be started; queued jobs will be recovered by the scheduled worker.',
+        serviceRequestId,
+        eventIds: [...eventIds],
+      }),
     )
-  } finally {
-    client.release()
   }
 }
 
@@ -1469,30 +1397,32 @@ const enqueueCreatedServiceRequestNotificationsInBackground = (
   enqueueAndDispatchServiceRequestNotificationsInBackground(
     serviceRequestId,
     async (client) =>
-      Promise.allSettled([
-        enqueueServiceRequestNotification(
-          serviceRequestId,
-          {
-            title: 'Service request created',
-            body: `${input.requestNumber} has been created and is currently ${input.status.replaceAll('_', ' ').toLowerCase()}.`,
-            idempotencyKey: `service_request.created:${serviceRequestId}`,
-            ...(input.triggeredByUserId
-              ? { triggeredByUserId: input.triggeredByUserId }
-              : {}),
-            maxAttempts: 1,
-          },
-          { dbClient: client },
-        ),
-        enqueueServiceRequestManagerNotification(
-          serviceRequestId,
-          {
-            ...(input.triggeredByUserId
-              ? { triggeredByUserId: input.triggeredByUserId }
-              : {}),
-            maxAttempts: 1,
-          },
-          { dbClient: client },
-        ),
+      settleSequentially([
+        () =>
+          enqueueServiceRequestNotification(
+            serviceRequestId,
+            {
+              title: 'Service request created',
+              body: `${input.requestNumber} has been created and is currently ${input.status.replaceAll('_', ' ').toLowerCase()}.`,
+              idempotencyKey: `service_request.created:${serviceRequestId}`,
+              ...(input.triggeredByUserId
+                ? { triggeredByUserId: input.triggeredByUserId }
+                : {}),
+              maxAttempts: 1,
+            },
+            { dbClient: client },
+          ),
+        () =>
+          enqueueServiceRequestManagerNotification(
+            serviceRequestId,
+            {
+              ...(input.triggeredByUserId
+                ? { triggeredByUserId: input.triggeredByUserId }
+                : {}),
+              maxAttempts: 1,
+            },
+            { dbClient: client },
+          ),
       ]),
     input.waitUntil,
   )
@@ -2155,29 +2085,31 @@ export const assignServiceRequest = async (
     enqueueAndDispatchServiceRequestNotificationsInBackground(
       id,
       async (notificationClient) =>
-        Promise.allSettled([
-          enqueueServiceRequestNotification(
-            id,
-            {
-              title: 'Service request assigned',
-              body: `${ticket.request_number} has been assigned for service.`,
-              idempotencyKey: `service_request.assigned:${id}:${Date.now()}`,
-              triggeredByUserId: authMe.user.id,
-              maxAttempts: 1,
-            },
-            { dbClient: notificationClient },
-          ),
-          enqueueServiceRequestManagerNotification(
-            id,
-            {
-              title: 'Service request assignment updated',
-              body: `${authMe.user.fullName} updated the assignment for ${ticket.request_number}: ${ticket.title}.`,
-              idempotencyKey: `service_request.manager.assigned:${id}:${Date.now()}`,
-              triggeredByUserId: authMe.user.id,
-              maxAttempts: 1,
-            },
-            { dbClient: notificationClient },
-          ),
+        settleSequentially([
+          () =>
+            enqueueServiceRequestNotification(
+              id,
+              {
+                title: 'Service request assigned',
+                body: `${ticket.request_number} has been assigned for service.`,
+                idempotencyKey: `service_request.assigned:${id}:${Date.now()}`,
+                triggeredByUserId: authMe.user.id,
+                maxAttempts: 1,
+              },
+              { dbClient: notificationClient },
+            ),
+          () =>
+            enqueueServiceRequestManagerNotification(
+              id,
+              {
+                title: 'Service request assignment updated',
+                body: `${authMe.user.fullName} updated the assignment for ${ticket.request_number}: ${ticket.title}.`,
+                idempotencyKey: `service_request.manager.assigned:${id}:${Date.now()}`,
+                triggeredByUserId: authMe.user.id,
+                maxAttempts: 1,
+              },
+              { dbClient: notificationClient },
+            ),
         ]),
       options.waitUntil,
     )
@@ -2326,35 +2258,37 @@ export const updateServiceRequestStatus = async (
     enqueueAndDispatchServiceRequestNotificationsInBackground(
       id,
       async (notificationClient) =>
-        Promise.allSettled([
-          enqueueServiceRequestManagerNotification(
-            id,
-            {
-              title: 'Service request status updated',
-              body: `${authMe.user.fullName} updated ${statusBody}`,
-              idempotencyKey: `service_request.manager.status:${id}:${input.status}:${Date.now()}`,
-              triggeredByUserId: authMe.user.id,
-              maxAttempts: 1,
-            },
-            { dbClient: notificationClient },
-          ),
-          scope !== 'resident'
-            ? enqueueServiceRequestNotification(
-                id,
-                {
-                  title: 'Service request status updated',
-                  body: statusBody,
-                  idempotencyKey: `service_request.status:${id}:${input.status}:${Date.now()}`,
-                  triggeredByUserId: authMe.user.id,
-                  maxAttempts: 1,
-                },
-                { dbClient: notificationClient },
-              )
-            : Promise.resolve({
-                eventId: null,
-                audienceCount: 0,
-                jobCount: 0,
-              }),
+        settleSequentially([
+          () =>
+            enqueueServiceRequestManagerNotification(
+              id,
+              {
+                title: 'Service request status updated',
+                body: `${authMe.user.fullName} updated ${statusBody}`,
+                idempotencyKey: `service_request.manager.status:${id}:${input.status}:${Date.now()}`,
+                triggeredByUserId: authMe.user.id,
+                maxAttempts: 1,
+              },
+              { dbClient: notificationClient },
+            ),
+          () =>
+            scope !== 'resident'
+              ? enqueueServiceRequestNotification(
+                  id,
+                  {
+                    title: 'Service request status updated',
+                    body: statusBody,
+                    idempotencyKey: `service_request.status:${id}:${input.status}:${Date.now()}`,
+                    triggeredByUserId: authMe.user.id,
+                    maxAttempts: 1,
+                  },
+                  { dbClient: notificationClient },
+                )
+              : Promise.resolve({
+                  eventId: null,
+                  audienceCount: 0,
+                  jobCount: 0,
+                }),
         ]),
       options.waitUntil,
     )
@@ -2423,35 +2357,37 @@ export const addServiceRequestComment = async (
     enqueueAndDispatchServiceRequestNotificationsInBackground(
       id,
       async (notificationClient) =>
-        Promise.allSettled([
-          enqueueServiceRequestManagerNotification(
-            id,
-            {
-              title: 'Service request note added',
-              body: `${authMe.user.fullName} added a note to ${ticket.request_number}: ${ticket.title}.`,
-              idempotencyKey: `service_request.manager.comment:${comment.rows[0]?.id ?? Date.now()}`,
-              triggeredByUserId: authMe.user.id,
-              maxAttempts: 1,
-            },
-            { dbClient: notificationClient },
-          ),
-          visibility === 'RESIDENT_VISIBLE' && scope !== 'resident'
-            ? enqueueServiceRequestNotification(
-                id,
-                {
-                  title: 'Service request note added',
-                  body: `A new update was added to ${ticket.request_number}.`,
-                  idempotencyKey: `service_request.comment:${comment.rows[0]?.id ?? Date.now()}`,
-                  triggeredByUserId: authMe.user.id,
-                  maxAttempts: 1,
-                },
-                { dbClient: notificationClient },
-              )
-            : Promise.resolve({
-                eventId: null,
-                audienceCount: 0,
-                jobCount: 0,
-              }),
+        settleSequentially([
+          () =>
+            enqueueServiceRequestManagerNotification(
+              id,
+              {
+                title: 'Service request note added',
+                body: `${authMe.user.fullName} added a note to ${ticket.request_number}: ${ticket.title}.`,
+                idempotencyKey: `service_request.manager.comment:${comment.rows[0]?.id ?? Date.now()}`,
+                triggeredByUserId: authMe.user.id,
+                maxAttempts: 1,
+              },
+              { dbClient: notificationClient },
+            ),
+          () =>
+            visibility === 'RESIDENT_VISIBLE' && scope !== 'resident'
+              ? enqueueServiceRequestNotification(
+                  id,
+                  {
+                    title: 'Service request note added',
+                    body: `A new update was added to ${ticket.request_number}.`,
+                    idempotencyKey: `service_request.comment:${comment.rows[0]?.id ?? Date.now()}`,
+                    triggeredByUserId: authMe.user.id,
+                    maxAttempts: 1,
+                  },
+                  { dbClient: notificationClient },
+                )
+              : Promise.resolve({
+                  eventId: null,
+                  audienceCount: 0,
+                  jobCount: 0,
+                }),
         ]),
       options.waitUntil,
     )
@@ -2530,35 +2466,37 @@ export const createServiceRequestAttachment = async (
     enqueueAndDispatchServiceRequestNotificationsInBackground(
       id,
       async (notificationClient) =>
-        Promise.allSettled([
-          enqueueServiceRequestManagerNotification(
-            id,
-            {
-              title: 'Service request attachment added',
-              body: `${authMe.user.fullName} attached ${input.fileName} to ${ticket.request_number}: ${ticket.title}.`,
-              idempotencyKey: `service_request.manager.attachment:${attachmentId ?? Date.now()}`,
-              triggeredByUserId: authMe.user.id,
-              maxAttempts: 1,
-            },
-            { dbClient: notificationClient },
-          ),
-          scope !== 'resident'
-            ? enqueueServiceRequestNotification(
-                id,
-                {
-                  title: 'Service request attachment added',
-                  body: `A new attachment was added to ${ticket.request_number}.`,
-                  idempotencyKey: `service_request.attachment:${attachmentId ?? Date.now()}`,
-                  triggeredByUserId: authMe.user.id,
-                  maxAttempts: 1,
-                },
-                { dbClient: notificationClient },
-              )
-            : Promise.resolve({
-                eventId: null,
-                audienceCount: 0,
-                jobCount: 0,
-              }),
+        settleSequentially([
+          () =>
+            enqueueServiceRequestManagerNotification(
+              id,
+              {
+                title: 'Service request attachment added',
+                body: `${authMe.user.fullName} attached ${input.fileName} to ${ticket.request_number}: ${ticket.title}.`,
+                idempotencyKey: `service_request.manager.attachment:${attachmentId ?? Date.now()}`,
+                triggeredByUserId: authMe.user.id,
+                maxAttempts: 1,
+              },
+              { dbClient: notificationClient },
+            ),
+          () =>
+            scope !== 'resident'
+              ? enqueueServiceRequestNotification(
+                  id,
+                  {
+                    title: 'Service request attachment added',
+                    body: `A new attachment was added to ${ticket.request_number}.`,
+                    idempotencyKey: `service_request.attachment:${attachmentId ?? Date.now()}`,
+                    triggeredByUserId: authMe.user.id,
+                    maxAttempts: 1,
+                  },
+                  { dbClient: notificationClient },
+                )
+              : Promise.resolve({
+                  eventId: null,
+                  audienceCount: 0,
+                  jobCount: 0,
+                }),
         ]),
       options.waitUntil,
     )
@@ -2681,35 +2619,37 @@ export const uploadServiceRequestAttachment = async (
     enqueueAndDispatchServiceRequestNotificationsInBackground(
       id,
       async (notificationClient) =>
-        Promise.allSettled([
-          enqueueServiceRequestManagerNotification(
-            id,
-            {
-              title: 'Service request attachment added',
-              body: `${authMe.user.fullName} attached ${input.fileName} to ${ticket.request_number}: ${ticket.title}.`,
-              idempotencyKey: `service_request.manager.attachment:${row.id}`,
-              triggeredByUserId: authMe.user.id,
-              maxAttempts: 1,
-            },
-            { dbClient: notificationClient },
-          ),
-          scope !== 'resident'
-            ? enqueueServiceRequestNotification(
-                id,
-                {
-                  title: 'Service request attachment added',
-                  body: `A new attachment was added to ${ticket.request_number}.`,
-                  idempotencyKey: `service_request.attachment:${row.id}`,
-                  triggeredByUserId: authMe.user.id,
-                  maxAttempts: 1,
-                },
-                { dbClient: notificationClient },
-              )
-            : Promise.resolve({
-                eventId: null,
-                audienceCount: 0,
-                jobCount: 0,
-              }),
+        settleSequentially([
+          () =>
+            enqueueServiceRequestManagerNotification(
+              id,
+              {
+                title: 'Service request attachment added',
+                body: `${authMe.user.fullName} attached ${input.fileName} to ${ticket.request_number}: ${ticket.title}.`,
+                idempotencyKey: `service_request.manager.attachment:${row.id}`,
+                triggeredByUserId: authMe.user.id,
+                maxAttempts: 1,
+              },
+              { dbClient: notificationClient },
+            ),
+          () =>
+            scope !== 'resident'
+              ? enqueueServiceRequestNotification(
+                  id,
+                  {
+                    title: 'Service request attachment added',
+                    body: `A new attachment was added to ${ticket.request_number}.`,
+                    idempotencyKey: `service_request.attachment:${row.id}`,
+                    triggeredByUserId: authMe.user.id,
+                    maxAttempts: 1,
+                  },
+                  { dbClient: notificationClient },
+                )
+              : Promise.resolve({
+                  eventId: null,
+                  audienceCount: 0,
+                  jobCount: 0,
+                }),
         ]),
       options.waitUntil,
     )
