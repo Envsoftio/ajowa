@@ -116,16 +116,18 @@ const timelineCount = computed(() =>
   <div class="landing-page">
     <AppSkeletonState v-if="pending && !ticket" />
     <template v-else-if="ticket">
-      <section class="hero-panel dashboard-hero">
-        <div>
+      <section class="hero-panel dashboard-hero service-request-brief">
+        <div class="service-request-brief__content">
           <p class="eyebrow">{{ ticket.requestNumber }}</p>
           <h1>{{ ticket.title }}</h1>
-          <p>{{ ticket.description }}</p>
+          <p class="service-request-brief__description">{{ ticket.description }}</p>
         </div>
-        <div class="hero-actions">
-          <PriorityTag :priority="ticket.priority" />
-          <TicketStatusTag :status="ticket.status" />
-          <SlaBadge :due-by-at="ticket.dueByAt" :is-overdue="ticket.isOverdue" />
+        <div class="service-request-brief__rail">
+          <div class="hero-actions service-request-brief__tags">
+            <PriorityTag :priority="ticket.priority" />
+            <TicketStatusTag :status="ticket.status" />
+            <SlaBadge :due-by-at="ticket.dueByAt" :is-overdue="ticket.isOverdue" />
+          </div>
           <Button label="Assign" icon="pi pi-user-plus" @click="assignDialogVisible = true" />
         </div>
       </section>
@@ -246,6 +248,47 @@ const timelineCount = computed(() =>
 </template>
 
 <style scoped>
+.service-request-brief {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: clamp(1rem, 3vw, 2rem);
+  align-items: start;
+}
+
+.service-request-brief__content {
+  max-width: 76ch;
+  min-width: 0;
+}
+
+.service-request-brief h1 {
+  max-width: 34ch;
+  margin: 0.55rem 0 0;
+  color: var(--color-text);
+  font-size: clamp(1.45rem, 2.2vw, 2rem);
+  line-height: 1.18;
+}
+
+.service-request-brief__description {
+  margin: 1rem 0 0;
+  max-width: 72ch;
+  color: color-mix(in srgb, var(--color-text) 86%, var(--color-muted));
+  font-size: clamp(0.98rem, 1.1vw, 1.08rem);
+  line-height: 1.72;
+  overflow-wrap: anywhere;
+}
+
+.service-request-brief__rail {
+  display: grid;
+  justify-items: end;
+  gap: 0.9rem;
+  min-width: 12rem;
+}
+
+.service-request-brief__tags {
+  justify-content: flex-end;
+  margin-top: 0;
+}
+
 .ticket-requester {
   display: flex;
   align-items: center;
@@ -297,5 +340,20 @@ const timelineCount = computed(() =>
 .ticket-detail-facts span {
   color: var(--color-muted);
   font-size: 0.85rem;
+}
+
+@media (max-width: 900px) {
+  .service-request-brief {
+    grid-template-columns: 1fr;
+  }
+
+  .service-request-brief__rail {
+    justify-items: start;
+    min-width: 0;
+  }
+
+  .service-request-brief__tags {
+    justify-content: flex-start;
+  }
 }
 </style>
