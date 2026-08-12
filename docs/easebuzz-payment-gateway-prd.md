@@ -1,8 +1,9 @@
 # PRD: Easebuzz Payment Gateway
 
 Date: 2026-07-29
+Last reviewed: 2026-08-12
 Owner: AJOWA product/engineering
-Status: Draft
+Status: Revised draft — implementation requires the operational decisions and release gates in this document
 
 ## Summary
 
@@ -19,7 +20,7 @@ The first production release should provide:
 - Resident checkout through the EaseCheckout iframe.
 - Server-side Easebuzz initiation and SHA-512 request signing.
 - Reverse-hash validation for callbacks and transaction webhooks.
-- Authoritative transaction verification using Easebuzz Transaction API V2.1.
+- Authoritative transaction verification using the merchant-approved, pinned Easebuzz Transaction V2 contract.
 - Idempotent payment initiation, webhook handling, reconciliation, allocation, receipt creation, finance journal posting, and notifications.
 - A safe pending-verification experience when the browser result arrives before server confirmation.
 - Provider-neutral payment-attempt and gateway-event records.
@@ -169,11 +170,11 @@ The prototype table:
 
 After confirming that this table has no production event records, a new migration may drop it. Easebuzz should use private, provider-neutral event storage with redaction and retention controls.
 
-### Automated Test Coverage Is Missing
+### Automated Test Coverage Exists But The Baseline Must Be Green
 
-[`package.json`](../package.json) includes lint, typecheck, format, and build scripts but has no automated unit or integration test command.
+[`package.json`](../package.json) includes an `npm test` command and the repository contains an automated test suite. At the time of this PRD review, `npm run typecheck` passes, while `npm test` has one pre-existing module-resolution failure in `tests/admin-resident-validation.test.mjs` caused by an extensionless import under the Node test runner.
 
-The Easebuzz implementation must introduce test coverage before production launch.
+The existing failure must be corrected and the full baseline recorded before Easebuzz implementation begins. The project must then add gateway-specific unit, database, API, concurrency, accounting, and sandbox coverage. A release cannot claim non-regression by comparing against a known failing baseline.
 
 ## Product Principles
 
@@ -182,10 +183,13 @@ The Easebuzz implementation must introduce test coverage before production launc
 - External gateway calls must not occur while database row locks are held.
 - Every external event may be duplicated, delayed, or delivered out of order.
 - Idempotency must cover both gateway initiation and every downstream financial effect.
+- Gateway capture, local payment verification, and bank settlement are separate financial events.
+- A verified gateway payment must debit a gateway-clearing account; it must not be recorded as bank cash before settlement.
 - Verified payments must not regress because an older failure or cancellation event arrives later.
 - Manual payment paths must remain operational if online payments are disabled.
 - Existing manual-payment and financial records must remain accessible while prototype code is removed.
 - Gateway secrets and raw payment payloads are server-only data.
+- Durable database work, not in-memory follow-up execution, must guarantee receipt, notification, and reconciliation recovery.
 - Production rollout must be reversible without deleting or rewriting payments.
 
 ## Non-Regression Requirements
@@ -237,6 +241,7 @@ Platform functionality:
 - New columns on existing tables must be nullable or have backward-compatible defaults.
 - No existing payment status may be reinterpreted for manual payments.
 - Existing generic allocation, receipt, journal, and notification functions may be reused only with regression coverage.
+- Existing manual-payment journal behavior must not be reused unchanged for online gateway receipts because bank settlement occurs later and may be net of fees and taxes.
 - The online-payments feature flag must default to disabled in every environment until the release gate is approved.
 - Failed or pending online payments must not appear in verified-payment totals or reduce dues balances.
 
@@ -256,8 +261,10 @@ Easebuzz cannot be enabled for residents unless:
 - All existing manual-payment regression tests pass.
 - Dues totals before and after the deployment match for the same database snapshot.
 - Existing receipt and finance report totals match.
-- No verified payment is missing its allocation, receipt number, or journal.
-- Lint, typecheck, build, payment tests, migration reset, and security checks pass.
+- No verified payment is missing its complete allocation/advance disposition, receipt number, or journal.
+- The pre-implementation automated-test baseline is green and documented.
+- Test, lint, typecheck, format check, build, payment tests, migration reset, and security checks pass.
+- Gateway-clearing balances reconcile to unsettled Easebuzz payments, and settled batches reconcile gross-to-fees/taxes-to-net bank deposits.
 - The online-payment kill switch has been exercised in the deployment environment.
 
 ## High-Level Resident Journey
@@ -277,7 +284,7 @@ Easebuzz cannot be enabled for residents unless:
 1. EaseCheckout returns a browser response.
 2. AJOWA displays a verification-in-progress state.
 3. The browser sends only the local payment identifier or `txnid` to AJOWA.
-4. AJOWA verifies the transaction through its stored data, callback/webhook hash, and Transaction API V2.1.
+4. AJOWA verifies the transaction through its stored data, callback/webhook hash, and the pinned Easebuzz Transaction V2 contract approved for the merchant account.
 5. AJOWA finalizes the verified payment exactly once.
 6. The resident sees success only after local finalization completes.
 7. Dues and receipts refresh.
@@ -353,7 +360,7 @@ AJOWA must:
 - Reject an invalid hash.
 - Validate `key`, `txnid`, amount, product information, and local payment correlation.
 - Persist a redacted callback record for investigation.
-- Use Transaction API V2.1 before financial finalization when the callback is the only available signal.
+- Use the pinned Transaction V2 contract before financial finalization when the callback is the only available signal.
 
 ### Transaction Webhook
 
@@ -371,9 +378,11 @@ AJOWA must:
 
 Easebuzz payloads do not provide the same globally unique event identifier assumed by the Razorpay prototype. AJOWA should create a deterministic event fingerprint from normalized provider, `txnid`, `easepayid`, status, and payload hash.
 
-### Transaction API V2.1
+### Transaction API V2 Contract
 
-AJOWA must integrate transaction retrieval for:
+The currently reviewed official Easebuzz integration kit uses `POST /transaction/v2/retrieve` with a SHA-512 hash over `key|txnid|salt`. Before implementation, engineering must confirm this contract against the merchant account's current Easebuzz documentation and sandbox behavior. The endpoint path, required fields, hash sequence, timeout behavior, and representative redacted response fixtures must be version-pinned in automated contract tests.
+
+AJOWA must integrate authoritative transaction retrieval for:
 
 - Browser-triggered verification.
 - Stale initiated or pending transactions.
@@ -381,7 +390,9 @@ AJOWA must integrate transaction retrieval for:
 - Webhook delivery failure.
 - Operational reconciliation.
 
-The request uses the locally stored `txnid` and a server-generated SHA-512 hash. The response must be reverse-hash verified when provided and compared with local merchant key, `txnid`, and amount.
+The request uses the locally stored `txnid` and a server-generated SHA-512 hash. The response must be integrity-checked according to the pinned contract and compared with the local merchant key, `txnid`, amount, provider, and known `easepayid` when present. A response format or status that does not match the pinned contract must remain pending or under review; it must never default to success.
+
+Self-generated test vectors are insufficient. The test suite must include merchant-approved documentation vectors or redacted sandbox fixtures for initiation, callback, webhook, transaction retrieval, duplicate transaction IDs, and each supported terminal and non-terminal status.
 
 ### Refunds
 
@@ -411,9 +422,12 @@ Resident UI
     -> Verified Payment Finalizer
       -> Allocation
       -> Receipt Number
-      -> Finance Journal
+      -> Gateway Clearing Journal
+      -> Durable Effect Jobs
       -> Receipt PDF
       -> Notification
+    -> Settlement Reconciliation
+      -> Bank / Fee / Tax / Clearing Journal
 ```
 
 The initial provider adapter may expose:
@@ -440,26 +454,27 @@ The accounting domain must not import Easebuzz-specific code directly.
 | Gateway payment identifier         | `easepayid`                |
 | Bank reference                     | `bank_ref_num`             |
 | Callback/webhook integrity         | Reverse SHA-512 hash       |
-| Server reconciliation              | Transaction API V2.1       |
+| Server reconciliation              | Pinned Transaction V2 API  |
 | Local correlation                  | `udf1 = payments.id`       |
 
 The existing generic `gateway_order_id` can store `txnid`, and `gateway_payment_id` can store `easepayid`. Provider-scoped uniqueness keeps the schema safe for future provider changes even though Easebuzz is the only live provider in this release.
 
 ## Data Model
 
-All schema changes must be additive and delivered through a new Supabase migration created with:
+Schema changes must preserve existing records and be delivered through new Supabase migrations created with:
 
 ```text
 supabase migration new easebuzz_payment_gateway
 ```
 
-Do not edit the previously applied Razorpay migration.
+Do not edit the previously applied Razorpay migration. New gateway tables and columns are additive. The only non-additive operations are the separately guarded removal of the unused Razorpay table and the audited replacement of legacy global gateway indexes described below.
 
 ### `payments` Changes
 
 Add:
 
 - `payment_provider text`
+- Optional `gateway_paid_at timestamptz`
 - Optional `gateway_finalized_at timestamptz`
 - Optional `gateway_finalization_error text`
 
@@ -477,7 +492,14 @@ Pre-migration verification:
 - New Easebuzz rows use `EASEBUZZ`.
 - Existing manual-payment rows remain unchanged.
 
-Indexes:
+Existing-index compatibility:
+
+- The current schema has globally unique partial indexes on `gateway_order_id`, `gateway_payment_id`, `gateway_webhook_event_id`, and `idempotency_key`.
+- After production data is audited, replace only the global `gateway_order_id` and `gateway_payment_id` indexes with provider-scoped unique indexes. Do not leave both global and provider-scoped versions active because the global indexes would defeat the provider-neutral design.
+- Keep the existing global `payments.idempotency_key` constraint for backward compatibility with manual payments. Scope online initiation additionally through the attempts-table constraint described below.
+- Keep legacy `gateway_webhook_event_id` nullable for compatibility, but new provider-neutral event processing must use `payment_gateway_events`; do not write new Easebuzz fingerprints into the single-value legacy column.
+
+Required indexes:
 
 - Unique partial index on `(payment_provider, gateway_order_id)` where `gateway_order_id is not null`.
 - Unique partial index on `(payment_provider, gateway_payment_id)` where `gateway_payment_id is not null`.
@@ -499,10 +521,13 @@ Recommended fields:
 - `provider text not null`
 - `merchant_transaction_id text not null`
 - `idempotency_key text not null`
+- `request_fingerprint text not null`
 - `status text not null`
 - `amount numeric(10,2) not null`
 - `currency text not null default 'INR'`
 - `initiation_response jsonb not null default '{}'`
+- Optional encrypted or access-restricted `access_key`
+- Optional `access_key_expires_at timestamptz`
 - `last_gateway_status text`
 - `attempt_count integer not null default 0`
 - `failure_stage text`
@@ -522,12 +547,16 @@ Recommended fields:
 Constraints and indexes:
 
 - Unique `(provider, merchant_transaction_id)`.
-- Unique `(provider, idempotency_key)`.
+- Unique `(society_id, provider, idempotency_key)`.
+- Unique `(payment_id, provider)` for the initial single-provider workflow.
+- `society_id` references `society_profile(id) on delete restrict`.
 - Index `(payment_id, created_at desc)`.
 - Partial reconciliation index on `(provider, updated_at)` for initiated and pending attempts.
 - Foreign-key indexes for `payment_id` and `society_id`.
 
-The short-lived `access_key` should not be stored unless required for operational recovery. If stored, it must have limited retention and must never be exposed through the Data API.
+The `request_fingerprint` must be a cryptographic digest generated from the canonical society, payer, flat, amount, currency, allocation mode, sorted selected due IDs, tenure, and other financially relevant intent. Store the digest rather than a raw string containing personal or financial data. Reusing an idempotency key with a different fingerprint returns `409 CONFLICT` and must not call Easebuzz.
+
+The implementation must resolve the crash window in which Easebuzz returns an `access_key` but AJOWA fails before returning it to the browser. Before sandbox approval, confirm whether Easebuzz safely returns/reissues an access key when initiation is repeated with the same `txnid`. If not, store the access key with an explicit expiry, server-only access, log redaction, and bounded retention. An ambiguous duplicate-`txnid` response must trigger transaction retrieval or manual review; it must never generate a new `txnid` automatically.
 
 ### `payment_gateway_events`
 
@@ -539,6 +568,9 @@ Purpose:
 Recommended fields:
 
 - `id uuid primary key default gen_random_uuid()`
+- `society_id uuid references society_profile(id) on delete restrict`
+- `payment_id uuid references payments(id) on delete restrict`
+- `attempt_id uuid references payment_gateway_attempts(id) on delete restrict`
 - `provider text not null`
 - `event_fingerprint text not null`
 - `event_kind text not null`
@@ -560,18 +592,72 @@ Recommended fields:
 Constraints and indexes:
 
 - Unique `(provider, event_fingerprint)`.
+- Foreign-key indexes for `society_id`, `payment_id`, and `attempt_id`.
 - Index `(provider, merchant_transaction_id, received_at desc)`.
 - Partial index on `(provider, received_at)` where `processed_at is null`.
 
-Duplicate receipt should use `INSERT ... ON CONFLICT` to increment `received_count` atomically.
+The fingerprint must include normalized provider, event kind, `txnid`, `easepayid`, gateway status, and payload hash. Including event kind prevents a callback and webhook with otherwise identical fields from being incorrectly collapsed into one audit record. Duplicate receipt should use `INSERT ... ON CONFLICT` to increment `received_count` atomically.
 
-### Data API And RLS Requirements
+An event may initially be stored without `society_id`, `payment_id`, or `attempt_id` only when correlation is invalid or unavailable. Valid correlated events must set all three references and must pass an application-level check that payment, attempt, society, provider, merchant transaction ID, and amount agree.
 
-`payment_gateway_attempts` and `payment_gateway_events` contain internal payment metadata.
+### `payment_effect_jobs`
+
+Purpose:
+
+- Durably records post-commit work so a process crash cannot lose receipt PDF generation or notification enqueueing.
+- Supports bounded retries and operational visibility.
+
+Recommended fields:
+
+- `id uuid primary key default gen_random_uuid()`
+- `society_id uuid not null references society_profile(id) on delete restrict`
+- `payment_id uuid not null references payments(id) on delete restrict`
+- `job_type text not null`
+- `status text not null default 'QUEUED'`
+- `attempt_count integer not null default 0`
+- `next_attempt_at timestamptz`
+- `locked_at timestamptz`
+- `locked_by text`
+- `last_error_code text`
+- `created_at timestamptz not null default now()`
+- `updated_at timestamptz not null default now()`
 
 Requirements:
 
-- Enable RLS on both tables if they are in `public`.
+- Unique `(payment_id, job_type)` for `RECEIPT_PDF` and `RECEIPT_NOTIFICATION`.
+- Finalization inserts required jobs in the same database transaction as payment verification.
+- Workers claim jobs in bounded batches using the repository's established `FOR UPDATE SKIP LOCKED` pattern, perform external work outside the claim transaction, and recover stale locks.
+- The existing notification queue remains the delivery system; the payment-effect job guarantees that enqueueing into it is retried exactly once logically.
+
+### `payment_gateway_settlements` And Settlement Items
+
+Purpose:
+
+- Separates gateway payment verification from actual bank settlement.
+- Reconciles gross captured amounts, gateway fees, taxes, adjustments, refunds, and net bank deposits.
+
+Minimum model:
+
+- A settlement header scoped by society and provider with provider settlement ID, settlement date, currency, gross amount, fee amount, tax amount, adjustment amount, net amount, bank account, status, and source/import metadata.
+- Settlement items linked to the header and local payment/attempt with `easepayid`, `txnid`, gross amount, fee, tax, adjustment, and net amount.
+- Unique provider-scoped settlement and settlement-item identifiers.
+- Additive foreign keys with `on delete restrict`, RLS, explicit public-role revocation, and indexes for unresolved clearing entries.
+
+The first release may use a protected, audited statement import if the merchant account does not provide a suitable settlement API. General availability still requires a repeatable daily reconciliation process; dashboard-only visual checking is not sufficient.
+
+### Finance Schema Compatibility
+
+Add a backward-compatible journal posting-source field, for example `posting_source text not null default 'USER'`, with supported values such as `USER`, `PAYMENT_GATEWAY`, and `GATEWAY_SETTLEMENT`. Existing journals retain `USER`. Online receipt and settlement journals use the appropriate system source and may keep `posted_by_user_id` null; user-triggered manual journals continue to require their current actor attribution.
+
+If the team instead chooses a dedicated system user, it must be a non-login service identity with stable lifecycle rules and must never be an arbitrary resident or administrator. The selected model must be applied consistently to audit records, journal entries, retries, and reconciliation.
+
+### Data API And RLS Requirements
+
+`payment_gateway_attempts`, `payment_gateway_events`, `payment_effect_jobs`, settlement headers, and settlement items contain internal payment metadata.
+
+Requirements:
+
+- Enable RLS on every new internal payment table if it is in `public`.
 - Do not create resident-facing policies for raw gateway data.
 - Explicitly revoke table access from `anon` and `authenticated`.
 - Use the server database role for all access.
@@ -606,13 +692,15 @@ Behavior:
 
 1. Validate input.
 2. Validate linked-flat access.
-3. Recalculate allocation preview on the server.
-4. Create or reuse the local `INITIATED` payment.
-5. Create or reuse the Easebuzz attempt and `txnid`.
-6. Commit local state.
-7. Call Easebuzz outside the database transaction.
-8. Store the redacted initiation result.
-9. Return checkout data.
+3. Enforce the same billing-contact, owner/tenant, society-policy, active-user, active-flat, and `canPayNow` rules used by `/my/dues`; linked-flat membership alone is insufficient.
+4. Recalculate allocation preview and payable amount on the server.
+5. Build and compare the canonical request fingerprint.
+6. Create or reuse the local `INITIATED` payment.
+7. Create or reuse the Easebuzz attempt and stable `txnid`.
+8. Commit local state.
+9. Call Easebuzz outside the database transaction.
+10. Store the redacted initiation result and recoverable access-key state according to the approved contract.
+11. Return checkout data.
 
 Response:
 
@@ -627,6 +715,8 @@ Response:
 
 The salt and server hash inputs beyond documented browser requirements must not be returned.
 
+The response amount and preview are authoritative. If the server-calculated intent no longer matches the submitted due selection, return a safe conflict that asks the resident to refresh; do not initiate a stale amount silently.
+
 ### Easebuzz Success/Failure Callback
 
 ```text
@@ -638,8 +728,8 @@ Behavior:
 - Accept form-encoded callback fields.
 - Validate reverse hash.
 - Persist a redacted event.
-- Reconcile using Transaction API V2.1.
-- Return a safe HTML redirect or result response appropriate to EaseCheckout.
+- Queue reconciliation using the pinned Transaction V2 contract.
+- Return a safe HTML redirect or result response promptly; do not hold the unauthenticated callback open for slow transaction retrieval or financial finalization.
 - Do not expose internal validation details to an unauthenticated caller.
 
 ### Easebuzz Transaction Webhook
@@ -656,7 +746,7 @@ Behavior:
 - Persist durably and idempotently.
 - Return 200 after durable acceptance.
 - Record invalid messages for security monitoring without processing them.
-- Apply only allowed monotonic state transitions.
+- Queue valid messages for processing and apply only allowed monotonic state transitions outside the webhook acknowledgement path.
 
 ### Browser Verification
 
@@ -676,7 +766,7 @@ Behavior:
 
 - Ignore any browser-supplied amount or success status.
 - Retrieve the local attempt.
-- Call Transaction API V2.1.
+- Call the pinned Transaction V2 API contract.
 - Verify the server response.
 - Apply the local transition.
 - Run finalization when authoritative status is successful.
@@ -707,6 +797,7 @@ Provide a protected scheduled process or worker that:
 
 - Selects stale initiated/pending Easebuzz attempts in bounded batches.
 - Claims work safely so two workers cannot finalize the same attempt concurrently.
+- Uses explicit claim metadata or `FOR UPDATE SKIP LOCKED`, with stale-lock recovery, rather than holding database locks during HTTP calls.
 - Calls Transaction API outside database transactions.
 - Applies the state transition in a short transaction.
 - Retries transient failures with bounded backoff.
@@ -746,33 +837,103 @@ Create one idempotent function, conceptually:
 finalizeVerifiedOnlinePaymentWithClient
 ```
 
+Before calling the finalizer, persist the authoritative gateway observation on the attempt in its own short transaction, including the verified raw status, `easepayid`, amount, and gateway-paid timestamp. This preserves evidence that Easebuzz captured the money even if local financial finalization later rolls back. The local `payments` row remains `PENDING_VERIFICATION` until the complete finalization transaction succeeds.
+
 Inside one short database transaction:
 
 1. Lock the payment.
 2. Confirm it is an Easebuzz online payment.
 3. Validate expected amount, `txnid`, `easepayid`, and society/flat association.
 4. Write gateway and bank references.
-5. Set status to `VERIFIED` and `verified_at`.
+5. Set status to `VERIFIED`, record authoritative `gateway_paid_at`, and set local `verified_at`.
 6. Allocate the payment using the existing allocation logic.
 7. Assign exactly one receipt number.
-8. Post exactly one maintenance receipt journal.
-9. Mark gateway finalization complete.
-10. Commit.
+8. Post exactly one gateway-clearing receipt journal.
+9. Insert durable `RECEIPT_PDF` and `RECEIPT_NOTIFICATION` effect jobs.
+10. Mark gateway finalization complete.
+11. Commit.
 
 Requirements:
 
 - Allocation remains idempotent when allocations already exist.
+- The verified gross amount must equal payment allocations plus any resident advance credit created from that payment, using paise-level rounding.
 - Receipt numbering remains idempotent.
-- Journal creation remains idempotent by `payment_id`.
+- Gateway-clearing journal creation remains idempotent by `payment_id` and the existing unique journal relationship.
 - No gateway HTTP call occurs inside this transaction.
 - Concurrent webhook, callback, browser verification, and reconciliation requests must converge on one result.
+- If finalization rolls back, the attempt retains authoritative gateway-success evidence, the local payment remains pending, `retry_allowed` remains false, and reconciliation retries finalization without another Easebuzz charge.
+- Online posting uses an explicit system/service actor or an approved nullable system-posting model; it must not impersonate the resident or an arbitrary administrator.
+- Receipt and reporting dates use the authoritative gateway-paid timestamp converted according to the documented society timezone policy. Initiation time must not be substituted for payment time.
 
-After commit:
+### Allocation Drift During Checkout
+
+The dues state may change after initiation but before Easebuzz success is finalized. For example, an administrator may record a manual payment, apply an advance, waive a charge, or correct a due while the resident is in checkout.
+
+Required policy:
+
+- Store the resident's allocation intent and initiation preview for audit, but recompute actual allocation under lock during finalization.
+- Preserve the selected allocation mode where still valid.
+- Never allocate more than the remaining eligible balance of a due.
+- If the verified amount exceeds the remaining selected dues, use the society's existing excess-payment policy. Create an advance only when that policy permits it.
+- If the remainder cannot legally be allocated or retained as advance, keep the local payment `PENDING_VERIFICATION` with resident code `PAYMENT_RECEIVED_PROCESSING`, mark the attempt for manual review, and prevent another payment. Do not discard the captured money, mark it failed, or ask the resident to pay again.
+- Test a manual payment, advance application, waiver, and due correction racing between online initiation and finalization.
+
+After commit, durable workers:
 
 - Generate and upload the receipt PDF.
 - Enqueue the receipt-ready notification.
 - Retry either operation if it fails.
 - Do not reverse a verified payment merely because receipt upload or notification delivery failed.
+- Periodically recover any verified payment missing its effect jobs, receipt file, notification event, allocation, receipt number, or journal.
+
+## Gateway Accounting And Settlement
+
+Easebuzz payment verification and Easebuzz settlement are distinct accounting events. The existing `postMaintenanceReceiptJournal` function is correct for manual money received directly into a configured bank account, but it must not be called unchanged for an Easebuzz capture.
+
+### Journal At Verified Gateway Payment
+
+Create a provider-neutral online-receipt posting function that uses the same allocation-derived maintenance, late-fee, and resident-advance amounts as the manual flow, but posts the debit to an active `Easebuzz Clearing` asset account rather than directly to a society bank account.
+
+Conceptual entry for a gross payment:
+
+```text
+Debit   Easebuzz Clearing                 gross captured amount
+Credit  Maintenance Income               allocated maintenance amount
+Credit  Late Fee Income                  allocated late-fee amount
+Credit  Resident Advance Liability       permitted excess/advance amount
+```
+
+The credits must total the verified gross payment and must remain compatible with the current allocation and advance-liability logic. Do not net gateway fees out of the resident receipt or reduce the resident's credited payment amount.
+
+### Journal At Settlement
+
+When an Easebuzz settlement is matched to the bank deposit, post a separate idempotent settlement journal. Conceptually:
+
+```text
+Debit   Society Bank                     net amount deposited
+Debit   Payment Gateway Fee Expense      gateway fee, if applicable
+Debit   Approved Tax/Input-Tax Account   tax amount, only per accounting policy
+Debit/Credit Explicit Adjustment Account supported settlement adjustments
+Credit  Easebuzz Clearing                gross amount settled
+```
+
+Requirements:
+
+- Finance/accounting must approve the account heads and tax treatment before the production pilot.
+- Settlement journals must link to the settlement header/items through additive relationships; they must not reuse `journal_entries.payment_id` for multiple settlement postings because that field is unique per payment.
+- Every fee, tax, refund, chargeback, reserve, or adjustment must be represented explicitly. Unknown deductions remain unreconciled and require review; they must not be silently posted to a generic expense.
+- The bank is debited only when the settlement is supported by a provider statement/API record and matched bank deposit.
+- Settlement import and journal posting are idempotent by provider settlement identifier and source fingerprint.
+- A settlement batch cannot be marked reconciled unless item gross totals and adjustments explain the net bank deposit exactly within the application's paise-level rounding rules.
+
+### Settlement Operations
+
+- Import or retrieve settlement data daily during the pilot and on every business day after general availability.
+- Match by provider, settlement ID, `easepayid`, `txnid`, amount, currency, and expected date window.
+- Surface captured-but-unsettled, settled-without-local-payment, duplicate, amount-mismatch, fee/tax mismatch, and bank-deposit mismatch cases.
+- Keep settlement status separate from resident payment status. A resident payment remains verified after a normal delayed settlement, but overdue or mismatched settlement must alert operations.
+- Record every manual settlement match, unmatch, adjustment classification, and retry as an audited action with a reason.
+- Establish expected settlement timing from the executed Easebuzz merchant agreement; alert thresholds must be based on that contract rather than an assumed T+N period.
 
 ## Resident UI Requirements
 
@@ -954,6 +1115,7 @@ ONLINE_PAYMENTS_ENABLED=false
 EASEBUZZ_ENV=test
 EASEBUZZ_KEY=
 EASEBUZZ_SALT=
+PAYMENT_RECONCILIATION_WORKER_SECRET=
 ```
 
 Rules:
@@ -962,6 +1124,7 @@ Rules:
 - Credentials must be configured independently for test and production deployments.
 - Production must refuse Easebuzz initiation when required configuration is missing.
 - Missing Easebuzz configuration must not prevent unrelated application routes or manual payments from starting.
+- Missing worker configuration must disable and alert only the online reconciliation worker; it must not prevent application startup or manual collection.
 - Do not log credentials, request hash source strings, full callbacks, or raw payment instruments.
 - Merchant key/environment may be returned only as required by the official EaseCheckout browser contract.
 - No Razorpay provider option or fallback configuration should remain.
@@ -972,6 +1135,7 @@ Rules:
 - Generate all request hashes server-side.
 - Use SHA-512 with exact documented field ordering.
 - Use timing-safe hash comparison.
+- Check decoded hash lengths before calling the timing-safe comparison so malformed input cannot trigger an exception-based denial of service.
 - Validate merchant key, `txnid`, amount, currency, product information, local payment ID, flat, society, and provider.
 - Recalculate payment allocation and authorization on the server.
 - Never trust browser-provided success, amount, user, flat, or gateway identifier.
@@ -992,8 +1156,10 @@ Rules:
 
 - One idempotency key maps to one logical local payment.
 - One provider/idempotency pair maps to one stable gateway attempt and `txnid`.
+- The same key with a different canonical request fingerprint returns `409 CONFLICT` before any gateway call.
 - A repeated request returns or refreshes the existing attempt instead of creating a new charge.
 - Easebuzz duplicate-`txnid` responses trigger retrieval/reconciliation rather than generating a new `txnid` automatically.
+- An unresolved attempt blocks accidental repeat initiation for the same resident intent, while a new intentional retry after an authoritative terminal failure receives a new idempotency key, payment, attempt, and `txnid` linked to the prior attempt for audit.
 
 ### Event Receipt
 
@@ -1008,6 +1174,14 @@ Rules:
 - Use provider-scoped unique constraints.
 - Keep transactions short.
 - Use deterministic lock ordering if more than one table/row is locked.
+- Create durable effect jobs in the finalization transaction so post-commit work cannot be lost.
+
+### Settlement
+
+- Provider settlement IDs and source fingerprints are unique within provider scope.
+- Reimporting the same statement or receiving the same settlement data is a no-op except for receipt metadata.
+- Settlement item matching and settlement journal posting are transactional and idempotent.
+- Concurrent settlement workers must use the same bounded claim and stale-lock recovery principles as payment reconciliation.
 
 ## Observability And Reconciliation
 
@@ -1024,6 +1198,8 @@ Operational metrics:
 - Transaction API latency and error rate.
 - Time from gateway success to local finalization.
 - Allocation, receipt-number, journal, PDF, and notification failures.
+- Gateway-clearing balance and captured-but-unsettled age buckets.
+- Settlement gross, fee, tax, adjustment, and net mismatches.
 - Verified payments missing allocations.
 - Verified payments missing journal entries.
 - Verified payments missing receipt numbers or files.
@@ -1035,6 +1211,8 @@ Operational views or protected queries should support:
 - Failed finalizations requiring retry.
 - Verified payment invariant violations.
 - Invalid webhook attempts.
+- Gateway-clearing balance by payment and settlement-age bucket.
+- Settlement batches with unmatched items, unexplained deductions, or unmatched bank deposits.
 
 Alerts should be actionable and must not include raw secrets or sensitive payment data.
 
@@ -1043,6 +1221,7 @@ Alerts should be actionable and must not include raw secrets or sensitive paymen
 ### Unit Tests
 
 - Initiate hash generation with fixed official-compatible vectors.
+- Pinned Transaction V2 request and response fixtures captured from merchant-approved documentation or sandbox traffic.
 - Reverse-hash generation and timing-safe comparison.
 - Exact amount canonicalization.
 - `txnid` generation and length/character validation.
@@ -1053,19 +1232,29 @@ Alerts should be actionable and must not include raw secrets or sensitive paymen
 - Unknown-outcome handling that never claims a definite failure.
 - Event fingerprint generation.
 - Payload redaction.
+- Canonical request-fingerprint stability and mismatch rejection.
+- Gateway-paid timestamp and society-timezone conversion.
 
 ### Database And Service Tests
 
 - Idempotent payment and attempt creation.
 - Concurrent initiation with the same idempotency key.
+- Same idempotency key with changed amount, flat, allocation mode, or due selection is rejected before a gateway call.
+- Recovery after Easebuzz returns an access key but the initiating process fails before responding.
 - Provider-scoped gateway identifier uniqueness.
 - Duplicate and out-of-order event handling.
 - Exactly-once allocation.
 - Exactly-once receipt numbering.
 - Exactly-once finance journal posting.
+- Verified online payment debits gateway clearing rather than a bank account.
+- Settlement posts net bank, fees, approved taxes, adjustments, and clearing without changing the resident's gross credited amount.
+- Duplicate settlement import and concurrent settlement processing remain idempotent.
+- Captured-but-unsettled and settlement-mismatch cases remain visible and do not alter resident payment verification.
+- Durable effect jobs recover after a process crash between finalization commit and worker execution.
 - Failed/cancelled payments create no allocation, receipt, journal, or notification.
 - Pending payments do not reduce dues or appear in verified totals.
 - Gateway-success finalization retry keeps the payment out of verified reports until the atomic finalizer commits.
+- Manual payment, advance application, waiver, and due correction racing with online checkout follow the allocation-drift policy without losing captured funds.
 - Prototype cleanup aborts when unexpected Razorpay event/payment data exists.
 - Verified payment invariant queries.
 - RLS and privilege tests showing `anon` and `authenticated` cannot access gateway tables.
@@ -1076,6 +1265,7 @@ Alerts should be actionable and must not include raw secrets or sensitive paymen
 - Unauthorized initiation and status access.
 - Initiation success and Easebuzz error mapping.
 - Initiation timeout returns unknown/pending rather than retry-safe failure.
+- Idempotency fingerprint mismatch returns a safe conflict.
 - Invalid callback hash.
 - Invalid webhook hash.
 - Amount, key, `txnid`, provider, and local-correlation mismatch.
@@ -1084,6 +1274,7 @@ Alerts should be actionable and must not include raw secrets or sensitive paymen
 - Raw provider or internal errors never reach resident responses.
 - Pending status polling.
 - Reconciliation recovery after callback/webhook loss.
+- Callback and webhook acknowledgement paths do not wait for slow transaction retrieval, PDF generation, notifications, or settlement processing.
 
 ### Sandbox End-To-End Matrix
 
@@ -1110,6 +1301,9 @@ Alerts should be actionable and must not include raw secrets or sensitive paymen
 - Transaction API timeout.
 - Receipt PDF upload failure.
 - Notification failure.
+- Process termination immediately after financial finalization commit.
+- Gross settlement with fee and tax deductions.
+- Multi-payment settlement batch and partial/unmatched settlement statement.
 - All payment allocation modes.
 - Partial payment.
 - Excess or advance handling according to society policy.
@@ -1136,12 +1330,14 @@ Alerts should be actionable and must not include raw secrets or sensitive paymen
 Before merge:
 
 ```text
+npm test
 npm run lint
 npm run typecheck
+npm run format:check
 npm run build
 ```
 
-The payment test suite added by this project must also be required before merge.
+The existing pre-implementation test failure must be corrected before gateway work is used as a non-regression baseline. The payment and settlement test suites added by this project must also be required before merge.
 
 For schema changes:
 
@@ -1192,6 +1388,7 @@ Exit criteria:
 - Add provider-neutral schema.
 - Create the Easebuzz provider adapter boundary.
 - Create unified verified-payment finalization.
+- Add gateway-clearing accounts/posting, durable payment-effect jobs, and settlement data structures without changing manual journal behavior.
 - Add invariant and idempotency tests.
 - Leave resident online payment disabled.
 
@@ -1208,7 +1405,7 @@ Exit criteria:
 - Add hash utilities.
 - Add Initiate Payment integration.
 - Add callback and webhook endpoints.
-- Add Transaction API V2.1 integration.
+- Add the pinned Transaction V2 integration.
 - Add reconciliation.
 - Keep the feature flag disabled in production.
 
@@ -1239,8 +1436,10 @@ Exit criteria:
 - Confirm Easebuzz merchant onboarding and permitted payment modes.
 - Confirm production callback and webhook URLs.
 - Configure production credentials and webhooks.
+- Configure and approve gateway-clearing, gateway-fee, tax, adjustment, and settlement bank accounts.
 - Enable Easebuzz for an internal or limited user allowlist.
 - Monitor every pilot payment through Easebuzz settlement and local accounting.
+- Import or retrieve each pilot settlement and reconcile gross payments, deductions, and the net bank deposit.
 - Disable online payments if a stop-the-line condition occurs; do not fall back to Razorpay.
 - Define success and stop-the-line thresholds.
 
@@ -1248,6 +1447,7 @@ Exit criteria:
 
 - Pilot payments have correct gateway, allocation, receipt, journal, and notification records.
 - No unexplained settlement difference exists.
+- Gateway clearing equals captured-but-unsettled items and every settled batch has an idempotent settlement journal.
 - Pending and failure handling has been exercised.
 - Every existing non-regression suite remains green against the production candidate.
 
@@ -1256,6 +1456,7 @@ Exit criteria:
 - Route all new online payments to Easebuzz.
 - Remove the pilot allowlist.
 - Continue scheduled reconciliation and invariant monitoring.
+- Continue daily settlement import/retrieval, clearing reconciliation, and bank-deposit matching.
 - Keep the global online-payments kill switch available.
 
 Exit criteria:
@@ -1277,6 +1478,7 @@ Exit criteria:
 - Disable new Easebuzz initiation immediately.
 - Reconcile every initiated Easebuzz `txnid`.
 - Leave existing attempts and events intact.
+- Continue reconciliation, durable payment-effect workers, and settlement processing for already initiated or captured payments.
 - Keep manual payment collection available.
 - Never route payments to Razorpay.
 
@@ -1284,6 +1486,7 @@ Exit criteria:
 
 - Set `ONLINE_PAYMENTS_ENABLED=false` to stop new checkout initiation.
 - Keep Easebuzz callback, webhook, status, and reconciliation handling active for already initiated transactions.
+- Keep payment-effect and settlement workers active until every captured transaction, receipt, notification, clearing balance, and settlement is resolved.
 - Never delete or rewrite successful Easebuzz payments.
 - Continue manual payment collection until the issue is resolved.
 
@@ -1327,11 +1530,14 @@ A successful Easebuzz transaction produces exactly:
 - One gateway attempt for the idempotency key.
 - One `txnid`.
 - One stored `easepayid`.
-- One set of allocations.
+- One complete financial disposition whose allocations plus permitted advance equal the verified gross amount.
 - One receipt number.
 - One receipt PDF, eventually.
-- One posted maintenance receipt journal.
+- One posted gateway-clearing receipt journal.
+- One durable receipt-PDF job and one durable notification-enqueue job.
 - One resident receipt-ready notification, eventually.
+
+When Easebuzz settles the transaction, it additionally produces exactly one matched settlement item and its share of one idempotent settlement journal without changing the resident's gross receipt amount.
 
 ### Verification Integrity
 
@@ -1370,6 +1576,8 @@ A successful Easebuzz transaction produces exactly:
 - Existing receipt history remains available.
 - Receipt numbering remains sequential and duplicate-safe.
 - Finance journals and reports contain every verified online payment exactly once.
+- Manual payments continue to debit their selected bank account directly; online payments debit gateway clearing until settlement.
+- Settlement journals explain gross collections, fees, approved taxes, adjustments, and net bank deposits without duplicating income.
 - Existing manual-payment journal and report totals do not change after deployment.
 - Dues balances update only after verified finalization.
 - Authentication, roles, permissions, linked-flat access, notifications, and storage continue to work.
@@ -1380,6 +1588,7 @@ A successful Easebuzz transaction produces exactly:
 
 - Easebuzz salt is not present in browser bundles, resident APIs, or logs.
 - Public Supabase roles cannot access gateway attempts or events.
+- Public Supabase roles cannot access payment-effect jobs, settlement headers, or settlement items.
 - Raw sensitive callback data is not exposed.
 - Callback and webhook hashes use timing-safe verification.
 
@@ -1396,28 +1605,39 @@ The unused Razorpay prototype is considered removed when:
 
 ## Risks And Mitigations
 
-| Risk                                              | Impact                                | Mitigation                                                     |
-| ------------------------------------------------- | ------------------------------------- | -------------------------------------------------------------- |
-| Browser reports success but server cannot confirm | Resident uncertainty or false credit  | Show pending; verify using webhook and Transaction API         |
-| Duplicate initiation                              | Multiple charges                      | Durable local attempt and stable `txnid` before external call  |
-| Duplicate/out-of-order events                     | Duplicate or regressed accounting     | Event fingerprint, row locks, monotonic state machine          |
-| Process failure during finalization               | Partial payment state                 | One atomic database finalizer plus retryable post-commit work  |
-| Missing finance journal                           | Reporting mismatch                    | Include journal posting in the unified finalizer               |
-| Webhook outage                                    | Delayed verification                  | Scheduled Transaction API reconciliation                       |
-| Sensitive payload exposure                        | Privacy/security incident             | RLS, privilege revocation, redaction, retention, safe logging  |
-| Easebuzz launch failure                           | Payment outage                        | Feature flag, controlled pilot, manual-payment continuity      |
-| Misleading failure description                    | Resident retries an uncertain payment | Stable failure taxonomy, retry flag, reference, reconciliation |
-| Regression in existing payment/accounting flows   | Incorrect dues, receipts, or reports  | Mandatory snapshot comparison and full non-regression gate     |
-| Unexpected Razorpay prototype data                | Accidental data loss during cleanup   | Query and investigate before dropping provider-specific data   |
-| Refund without accounting reversal                | Incorrect dues and ledger             | Separate audited refund/reversal workflow                      |
+| Risk                                               | Impact                                 | Mitigation                                                                                 |
+| -------------------------------------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Browser reports success but server cannot confirm  | Resident uncertainty or false credit   | Show pending; verify using webhook and Transaction API                                     |
+| Duplicate initiation                               | Multiple charges                       | Durable local attempt and stable `txnid` before external call                              |
+| Duplicate/out-of-order events                      | Duplicate or regressed accounting      | Event fingerprint, row locks, monotonic state machine                                      |
+| Process failure during finalization                | Partial payment state                  | One atomic database finalizer plus retryable post-commit work                              |
+| Missing finance journal                            | Reporting mismatch                     | Include the gateway-clearing journal in the unified finalizer                              |
+| Gateway capture posted directly to bank            | Bank and cash balances overstated      | Debit gateway clearing at capture; debit bank only at settlement                           |
+| Settlement fees/taxes netted from resident receipt | Incorrect resident credit or income    | Credit the resident at gross and post deductions only in settlement accounting             |
+| Lost receipt/notification follow-up after commit   | Verified payment lacks expected output | Create durable effect jobs in the finalization transaction                                 |
+| Dues change while checkout is open                 | Captured amount cannot follow preview  | Recompute under lock and apply the documented allocation-drift policy                      |
+| Lost initiation response/access key                | Duplicate checkout or stranded attempt | Stable `txnid`, fingerprinted idempotency, bounded access-key recovery, and reconciliation |
+| Webhook outage                                     | Delayed verification                   | Scheduled Transaction API reconciliation                                                   |
+| Sensitive payload exposure                         | Privacy/security incident              | RLS, privilege revocation, redaction, retention, safe logging                              |
+| Easebuzz launch failure                            | Payment outage                         | Feature flag, controlled pilot, manual-payment continuity                                  |
+| Misleading failure description                     | Resident retries an uncertain payment  | Stable failure taxonomy, retry flag, reference, reconciliation                             |
+| Regression in existing payment/accounting flows    | Incorrect dues, receipts, or reports   | Mandatory snapshot comparison and full non-regression gate                                 |
+| Unexpected Razorpay prototype data                 | Accidental data loss during cleanup    | Query and investigate before dropping provider-specific data                               |
+| Refund without accounting reversal                 | Incorrect dues and ledger              | Separate audited refund/reversal workflow                                                  |
 
 ## Operational Decisions Required Before Implementation
 
 - Easebuzz merchant key and salt for sandbox and production.
+- The exact merchant-approved Transaction V2 endpoint, fields, hashes, statuses, and redacted sandbox fixtures.
 - Approved production `surl`, `furl`, and webhook URLs.
 - Payment modes enabled in the Easebuzz account.
+- Confirmed access-key lifetime and same-`txnid` re-initiation/recovery behavior.
 - Stop-the-line thresholds for success rate, pending age, and settlement mismatch.
 - Gateway-event payload retention period.
+- Approved Easebuzz clearing, fee-expense, tax, adjustment, and settlement bank accounts.
+- Approved tax treatment for Easebuzz fees and settlement deductions.
+- Settlement source (API or protected statement import), expected settlement timing, and daily reconciliation owner.
+- Approved online journal system-actor/posting-source model.
 - Refund automation scope and accounting reversal policy.
 - Owner for daily reconciliation during the pilot and general-availability launch.
 - Whether the first pilot is user-allowlisted, society-wide during a maintenance window, or both.
