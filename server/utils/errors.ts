@@ -1,4 +1,3 @@
-import { H3Error } from 'h3'
 import { createEventError } from './http-event'
 
 export type AppErrorCode =
@@ -55,8 +54,12 @@ const getPublicErrorDetails = (
   return Object.keys(publicDetails).length > 0 ? publicDetails : undefined
 }
 
-export class AppError extends H3Error<AppErrorData> {
+export class AppError extends Error {
   code: AppErrorCode
+  statusCode: number
+  statusMessage: string
+  data: AppErrorData
+  unhandled: boolean
   details: Record<string, unknown> | undefined
 
   constructor(options: AppErrorOptions) {
