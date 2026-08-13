@@ -24,6 +24,7 @@ export default defineEventHandler(async (event) => {
               'dueId', pa.maintenance_due_id,
               'billingPeriodId', md.billing_period_id,
               'billingPeriodLabel', bp.label,
+              'billingPeriodChargeType', bp.charge_type,
               'dueAmount', pa.due_amount,
               'lateFeeComponent', pa.late_fee_component,
               'allocatedAmount', pa.allocated_amount,

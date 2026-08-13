@@ -80,3 +80,50 @@ test('adds the DG source column only when a DG row is exported', async () => {
   assert.match(source, /\.\.\.\(includeDgSource\s*\? \{\s*Source:/)
   assert.match(source, /\.\.\.\(includeDgSource \? \[\{ wch: 24 \}\] : \[\]\)/)
 })
+
+test('requires and persists a payment charge type for every allocation mode', async () => {
+  const payments = await readSource('../server/utils/payments.ts')
+  const manualPayment = await readSource('../server/utils/manual-payment.ts')
+
+  assert.match(payments, /chargeType: paymentChargeTypeSchema/)
+  assert.match(payments, /filters\.push\(`bp\.charge_type = \$\$\{params\.length\}`\)/)
+  assert.match(
+    payments,
+    /Every selected due must be an open \$\{input\.chargeType === 'DG_SET'/,
+  )
+  assert.match(manualPayment, /charge_type,[\s\S]*input\.chargeType/)
+})
+
+test('keeps excess and existing advances within the exact payment type', async () => {
+  const payments = await readSource('../server/utils/payments.ts')
+  const advance = await readSource('../server/utils/payment-advance.ts')
+
+  assert.match(payments, /applicable_charge_type = \$3/)
+  assert.doesNotMatch(
+    payments,
+    /applicable_charge_type is null\s*or applicable_charge_type = \$3/,
+  )
+  assert.match(advance, /applicableChargeType: chargeType/)
+  assert.match(advance, /applicableChargeType === targetChargeType/)
+})
+
+test('enforces payment and allocation charge types in the database', async () => {
+  const migration = await readSource(
+    '../supabase/migrations/20260813174215_cam_dg_payment_isolation.sql',
+  )
+
+  assert.match(migration, /add column if not exists charge_type text/)
+  assert.match(migration, /create trigger payments_require_charge_type/)
+  assert.match(migration, /create trigger payment_allocations_charge_type_guard/)
+  assert.match(migration, /due_charge_type is distinct from payment_charge_type/)
+})
+
+test('shows and filters CAM and DG payment types on the payments page', async () => {
+  const api = await readSource('../server/api/payments/index.get.ts')
+  const page = await readSource('../pages/admin/payments/index.vue')
+
+  assert.match(api, /p\.charge_type::text as "chargeType"/)
+  assert.match(api, /conditions\.push\(`p\.charge_type = \$\$\{params\.length\}`\)/)
+  assert.match(page, /field="chargeType" header="Payment type"/)
+  assert.match(page, /v-model="query\.chargeType"/)
+})

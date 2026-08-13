@@ -102,13 +102,14 @@ const initialBillingPeriodId = getQueryText(route.query.billingPeriodId)
 
 const form = reactive({
   flatId: initialFlatId,
+  chargeType: 'CAM' as BillingPeriodChargeType,
   payerUserId: '',
   amount: getQueryAmount(route.query.amount),
   paymentDate: todayDate(),
   mode: 'UPI',
   transferKind: '',
   allocationMode: initialDueId || initialBillingPeriodId ? 'SELECTED_PERIODS' : 'OLDEST_UNPAID_FIRST',
-  advanceCreditScope: 'DG_SET' as AdvanceCreditScope,
+  advanceCreditScope: 'CAM' as AdvanceCreditScope,
   selectedDueIds: initialDueId ? [initialDueId] : [] as string[],
   tenureMonths: '3',
   utrReference: '',
@@ -143,11 +144,10 @@ const allocationModes = [
   { label: 'Keep entire amount as advance', value: 'ADVANCE_ONLY' },
 ]
 
-const advanceCreditScopes = [
-  { label: 'DG Set bills only', value: 'DG_SET' },
-  { label: 'CAM bills only', value: 'CAM' },
-  { label: 'General bills only', value: 'GENERAL' },
-  { label: 'Any non-DG bill (DG requires explicit scope)', value: 'ANY_BILL' },
+const paymentChargeTypes = [
+  { label: 'CAM', value: 'CAM' },
+  { label: 'DG Set', value: 'DG_SET' },
+  { label: 'General', value: 'GENERAL' },
 ]
 
 const formatMoney = (value: number | string | null | undefined) =>
@@ -303,8 +303,13 @@ const autoDepositAccountId = computed(() => {
 })
 
 const openDues = computed(() => duesData.value?.data.items ?? [])
+const eligibleOpenDues = computed(() =>
+  openDues.value.filter(
+    (due) => due.billingPeriodChargeType === form.chargeType,
+  ),
+)
 const dueOptions = computed(() =>
-  openDues.value.map((due) => {
+  eligibleOpenDues.value.map((due) => {
     const isDg = due.billingPeriodChargeType === 'DG_SET'
     const prevOutstanding = isDg
       ? Number(due.previousDgOutstandingAmount ?? 0)
@@ -339,9 +344,12 @@ const applyRouteDuePrefill = () => {
   }
 
   form.allocationMode = 'SELECTED_PERIODS'
+  const matchingChargeType = matchingDue.billingPeriodChargeType ?? 'GENERAL'
+  form.chargeType = matchingChargeType
+  form.advanceCreditScope = matchingChargeType
 
   if (matchingDue.billingPeriodChargeType === 'DG_SET') {
-    const openDgDues = openDues.value.filter(
+    const openDgDues = eligibleOpenDues.value.filter(
       (due) => due.billingPeriodChargeType === 'DG_SET' && due.balanceAmount > 0,
     )
     form.selectedDueIds = openDgDues.map((due) => due.id)
@@ -380,8 +388,8 @@ const getDueMonthSpan = (due: MaintenanceDue) => {
 const multiMonthPartialDue = computed(() => {
   const selectedIds = new Set(form.selectedDueIds)
   const candidates = form.allocationMode === 'SELECTED_PERIODS'
-    ? openDues.value.filter((due) => selectedIds.has(due.id))
-    : openDues.value
+    ? eligibleOpenDues.value.filter((due) => selectedIds.has(due.id))
+    : eligibleOpenDues.value
 
   return candidates.find(
     (due) =>
@@ -437,6 +445,7 @@ const validatePaymentForm = (showToast = false) => {
   clearFieldErrors()
 
   requireField('flatId', form.flatId, 'Select a flat.')
+  requireField('chargeType', form.chargeType, 'Select CAM, DG Set, or general payment type.')
   requireField('payerUserId', form.payerUserId, 'Select a payer.')
   if (amountNumber.value <= 0) {
     setFieldError('amount', 'Enter a payment amount greater than zero.')
@@ -470,10 +479,6 @@ const validatePaymentForm = (showToast = false) => {
     }
   }
 
-  if (form.allocationMode === 'ADVANCE_ONLY') {
-    requireField('advanceCreditScope', form.advanceCreditScope, 'Select which bill type this advance can be used for.')
-  }
-
   if (form.allowDuplicateUtr) {
     requireField('overrideReason', form.overrideReason, 'Enter the duplicate reference approval reason.')
   }
@@ -492,7 +497,7 @@ const validatePaymentForm = (showToast = false) => {
 }
 
 watch(
-  () => [form.flatId, form.amount, form.allocationMode, form.advanceCreditScope, form.selectedDueIds.join(','), form.tenureMonths],
+  () => [form.flatId, form.chargeType, form.amount, form.allocationMode, form.selectedDueIds.join(','), form.tenureMonths],
   () => {
     preview.value = null
   },
@@ -519,7 +524,7 @@ watch(
     form.chequeDate,
     form.bankName,
     form.allocationMode,
-    form.advanceCreditScope,
+    form.chargeType,
     form.selectedDueIds.join(','),
     form.tenureMonths,
     form.allowDuplicateUtr,
@@ -573,6 +578,17 @@ watch(
   },
 )
 
+watch(
+  () => form.chargeType,
+  (chargeType) => {
+    form.advanceCreditScope = chargeType
+    form.selectedDueIds = form.selectedDueIds.filter((dueId) =>
+      eligibleOpenDues.value.some((due) => due.id === dueId),
+    )
+    preview.value = null
+  },
+)
+
 const previewAllocation = async () => {
   if (!form.flatId || amountNumber.value <= 0) {
     formSubmitted.value = true
@@ -586,9 +602,10 @@ const previewAllocation = async () => {
       method: 'POST',
       body: {
         flatId: form.flatId,
+        chargeType: form.chargeType,
         amount: amountNumber.value,
         allocationMode: form.allocationMode,
-        advanceCreditScope: form.allocationMode === 'ADVANCE_ONLY' ? form.advanceCreditScope : undefined,
+        advanceCreditScope: form.allocationMode === 'ADVANCE_ONLY' ? form.chargeType : undefined,
         selectedDueIds: form.allocationMode === 'SELECTED_PERIODS' ? form.selectedDueIds : [],
         tenureMonths: form.allocationMode === 'TENURE_PACK' ? Number(form.tenureMonths) : undefined,
       },
@@ -684,13 +701,14 @@ const submitPayment = async () => {
       method: 'POST',
       body: {
         flatId: form.flatId,
+        chargeType: form.chargeType,
         payerUserId: form.payerUserId || undefined,
         amount: amountNumber.value,
         paymentDate: form.paymentDate,
         mode: form.mode,
         transferKind: form.mode === 'BANK_TRANSFER' ? form.transferKind : undefined,
         allocationMode: form.allocationMode,
-        advanceCreditScope: form.allocationMode === 'ADVANCE_ONLY' ? form.advanceCreditScope : undefined,
+        advanceCreditScope: form.allocationMode === 'ADVANCE_ONLY' ? form.chargeType : undefined,
         selectedDueIds: form.allocationMode === 'SELECTED_PERIODS' ? form.selectedDueIds : [],
         tenureMonths: form.allocationMode === 'TENURE_PACK' ? Number(form.tenureMonths) : undefined,
         utrReference: form.utrReference || undefined,
@@ -716,13 +734,14 @@ const submitPayment = async () => {
 
 const resetForm = () => {
   form.flatId = ''
+  form.chargeType = 'CAM'
   form.payerUserId = ''
   form.amount = ''
   form.paymentDate = todayDate()
   form.mode = 'UPI'
   form.transferKind = ''
   form.allocationMode = 'OLDEST_UNPAID_FIRST'
-  form.advanceCreditScope = 'DG_SET'
+  form.advanceCreditScope = 'CAM'
   form.selectedDueIds = []
   form.tenureMonths = '3'
   form.utrReference = ''
@@ -787,6 +806,11 @@ const resetForm = () => {
               <span class="field-label">Flat <span class="required-marker">*</span></span>
               <Select v-model="form.flatId" :options="flatOptions" option-label="label" option-value="value" filter required placeholder="Select flat" :invalid="Boolean(fieldError('flatId'))" />
               <small v-if="fieldError('flatId')" class="field-error">{{ fieldError('flatId') }}</small>
+            </label>
+            <label>
+              <span class="field-label">Payment type <span class="required-marker">*</span></span>
+              <Select v-model="form.chargeType" :options="paymentChargeTypes" option-label="label" option-value="value" :invalid="Boolean(fieldError('chargeType'))" />
+              <small v-if="fieldError('chargeType')" class="field-error">{{ fieldError('chargeType') }}</small>
             </label>
             <label>
               <span class="field-label">Payer <span class="required-marker">*</span></span>
@@ -955,12 +979,11 @@ const resetForm = () => {
               <small v-if="fieldError('tenureMonths')" class="field-error">{{ fieldError('tenureMonths') }}</small>
             </label>
             <label v-if="form.allocationMode === 'ADVANCE_ONLY'">
-              <span class="field-label">Advance applies to <span class="required-marker">*</span></span>
-              <Select v-model="form.advanceCreditScope" :options="advanceCreditScopes" option-label="label" option-value="value" :invalid="Boolean(fieldError('advanceCreditScope'))" />
+              <span class="field-label">Advance applies to</span>
+              <InputText :model-value="advanceScopeLabel(form.chargeType)" disabled />
               <small class="field-help">
-                The entire receipt will remain as a flat-level liability and will not pay any current due. If the DG bill already exists, choose “Selected periods” and select that DG due instead.
+                The entire receipt remains available only for future bills of this payment type.
               </small>
-              <small v-if="fieldError('advanceCreditScope')" class="field-error">{{ fieldError('advanceCreditScope') }}</small>
             </label>
             <label v-if="form.allocationMode === 'SELECTED_PERIODS'" class="admin-form-grid__full">
               <span class="field-label">Selected periods <span class="required-marker">*</span></span>

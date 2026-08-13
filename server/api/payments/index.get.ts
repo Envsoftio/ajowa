@@ -21,6 +21,7 @@ type PaymentCamAdvanceMatchRow = {
 type PaymentSummaryRow = {
   id: string
   recordType: 'PAYMENT'
+  chargeType: 'GENERAL' | 'CAM' | 'DG_SET' | null
   paymentDate: string
   amount: string
   mode: string
@@ -47,6 +48,7 @@ type PaymentSummaryRow = {
 type PaymentListRow = PaymentSummaryRow | {
   id: string
   recordType: 'CAM_ADVANCE'
+  chargeType: 'CAM'
   paymentDate: string
   amount: string
   mode: 'CAM_ADVANCE'
@@ -73,6 +75,7 @@ type PaymentListRow = PaymentSummaryRow | {
 const mapCamAdvanceMatchToPaymentRow = (row: PaymentCamAdvanceMatchRow): PaymentListRow => ({
   id: `cam-advance:${row.id}`,
   recordType: 'CAM_ADVANCE',
+  chargeType: 'CAM',
   paymentDate: row.coveredFrom,
   amount: row.amount ?? '0',
   mode: 'CAM_ADVANCE',
@@ -100,6 +103,8 @@ const loadPaymentCamAdvanceMatches = async (
   societyId: string,
   query: Record<string, unknown>,
 ) => {
+  if (query.chargeType && query.chargeType !== 'CAM') return []
+
   const conditions = ['cac.society_id = $1', 'cac.is_active = true']
   const params: unknown[] = [societyId]
 
@@ -223,6 +228,11 @@ export default defineEventHandler(async (event) => {
     }
   }
 
+  if (query.chargeType) {
+    params.push(String(query.chargeType))
+    conditions.push(`p.charge_type = $${params.length}`)
+  }
+
   const payerUserId = String(query.payerUserId ?? query.residentId ?? '')
   if (isStaff && payerUserId) {
     params.push(payerUserId)
@@ -330,6 +340,7 @@ export default defineEventHandler(async (event) => {
       select
         p.id,
         'PAYMENT'::text as "recordType",
+        p.charge_type::text as "chargeType",
         p.payment_date::text as "paymentDate",
         p.amount::text,
         p.mode,
