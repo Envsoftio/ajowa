@@ -3,7 +3,8 @@ import { definePreset } from '@primevue/themes'
 import Aura from '@primevue/themes/aura'
 
 const defaultAppUrl = 'https://ajowa.in'
-const appUrl = process.env.APP_URL ?? process.env.NUXT_PUBLIC_APP_URL ?? defaultAppUrl
+const appUrl =
+  process.env.APP_URL ?? process.env.NUXT_PUBLIC_APP_URL ?? defaultAppUrl
 const publicAppUrl = process.env.NUXT_PUBLIC_APP_URL ?? appUrl
 const AjowaPreset = definePreset(Aura, {
   semantic: {
@@ -67,15 +68,20 @@ export default defineNuxtConfig({
     whatsappApiKey: process.env.WHATSAPP_API_KEY ?? '',
     whatsappSenderId: process.env.WHATSAPP_SENDER_ID ?? '',
     whatsappWebhookVerifyToken: process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN ?? '',
-    whatsappAppSecret: process.env.WHATSAPP_APP_SECRET ?? process.env.META_APP_SECRET ?? '',
-    whatsappNotificationsEnabled: process.env.WHATSAPP_NOTIFICATIONS_ENABLED === 'true',
+    whatsappAppSecret:
+      process.env.WHATSAPP_APP_SECRET ?? process.env.META_APP_SECRET ?? '',
+    whatsappNotificationsEnabled:
+      process.env.WHATSAPP_NOTIFICATIONS_ENABLED === 'true',
     vapidPublicKey: process.env.VAPID_PUBLIC_KEY ?? '',
     vapidPrivateKey: process.env.VAPID_PRIVATE_KEY ?? '',
     pushSubject: process.env.PUSH_SUBJECT ?? '',
     pushNotificationsEnabled: process.env.PUSH_NOTIFICATIONS_ENABLED === 'true',
-    razorpayKeyId: process.env.RAZORPAY_KEY_ID ?? '',
-    razorpayKeySecret: process.env.RAZORPAY_KEY_SECRET ?? '',
-    razorpayWebhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET ?? '',
+    onlinePaymentsEnabled: process.env.ONLINE_PAYMENTS_ENABLED === 'true',
+    easebuzzEnvironment: process.env.EASEBUZZ_ENV ?? 'test',
+    easebuzzKey: process.env.EASEBUZZ_KEY ?? '',
+    easebuzzSalt: process.env.EASEBUZZ_SALT ?? '',
+    paymentReconciliationWorkerSecret:
+      process.env.PAYMENT_RECONCILIATION_WORKER_SECRET ?? '',
     appUrl,
     qrSecret: process.env.QR_SECRET ?? '',
     societyCode: process.env.SOCIETY_CODE ?? 'AJOWA',
@@ -83,9 +89,12 @@ export default defineNuxtConfig({
       appName: process.env.NUXT_PUBLIC_APP_NAME ?? 'AJOWA',
       appUrl: publicAppUrl,
       // Support the older local env names while standardizing on Nuxt public keys.
-      supabaseUrl: process.env.NUXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? '',
+      supabaseUrl:
+        process.env.NUXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? '',
       supabaseAnonKey:
-        process.env.NUXT_PUBLIC_SUPABASE_ANON_KEY ?? process.env.SUPABASE_ANON_KEY ?? '',
+        process.env.NUXT_PUBLIC_SUPABASE_ANON_KEY ??
+        process.env.SUPABASE_ANON_KEY ??
+        '',
       societyCode: process.env.NUXT_PUBLIC_SOCIETY_CODE ?? 'AJOWA',
     },
   },
@@ -138,16 +147,34 @@ export default defineNuxtConfig({
       ],
       link: [
         { rel: 'preconnect', href: 'https://fonts.googleapis.com' },
-        { rel: 'preconnect', href: 'https://fonts.gstatic.com', crossorigin: '' },
+        {
+          rel: 'preconnect',
+          href: 'https://fonts.gstatic.com',
+          crossorigin: '',
+        },
         {
           rel: 'stylesheet',
           href: 'https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&display=swap',
         },
         { rel: 'manifest', href: '/manifest.webmanifest' },
         { rel: 'icon', type: 'image/svg+xml', href: '/ajowa-icon.svg' },
-        { rel: 'icon', type: 'image/png', sizes: '32x32', href: '/favicon-32x32.png' },
-        { rel: 'icon', type: 'image/png', sizes: '16x16', href: '/favicon-16x16.png' },
-        { rel: 'apple-touch-icon', sizes: '180x180', href: '/apple-touch-icon.png' },
+        {
+          rel: 'icon',
+          type: 'image/png',
+          sizes: '32x32',
+          href: '/favicon-32x32.png',
+        },
+        {
+          rel: 'icon',
+          type: 'image/png',
+          sizes: '16x16',
+          href: '/favicon-16x16.png',
+        },
+        {
+          rel: 'apple-touch-icon',
+          sizes: '180x180',
+          href: '/apple-touch-icon.png',
+        },
       ],
     },
   },

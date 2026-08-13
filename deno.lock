@@ -34,7 +34,7 @@
         "npm:primeicons@7",
         "npm:primevue@^4.4.1",
         "npm:qrcode@^1.5.4",
-        "npm:razorpay@^2.9.6",
+        "npm:tsx@4.23.1",
         "npm:typescript@^5.9.2",
         "npm:vee-validate@^4.15.1",
         "npm:vue-tsc@^3.0.7",

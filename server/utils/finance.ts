@@ -15,18 +15,48 @@ import type {
 } from '~/types/domain'
 import { AppError } from './errors'
 
-export const accountHeadTypes = ['ASSET', 'LIABILITY', 'INCOME', 'EXPENSE', 'EQUITY'] as const
-export const bankAccountTypes = ['SAVINGS', 'CURRENT', 'CASH_CREDIT', 'OVERDRAFT', 'OTHER'] as const
+export const accountHeadTypes = [
+  'ASSET',
+  'LIABILITY',
+  'INCOME',
+  'EXPENSE',
+  'EQUITY',
+] as const
+export const bankAccountTypes = [
+  'SAVINGS',
+  'CURRENT',
+  'CASH_CREDIT',
+  'OVERDRAFT',
+  'OTHER',
+] as const
 export const transactionTypes = ['INCOME', 'EXPENSE'] as const
-export const financeStatuses = ['DRAFT', 'PENDING_REVIEW', 'POSTED', 'REJECTED', 'RETURNED', 'REVERSED', 'CANCELLED'] as const
-export const financePaymentModes = ['CASH', 'BANK_TRANSFER', 'UPI', 'CHEQUE', 'CARD', 'OTHER'] as const
+export const financeStatuses = [
+  'DRAFT',
+  'PENDING_REVIEW',
+  'POSTED',
+  'REJECTED',
+  'RETURNED',
+  'REVERSED',
+  'CANCELLED',
+] as const
+export const financePaymentModes = [
+  'CASH',
+  'BANK_TRANSFER',
+  'UPI',
+  'CHEQUE',
+  'CARD',
+  'OTHER',
+] as const
 
 const codeSchema = z
   .string()
   .trim()
   .min(1)
   .max(40)
-  .regex(/^[a-z0-9._-]+$/i, 'Use letters, numbers, dots, underscores, or hyphens.')
+  .regex(
+    /^[a-z0-9._-]+$/i,
+    'Use letters, numbers, dots, underscores, or hyphens.',
+  )
   .transform((value) => value.toUpperCase())
 
 export const accountHeadSchema = z.object({
@@ -105,7 +135,9 @@ export const transactionSchema = z.object({
   payment: expensePaymentSchema.partial().optional(),
 })
 
-export const transactionUpdateSchema = transactionSchema.omit({ submitForPosting: true })
+export const transactionUpdateSchema = transactionSchema.omit({
+  submitForPosting: true,
+})
 
 export const financeDecisionSchema = z.object({
   reason: z.string().trim().min(3).max(500),
@@ -312,7 +344,9 @@ export const mapCategoryRow = (row: CategoryRow): FinanceCategory => ({
   updatedAt: row.updated_at,
 })
 
-export const mapJournalEntryRow = (row: JournalEntryRow): FinanceJournalEntry => ({
+export const mapJournalEntryRow = (
+  row: JournalEntryRow,
+): FinanceJournalEntry => ({
   id: row.id,
   societyId: row.society_id,
   voucherNumber: row.voucher_number,
@@ -334,7 +368,9 @@ export const mapJournalEntryRow = (row: JournalEntryRow): FinanceJournalEntry =>
   updatedAt: row.updated_at,
 })
 
-export const mapPeriodCloseRow = (row: PeriodCloseRow): FinancialPeriodClose => ({
+export const mapPeriodCloseRow = (
+  row: PeriodCloseRow,
+): FinancialPeriodClose => ({
   id: row.id,
   societyId: row.society_id,
   startDate: row.start_date,
@@ -357,7 +393,9 @@ export const mapPeriodCloseRow = (row: PeriodCloseRow): FinancialPeriodClose => 
   updatedAt: row.updated_at,
 })
 
-export const mapReconciliationAccountRow = (row: ReconciliationAccountRow): ReconciliationAccount => ({
+export const mapReconciliationAccountRow = (
+  row: ReconciliationAccountRow,
+): ReconciliationAccount => ({
   accountHeadId: row.account_head_id,
   code: row.code,
   name: row.name,
@@ -369,7 +407,10 @@ export const mapReconciliationAccountRow = (row: ReconciliationAccountRow): Reco
 
 const roundMoney = (value: number) => Math.round(value * 100) / 100
 
-export const nextJournalVoucherNumber = async (client: PoolClient, dateValue: string) => {
+export const nextJournalVoucherNumber = async (
+  client: PoolClient,
+  dateValue: string,
+) => {
   const year = new Date(`${dateValue}T00:00:00.000Z`).getUTCFullYear()
   const result = await client.query<{ value: string }>(
     `select next_yearly_sequence('JOURNAL_VOUCHER', $1)::text as value`,
@@ -408,7 +449,11 @@ const assertNoClosedPeriodOverlap = async (
 export const validateFinanceTransactionContext = async (
   client: PoolClient,
   societyId: string,
-  input: { transactionType: 'INCOME' | 'EXPENSE'; categoryId: string; bankAccountId: string },
+  input: {
+    transactionType: 'INCOME' | 'EXPENSE'
+    categoryId: string
+    bankAccountId: string
+  },
 ) => {
   const result = await client.query<{
     category_id: string
@@ -441,7 +486,11 @@ export const validateFinanceTransactionContext = async (
   const row = result.rows[0]
 
   if (!row) {
-    throw new AppError({ code: 'NOT_FOUND', statusCode: 404, message: 'Category or bank account was not found.' })
+    throw new AppError({
+      code: 'NOT_FOUND',
+      statusCode: 404,
+      message: 'Category or bank account was not found.',
+    })
   }
   if (row.category_type !== input.transactionType) {
     throw new AppError({
@@ -451,10 +500,18 @@ export const validateFinanceTransactionContext = async (
     })
   }
   if (!row.category_active) {
-    throw new AppError({ code: 'CONFLICT', statusCode: 409, message: 'Inactive categories cannot be used.' })
+    throw new AppError({
+      code: 'CONFLICT',
+      statusCode: 409,
+      message: 'Inactive categories cannot be used.',
+    })
   }
   if (!row.bank_active) {
-    throw new AppError({ code: 'CONFLICT', statusCode: 409, message: 'Inactive bank or cash accounts cannot be used.' })
+    throw new AppError({
+      code: 'CONFLICT',
+      statusCode: 409,
+      message: 'Inactive bank or cash accounts cannot be used.',
+    })
   }
 
   return row
@@ -463,7 +520,11 @@ export const validateFinanceTransactionContext = async (
 const loadPostingContext = async (
   client: PoolClient,
   societyId: string,
-  input: { transactionType: 'INCOME' | 'EXPENSE'; categoryId: string; bankAccountId: string },
+  input: {
+    transactionType: 'INCOME' | 'EXPENSE'
+    categoryId: string
+    bankAccountId: string
+  },
 ) => {
   const result = await client.query<{
     category_id: string
@@ -509,7 +570,11 @@ const loadPostingContext = async (
   const row = result.rows[0]
 
   if (!row) {
-    throw new AppError({ code: 'NOT_FOUND', statusCode: 404, message: 'Category or bank account was not found.' })
+    throw new AppError({
+      code: 'NOT_FOUND',
+      statusCode: 404,
+      message: 'Category or bank account was not found.',
+    })
   }
   if (row.category_type !== input.transactionType) {
     throw new AppError({
@@ -519,13 +584,21 @@ const loadPostingContext = async (
     })
   }
   if (!row.category_active) {
-    throw new AppError({ code: 'CONFLICT', statusCode: 409, message: 'Inactive categories cannot be posted.' })
+    throw new AppError({
+      code: 'CONFLICT',
+      statusCode: 409,
+      message: 'Inactive categories cannot be posted.',
+    })
   }
-  if (!row.posting_account_id || row.posting_account_type !== input.transactionType) {
+  if (
+    !row.posting_account_id ||
+    row.posting_account_type !== input.transactionType
+  ) {
     throw new AppError({
       code: 'VALIDATION_ERROR',
       statusCode: 400,
-      message: 'The selected category is not mapped to a matching account head.',
+      message:
+        'The selected category is not mapped to a matching account head.',
     })
   }
   if (!row.posting_account_active || !row.posting_allows_manual) {
@@ -536,7 +609,11 @@ const loadPostingContext = async (
     })
   }
   if (!row.bank_active) {
-    throw new AppError({ code: 'CONFLICT', statusCode: 409, message: 'Inactive bank or cash accounts cannot be posted.' })
+    throw new AppError({
+      code: 'CONFLICT',
+      statusCode: 409,
+      message: 'Inactive bank or cash accounts cannot be posted.',
+    })
   }
 
   return row
@@ -566,8 +643,14 @@ export const postJournalForTransaction = async (
   }
 
   const context = await loadPostingContext(client, input.societyId, input)
-  const voucherNumber = await nextJournalVoucherNumber(client, input.transactionDate)
-  const entryResult = await client.query<{ id: string; voucher_number: string }>(
+  const voucherNumber = await nextJournalVoucherNumber(
+    client,
+    input.transactionDate,
+  )
+  const entryResult = await client.query<{
+    id: string
+    voucher_number: string
+  }>(
     `
       insert into journal_entries (
         society_id,
@@ -595,15 +678,21 @@ export const postJournalForTransaction = async (
   )
   const entry = entryResult.rows[0]
   if (!entry) {
-    throw new AppError({ code: 'INTERNAL_ERROR', statusCode: 500, message: 'Journal entry creation failed.' })
+    throw new AppError({
+      code: 'INTERNAL_ERROR',
+      statusCode: 500,
+      message: 'Journal entry creation failed.',
+    })
   }
 
-  const debitAccountId = input.transactionType === 'EXPENSE'
-    ? context.posting_account_id
-    : context.bank_account_head_id
-  const creditAccountId = input.transactionType === 'EXPENSE'
-    ? context.bank_account_head_id
-    : context.posting_account_id
+  const debitAccountId =
+    input.transactionType === 'EXPENSE'
+      ? context.posting_account_id
+      : context.bank_account_head_id
+  const creditAccountId =
+    input.transactionType === 'EXPENSE'
+      ? context.bank_account_head_id
+      : context.posting_account_id
 
   await client.query(
     `
@@ -612,7 +701,13 @@ export const postJournalForTransaction = async (
         ($1, 1, $2, 'DEBIT', $4, $5),
         ($1, 2, $3, 'CREDIT', $4, $5)
     `,
-    [entry.id, debitAccountId, creditAccountId, roundMoney(input.amount), input.description ?? null],
+    [
+      entry.id,
+      debitAccountId,
+      creditAccountId,
+      roundMoney(input.amount),
+      input.description ?? null,
+    ],
   )
   await client.query(
     `
@@ -667,13 +762,25 @@ export const createExpensePaymentForTransaction = async (
   )
   const tx = txResult.rows[0]
   if (!tx) {
-    throw new AppError({ code: 'NOT_FOUND', statusCode: 404, message: 'Expense transaction not found.' })
+    throw new AppError({
+      code: 'NOT_FOUND',
+      statusCode: 404,
+      message: 'Expense transaction not found.',
+    })
   }
   if (tx.transaction_type !== 'EXPENSE') {
-    throw new AppError({ code: 'VALIDATION_ERROR', statusCode: 400, message: 'Payment records can be added only to expenses.' })
+    throw new AppError({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message: 'Payment records can be added only to expenses.',
+    })
   }
   if (tx.status !== 'POSTED') {
-    throw new AppError({ code: 'CONFLICT', statusCode: 409, message: 'Only posted expenses can have payment records.' })
+    throw new AppError({
+      code: 'CONFLICT',
+      statusCode: 409,
+      message: 'Only posted expenses can have payment records.',
+    })
   }
 
   const existingPayment = await client.query<{ id: string }>(
@@ -681,18 +788,27 @@ export const createExpensePaymentForTransaction = async (
     [input.transactionId],
   )
   if (existingPayment.rows[0]) {
-    throw new AppError({ code: 'CONFLICT', statusCode: 409, message: 'A payment record is already linked to this expense.' })
+    throw new AppError({
+      code: 'CONFLICT',
+      statusCode: 409,
+      message: 'A payment record is already linked to this expense.',
+    })
   }
 
   const bankAccountId = input.bankAccountId ?? tx.bank_account_id
   if (!bankAccountId) {
-    throw new AppError({ code: 'VALIDATION_ERROR', statusCode: 400, message: 'Select the paid-from account for this expense payment.' })
+    throw new AppError({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message: 'Select the paid-from account for this expense payment.',
+    })
   }
   if (tx.bank_account_id && bankAccountId !== tx.bank_account_id) {
     throw new AppError({
       code: 'VALIDATION_ERROR',
       statusCode: 400,
-      message: 'The payment account must match the account used by the posted expense journal.',
+      message:
+        'The payment account must match the account used by the posted expense journal.',
     })
   }
 
@@ -707,9 +823,17 @@ export const createExpensePaymentForTransaction = async (
   )
   const bankRow = bank.rows[0]
   if (!bankRow) {
-    throw new AppError({ code: 'NOT_FOUND', statusCode: 404, message: 'Paid-from account was not found.' })
+    throw new AppError({
+      code: 'NOT_FOUND',
+      statusCode: 404,
+      message: 'Paid-from account was not found.',
+    })
   }
-  const journalResult = await client.query<{ id: string; voucher_number: string; expense_payment_id: string | null }>(
+  const journalResult = await client.query<{
+    id: string
+    voucher_number: string
+    expense_payment_id: string | null
+  }>(
     `
       select id, voucher_number, expense_payment_id
       from journal_entries
@@ -724,10 +848,18 @@ export const createExpensePaymentForTransaction = async (
   )
   const journal = journalResult.rows[0]
   if (!journal) {
-    throw new AppError({ code: 'CONFLICT', statusCode: 409, message: 'Posted expense journal was not found.' })
+    throw new AppError({
+      code: 'CONFLICT',
+      statusCode: 409,
+      message: 'Posted expense journal was not found.',
+    })
   }
   if (journal.expense_payment_id) {
-    throw new AppError({ code: 'CONFLICT', statusCode: 409, message: 'The posted journal is already linked to a payment record.' })
+    throw new AppError({
+      code: 'CONFLICT',
+      statusCode: 409,
+      message: 'The posted journal is already linked to a payment record.',
+    })
   }
 
   const result = await client.query<{ id: string }>(
@@ -760,7 +892,11 @@ export const createExpensePaymentForTransaction = async (
   )
   const paymentId = result.rows[0]?.id
   if (!paymentId) {
-    throw new AppError({ code: 'INTERNAL_ERROR', statusCode: 500, message: 'Expense payment creation failed.' })
+    throw new AppError({
+      code: 'INTERNAL_ERROR',
+      statusCode: 500,
+      message: 'Expense payment creation failed.',
+    })
   }
 
   await client.query(
@@ -786,7 +922,8 @@ export const createFinanceTransaction = async (
   },
 ) => {
   await validateFinanceTransactionContext(client, input.societyId, input)
-  const initialStatus = input.submitForPosting === false ? 'DRAFT' : 'PENDING_REVIEW'
+  const initialStatus =
+    input.submitForPosting === false ? 'DRAFT' : 'PENDING_REVIEW'
 
   const result = await client.query<{ id: string }>(
     `
@@ -840,7 +977,11 @@ export const createFinanceTransaction = async (
   )
   const transactionId = result.rows[0]?.id
   if (!transactionId) {
-    throw new AppError({ code: 'INTERNAL_ERROR', statusCode: 500, message: 'Transaction creation failed.' })
+    throw new AppError({
+      code: 'INTERNAL_ERROR',
+      statusCode: 500,
+      message: 'Transaction creation failed.',
+    })
   }
 
   if (input.submitForPosting !== false) {
@@ -865,7 +1006,8 @@ export const createFinanceTransaction = async (
         bankAccountId: input.payment?.bankAccountId ?? input.bankAccountId,
         paymentDate: input.payment?.paymentDate ?? input.transactionDate,
         mode: input.payment?.mode ?? 'BANK_TRANSFER',
-        referenceNumber: input.payment?.referenceNumber ?? input.voucherNumber ?? null,
+        referenceNumber:
+          input.payment?.referenceNumber ?? input.voucherNumber ?? null,
         notes: input.payment?.notes ?? null,
         journalEntryId: journal.id,
       })
@@ -903,10 +1045,18 @@ export const approveFinanceTransaction = async (
   )
   const tx = result.rows[0]
   if (!tx) {
-    throw new AppError({ code: 'NOT_FOUND', statusCode: 404, message: 'Transaction not found.' })
+    throw new AppError({
+      code: 'NOT_FOUND',
+      statusCode: 404,
+      message: 'Transaction not found.',
+    })
   }
   if (!['PENDING_REVIEW', 'RETURNED', 'DRAFT'].includes(tx.status)) {
-    throw new AppError({ code: 'CONFLICT', statusCode: 409, message: 'Only draft, returned, or pending transactions can be approved.' })
+    throw new AppError({
+      code: 'CONFLICT',
+      statusCode: 409,
+      message: 'Only draft, returned, or pending transactions can be approved.',
+    })
   }
 
   const journal = await postJournalForTransaction(client, {
@@ -939,9 +1089,18 @@ export const approveFinanceTransaction = async (
 
 export const reverseFinanceTransaction = async (
   client: PoolClient,
-  input: { societyId: string; transactionId: string; actorUserId: string; reason: string },
+  input: {
+    societyId: string
+    transactionId: string
+    actorUserId: string
+    reason: string
+  },
 ) => {
-  const txResult = await client.query<{ id: string; status: string; title: string }>(
+  const txResult = await client.query<{
+    id: string
+    status: string
+    title: string
+  }>(
     `
       select id, status::text, title
       from transactions
@@ -952,10 +1111,18 @@ export const reverseFinanceTransaction = async (
   )
   const tx = txResult.rows[0]
   if (!tx) {
-    throw new AppError({ code: 'NOT_FOUND', statusCode: 404, message: 'Transaction not found.' })
+    throw new AppError({
+      code: 'NOT_FOUND',
+      statusCode: 404,
+      message: 'Transaction not found.',
+    })
   }
   if (tx.status !== 'POSTED') {
-    throw new AppError({ code: 'CONFLICT', statusCode: 409, message: 'Only posted transactions can be reversed.' })
+    throw new AppError({
+      code: 'CONFLICT',
+      statusCode: 409,
+      message: 'Only posted transactions can be reversed.',
+    })
   }
 
   const entryResult = await client.query<{
@@ -982,7 +1149,11 @@ export const reverseFinanceTransaction = async (
   )
   const original = entryResult.rows[0]
   if (!original) {
-    throw new AppError({ code: 'CONFLICT', statusCode: 409, message: 'Posted journal entry was not found.' })
+    throw new AppError({
+      code: 'CONFLICT',
+      statusCode: 409,
+      message: 'Posted journal entry was not found.',
+    })
   }
   if (original.tenant_deposit_settlement_id) {
     throw new AppError({
@@ -998,10 +1169,17 @@ export const reverseFinanceTransaction = async (
     [original.id, 'POSTED'],
   )
   if (alreadyReversed.rows[0]) {
-    throw new AppError({ code: 'CONFLICT', statusCode: 409, message: 'This transaction already has a reversal journal.' })
+    throw new AppError({
+      code: 'CONFLICT',
+      statusCode: 409,
+      message: 'This transaction already has a reversal journal.',
+    })
   }
 
-  const voucherNumber = await nextJournalVoucherNumber(client, original.entry_date)
+  const voucherNumber = await nextJournalVoucherNumber(
+    client,
+    original.entry_date,
+  )
   const reversal = await client.query<{ id: string }>(
     `
       insert into journal_entries (
@@ -1031,7 +1209,11 @@ export const reverseFinanceTransaction = async (
   )
   const reversalId = reversal.rows[0]?.id
   if (!reversalId) {
-    throw new AppError({ code: 'INTERNAL_ERROR', statusCode: 500, message: 'Reversal journal creation failed.' })
+    throw new AppError({
+      code: 'INTERNAL_ERROR',
+      statusCode: 500,
+      message: 'Reversal journal creation failed.',
+    })
   }
 
   await client.query(
@@ -1050,7 +1232,10 @@ export const reverseFinanceTransaction = async (
     `,
     [original.id, reversalId, input.reason],
   )
-  await client.query(`update journal_entries set status = 'POSTED' where id = $1`, [reversalId])
+  await client.query(
+    `update journal_entries set status = 'POSTED' where id = $1`,
+    [reversalId],
+  )
   await client.query(
     `update transactions set status = 'REVERSED', reversed_at = now() where id = $1`,
     [input.transactionId],
@@ -1090,10 +1275,7 @@ const getMaintenanceReceiptAmounts = async (
   )
   const allocatedReceiptAmount = roundMoney(amount - advanceAmount)
   const lateFee = roundMoney(
-    Math.min(
-      allocatedReceiptAmount,
-      Number(result.rows[0]?.late_fee ?? 0),
-    ),
+    Math.min(allocatedReceiptAmount, Number(result.rows[0]?.late_fee ?? 0)),
   )
 
   return {
@@ -1106,7 +1288,12 @@ const getMaintenanceReceiptAmounts = async (
 
 export const postMaintenanceReceiptJournal = async (
   client: PoolClient,
-  input: { paymentId: string; societyId: string; postedByUserId: string; bankAccountId?: string | null },
+  input: {
+    paymentId: string
+    societyId: string
+    postedByUserId: string
+    bankAccountId?: string | null
+  },
 ) => {
   const existing = await client.query<{ id: string; voucher_number: string }>(
     'select id, voucher_number from journal_entries where payment_id = $1 and society_id = $2 limit 1',
@@ -1134,10 +1321,18 @@ export const postMaintenanceReceiptJournal = async (
   )
   const paymentRow = payment.rows[0]
   if (!paymentRow) {
-    throw new AppError({ code: 'NOT_FOUND', statusCode: 404, message: 'Payment not found.' })
+    throw new AppError({
+      code: 'NOT_FOUND',
+      statusCode: 404,
+      message: 'Payment not found.',
+    })
   }
   if (paymentRow.status !== 'VERIFIED') {
-    throw new AppError({ code: 'CONFLICT', statusCode: 409, message: 'Only verified payments can be posted.' })
+    throw new AppError({
+      code: 'CONFLICT',
+      statusCode: 409,
+      message: 'Only verified payments can be posted.',
+    })
   }
 
   const bank = await client.query<{ account_head_id: string }>(
@@ -1154,7 +1349,12 @@ export const postMaintenanceReceiptJournal = async (
   )
   const bankAccountHeadId = bank.rows[0]?.account_head_id
   if (!bankAccountHeadId) {
-    throw new AppError({ code: 'VALIDATION_ERROR', statusCode: 400, message: 'Select or configure an active bank account for receipt posting.' })
+    throw new AppError({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message:
+        'Select or configure an active bank account for receipt posting.',
+    })
   }
 
   const accountHeads = await client.query<{ code: string; id: string }>(
@@ -1167,11 +1367,15 @@ export const postMaintenanceReceiptJournal = async (
     `,
     [input.societyId],
   )
-  const maintenanceHeadId = accountHeads.rows.find((row) => row.code === 'INC-MAINT')?.id
+  const maintenanceHeadId = accountHeads.rows.find(
+    (row) => row.code === 'INC-MAINT',
+  )?.id
   const lateFeeHeadId =
     accountHeads.rows.find((row) => row.code === 'INC-LATE-FEE')?.id ??
     accountHeads.rows.find((row) => row.code === 'INC-LATEFEE')?.id
-  const advanceHeadId = accountHeads.rows.find((row) => row.code === 'LIAB-RES-ADV')?.id
+  const advanceHeadId = accountHeads.rows.find(
+    (row) => row.code === 'LIAB-RES-ADV',
+  )?.id
   const receiptAmounts = await getMaintenanceReceiptAmounts(
     client,
     input.paymentId,
@@ -1179,15 +1383,31 @@ export const postMaintenanceReceiptJournal = async (
   )
   const { amount, advanceAmount, lateFee, maintenanceIncome } = receiptAmounts
   if (maintenanceIncome > 0 && !maintenanceHeadId) {
-    throw new AppError({ code: 'VALIDATION_ERROR', statusCode: 400, message: 'Maintenance income head is required before posting receipts.' })
+    throw new AppError({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message: 'Maintenance income head is required before posting receipts.',
+    })
   }
   if (lateFee > 0 && !lateFeeHeadId) {
-    throw new AppError({ code: 'VALIDATION_ERROR', statusCode: 400, message: 'Late-fee income head is required before posting receipts.' })
+    throw new AppError({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message: 'Late-fee income head is required before posting receipts.',
+    })
   }
   if (advanceAmount > 0 && !advanceHeadId) {
-    throw new AppError({ code: 'VALIDATION_ERROR', statusCode: 400, message: 'Resident-advance liability head is required before posting receipts.' })
+    throw new AppError({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message:
+        'Resident-advance liability head is required before posting receipts.',
+    })
   }
-  const voucherNumber = await nextJournalVoucherNumber(client, paymentRow.payment_date)
+  const voucherNumber = await nextJournalVoucherNumber(
+    client,
+    paymentRow.payment_date,
+  )
   const entry = await client.query<{ id: string; voucher_number: string }>(
     `
       insert into journal_entries (
@@ -1214,7 +1434,11 @@ export const postMaintenanceReceiptJournal = async (
   )
   const entryRow = entry.rows[0]
   if (!entryRow) {
-    throw new AppError({ code: 'INTERNAL_ERROR', statusCode: 500, message: 'Receipt journal creation failed.' })
+    throw new AppError({
+      code: 'INTERNAL_ERROR',
+      statusCode: 500,
+      message: 'Receipt journal creation failed.',
+    })
   }
 
   const lines: Array<[number, string, 'DEBIT' | 'CREDIT', number, string]> = [
@@ -1223,19 +1447,33 @@ export const postMaintenanceReceiptJournal = async (
   if (maintenanceIncome > 0) {
     const headId = maintenanceHeadId
     if (!headId) {
-      throw new AppError({ code: 'VALIDATION_ERROR', statusCode: 400, message: 'Maintenance income head is required before posting receipts.' })
+      throw new AppError({
+        code: 'VALIDATION_ERROR',
+        statusCode: 400,
+        message: 'Maintenance income head is required before posting receipts.',
+      })
     }
     lines.push([2, headId, 'CREDIT', maintenanceIncome, 'Maintenance income'])
   }
   if (lateFee > 0) {
     const headId = lateFeeHeadId
     if (!headId) {
-      throw new AppError({ code: 'VALIDATION_ERROR', statusCode: 400, message: 'Late-fee income head is required before posting receipts.' })
+      throw new AppError({
+        code: 'VALIDATION_ERROR',
+        statusCode: 400,
+        message: 'Late-fee income head is required before posting receipts.',
+      })
     }
     lines.push([lines.length + 1, headId, 'CREDIT', lateFee, 'Late fee income'])
   }
   if (advanceAmount > 0) {
-    lines.push([lines.length + 1, advanceHeadId!, 'CREDIT', advanceAmount, 'Resident advance liability'])
+    lines.push([
+      lines.length + 1,
+      advanceHeadId!,
+      'CREDIT',
+      advanceAmount,
+      'Resident advance liability',
+    ])
   }
   for (const line of lines) {
     await client.query(
@@ -1246,9 +1484,209 @@ export const postMaintenanceReceiptJournal = async (
       [entryRow.id, ...line],
     )
   }
-  await client.query(`update journal_entries set status = 'POSTED' where id = $1`, [entryRow.id])
+  await client.query(
+    `update journal_entries set status = 'POSTED' where id = $1`,
+    [entryRow.id],
+  )
 
   return entryRow
+}
+
+export const postOnlineMaintenanceReceiptJournal = async (
+  client: PoolClient,
+  input: { paymentId: string; societyId: string },
+) => {
+  const existing = await client.query<{
+    id: string
+    voucher_number: string
+  }>(
+    `select id, voucher_number
+     from journal_entries
+     where payment_id = $1 and society_id = $2
+     limit 1`,
+    [input.paymentId, input.societyId],
+  )
+  if (existing.rows[0]) return existing.rows[0]
+
+  const paymentResult = await client.query<{
+    amount: string
+    notes: string | null
+    payment_date: string
+    status: string
+  }>(
+    `select amount::text, notes, payment_date::text, status::text
+     from payments
+     where id = $1 and society_id = $2
+     for update`,
+    [input.paymentId, input.societyId],
+  )
+  const payment = paymentResult.rows[0]
+  if (!payment) {
+    throw new AppError({
+      code: 'NOT_FOUND',
+      statusCode: 404,
+      message: 'Payment not found.',
+    })
+  }
+  if (payment.status !== 'VERIFIED') {
+    throw new AppError({
+      code: 'CONFLICT',
+      statusCode: 409,
+      message: 'Only verified payments can be posted.',
+    })
+  }
+
+  const accountResult = await client.query<{ code: string; id: string }>(
+    `select code, id
+     from account_heads
+     where (society_id = $1 or society_id is null)
+       and code in (
+         'ASSET-PG-EASEBUZZ',
+         'INC-MAINT',
+         'INC-LATE-FEE',
+         'INC-LATEFEE',
+         'LIAB-RES-ADV'
+       )
+       and is_active = true`,
+    [input.societyId],
+  )
+  const accountByCode = new Map(
+    accountResult.rows.map((account) => [account.code, account.id]),
+  )
+  const clearingHeadId = accountByCode.get('ASSET-PG-EASEBUZZ')
+  if (!clearingHeadId) {
+    throw new AppError({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message: 'Easebuzz clearing account is not configured.',
+    })
+  }
+
+  const amounts = await getMaintenanceReceiptAmounts(
+    client,
+    input.paymentId,
+    Number(payment.amount),
+  )
+  const maintenanceHeadId = accountByCode.get('INC-MAINT')
+  const lateFeeHeadId =
+    accountByCode.get('INC-LATE-FEE') ?? accountByCode.get('INC-LATEFEE')
+  const advanceHeadId = accountByCode.get('LIAB-RES-ADV')
+  if (amounts.maintenanceIncome > 0 && !maintenanceHeadId) {
+    throw new AppError({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message: 'Maintenance income head is required before posting receipts.',
+    })
+  }
+  if (amounts.lateFee > 0 && !lateFeeHeadId) {
+    throw new AppError({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message: 'Late-fee income head is required before posting receipts.',
+    })
+  }
+  if (amounts.advanceAmount > 0 && !advanceHeadId) {
+    throw new AppError({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message:
+        'Resident-advance liability head is required before posting receipts.',
+    })
+  }
+
+  const voucherNumber = await nextJournalVoucherNumber(
+    client,
+    payment.payment_date,
+  )
+  const entryResult = await client.query<{
+    id: string
+    voucher_number: string
+  }>(
+    `insert into journal_entries (
+       society_id,
+       voucher_number,
+       payment_id,
+       entry_date,
+       description,
+       status,
+       posting_source,
+       posted_at
+     )
+     values ($1, $2, $3, $4, $5, 'DRAFT', 'PAYMENT_GATEWAY', now())
+     returning id, voucher_number`,
+    [
+      input.societyId,
+      voucherNumber,
+      input.paymentId,
+      payment.payment_date,
+      payment.notes ?? 'Easebuzz maintenance receipt',
+    ],
+  )
+  const entry = entryResult.rows[0]
+  if (!entry) {
+    throw new AppError({
+      code: 'INTERNAL_ERROR',
+      statusCode: 500,
+      message: 'Online receipt journal creation failed.',
+    })
+  }
+
+  const lines: Array<[number, string, 'DEBIT' | 'CREDIT', number, string]> = [
+    [
+      1,
+      clearingHeadId,
+      'DEBIT',
+      amounts.amount,
+      'Easebuzz captured maintenance receipt',
+    ],
+  ]
+  if (amounts.maintenanceIncome > 0) {
+    lines.push([
+      lines.length + 1,
+      maintenanceHeadId!,
+      'CREDIT',
+      amounts.maintenanceIncome,
+      'Maintenance income',
+    ])
+  }
+  if (amounts.lateFee > 0) {
+    lines.push([
+      lines.length + 1,
+      lateFeeHeadId!,
+      'CREDIT',
+      amounts.lateFee,
+      'Late fee income',
+    ])
+  }
+  if (amounts.advanceAmount > 0) {
+    lines.push([
+      lines.length + 1,
+      advanceHeadId!,
+      'CREDIT',
+      amounts.advanceAmount,
+      'Resident advance liability',
+    ])
+  }
+
+  for (const line of lines) {
+    await client.query(
+      `insert into journal_lines (
+         journal_entry_id,
+         line_no,
+         account_head_id,
+         line_type,
+         amount,
+         description
+       ) values ($1, $2, $3, $4::journal_line_type, $5, $6)`,
+      [entry.id, ...line],
+    )
+  }
+  await client.query(
+    `update journal_entries set status = 'POSTED' where id = $1`,
+    [entry.id],
+  )
+
+  return entry
 }
 
 export const postAdvanceCreditConsumptionJournal = async (
@@ -1289,23 +1727,32 @@ export const postAdvanceCreditConsumptionJournal = async (
     `,
     [input.societyId],
   )
-  const maintenanceHeadId = accountHeads.rows.find((row) => row.code === 'INC-MAINT')?.id
-  const advanceHeadId = accountHeads.rows.find((row) => row.code === 'LIAB-RES-ADV')?.id
+  const maintenanceHeadId = accountHeads.rows.find(
+    (row) => row.code === 'INC-MAINT',
+  )?.id
+  const advanceHeadId = accountHeads.rows.find(
+    (row) => row.code === 'LIAB-RES-ADV',
+  )?.id
   if (!maintenanceHeadId || !advanceHeadId) {
     throw new AppError({
       code: 'VALIDATION_ERROR',
       statusCode: 400,
-      message: 'Maintenance income and resident-advance liability heads are required before applying advance credit.',
+      message:
+        'Maintenance income and resident-advance liability heads are required before applying advance credit.',
     })
   }
 
-  const chargeTypeLabel = input.chargeType === 'DG_SET'
-    ? 'DG Set'
-    : input.chargeType === 'CAM'
-      ? 'CAM'
-      : 'general'
+  const chargeTypeLabel =
+    input.chargeType === 'DG_SET'
+      ? 'DG Set'
+      : input.chargeType === 'CAM'
+        ? 'CAM'
+        : 'general'
   const description = `${chargeTypeLabel} advance credit applied`
-  const voucherNumber = await nextJournalVoucherNumber(client, input.paymentDate)
+  const voucherNumber = await nextJournalVoucherNumber(
+    client,
+    input.paymentDate,
+  )
   const entry = await client.query<{ id: string; voucher_number: string }>(
     `
       insert into journal_entries (
@@ -1362,14 +1809,21 @@ export const postAdvanceCreditConsumptionJournal = async (
       `${chargeTypeLabel} maintenance income`,
     ],
   )
-  await client.query(`update journal_entries set status = 'POSTED' where id = $1`, [entryRow.id])
+  await client.query(
+    `update journal_entries set status = 'POSTED' where id = $1`,
+    [entryRow.id],
+  )
 
   return entryRow
 }
 
 export const refreshMaintenanceReceiptJournalForPayment = async (
   client: PoolClient,
-  input: { paymentId: string; societyId: string; bankAccountId?: string | null },
+  input: {
+    paymentId: string
+    societyId: string
+    bankAccountId?: string | null
+  },
 ) => {
   const journalResult = await client.query<{
     id: string
@@ -1412,15 +1866,24 @@ export const refreshMaintenanceReceiptJournalForPayment = async (
   )
   const paymentRow = payment.rows[0]
   if (!paymentRow) {
-    throw new AppError({ code: 'NOT_FOUND', statusCode: 404, message: 'Payment not found.' })
+    throw new AppError({
+      code: 'NOT_FOUND',
+      statusCode: 404,
+      message: 'Payment not found.',
+    })
   }
   if (paymentRow.status !== 'VERIFIED') {
-    throw new AppError({ code: 'CONFLICT', statusCode: 409, message: 'Only verified payments can have receipt journals.' })
+    throw new AppError({
+      code: 'CONFLICT',
+      statusCode: 409,
+      message: 'Only verified payments can have receipt journals.',
+    })
   }
 
   const bankAccountHeadId = input.bankAccountId
-    ? (await client.query<{ account_head_id: string }>(
-        `
+    ? (
+        await client.query<{ account_head_id: string }>(
+          `
           select account_head_id
           from society_bank_accounts
           where id = $1
@@ -1428,18 +1891,21 @@ export const refreshMaintenanceReceiptJournalForPayment = async (
             and is_active = true
           limit 1
         `,
-        [input.bankAccountId, input.societyId],
-      )).rows[0]?.account_head_id
-    : (await client.query<{ account_head_id: string }>(
-        `
+          [input.bankAccountId, input.societyId],
+        )
+      ).rows[0]?.account_head_id
+    : (
+        await client.query<{ account_head_id: string }>(
+          `
           select account_head_id
           from journal_lines
           where journal_entry_id = $1 and line_type = 'DEBIT'
           order by line_no asc
           limit 1
         `,
-        [journal.id],
-      )).rows[0]?.account_head_id
+          [journal.id],
+        )
+      ).rows[0]?.account_head_id
   if (!bankAccountHeadId) {
     throw new AppError({
       code: 'CONFLICT',
@@ -1460,11 +1926,15 @@ export const refreshMaintenanceReceiptJournalForPayment = async (
     `,
     [input.societyId],
   )
-  const maintenanceHeadId = accountHeads.rows.find((row) => row.code === 'INC-MAINT')?.id
+  const maintenanceHeadId = accountHeads.rows.find(
+    (row) => row.code === 'INC-MAINT',
+  )?.id
   const lateFeeHeadId =
     accountHeads.rows.find((row) => row.code === 'INC-LATE-FEE')?.id ??
     accountHeads.rows.find((row) => row.code === 'INC-LATEFEE')?.id
-  const advanceHeadId = accountHeads.rows.find((row) => row.code === 'LIAB-RES-ADV')?.id
+  const advanceHeadId = accountHeads.rows.find(
+    (row) => row.code === 'LIAB-RES-ADV',
+  )?.id
   const receiptAmounts = await getMaintenanceReceiptAmounts(
     client,
     input.paymentId,
@@ -1472,29 +1942,63 @@ export const refreshMaintenanceReceiptJournalForPayment = async (
   )
   const { amount, advanceAmount, lateFee, maintenanceIncome } = receiptAmounts
   if (maintenanceIncome > 0 && !maintenanceHeadId) {
-    throw new AppError({ code: 'VALIDATION_ERROR', statusCode: 400, message: 'Maintenance income head is required before refreshing receipts.' })
+    throw new AppError({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message:
+        'Maintenance income head is required before refreshing receipts.',
+    })
   }
   if (lateFee > 0 && !lateFeeHeadId) {
-    throw new AppError({ code: 'VALIDATION_ERROR', statusCode: 400, message: 'Late-fee income head is required before refreshing receipts.' })
+    throw new AppError({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message: 'Late-fee income head is required before refreshing receipts.',
+    })
   }
   if (advanceAmount > 0 && !advanceHeadId) {
-    throw new AppError({ code: 'VALIDATION_ERROR', statusCode: 400, message: 'Resident-advance liability head is required before refreshing receipts.' })
+    throw new AppError({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message:
+        'Resident-advance liability head is required before refreshing receipts.',
+    })
   }
 
   const lines: Array<[number, string, 'DEBIT' | 'CREDIT', number, string]> = [
     [1, bankAccountHeadId, 'DEBIT', amount, 'Maintenance receipt deposited'],
   ]
   if (maintenanceIncome > 0) {
-    lines.push([2, maintenanceHeadId!, 'CREDIT', maintenanceIncome, 'Maintenance income'])
+    lines.push([
+      2,
+      maintenanceHeadId!,
+      'CREDIT',
+      maintenanceIncome,
+      'Maintenance income',
+    ])
   }
   if (lateFee > 0) {
-    lines.push([lines.length + 1, lateFeeHeadId!, 'CREDIT', lateFee, 'Late fee income'])
+    lines.push([
+      lines.length + 1,
+      lateFeeHeadId!,
+      'CREDIT',
+      lateFee,
+      'Late fee income',
+    ])
   }
   if (advanceAmount > 0) {
-    lines.push([lines.length + 1, advanceHeadId!, 'CREDIT', advanceAmount, 'Resident advance liability'])
+    lines.push([
+      lines.length + 1,
+      advanceHeadId!,
+      'CREDIT',
+      advanceAmount,
+      'Resident advance liability',
+    ])
   }
 
-  await client.query(`delete from journal_lines where journal_entry_id = $1`, [journal.id])
+  await client.query(`delete from journal_lines where journal_entry_id = $1`, [
+    journal.id,
+  ])
   for (const line of lines) {
     await client.query(
       `
@@ -1512,7 +2016,11 @@ export const refreshMaintenanceReceiptJournalForPayment = async (
           updated_at = now()
       where id = $1
     `,
-    [journal.id, paymentRow.payment_date, paymentRow.notes ?? 'Maintenance receipt'],
+    [
+      journal.id,
+      paymentRow.payment_date,
+      paymentRow.notes ?? 'Maintenance receipt',
+    ],
   )
 
   return {
@@ -1527,9 +2035,18 @@ export const computePeriodCloseSummary = async (
   input: { societyId: string; startDate: string; endDate: string },
 ) => {
   if (input.endDate < input.startDate) {
-    throw new AppError({ code: 'VALIDATION_ERROR', statusCode: 400, message: 'End date must be on or after start date.' })
+    throw new AppError({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message: 'End date must be on or after start date.',
+    })
   }
-  await assertNoClosedPeriodOverlap(client, input.societyId, input.startDate, input.endDate)
+  await assertNoClosedPeriodOverlap(
+    client,
+    input.societyId,
+    input.startDate,
+    input.endDate,
+  )
 
   const pending = await client.query<{ count: string }>(
     `
@@ -1546,7 +2063,8 @@ export const computePeriodCloseSummary = async (
     throw new AppError({
       code: 'CONFLICT',
       statusCode: 409,
-      message: 'Close is blocked while draft, returned, or pending finance records exist in the period.',
+      message:
+        'Close is blocked while draft, returned, or pending finance records exist in the period.',
       details: { unpostedTransactions: unposted },
     })
   }

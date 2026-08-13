@@ -8,6 +8,38 @@ definePageMeta({
 })
 
 type DuesResponse = { ok: true; data: MaintenanceDue[] }
+type PaymentAvailabilityResponse = { ok: true; data: { enabled: boolean } }
+type OnlinePaymentStatus = {
+  paymentId: string
+  status: string
+  attemptStatus: string
+  receiptNumber: string | null
+  reference: string
+  retryAllowed: boolean
+  failureCode: string | null
+}
+type OnlinePaymentStatusResponse = { ok: true; data: OnlinePaymentStatus }
+type OnlinePaymentInitiateResponse = {
+  ok: true
+  data: {
+    paymentId: string
+    status: string
+    accessKey?: string
+    merchantKey?: string
+    environment?: 'test' | 'prod'
+  }
+}
+type EasebuzzCheckoutInstance = {
+  initiatePayment(options: {
+    access_key: string
+    onResponse: (response: unknown) => void
+    theme: string
+  }): void
+}
+type EasebuzzCheckoutConstructor = new (
+  merchantKey: string,
+  environment: 'test' | 'prod',
+) => EasebuzzCheckoutInstance
 type DgAdvanceSummaryResponse = {
   ok: true
   data: {
@@ -24,18 +56,32 @@ type SummaryCardKey = 'balance' | 'total' | 'advance' | 'flats'
 
 const api = useApi()
 const authStore = useAuthStore()
+const toast = useToast()
+const route = useRoute()
 
 const formatMoney = (value: number) =>
-  new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(value)
+  new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    maximumFractionDigits: 0,
+  }).format(value)
 
 const formatDate = (value: string | null | undefined) =>
-  value ? new Date(`${value}T00:00:00`).toLocaleDateString('en-IN', { dateStyle: 'medium' }) : '-'
+  value
+    ? new Date(`${value}T00:00:00`).toLocaleDateString('en-IN', {
+        dateStyle: 'medium',
+      })
+    : '-'
 
 const {
   data: duesData,
   pending,
   refresh: refreshDues,
 } = await useAsyncData('my-dues', () => api<DuesResponse>('/api/my/dues'))
+const { data: paymentAvailabilityData } = await useAsyncData(
+  'online-payment-availability',
+  () => api<PaymentAvailabilityResponse>('/api/payments/online/availability'),
+)
 const {
   data: dgAdvanceData,
   refresh: refreshDgAdvances,
@@ -55,16 +101,26 @@ const refresh = async () => {
 }
 
 const dues = computed(() => duesData.value?.data ?? [])
-const dgAdvanceSummary = computed(() => dgAdvanceData.value?.data ?? {
-  items: [],
-  totalAvailable: 0,
-})
-const dgAdvanceByFlat = computed(() => new Map(
-  dgAdvanceSummary.value.items.map((item) => [item.flatId, item.availableAmount]),
-))
+const dgAdvanceSummary = computed(
+  () =>
+    dgAdvanceData.value?.data ?? {
+      items: [],
+      totalAvailable: 0,
+    },
+)
+const dgAdvanceByFlat = computed(
+  () =>
+    new Map(
+      dgAdvanceSummary.value.items.map((item) => [
+        item.flatId,
+        item.availableAmount,
+      ]),
+    ),
+)
 
 const isCamDue = (due: MaintenanceDue) => due.billingPeriodChargeType === 'CAM'
-const isDgDue = (due: MaintenanceDue) => due.billingPeriodChargeType === 'DG_SET'
+const isDgDue = (due: MaintenanceDue) =>
+  due.billingPeriodChargeType === 'DG_SET'
 const isCarriedForwardDgBalance = (due: MaintenanceDue) =>
   due.origin === 'DG_OPENING_BALANCE'
 const dueSourceLabel = (due: MaintenanceDue) => {
@@ -72,7 +128,8 @@ const dueSourceLabel = (due: MaintenanceDue) => {
   if (isDgDue(due)) return 'DG Charges bill'
   return null
 }
-const hasActionableBalance = (due: MaintenanceDue) => due.balanceAmount > 0 && !due.isCamAdvanceCovered
+const hasActionableBalance = (due: MaintenanceDue) =>
+  due.balanceAmount > 0 && !due.isCamAdvanceCovered
 const camAdvanceAdjustmentAmount = (due: MaintenanceDue) =>
   due.chargeBreakdown.reduce((sum, item) => {
     const adjustment = Number(item.camAdvanceAdjustmentAmount ?? 0)
@@ -83,12 +140,14 @@ const camAdvanceAdjustmentAmount = (due: MaintenanceDue) =>
 const hasCamAdvanceAdjustment = (due: MaintenanceDue) =>
   camAdvanceAdjustmentAmount(due) > 0
 const camAdvanceAdjustmentNote = (due: MaintenanceDue) =>
-  due.chargeBreakdown.find((item) => item.camAdvanceNote)?.camAdvanceNote ?? null
+  due.chargeBreakdown.find((item) => item.camAdvanceNote)?.camAdvanceNote ??
+  null
 
 const advanceStatusKind = (due: MaintenanceDue) => {
   if (due.isCamAdvanceCovered) return 'covered'
   if (hasCamAdvanceAdjustment(due)) return 'billable'
-  if (isDgDue(due) && Number(due.advanceAppliedAmount ?? 0) > 0) return 'covered'
+  if (isDgDue(due) && Number(due.advanceAppliedAmount ?? 0) > 0)
+    return 'covered'
   if (isDgDue(due)) return 'billable'
   if (isCamDue(due)) return 'billable'
   return 'not-cam'
@@ -97,7 +156,8 @@ const advanceStatusKind = (due: MaintenanceDue) => {
 const advanceStatusLabel = (due: MaintenanceDue) => {
   if (due.isCamAdvanceCovered) return 'Covered'
   if (hasCamAdvanceAdjustment(due)) return 'Advance deducted'
-  if (isDgDue(due) && Number(due.advanceAppliedAmount ?? 0) > 0) return 'DG advance applied'
+  if (isDgDue(due) && Number(due.advanceAppliedAmount ?? 0) > 0)
+    return 'DG advance applied'
   if (isDgDue(due)) return 'No DG advance applied'
   if (isCamDue(due)) return 'Billable'
   return 'Not CAM'
@@ -125,14 +185,155 @@ const advanceStatusDetail = (due: MaintenanceDue) => {
 }
 
 const canPayDue = (due: MaintenanceDue) =>
-  Boolean(due.canPayNow) && hasActionableBalance(due)
+  Boolean(paymentAvailabilityData.value?.data.enabled) &&
+  Boolean(due.canPayNow) &&
+  hasActionableBalance(due)
 
 const getPayTitle = (due: MaintenanceDue) => {
-  if (due.isCamAdvanceCovered) return 'No payment needed. CAM advance covers this period.'
+  if (due.isCamAdvanceCovered)
+    return 'No payment needed. CAM advance covers this period.'
   if (due.balanceAmount <= 0) return 'No balance pending.'
-  if (!due.canPayNow) return 'Payment access is limited to the billing contact and society policy.'
+  if (!due.canPayNow)
+    return 'Payment access is limited to the billing contact and society policy.'
+  if (!paymentAvailabilityData.value?.data.enabled)
+    return 'Online payments are currently unavailable.'
   return 'Pay this due'
 }
+
+const payingDueId = ref<string | null>(null)
+let checkoutScriptPromise: Promise<EasebuzzCheckoutConstructor> | null = null
+
+const loadEasebuzzCheckout = () => {
+  if (!import.meta.client)
+    throw new Error('Checkout can be opened only in the browser.')
+  const existing = (
+    window as typeof window & {
+      EasebuzzCheckout?: EasebuzzCheckoutConstructor
+    }
+  ).EasebuzzCheckout
+  if (existing) return Promise.resolve(existing)
+  if (checkoutScriptPromise) return checkoutScriptPromise
+
+  checkoutScriptPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script')
+    script.src =
+      'https://ebz-static.s3.ap-south-1.amazonaws.com/easecheckout/v2.0.0/easebuzz-checkout-v2.min.js'
+    script.async = true
+    script.onload = () => {
+      const constructor = (
+        window as typeof window & {
+          EasebuzzCheckout?: EasebuzzCheckoutConstructor
+        }
+      ).EasebuzzCheckout
+      if (constructor) resolve(constructor)
+      else reject(new Error('Easebuzz checkout did not initialize.'))
+    }
+    script.onerror = () =>
+      reject(new Error('Easebuzz checkout could not be loaded.'))
+    document.head.appendChild(script)
+  })
+  return checkoutScriptPromise
+}
+
+const showPaymentStatus = async (paymentId: string) => {
+  const response = await api<OnlinePaymentStatusResponse>(
+    `/api/payments/${paymentId}/status`,
+  )
+  const status = response.data
+  if (status.status === 'VERIFIED') {
+    toast.add({
+      severity: 'success',
+      summary: 'Payment confirmed',
+      detail: status.receiptNumber
+        ? `Receipt ${status.receiptNumber} is ready.`
+        : 'Your payment has been confirmed.',
+      life: 7000,
+    })
+    await refresh()
+  } else if (['FAILED', 'CANCELLED'].includes(status.status)) {
+    toast.add({
+      severity: 'warn',
+      summary: 'Payment not completed',
+      detail:
+        'No successful payment has been confirmed. You may try again when the Pay button is available.',
+      life: 7000,
+    })
+  } else {
+    toast.add({
+      severity: 'info',
+      summary: 'Verification in progress',
+      detail: `Do not pay again. We are checking payment reference ${status.reference}.`,
+      life: 8000,
+    })
+  }
+}
+
+const verifyOnlinePayment = async (paymentId: string) => {
+  try {
+    await api<OnlinePaymentStatusResponse>('/api/payments/online/verify', {
+      method: 'POST',
+      body: { paymentId },
+    })
+  } catch {
+    // A gateway timeout is an unknown outcome. The durable worker and status
+    // endpoint remain the source of truth, so never invite an immediate retry.
+  }
+  await showPaymentStatus(paymentId)
+}
+
+const payDue = async (due: MaintenanceDue) => {
+  if (!canPayDue(due) || payingDueId.value) return
+  payingDueId.value = due.id
+  try {
+    const response = await api<OnlinePaymentInitiateResponse>(
+      '/api/payments/online/initiate',
+      {
+        method: 'POST',
+        body: {
+          flatId: due.flatId,
+          amount: due.balanceAmount,
+          allocationMode: 'SELECTED_PERIODS',
+          selectedDueIds: [due.id],
+          idempotencyKey: crypto.randomUUID(),
+        },
+      },
+    )
+    const payment = response.data
+    if (!payment.accessKey || !payment.merchantKey || !payment.environment) {
+      await showPaymentStatus(payment.paymentId)
+      return
+    }
+
+    const EasebuzzCheckout = await loadEasebuzzCheckout()
+    const checkout = new EasebuzzCheckout(
+      payment.merchantKey,
+      payment.environment,
+    )
+    checkout.initiatePayment({
+      access_key: payment.accessKey,
+      theme: '#0645c3',
+      onResponse: () => void verifyOnlinePayment(payment.paymentId),
+    })
+  } catch (error) {
+    toast.add({
+      severity: 'error',
+      summary: 'Payment could not be started',
+      detail:
+        error instanceof Error
+          ? error.message
+          : 'Please wait and refresh before trying again.',
+      life: 7000,
+    })
+  } finally {
+    payingDueId.value = null
+  }
+}
+
+onMounted(() => {
+  const callbackPaymentId =
+    typeof route.query.paymentId === 'string' ? route.query.paymentId : null
+  if (callbackPaymentId) void verifyOnlinePayment(callbackPaymentId)
+})
 
 const summary = computed(() => {
   const billRows = dues.value.filter((due) => !due.isAdvanceCoverageRow)
@@ -142,12 +343,21 @@ const summary = computed(() => {
     .filter((due) => !due.isCamAdvanceCovered)
     .reduce((sum, due) => sum + due.balanceAmount, 0)
   const overdueCount = billRows.filter((due) => due.status === 'OVERDUE').length
-  const advanceCoveredCount = dues.value.filter((due) => due.isCamAdvanceCovered).length
+  const advanceCoveredCount = dues.value.filter(
+    (due) => due.isCamAdvanceCovered,
+  ).length
 
-  return { totalDue, totalPaid, totalBalance, overdueCount, advanceCoveredCount }
+  return {
+    totalDue,
+    totalPaid,
+    totalBalance,
+    overdueCount,
+    advanceCoveredCount,
+  }
 })
 const activeSummaryHelp = ref<SummaryCardKey | null>(null)
-const isSummaryHelpOpen = (key: SummaryCardKey) => activeSummaryHelp.value === key
+const isSummaryHelpOpen = (key: SummaryCardKey) =>
+  activeSummaryHelp.value === key
 const toggleSummaryHelp = (key: SummaryCardKey) => {
   activeSummaryHelp.value = isSummaryHelpOpen(key) ? null : key
 }
@@ -199,7 +409,9 @@ const flatGroups = computed(() => {
     }
   }
 
-  return Array.from(groups.values()).sort((a, b) => a.label.localeCompare(b.label))
+  return Array.from(groups.values()).sort((a, b) =>
+    a.label.localeCompare(b.label),
+  )
 })
 
 const selectedDue = ref<MaintenanceDue | null>(null)
@@ -235,7 +447,8 @@ const openBreakdown = (due: MaintenanceDue) => {
           :class="{ 'is-open': isBalanceHelpOpen }"
         >
           {{ summary.overdueCount }} overdue bills across linked flats.
-          {{ summary.advanceCoveredCount }} CAM advance-covered records are already covered.
+          {{ summary.advanceCoveredCount }} CAM advance-covered records are
+          already covered.
         </p>
       </section>
       <section class="surface-card resident-summary-card">
@@ -258,7 +471,8 @@ const openBreakdown = (due: MaintenanceDue) => {
           class="resident-summary-card__help-text"
           :class="{ 'is-open': isAdvanceHelpOpen }"
         >
-          Unused credit reserved for future DG bills. It is not deducted twice from an existing bill.
+          Unused credit reserved for future DG bills. It is not deducted twice
+          from an existing bill.
         </p>
       </section>
       <section class="surface-card resident-summary-card">
@@ -281,7 +495,8 @@ const openBreakdown = (due: MaintenanceDue) => {
           class="resident-summary-card__help-text"
           :class="{ 'is-open': isTotalHelpOpen }"
         >
-          {{ formatMoney(summary.totalPaid) }} has been collected against these dues.
+          {{ formatMoney(summary.totalPaid) }} has been collected against these
+          dues.
         </p>
       </section>
       <section class="surface-card resident-summary-card">
@@ -304,7 +519,11 @@ const openBreakdown = (due: MaintenanceDue) => {
           class="resident-summary-card__help-text"
           :class="{ 'is-open': isFlatsHelpOpen }"
         >
-          {{ authStore.me?.flatAccess.map((item) => `${item.blockName} ${item.flatNumber}`).join(', ') || 'No active flats' }}
+          {{
+            authStore.me?.flatAccess
+              .map((item) => `${item.blockName} ${item.flatNumber}`)
+              .join(', ') || 'No active flats'
+          }}
         </p>
       </section>
     </div>
@@ -313,7 +532,10 @@ const openBreakdown = (due: MaintenanceDue) => {
       <header class="list-page__header">
         <div>
           <h1>My dues</h1>
-          <p>Maintenance dues are shown for flats connected to your active resident relationships.</p>
+          <p>
+            Maintenance dues are shown for flats connected to your active
+            resident relationships.
+          </p>
         </div>
         <div class="list-page__exports">
           <Button
@@ -336,7 +558,11 @@ const openBreakdown = (due: MaintenanceDue) => {
       />
 
       <div v-else class="resident-due-groups">
-        <section v-for="group in flatGroups" :key="group.flatId" class="resident-due-group">
+        <section
+          v-for="group in flatGroups"
+          :key="group.flatId"
+          class="resident-due-group"
+        >
           <header class="resident-due-group__header">
             <div>
               <h2>{{ group.label }}</h2>
@@ -348,14 +574,23 @@ const openBreakdown = (due: MaintenanceDue) => {
             <strong>{{ formatMoney(group.totalBalance) }}</strong>
           </header>
 
-          <AppDataTable :value="group.rows" responsive-layout="scroll" class="list-page__table">
+          <AppDataTable
+            :value="group.rows"
+            responsive-layout="scroll"
+            class="list-page__table"
+          >
             <Column field="billingPeriodLabel" header="Period">
               <template #body="{ data: row }">
                 <strong>{{ row.billingPeriodLabel }}</strong>
-                <p v-if="dueSourceLabel(row)" class="table-muted">{{ dueSourceLabel(row) }}</p>
+                <p v-if="dueSourceLabel(row)" class="table-muted">
+                  {{ dueSourceLabel(row) }}
+                </p>
                 <p class="table-muted">Due {{ formatDate(row.dueDate) }}</p>
                 <p
-                  v-if="row.penaltyFreeUntilDate && row.penaltyFreeUntilDate > row.dueDate"
+                  v-if="
+                    row.penaltyFreeUntilDate &&
+                    row.penaltyFreeUntilDate > row.dueDate
+                  "
                   class="table-muted"
                 >
                   No late fee through {{ formatDate(row.penaltyFreeUntilDate) }}
@@ -394,13 +629,17 @@ const openBreakdown = (due: MaintenanceDue) => {
               <template #body="{ data: row }">
                 <strong>{{ formatMoney(row.balanceAmount) }}</strong>
                 <p v-if="hasCamAdvanceAdjustment(row)" class="table-muted">
-                  {{ formatMoney(camAdvanceAdjustmentAmount(row)) }} advance deducted
+                  {{ formatMoney(camAdvanceAdjustmentAmount(row)) }} advance
+                  deducted
                 </p>
               </template>
             </Column>
             <Column field="status" header="Status">
               <template #body="{ data: row }">
-                <span v-if="row.isCamAdvanceCovered" class="billing-advance-pill">
+                <span
+                  v-if="row.isCamAdvanceCovered"
+                  class="billing-advance-pill"
+                >
                   Covered
                 </span>
                 <AppStatusBadge v-else :status="row.status" />
@@ -436,7 +675,9 @@ const openBreakdown = (due: MaintenanceDue) => {
                     outlined
                     size="small"
                     :title="getPayTitle(row)"
-                    :disabled="!canPayDue(row)"
+                    :disabled="!canPayDue(row) || Boolean(payingDueId)"
+                    :loading="payingDueId === row.id"
+                    @click="payDue(row)"
                   />
                 </div>
               </template>
@@ -444,28 +685,44 @@ const openBreakdown = (due: MaintenanceDue) => {
           </AppDataTable>
 
           <div class="list-page__cards resident-due-cards">
-            <article v-for="row in group.rows" :key="row.id" class="list-card resident-due-card">
+            <article
+              v-for="row in group.rows"
+              :key="row.id"
+              class="list-card resident-due-card"
+            >
               <div class="list-card__header resident-due-card__header">
                 <div>
                   <h3>{{ row.billingPeriodLabel }}</h3>
                   <p v-if="dueSourceLabel(row)">{{ dueSourceLabel(row) }}</p>
                   <p>Due {{ formatDate(row.dueDate) }}</p>
-                  <p v-if="row.penaltyFreeUntilDate && row.penaltyFreeUntilDate > row.dueDate">
-                    No late fee through {{ formatDate(row.penaltyFreeUntilDate) }}
+                  <p
+                    v-if="
+                      row.penaltyFreeUntilDate &&
+                      row.penaltyFreeUntilDate > row.dueDate
+                    "
+                  >
+                    No late fee through
+                    {{ formatDate(row.penaltyFreeUntilDate) }}
                   </p>
                 </div>
-                <span v-if="row.isCamAdvanceCovered" class="billing-advance-pill">
+                <span
+                  v-if="row.isCamAdvanceCovered"
+                  class="billing-advance-pill"
+                >
                   Covered
                 </span>
                 <AppStatusBadge v-else :status="row.status" />
               </div>
 
               <div class="resident-due-card__amount-strip">
-                <div class="resident-due-card__amount resident-due-card__amount--balance">
+                <div
+                  class="resident-due-card__amount resident-due-card__amount--balance"
+                >
                   <span>Balance</span>
                   <strong>{{ formatMoney(row.balanceAmount) }}</strong>
                   <small v-if="hasCamAdvanceAdjustment(row)">
-                    {{ formatMoney(camAdvanceAdjustmentAmount(row)) }} advance deducted
+                    {{ formatMoney(camAdvanceAdjustmentAmount(row)) }} advance
+                    deducted
                   </small>
                 </div>
                 <div class="resident-due-card__amount">
@@ -521,7 +778,9 @@ const openBreakdown = (due: MaintenanceDue) => {
                   outlined
                   size="small"
                   :title="getPayTitle(row)"
-                  :disabled="!canPayDue(row)"
+                  :disabled="!canPayDue(row) || Boolean(payingDueId)"
+                  :loading="payingDueId === row.id"
+                  @click="payDue(row)"
                 />
               </div>
             </article>
@@ -540,9 +799,15 @@ const openBreakdown = (due: MaintenanceDue) => {
       <div v-if="selectedDue" class="admin-form-layout">
         <div>
           <h3>{{ selectedDue.billingPeriodLabel }}</h3>
-          <p>{{ selectedDue.blockName }} {{ selectedDue.flatNumber }} · {{ formatDate(selectedDue.dueDate) }}</p>
+          <p>
+            {{ selectedDue.blockName }} {{ selectedDue.flatNumber }} ·
+            {{ formatDate(selectedDue.dueDate) }}
+          </p>
         </div>
-        <AppDataTable :value="selectedDue.chargeBreakdown" responsive-layout="scroll">
+        <AppDataTable
+          :value="selectedDue.chargeBreakdown"
+          responsive-layout="scroll"
+        >
           <Column field="label" header="Charge" />
           <Column field="amount" header="Amount">
             <template #body="{ data: row }">
@@ -554,17 +819,28 @@ const openBreakdown = (due: MaintenanceDue) => {
           <span>Balance</span>
           <strong>{{ formatMoney(selectedDue.balanceAmount) }}</strong>
         </div>
-        <Message v-if="selectedDue.isCamAdvanceCovered" severity="success" :closable="false">
-          CAM advance covers this period from {{ formatDate(selectedDue.camAdvanceCoveredFrom) }}
-          through {{ formatDate(selectedDue.camAdvancePaidUntil) }}.
-          No payment is needed for this CAM period.
+        <Message
+          v-if="selectedDue.isCamAdvanceCovered"
+          severity="success"
+          :closable="false"
+        >
+          CAM advance covers this period from
+          {{ formatDate(selectedDue.camAdvanceCoveredFrom) }} through
+          {{ formatDate(selectedDue.camAdvancePaidUntil) }}. No payment is
+          needed for this CAM period.
         </Message>
-        <Message v-else-if="hasCamAdvanceAdjustment(selectedDue)" severity="info" :closable="false">
-          {{ formatMoney(camAdvanceAdjustmentAmount(selectedDue)) }} CAM advance was deducted.
-          The remaining balance is {{ formatMoney(selectedDue.balanceAmount) }}.
+        <Message
+          v-else-if="hasCamAdvanceAdjustment(selectedDue)"
+          severity="info"
+          :closable="false"
+        >
+          {{ formatMoney(camAdvanceAdjustmentAmount(selectedDue)) }} CAM advance
+          was deducted. The remaining balance is
+          {{ formatMoney(selectedDue.balanceAmount) }}.
         </Message>
         <Message v-else-if="!selectedDue.canPayNow" severity="info">
-          Payment access is limited to the billing contact and configured resident relationship policy.
+          Payment access is limited to the billing contact and configured
+          resident relationship policy.
         </Message>
       </div>
     </Dialog>

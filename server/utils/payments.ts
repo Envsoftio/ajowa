@@ -1,4 +1,3 @@
-import { createHmac } from 'node:crypto'
 import type { PoolClient } from 'pg'
 import { z } from 'zod'
 import { AppError } from './errors'
@@ -2938,17 +2937,6 @@ export const enqueueReceiptReadyNotification = async (paymentId: string) => {
   } finally {
     client.release()
   }
-}
-
-export const verifyRazorpayWebhookSignature = (
-  rawBody: string,
-  signature: string,
-) => {
-  const runtimeConfig = getValidatedRuntimeConfig(useRuntimeConfig())
-  const expected = createHmac('sha256', runtimeConfig.razorpayWebhookSecret)
-    .update(rawBody)
-    .digest('hex')
-  return expected === signature
 }
 
 export const searchPaymentByReference = async (reference: string) =>

@@ -10,7 +10,9 @@ const whatsappIntegrationSchema = z.object({
 
 const whatsappWebhookSchema = z.object({
   verifyToken: z.string().min(1, 'WHATSAPP_WEBHOOK_VERIFY_TOKEN is required'),
-  appSecret: z.string().min(1, 'WHATSAPP_APP_SECRET or META_APP_SECRET is required'),
+  appSecret: z
+    .string()
+    .min(1, 'WHATSAPP_APP_SECRET or META_APP_SECRET is required'),
 })
 
 const vapidKeySchema = (name: string) =>
@@ -31,9 +33,17 @@ const pushIntegrationSchema = z.object({
     ),
 })
 
+const easebuzzIntegrationSchema = z.object({
+  environment: z.enum(['test', 'prod']),
+  key: z.string().trim().min(1, 'EASEBUZZ_KEY is required'),
+  salt: z.string().trim().min(1, 'EASEBUZZ_SALT is required'),
+})
+
 const runtimeConfigSchema = z.object({
   databaseUrl: z.string().min(1, 'DATABASE_URL or SUPABASE_DB_URL is required'),
-  supabaseServiceRoleKey: z.string().min(1, 'SUPABASE_SERVICE_ROLE_KEY is required'),
+  supabaseServiceRoleKey: z
+    .string()
+    .min(1, 'SUPABASE_SERVICE_ROLE_KEY is required'),
   betterAuthSecret: z.string().min(1, 'BETTER_AUTH_SECRET is required'),
   betterAuthUrl: z.string().url('BETTER_AUTH_URL must be a valid URL'),
   smtp: z.object({
@@ -50,16 +60,20 @@ const runtimeConfigSchema = z.object({
   vapidPrivateKey: z.string(),
   pushSubject: z.string(),
   pushNotificationsEnabled: z.boolean(),
-  razorpayKeyId: z.string(),
-  razorpayKeySecret: z.string(),
-  razorpayWebhookSecret: z.string(),
+  onlinePaymentsEnabled: z.boolean(),
+  easebuzzEnvironment: z.string(),
+  easebuzzKey: z.string(),
+  easebuzzSalt: z.string(),
+  paymentReconciliationWorkerSecret: z.string(),
   appUrl: z.string().url('APP_URL must be a valid URL'),
   qrSecret: z.string().min(1, 'QR_SECRET is required'),
   societyCode: z.string().min(1, 'SOCIETY_CODE is required'),
   public: z.object({
     appName: z.string().min(1),
     appUrl: z.string().url('NUXT_PUBLIC_APP_URL must be a valid URL'),
-    supabaseUrl: z.string().url('NUXT_PUBLIC_SUPABASE_URL or SUPABASE_URL must be a valid URL'),
+    supabaseUrl: z
+      .string()
+      .url('NUXT_PUBLIC_SUPABASE_URL or SUPABASE_URL must be a valid URL'),
     supabaseAnonKey: z
       .string()
       .min(1, 'NUXT_PUBLIC_SUPABASE_ANON_KEY or SUPABASE_ANON_KEY is required'),
@@ -85,12 +99,23 @@ const OPTIONAL_INTEGRATION_REQUIREMENTS = {
     'VAPID_PRIVATE_KEY',
     'PUSH_SUBJECT',
   ],
+  easebuzz: [
+    'ONLINE_PAYMENTS_ENABLED=true',
+    'EASEBUZZ_ENV',
+    'EASEBUZZ_KEY',
+    'EASEBUZZ_SALT',
+  ],
 } as const
 
 export type ValidatedRuntimeConfig = z.infer<typeof runtimeConfigSchema>
-export type WhatsAppIntegrationConfig = z.infer<typeof whatsappIntegrationSchema>
+export type WhatsAppIntegrationConfig = z.infer<
+  typeof whatsappIntegrationSchema
+>
 export type WhatsAppWebhookConfig = z.infer<typeof whatsappWebhookSchema>
 export type PushIntegrationConfig = z.infer<typeof pushIntegrationSchema>
+export type EasebuzzIntegrationConfig = z.infer<
+  typeof easebuzzIntegrationSchema
+>
 
 export type OptionalIntegrationStatus<T> =
   | {
@@ -113,7 +138,8 @@ const readRuntimeConfig = () => {
     return useRuntimeConfig()
   }
 
-  const appUrl = process.env.APP_URL ?? process.env.NUXT_PUBLIC_APP_URL ?? defaultAppUrl
+  const appUrl =
+    process.env.APP_URL ?? process.env.NUXT_PUBLIC_APP_URL ?? defaultAppUrl
   const publicAppUrl = process.env.NUXT_PUBLIC_APP_URL ?? appUrl
 
   return {
@@ -129,24 +155,32 @@ const readRuntimeConfig = () => {
     whatsappApiKey: process.env.WHATSAPP_API_KEY ?? '',
     whatsappSenderId: process.env.WHATSAPP_SENDER_ID ?? '',
     whatsappWebhookVerifyToken: process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN ?? '',
-    whatsappAppSecret: process.env.WHATSAPP_APP_SECRET ?? process.env.META_APP_SECRET ?? '',
-    whatsappNotificationsEnabled: process.env.WHATSAPP_NOTIFICATIONS_ENABLED === 'true',
+    whatsappAppSecret:
+      process.env.WHATSAPP_APP_SECRET ?? process.env.META_APP_SECRET ?? '',
+    whatsappNotificationsEnabled:
+      process.env.WHATSAPP_NOTIFICATIONS_ENABLED === 'true',
     vapidPublicKey: process.env.VAPID_PUBLIC_KEY ?? '',
     vapidPrivateKey: process.env.VAPID_PRIVATE_KEY ?? '',
     pushSubject: process.env.PUSH_SUBJECT ?? '',
     pushNotificationsEnabled: process.env.PUSH_NOTIFICATIONS_ENABLED === 'true',
-    razorpayKeyId: process.env.RAZORPAY_KEY_ID ?? '',
-    razorpayKeySecret: process.env.RAZORPAY_KEY_SECRET ?? '',
-    razorpayWebhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET ?? '',
+    onlinePaymentsEnabled: process.env.ONLINE_PAYMENTS_ENABLED === 'true',
+    easebuzzEnvironment: process.env.EASEBUZZ_ENV ?? 'test',
+    easebuzzKey: process.env.EASEBUZZ_KEY ?? '',
+    easebuzzSalt: process.env.EASEBUZZ_SALT ?? '',
+    paymentReconciliationWorkerSecret:
+      process.env.PAYMENT_RECONCILIATION_WORKER_SECRET ?? '',
     appUrl,
     qrSecret: process.env.QR_SECRET ?? '',
     societyCode: process.env.SOCIETY_CODE ?? 'AJOWA',
     public: {
       appName: process.env.NUXT_PUBLIC_APP_NAME ?? 'AJOWA',
       appUrl: publicAppUrl,
-      supabaseUrl: process.env.NUXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? '',
+      supabaseUrl:
+        process.env.NUXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? '',
       supabaseAnonKey:
-        process.env.NUXT_PUBLIC_SUPABASE_ANON_KEY ?? process.env.SUPABASE_ANON_KEY ?? '',
+        process.env.NUXT_PUBLIC_SUPABASE_ANON_KEY ??
+        process.env.SUPABASE_ANON_KEY ??
+        '',
       societyCode: process.env.NUXT_PUBLIC_SOCIETY_CODE ?? 'AJOWA',
     },
   }
@@ -222,7 +256,10 @@ export const getWhatsAppWebhookStatus = (
   const runtimeConfig = getValidatedRuntimeConfig(config)
 
   return validateOptionalIntegration(
-    Boolean(runtimeConfig.whatsappWebhookVerifyToken && runtimeConfig.whatsappAppSecret),
+    Boolean(
+      runtimeConfig.whatsappWebhookVerifyToken &&
+      runtimeConfig.whatsappAppSecret,
+    ),
     'WhatsApp webhook',
     OPTIONAL_INTEGRATION_REQUIREMENTS.whatsappWebhook,
     whatsappWebhookSchema,
@@ -247,6 +284,44 @@ export const getPushIntegrationStatus = (
       publicKey: runtimeConfig.vapidPublicKey,
       privateKey: runtimeConfig.vapidPrivateKey,
       subject: runtimeConfig.pushSubject,
+    },
+  )
+}
+
+export const getEasebuzzIntegrationStatus = (
+  config?: Record<string, unknown>,
+): OptionalIntegrationStatus<EasebuzzIntegrationConfig> => {
+  const runtimeConfig = getValidatedRuntimeConfig(config)
+
+  return validateOptionalIntegration(
+    runtimeConfig.onlinePaymentsEnabled,
+    'Easebuzz online payments',
+    OPTIONAL_INTEGRATION_REQUIREMENTS.easebuzz,
+    easebuzzIntegrationSchema,
+    {
+      environment: runtimeConfig.easebuzzEnvironment,
+      key: runtimeConfig.easebuzzKey,
+      salt: runtimeConfig.easebuzzSalt,
+    },
+  )
+}
+
+// Callback verification must remain available for payments already in flight
+// even when new checkout initiation has been disabled by the feature flag.
+export const getEasebuzzCredentialStatus = (
+  config?: Record<string, unknown>,
+): OptionalIntegrationStatus<EasebuzzIntegrationConfig> => {
+  const runtimeConfig = getValidatedRuntimeConfig(config)
+
+  return validateOptionalIntegration(
+    Boolean(runtimeConfig.easebuzzKey && runtimeConfig.easebuzzSalt),
+    'Easebuzz payment verification',
+    ['EASEBUZZ_ENV', 'EASEBUZZ_KEY', 'EASEBUZZ_SALT'],
+    easebuzzIntegrationSchema,
+    {
+      environment: runtimeConfig.easebuzzEnvironment,
+      key: runtimeConfig.easebuzzKey,
+      salt: runtimeConfig.easebuzzSalt,
     },
   )
 }

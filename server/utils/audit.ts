@@ -239,8 +239,7 @@ export const resolveAuditModuleFromPath = (
 ): AuditEventContract['module'] => {
   if (path.includes('/finance')) return 'FINANCE'
   if (path.includes('/billing') || path.includes('/dues')) return 'BILLING'
-  if (path.includes('/payments') || path.includes('/razorpay'))
-    return 'PAYMENTS'
+  if (path.includes('/payments')) return 'PAYMENTS'
   if (path.includes('/qr') || path.includes('/gate-log')) return 'ACCESS'
   if (path.includes('/service-requests') || path.includes('/service/'))
     return 'SERVICE'

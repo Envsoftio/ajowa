@@ -1,4 +1,5 @@
 import {
+  getEasebuzzIntegrationStatus,
   getPushIntegrationStatus,
   getValidatedRuntimeConfig,
   getWhatsAppIntegrationStatus,
@@ -10,6 +11,7 @@ export default defineNitroPlugin(() => {
     const integrationStatuses = [
       getWhatsAppIntegrationStatus(runtimeConfig),
       getPushIntegrationStatus(runtimeConfig),
+      getEasebuzzIntegrationStatus(runtimeConfig),
     ]
 
     for (const status of integrationStatuses) {
