@@ -52,20 +52,6 @@ type PaymentSummary = {
   coveredUntil?: string | null
 }
 
-type PaymentCamAdvanceMatch = {
-  id: string
-  flatId: string
-  flatNumber: string
-  blockName: string
-  primaryResidentName: string | null
-  coveredFrom: string
-  coveredUntil: string
-  amount: string | null
-  source: string
-  reference: string | null
-  notes: string | null
-}
-
 type CamAdvancePaymentSource =
   | 'MANUAL'
   | 'PAYMENT'
@@ -139,7 +125,7 @@ type PaymentDetail = {
 type PaymentsResponse = {
   ok: true
   data: Paginated<PaymentSummary> & {
-    camAdvanceMatches?: PaymentCamAdvanceMatch[]
+    camAdvanceMatches?: PaymentSummary[]
   }
 }
 type DetailResponse = { ok: true; data: PaymentDetail }
@@ -379,6 +365,7 @@ const { data: periodsData } = periodsAsyncData
 const { data: bankAccountsData } = bankAccountsAsyncData
 
 const payments = computed(() => data.value?.data.items ?? [])
+const camAdvanceMatches = computed(() => data.value?.data.camAdvanceMatches ?? [])
 const totalRecords = computed(() => data.value?.data.total ?? 0)
 
 const flatOptions = computed(() => [
@@ -1400,6 +1387,38 @@ const onProofFileChange = async (event: Event) => {
           </div>
         </article>
       </div>
+    </section>
+
+    <section v-if="camAdvanceMatches.length > 0" class="list-page surface-card">
+      <header class="list-page__header">
+        <div>
+          <p class="eyebrow">Separate register</p>
+          <h2>CAM advances</h2>
+        </div>
+        <Tag :value="`${camAdvanceMatches.length} matching`" severity="info" rounded />
+      </header>
+      <AppDataTable :value="camAdvanceMatches" responsive-layout="scroll" data-key="id">
+        <Column field="coveredFrom" header="Coverage">
+          <template #body="{ data: row }">
+            {{ formatDate(row.coveredFrom) }} - {{ formatDate(row.coveredUntil) }}
+          </template>
+        </Column>
+        <Column field="flatNumber" header="Flat">
+          <template #body="{ data: row }">{{ flatLabel(row) }}</template>
+        </Column>
+        <Column field="amount" header="Advance amount">
+          <template #body="{ data: row }"><strong>{{ formatMoney(row.amount) }}</strong></template>
+        </Column>
+        <Column field="transferKind" header="Source" />
+        <Column field="bankReference" header="Reference">
+          <template #body="{ data: row }">{{ row.utrReference || row.bankReference || '-' }}</template>
+        </Column>
+        <Column v-if="canEditPayment" header="Actions" style="width: 80px">
+          <template #body="{ data: row }">
+            <Button icon="pi pi-pencil" severity="secondary" text rounded aria-label="Edit CAM advance" title="Edit CAM advance" @click="openCamAdvanceEdit(row)" />
+          </template>
+        </Column>
+      </AppDataTable>
     </section>
 
     <Dialog v-model:visible="detailVisible" header="Payment detail" modal :style="{ width: '720px' }">

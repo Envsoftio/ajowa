@@ -105,7 +105,12 @@ const loadPaymentCamAdvanceMatches = async (
 ) => {
   if (query.chargeType && query.chargeType !== 'CAM') return []
 
-  const conditions = ['cac.society_id = $1', 'cac.is_active = true']
+  const conditions = [
+    'cac.society_id = $1',
+    'cac.is_active = true',
+    'cac.amount is not null',
+    'cac.amount > 0',
+  ]
   const params: unknown[] = [societyId]
 
   if (query.flatId) {
@@ -378,10 +383,9 @@ export default defineEventHandler(async (event) => {
     : []
   const camAdvanceRows = camAdvanceMatches.map(mapCamAdvanceMatchToPaymentRow)
   const paymentTotal = Number(totalResult.rows[0]?.count ?? 0)
-  const items: PaymentListRow[] = [...rows.rows, ...camAdvanceRows]
 
   return createApiSuccess(event, {
-    ...createPaginatedResult(items, paymentTotal + camAdvanceRows.length, pagination),
-    camAdvanceMatches,
+    ...createPaginatedResult(rows.rows, paymentTotal, pagination),
+    camAdvanceMatches: camAdvanceRows,
   })
 })
