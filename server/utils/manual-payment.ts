@@ -174,6 +174,7 @@ export const recordManualPayment = async (
 
   const previewInput = {
     flatId: input.flatId,
+    chargeType: input.chargeType,
     amount: input.amount,
     allocationMode: input.allocationMode ?? 'OLDEST_UNPAID_FIRST',
     advanceCreditScope: input.advanceCreditScope,
@@ -189,6 +190,7 @@ export const recordManualPayment = async (
     societyId: flatRow.society_id,
     payerUserId,
     flatId: input.flatId,
+    chargeType: input.chargeType,
     amount: input.amount,
     paymentDate: input.paymentDate,
     mode: input.mode,
@@ -228,6 +230,7 @@ export const recordManualPayment = async (
             payment_date,
             amount,
             allocation_mode,
+            charge_type,
             allocation_snapshot,
             utr_reference,
             bank_reference,
@@ -239,7 +242,7 @@ export const recordManualPayment = async (
             verified_at,
             idempotency_key
           )
-          values ($1, $2, $3, $4, 'VERIFIED', $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13, $14, $15, now(), $16)
+          values ($1, $2, $3, $4, 'VERIFIED', $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14, $15, $16, now(), $17)
           on conflict (idempotency_key) where idempotency_key is not null do update set idempotency_key = excluded.idempotency_key
           returning id, allocation_snapshot
         `,
@@ -251,7 +254,9 @@ export const recordManualPayment = async (
           input.paymentDate,
           input.amount,
           input.allocationMode,
+          input.chargeType,
           JSON.stringify({
+            chargeType: input.chargeType,
             selectedDueIds: input.selectedDueIds,
             tenureMonths: input.tenureMonths,
             advanceCreditScope: input.advanceCreditScope,

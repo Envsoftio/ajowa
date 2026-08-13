@@ -42,6 +42,7 @@ export default defineEventHandler(async (event) => {
   const runtimeConfig = getValidatedRuntimeConfig(useRuntimeConfig())
   const previewInput = {
     flatId: input.flatId,
+    chargeType: input.chargeType,
     amount: input.amount,
     allocationMode: input.allocationMode ?? 'OLDEST_UNPAID_FIRST',
     selectedDueIds: input.selectedDueIds ?? [],
@@ -88,9 +89,10 @@ export default defineEventHandler(async (event) => {
           gateway_order_id,
           idempotency_key,
           allocation_mode,
+          charge_type,
           allocation_snapshot
         )
-        values ($1, $2, $3, 'ONLINE_GATEWAY', 'INITIATED', current_date, $4, $5, $6, $7, $8::jsonb)
+        values ($1, $2, $3, 'ONLINE_GATEWAY', 'INITIATED', current_date, $4, $5, $6, $7, $8, $9::jsonb)
         on conflict (idempotency_key) where idempotency_key is not null do update set idempotency_key = excluded.idempotency_key
         returning id
       `,
@@ -102,7 +104,9 @@ export default defineEventHandler(async (event) => {
         order.id,
         input.idempotencyKey,
         input.allocationMode ?? 'OLDEST_UNPAID_FIRST',
+        input.chargeType,
         JSON.stringify({
+          chargeType: input.chargeType,
           selectedDueIds: input.selectedDueIds,
           tenureMonths: input.tenureMonths,
           preview,

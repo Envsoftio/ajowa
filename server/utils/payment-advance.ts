@@ -20,9 +20,11 @@ type AdvanceAllocationLine = {
 export const resolveAdvanceCreditContext = (
   lines: AdvanceAllocationLine[],
 ): AdvanceCreditContext => {
+  const chargeType = lines[0]?.billingPeriodChargeType
   if (
     lines.length === 0 ||
-    lines.some((line) => line.billingPeriodChargeType !== 'DG_SET')
+    !chargeType ||
+    lines.some((line) => line.billingPeriodChargeType !== chargeType)
   ) {
     return {
       applicableChargeType: null,
@@ -33,9 +35,11 @@ export const resolveAdvanceCreditContext = (
   const periodIds = new Set(lines.map((line) => line.billingPeriodId))
 
   return {
-    applicableChargeType: 'DG_SET',
+    applicableChargeType: chargeType,
     sourceBillingPeriodId:
-      periodIds.size === 1 ? (periodIds.values().next().value ?? null) : null,
+      chargeType === 'DG_SET' && periodIds.size === 1
+        ? (periodIds.values().next().value ?? null)
+        : null,
   }
 }
 
@@ -59,9 +63,7 @@ export const getAdvanceCreditScope = (
 export const isAdvanceCreditEligibleForCharge = (
   applicableChargeType: BillingPeriodChargeType | null,
   targetChargeType: BillingPeriodChargeType,
-) => targetChargeType === 'DG_SET'
-  ? applicableChargeType === 'DG_SET'
-  : applicableChargeType === null || applicableChargeType === targetChargeType
+) => applicableChargeType === targetChargeType
 
 const closedDueStatuses = new Set(['PAID', 'WAIVED', 'CANCELLED'])
 

@@ -55,7 +55,7 @@ test('keeps a DG Set scope when a payment covers multiple DG Set periods', () =>
   })
 })
 
-test('leaves mixed or non-DG excess as general advance', () => {
+test('rejects mixed scope inference and keeps CAM excess CAM-only', () => {
   const mixed = resolveAdvanceCreditContext([
     {
       billingPeriodId: '11111111-1111-4111-8111-111111111111',
@@ -78,7 +78,7 @@ test('leaves mixed or non-DG excess as general advance', () => {
     sourceBillingPeriodId: null,
   })
   assert.deepEqual(camOnly, {
-    applicableChargeType: null,
+    applicableChargeType: 'CAM',
     sourceBillingPeriodId: null,
   })
   assert.equal(getAdvanceCreditScopeLabel(null), 'Any non-DG bill')
@@ -99,13 +99,13 @@ test('maps explicit advance scopes to stored charge types without broadening the
   assert.equal(getAdvanceCreditScopeLabel('GENERAL'), 'General bills only')
 })
 
-test('requires explicit DG scope before applying an advance to a DG bill', () => {
+test('requires an exact scope match before applying any advance', () => {
   assert.equal(isAdvanceCreditEligibleForCharge('DG_SET', 'DG_SET'), true)
   assert.equal(isAdvanceCreditEligibleForCharge(null, 'DG_SET'), false)
   assert.equal(isAdvanceCreditEligibleForCharge('GENERAL', 'DG_SET'), false)
   assert.equal(isAdvanceCreditEligibleForCharge('CAM', 'DG_SET'), false)
 
-  assert.equal(isAdvanceCreditEligibleForCharge(null, 'CAM'), true)
+  assert.equal(isAdvanceCreditEligibleForCharge(null, 'CAM'), false)
   assert.equal(isAdvanceCreditEligibleForCharge('CAM', 'CAM'), true)
   assert.equal(isAdvanceCreditEligibleForCharge('DG_SET', 'CAM'), false)
 })
@@ -113,8 +113,8 @@ test('requires explicit DG scope before applying an advance to a DG bill', () =>
 test('keeps the full CAM, DG, and general advance eligibility matrix separate', () => {
   const scopes = [null, 'GENERAL', 'CAM', 'DG_SET']
   const expected = {
-    GENERAL: new Set([null, 'GENERAL']),
-    CAM: new Set([null, 'CAM']),
+    GENERAL: new Set(['GENERAL']),
+    CAM: new Set(['CAM']),
     DG_SET: new Set(['DG_SET']),
   }
 

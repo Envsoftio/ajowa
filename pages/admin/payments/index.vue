@@ -33,6 +33,7 @@ type PaymentSummary = {
   mode: string
   transferKind: string | null
   status: string
+  chargeType: BillingPeriodChargeType | null
   payerUserId: string | null
   flatId: string | null
   utrReference: string | null
@@ -79,6 +80,7 @@ type PaymentAllocation = {
   dueId: string
   billingPeriodId: string
   billingPeriodLabel: string
+  billingPeriodChargeType: BillingPeriodChargeType
   dueAmount: string
   lateFeeComponent: string
   allocatedAmount: string
@@ -120,6 +122,7 @@ type PaymentDetail = {
   payer_user_id: string
   received_for_flat_id: string
   allocation_mode: string
+  charge_type: BillingPeriodChargeType | null
   allocation_snapshot: PaymentSnapshot | null
   utr_reference: string | null
   bank_reference: string | null
@@ -192,6 +195,7 @@ const query = reactive({
   flatId: '',
   payerUserId: '',
   billingPeriodId: '',
+  chargeType: '',
   mode: '',
   status: '',
   receipt: '',
@@ -212,6 +216,13 @@ const paymentModes = [
   { label: 'Cheque', value: 'CHEQUE' },
   { label: 'Online gateway', value: 'ONLINE_GATEWAY' },
   { label: 'Advance credit', value: 'ADVANCE_CREDIT' },
+]
+
+const paymentChargeTypes = [
+  { label: 'All payment types', value: '' },
+  { label: 'CAM', value: 'CAM' },
+  { label: 'DG Set', value: 'DG_SET' },
+  { label: 'General', value: 'GENERAL' },
 ]
 
 const editablePaymentModes = [
@@ -243,13 +254,6 @@ const allocationModes = [
   { label: 'Keep entire amount as advance', value: 'ADVANCE_ONLY' },
 ]
 
-const advanceCreditScopes = [
-  { label: 'DG Set bills only', value: 'DG_SET' },
-  { label: 'CAM bills only', value: 'CAM' },
-  { label: 'General bills only', value: 'GENERAL' },
-  { label: 'Any non-DG bill (DG requires explicit scope)', value: 'ANY_BILL' },
-]
-
 const statusOptions = [
   { label: 'All statuses', value: '' },
   { label: 'Pending', value: 'PENDING' },
@@ -276,6 +280,13 @@ const formatAdvanceCreditScope = (scope: AdvanceCreditScope | null) => {
   if (scope === 'CAM') return 'CAM-only'
   if (scope === 'GENERAL') return 'general-bill-only'
   return 'non-DG'
+}
+
+const formatPaymentChargeType = (chargeType: BillingPeriodChargeType | null) => {
+  if (chargeType === 'DG_SET') return 'DG Set'
+  if (chargeType === 'CAM') return 'CAM'
+  if (chargeType === 'GENERAL') return 'General'
+  return 'Unclassified'
 }
 
 const formatDate = (value: string | null | undefined) =>
@@ -319,6 +330,7 @@ const loadPayments = () =>
       flatId: query.flatId || undefined,
       payerUserId: query.payerUserId || undefined,
       billingPeriodId: query.billingPeriodId || undefined,
+      chargeType: query.chargeType || undefined,
       mode: query.mode || undefined,
       status: query.status || undefined,
       receipt: query.receipt || undefined,
@@ -426,6 +438,7 @@ watch(
     query.flatId,
     query.payerUserId,
     query.billingPeriodId,
+    query.chargeType,
     query.mode,
     query.status,
     query.receipt,
@@ -456,6 +469,7 @@ const paymentEditFlat = ref<FlatDetail | null>(null)
 const paymentEditDues = ref<MaintenanceDue[]>([])
 const paymentEditForm = reactive({
   flatId: '',
+  chargeType: 'CAM' as BillingPeriodChargeType,
   payerUserId: '',
   amount: null as number | null,
   paymentDate: '',
@@ -584,6 +598,7 @@ const resetFilters = () => {
   query.flatId = ''
   query.payerUserId = ''
   query.billingPeriodId = ''
+  query.chargeType = ''
   query.mode = ''
   query.status = ''
   query.receipt = ''
@@ -634,6 +649,7 @@ const paymentEditDueOptions = computed(() => {
 
   for (const due of paymentEditDues.value) {
     if (due.isAdvanceCoverageRow || due.isCamAdvanceCovered) continue
+    if (due.billingPeriodChargeType !== paymentEditForm.chargeType) continue
     options.set(
       due.id,
       `${due.billingPeriodLabel} · ${formatMoney(due.balanceAmount)} balance`,
@@ -641,6 +657,7 @@ const paymentEditDueOptions = computed(() => {
   }
 
   for (const allocation of paymentEditPayment.value?.allocations ?? []) {
+    if (allocation.billingPeriodChargeType !== paymentEditForm.chargeType) continue
     if (options.has(allocation.dueId)) continue
     options.set(
       allocation.dueId,
@@ -672,6 +689,7 @@ const validatePaymentEditForm = (showToast = false) => {
   clearPaymentEditFieldErrors()
 
   requirePaymentEditField('flatId', paymentEditForm.flatId, 'Select a flat.')
+  requirePaymentEditField('chargeType', paymentEditForm.chargeType, 'Select CAM, DG Set, or general payment type.')
   requirePaymentEditField('payerUserId', paymentEditForm.payerUserId, 'Select a payer.')
   if (paymentEditAmount.value <= 0) {
     setPaymentEditFieldError('amount', 'Enter a payment amount greater than zero.')
@@ -703,10 +721,6 @@ const validatePaymentEditForm = (showToast = false) => {
     if (!Number.isInteger(months) || months <= 0) {
       setPaymentEditFieldError('tenureMonths', 'Enter a valid tenure in months.')
     }
-  }
-
-  if (paymentEditShowsAdvanceScope.value) {
-    requirePaymentEditField('advanceCreditScope', paymentEditForm.advanceCreditScope, 'Select which bill type this advance can be used for.')
   }
 
   if (paymentEditForm.allowDuplicateUtr) {
@@ -753,6 +767,7 @@ const applyPaymentDetailToEditForm = (payment: PaymentDetail) => {
       : payment.allocations.map((allocation) => allocation.dueId)
 
   paymentEditForm.flatId = payment.received_for_flat_id
+  paymentEditForm.chargeType = payment.charge_type ?? payment.allocations[0]?.billingPeriodChargeType ?? 'CAM'
   paymentEditForm.payerUserId = payment.payer_user_id
   paymentEditForm.amount = Number(payment.amount)
   paymentEditForm.paymentDate = payment.payment_date
@@ -765,7 +780,7 @@ const applyPaymentDetailToEditForm = (payment: PaymentDetail) => {
   paymentEditForm.chequeDate = cheque.chequeDate ?? ''
   paymentEditForm.bankName = cheque.bankName ?? ''
   paymentEditForm.allocationMode = payment.allocation_mode || 'OLDEST_UNPAID_FIRST'
-  paymentEditForm.advanceCreditScope = payment.advance_credits[0]?.applicableChargeType ?? snapshot.advanceCreditScope ?? 'ANY_BILL'
+  paymentEditForm.advanceCreditScope = paymentEditForm.chargeType
   paymentEditForm.selectedDueIds = selectedDueIds
   paymentEditForm.tenureMonths = String(snapshot.tenureMonths ?? '3')
   paymentEditForm.notes = payment.notes ?? ''
@@ -890,6 +905,7 @@ watch(autoDepositAccountId, (accountId) => {
 watch(
   () => [
     paymentEditForm.flatId,
+    paymentEditForm.chargeType,
     paymentEditForm.payerUserId,
     paymentEditForm.amount,
     paymentEditForm.paymentDate,
@@ -902,7 +918,6 @@ watch(
     paymentEditForm.chequeDate,
     paymentEditForm.bankName,
     paymentEditForm.allocationMode,
-    paymentEditForm.advanceCreditScope,
     paymentEditForm.selectedDueIds.join(','),
     paymentEditForm.tenureMonths,
     paymentEditForm.allowDuplicateUtr,
@@ -930,6 +945,7 @@ const savePaymentEdit = async () => {
       method: 'PATCH',
       body: {
         flatId: paymentEditForm.flatId,
+        chargeType: paymentEditForm.chargeType,
         payerUserId: paymentEditForm.payerUserId,
         amount: paymentEditAmount.value,
         paymentDate: paymentEditForm.paymentDate,
@@ -944,7 +960,7 @@ const savePaymentEdit = async () => {
         chequeDate: paymentEditNeedsCheque.value ? paymentEditForm.chequeDate || null : null,
         bankName: paymentEditNeedsCheque.value ? paymentEditForm.bankName || null : null,
         allocationMode: paymentEditForm.allocationMode,
-        advanceCreditScope: paymentEditShowsAdvanceScope.value ? paymentEditForm.advanceCreditScope : undefined,
+        advanceCreditScope: paymentEditShowsAdvanceScope.value ? paymentEditForm.chargeType : undefined,
         selectedDueIds: paymentEditForm.allocationMode === 'SELECTED_PERIODS'
           ? paymentEditForm.selectedDueIds
           : [],
@@ -1110,6 +1126,10 @@ const onProofFileChange = async (event: Event) => {
             <Select v-model="query.billingPeriodId" :options="periodOptions" option-label="label" option-value="value" />
           </label>
           <label>
+            <span class="field-label">Payment type</span>
+            <Select v-model="query.chargeType" :options="paymentChargeTypes" option-label="label" option-value="value" />
+          </label>
+          <label>
             <span class="field-label">Mode</span>
             <Select v-model="query.mode" :options="paymentModes" option-label="label" option-value="value" />
           </label>
@@ -1181,6 +1201,11 @@ const onProofFileChange = async (event: Event) => {
         <Column field="amount" header="Amount">
           <template #body="{ data: row }">
             <strong>{{ formatMoney(row.amount) }}</strong>
+          </template>
+        </Column>
+        <Column field="chargeType" header="Payment type">
+          <template #body="{ data: row }">
+            <Tag :value="formatPaymentChargeType(row.chargeType)" :severity="row.chargeType === 'DG_SET' ? 'info' : row.chargeType === 'CAM' ? 'success' : 'secondary'" rounded />
           </template>
         </Column>
         <Column field="mode" header="Mode">
@@ -1308,6 +1333,10 @@ const onProofFileChange = async (event: Event) => {
             </div>
           </div>
           <div class="list-card__row">
+            <span>Payment type</span>
+            <strong>{{ formatPaymentChargeType(payment.chargeType) }}</strong>
+          </div>
+          <div class="list-card__row">
             <span>Reference</span>
             <strong>{{ referenceLabel(payment) }}</strong>
           </div>
@@ -1400,6 +1429,9 @@ const onProofFileChange = async (event: Event) => {
         </div>
         <AppDataTable :value="selectedPayment.allocations" responsive-layout="scroll">
           <Column field="billingPeriodLabel" header="Period" />
+          <Column field="billingPeriodChargeType" header="Type">
+            <template #body="{ data: row }">{{ formatPaymentChargeType(row.billingPeriodChargeType) }}</template>
+          </Column>
           <Column field="dueAmount" header="Due">
             <template #body="{ data: row }">{{ formatMoney(row.dueAmount) }}</template>
           </Column>
@@ -1798,6 +1830,11 @@ const onProofFileChange = async (event: Event) => {
           </div>
           <div class="admin-form-grid">
             <label>
+              <span class="field-label">Payment type <span class="required-marker">*</span></span>
+              <Select v-model="paymentEditForm.chargeType" :options="paymentChargeTypes.slice(1)" option-label="label" option-value="value" :invalid="Boolean(paymentEditFieldError('chargeType'))" @change="paymentEditForm.selectedDueIds = []" />
+              <small v-if="paymentEditFieldError('chargeType')" class="field-error">{{ paymentEditFieldError('chargeType') }}</small>
+            </label>
+            <label>
               <span class="field-label">Allocation mode <span class="required-marker">*</span></span>
               <Select
                 v-model="paymentEditForm.allocationMode"
@@ -1812,18 +1849,11 @@ const onProofFileChange = async (event: Event) => {
               <small v-if="paymentEditFieldError('tenureMonths')" class="field-error">{{ paymentEditFieldError('tenureMonths') }}</small>
             </label>
             <label v-if="paymentEditShowsAdvanceScope">
-              <span class="field-label">Advance applies to <span class="required-marker">*</span></span>
-              <Select
-                v-model="paymentEditForm.advanceCreditScope"
-                :options="advanceCreditScopes"
-                option-label="label"
-                option-value="value"
-                :invalid="Boolean(paymentEditFieldError('advanceCreditScope'))"
-              />
+              <span class="field-label">Advance applies to</span>
+              <InputText :model-value="formatPaymentChargeType(paymentEditForm.chargeType)" disabled />
               <small class="field-help">
-                Choose the scope for the new advance that this payment edit will create.
+                Any excess remains available only for future bills of this payment type.
               </small>
-              <small v-if="paymentEditFieldError('advanceCreditScope')" class="field-error">{{ paymentEditFieldError('advanceCreditScope') }}</small>
             </label>
             <label v-else-if="paymentEditHasExistingAdvanceCredit">
               <span class="field-label">Existing advance scope</span>

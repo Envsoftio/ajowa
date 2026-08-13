@@ -47,8 +47,11 @@ export const advanceCreditScopeSchema = z.enum([
   'DG_SET',
 ])
 
+export const paymentChargeTypeSchema = z.enum(['GENERAL', 'CAM', 'DG_SET'])
+
 const requireAdvanceCreditScope = (
   value: {
+    chargeType?: z.infer<typeof paymentChargeTypeSchema> | undefined
     allocationMode?: z.infer<typeof allocationModeSchema> | undefined
     advanceCreditScope?: AdvanceCreditScope | undefined
     selectedDueIds?: string[] | undefined
@@ -56,13 +59,25 @@ const requireAdvanceCreditScope = (
   context: z.RefinementCtx,
 ) => {
   if (
-    value.allocationMode === 'ADVANCE_ONLY' &&
-    value.advanceCreditScope === undefined
+    value.advanceCreditScope === 'ANY_BILL'
   ) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['advanceCreditScope'],
-      message: 'Select which bill type this advance can be used for.',
+      message: 'Advances must be classified as CAM, DG Set, or General.',
+    })
+  }
+
+  if (
+    value.advanceCreditScope !== undefined &&
+    value.advanceCreditScope !== 'ANY_BILL' &&
+    value.chargeType !== undefined &&
+    value.advanceCreditScope !== value.chargeType
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['advanceCreditScope'],
+      message: 'Advance scope must match the payment type.',
     })
   }
 
@@ -90,6 +105,7 @@ export const paymentModeSchema = z.enum([
 
 export const manualPaymentSchema = z.object({
   flatId: z.string().uuid(),
+  chargeType: paymentChargeTypeSchema,
   payerUserId: z.string().uuid().optional(),
   amount: z.coerce.number().positive(),
   paymentDate: z.string().date(),
@@ -114,6 +130,7 @@ export const manualPaymentSchema = z.object({
 
 export const paymentPreviewSchema = z.object({
   flatId: z.string().uuid(),
+  chargeType: paymentChargeTypeSchema,
   amount: z.coerce.number().positive(),
   allocationMode: allocationModeSchema.default('OLDEST_UNPAID_FIRST'),
   advanceCreditScope: advanceCreditScopeSchema.optional(),
@@ -133,6 +150,7 @@ const optionalNullableText = (max: number) =>
 
 export const paymentUpdateSchema = z.object({
   flatId: z.string().uuid().optional(),
+  chargeType: paymentChargeTypeSchema.optional(),
   payerUserId: z.string().uuid().optional(),
   amount: z.coerce.number().positive().optional(),
   paymentDate: z.string().date().optional(),
@@ -202,6 +220,7 @@ type PaymentRow = {
   payment_date: string
   status: string
   allocation_mode: string
+  charge_type: BillingPeriodChargeType | null
 }
 
 export type PaymentAllocationInput = PaymentPreviewInput & {
@@ -421,6 +440,7 @@ const selectAllocatableDues = async (
   client: PoolClient,
   input: {
     flatId: string
+    chargeType: BillingPeriodChargeType
     mode: z.infer<typeof allocationModeSchema>
     selectedDueIds?: string[]
     tenureMonths?: number
@@ -436,6 +456,8 @@ const selectAllocatableDues = async (
     `md.flat_id = $1`,
     `md.status not in ('PAID', 'WAIVED', 'CANCELLED')`,
   ]
+  params.push(input.chargeType)
+  filters.push(`bp.charge_type = $${params.length}`)
 
   if (input.mode === 'SELECTED_PERIODS') {
     if (!input.selectedDueIds?.length) {
@@ -498,6 +520,20 @@ const selectAllocatableDues = async (
     `,
     params,
   )
+
+  if (input.mode === 'SELECTED_PERIODS') {
+    const returnedDueIds = new Set(result.rows.map((due) => due.id))
+    const invalidSelection = input.selectedDueIds?.some(
+      (dueId) => !returnedDueIds.has(dueId),
+    )
+    if (invalidSelection) {
+      throw new AppError({
+        code: 'VALIDATION_ERROR',
+        statusCode: 400,
+        message: `Every selected due must be an open ${input.chargeType === 'DG_SET' ? 'DG Set' : input.chargeType} bill for this flat.`,
+      })
+    }
+  }
 
   const asOfDate = input.asOfDate ?? todayDate()
   const paymentEventsByDueId = await getVerifiedDuePaymentEvents(
@@ -566,6 +602,7 @@ const previewPaymentAllocationWithClient = async (
 
     const dueInput: Parameters<typeof selectAllocatableDues>[1] = {
       flatId: input.flatId,
+      chargeType: input.chargeType,
       mode: input.allocationMode,
       selectedDueIds: input.selectedDueIds,
       graceDays: policy.graceDays,
@@ -619,7 +656,12 @@ const previewPaymentAllocationWithClient = async (
           ),
           sourceBillingPeriodId: null,
         }
-      : resolveAdvanceCreditContext(lines)
+      : lines.length > 0
+        ? resolveAdvanceCreditContext(lines)
+        : {
+            applicableChargeType: input.chargeType,
+            sourceBillingPeriodId: null,
+          }
 
   return {
     lines,
@@ -848,7 +890,8 @@ export const allocateMaintenancePaymentWithClient = async (
           amount::text,
           payment_date::text,
           status,
-          allocation_mode
+          allocation_mode,
+          charge_type
         from payments
         where id = $1
         for update
@@ -897,6 +940,13 @@ export const allocateMaintenancePaymentWithClient = async (
       message: 'Payment allocation runs only after verification.',
     })
   }
+  if (!payment.charge_type) {
+    throw new AppError({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message: 'Classify the payment as CAM, DG Set, or General before allocation.',
+    })
+  }
 
   const snapshotResult = await client.query<{
     allocation_snapshot: Record<string, unknown>
@@ -905,6 +955,7 @@ export const allocateMaintenancePaymentWithClient = async (
   const policy = await getPaymentPolicy(client, payment.society_id)
   const previewInput: PaymentAllocationInput = {
     flatId: payment.received_for_flat_id,
+    chargeType: payment.charge_type,
     amount: Number(payment.amount),
     allocationMode: allocationModeSchema.parse(payment.allocation_mode),
     asOfDate: payment.payment_date,
@@ -1122,6 +1173,7 @@ export const updatePaymentWithClient = async (
         payment_date::text,
         status,
         allocation_mode,
+        charge_type,
         mode::text,
         transfer_kind,
         utr_reference,
@@ -1192,6 +1244,23 @@ export const updatePaymentWithClient = async (
       existingAllocations.rows.map((allocation) => allocation.maintenance_due_id),
     ),
   ]
+  const existingChargeTypes = [
+    ...new Set(
+      existingAllocations.rows.map(
+        (allocation) => allocation.billing_period_charge_type,
+      ),
+    ),
+  ]
+  const previousChargeType = payment.charge_type ??
+    (existingChargeTypes.length === 1 ? existingChargeTypes[0] : undefined)
+  const nextChargeType = input.changes.chargeType ?? previousChargeType
+  if (!nextChargeType) {
+    throw new AppError({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message: 'Classify the payment as CAM, DG Set, or General before editing.',
+    })
+  }
 
   const previousAmount = roundMoney(Number(payment.amount))
   const nextAmount = roundMoney(input.changes.amount ?? previousAmount)
@@ -1467,20 +1536,9 @@ export const updatePaymentWithClient = async (
   const previousAdvanceCreditScope = sourceCredit
     ? getAdvanceCreditScope(sourceCredit.applicable_charge_type)
     : getSnapshotAdvanceCreditScope(snapshot)
-  const nextAdvanceCreditScope = input.changes.advanceCreditScope ?? previousAdvanceCreditScope
-
-  if (nextAllocationMode === 'ADVANCE_ONLY' && nextAdvanceCreditScope === undefined) {
-    throw new AppError({
-      code: 'VALIDATION_ERROR',
-      statusCode: 400,
-      message: 'Select which bill type this advance can be used for.',
-    })
-  }
-
-  const nextAdvanceApplicableChargeType = nextAdvanceCreditScope === undefined
-    ? undefined
-    : getAdvanceApplicableChargeType(nextAdvanceCreditScope)
-  const creditScopeChanged = input.changes.advanceCreditScope !== undefined &&
+  const nextAdvanceCreditScope = nextChargeType
+  const nextAdvanceApplicableChargeType = nextChargeType
+  const creditScopeChanged = sourceCredits.rows.length > 0 &&
     sourceCredits.rows.some((credit) => credit.applicable_charge_type !== nextAdvanceApplicableChargeType)
 
   if (creditScopeChanged && sourceCredits.rows.length !== 1) {
@@ -1512,6 +1570,7 @@ export const updatePaymentWithClient = async (
   }
 
   const amountChanged = previousAmount !== nextAmount
+  const chargeTypeChanged = previousChargeType !== nextChargeType
   const paymentDateChanged = payment.payment_date !== nextPaymentDate
   const flatChanged = payment.received_for_flat_id !== nextFlatId
   const payerChanged = payment.payer_user_id !== nextPayerUserId
@@ -1529,6 +1588,7 @@ export const updatePaymentWithClient = async (
     amountChanged ||
     paymentDateChanged ||
     flatChanged ||
+    chargeTypeChanged ||
     allocationModeChanged ||
     selectedDueIdsChanged ||
     tenureMonthsChanged
@@ -1562,6 +1622,7 @@ export const updatePaymentWithClient = async (
     utrReference: payment.utr_reference,
     bankReference: payment.bank_reference,
     allocationMode: previousAllocationMode,
+    chargeType: previousChargeType ?? null,
     advanceCreditScope: previousAdvanceCreditScope ?? null,
     selectedDueIds: previousSelectedDueIds,
     tenureMonths: previousTenureMonths ?? null,
@@ -1579,6 +1640,7 @@ export const updatePaymentWithClient = async (
     utrReference: nextUtrReference,
     bankReference: nextBankReference,
     allocationMode: nextAllocationMode,
+    chargeType: nextChargeType,
     advanceCreditScope: nextAdvanceCreditScope ?? null,
     selectedDueIds: nextSelectedDueIds,
     tenureMonths: nextTenureMonths ?? null,
@@ -1622,6 +1684,13 @@ export const updatePaymentWithClient = async (
     advanceSourceBillingPeriodId: string | null
     policy: string
   } | null = null
+
+  if (chargeTypeChanged) {
+    await client.query(
+      `update payments set charge_type = $2, updated_at = now() where id = $1`,
+      [payment.id, nextChargeType],
+    )
+  }
 
   if (reallocatePayment && allocationIds.length > 0) {
     const referencedAllocations = await client.query<{ count: string }>(
@@ -1737,6 +1806,7 @@ export const updatePaymentWithClient = async (
 
     const previewInput: PaymentAllocationInput = {
       flatId: nextFlatId,
+      chargeType: nextChargeType,
       amount: nextAmount,
       allocationMode: nextAllocationMode,
       selectedDueIds: nextAllocationMode === 'SELECTED_PERIODS'
@@ -1747,9 +1817,7 @@ export const updatePaymentWithClient = async (
     if (nextAllocationMode === 'TENURE_PACK' && nextTenureMonths !== undefined) {
       previewInput.tenureMonths = nextTenureMonths
     }
-    if (nextAdvanceCreditScope !== undefined) {
-      previewInput.advanceCreditScope = nextAdvanceCreditScope
-    }
+    previewInput.advanceCreditScope = nextAdvanceCreditScope
     const nextPreview = await previewPaymentAllocationWithClient(
       client,
       previewInput,
@@ -1889,6 +1957,7 @@ export const updatePaymentWithClient = async (
 
   const nextSnapshot = {
     ...snapshot,
+    chargeType: nextChargeType,
     selectedDueIds: nextSelectedDueIds,
     tenureMonths: nextTenureMonths,
     advanceCreditScope: nextAdvanceCreditScope,
@@ -1941,13 +2010,14 @@ export const updatePaymentWithClient = async (
         payment_date = $6::date,
         amount = $7,
         allocation_mode = $8,
-        allocation_snapshot = $9::jsonb,
-        utr_reference = $10,
-        bank_reference = $11,
-        is_default_utr = $12,
-        notes = $13,
-        receipt_file_path = case when $14::boolean then null else receipt_file_path end,
-        receipt_generated_at = case when $14::boolean then now() else receipt_generated_at end,
+        charge_type = $9,
+        allocation_snapshot = $10::jsonb,
+        utr_reference = $11,
+        bank_reference = $12,
+        is_default_utr = $13,
+        notes = $14,
+        receipt_file_path = case when $15::boolean then null else receipt_file_path end,
+        receipt_generated_at = case when $15::boolean then now() else receipt_generated_at end,
         updated_at = now()
       where id = $1
     `,
@@ -1960,6 +2030,7 @@ export const updatePaymentWithClient = async (
       nextPaymentDate,
       nextAmount,
       nextAllocationMode,
+      nextChargeType,
       JSON.stringify(nextSnapshot),
       nextUtrReference,
       nextBankReference,
@@ -2127,23 +2198,8 @@ export const consumeAdvanceCreditsForDueWithClient = async (
         and flat_id = $2
         and status = 'ACTIVE'
         and current_balance > 0
-        and (
-          (
-            $3 = 'DG_SET'
-            and applicable_charge_type = 'DG_SET'
-          )
-          or (
-            $3 <> 'DG_SET'
-            and (
-              applicable_charge_type is null
-              or applicable_charge_type = $3
-            )
-          )
-        )
-      order by
-        case when applicable_charge_type = $3 then 0 else 1 end,
-        created_at asc,
-        id asc
+        and applicable_charge_type = $3
+      order by created_at asc, id asc
       for update
     `,
     [due.society_id, due.flat_id, due.billing_period_charge_type],
@@ -2181,10 +2237,11 @@ export const consumeAdvanceCreditsForDueWithClient = async (
           payment_date,
           amount,
           allocation_mode,
+          charge_type,
           notes,
           verified_at
         )
-        select society_id, user_id, flat_id, 'ADVANCE_CREDIT', 'VERIFIED', $4::date, $2, 'SELECTED_PERIODS', $3, now()
+        select society_id, user_id, flat_id, 'ADVANCE_CREDIT', 'VERIFIED', $4::date, $2, 'SELECTED_PERIODS', $5, $3, now()
         from resident_advance_credits
         where id = $1
         returning id
@@ -2194,6 +2251,7 @@ export const consumeAdvanceCreditsForDueWithClient = async (
         amount,
         `${getAdvanceCreditScopeLabel(credit.applicable_charge_type)} advance credit consumed against due ${dueId}.`,
         settlementDate,
+        due.billing_period_charge_type,
       ],
     )
     const advancePaymentId = payment.rows[0]?.id
