@@ -1,12 +1,11 @@
 import { z } from 'zod'
-import process from 'node:process'
 import type { PoolClient } from 'pg'
 import { createApiSuccess, readJsonBody, validateInput } from '~/server/utils/api'
 import { requireRole } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
 import { AppError } from '~/server/utils/errors'
+import { invokeNotificationWorker } from '~/server/utils/notification-worker-dispatch'
 import {
-  dispatchNotificationJobs,
   type NotificationCategory,
   type NotificationChannel,
   type NotificationJobClaimFilters,
@@ -30,7 +29,6 @@ const notificationPriorities = ['LOW', 'MEDIUM', 'HIGH', 'EMERGENCY'] as const
 const schema = z.object({
   eventId: z.string().uuid().optional(),
   retryFailed: z.boolean().optional(),
-  limit: z.coerce.number().int().min(1).max(25).optional(),
   channel: z.enum(notificationChannels).optional(),
   eventKey: z.string().trim().min(1).max(120).regex(/^[a-z0-9_.-]+$/i).optional(),
   category: z.enum(notificationCategories).optional(),
@@ -49,17 +47,6 @@ type EventJobSummaryRow = {
   failed_count: number
   channel_statuses: string
 }
-
-const parsePositiveInteger = (value: string | undefined, fallback: number) => {
-  const parsed = Number(value)
-  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback
-}
-
-const defaultProcessLimit = () =>
-  parsePositiveInteger(
-    process.env.NOTIFICATION_PROCESS_BATCH_SIZE,
-    process.env.NETLIFY === 'true' ? 5 : 25,
-  )
 
 const getErrorMessage = (error: unknown) =>
   error instanceof Error ? error.message : String(error)
@@ -202,13 +189,6 @@ export default defineEventHandler(async (event) => {
         })
       : 0
     const lockTimeoutMinutes = body.eventId ? 1 : 10
-    const result = await dispatchNotificationJobs(client, {
-      limit: body.limit ?? defaultProcessLimit(),
-      societyId: authMe.user.societyId,
-      lockTimeoutMinutes,
-      ...(body.eventId ? { eventId: body.eventId } : {}),
-      ...processFilters,
-    })
     const remaining = await getClaimableNotificationJobCount(client, {
       societyId: authMe.user.societyId,
       lockTimeoutMinutes,
@@ -218,11 +198,22 @@ export default defineEventHandler(async (event) => {
     const eventSummary = body.eventId
       ? await getEventJobSummary(client, authMe.user.societyId, body.eventId)
       : null
+    const workerStarted = remaining > 0
+      ? await invokeNotificationWorker({
+          societyId: authMe.user.societyId,
+          ...(body.eventId ? { eventId: body.eventId } : {}),
+          ...processFilters,
+        })
+      : false
 
     return createApiSuccess(event, {
-      ...result,
+      claimed: 0,
+      sent: 0,
+      failed: 0,
+      retried: 0,
       requeued,
       remaining,
+      workerStarted,
       ...(eventSummary ? { eventSummary } : {}),
     })
   } catch (error) {
