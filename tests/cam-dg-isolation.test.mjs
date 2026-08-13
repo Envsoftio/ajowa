@@ -127,3 +127,17 @@ test('shows and filters CAM and DG payment types on the payments page', async ()
   assert.match(page, /field="chargeType" header="Payment type"/)
   assert.match(page, /v-model="query\.chargeType"/)
 })
+
+test('keeps CAM coverage records separate from payment rows and totals', async () => {
+  const api = await readSource('../server/api/payments/index.get.ts')
+  const page = await readSource('../pages/admin/payments/index.vue')
+
+  assert.match(api, /'cac\.amount is not null'/)
+  assert.match(api, /'cac\.amount > 0'/)
+  assert.match(api, /createPaginatedResult\(rows\.rows, paymentTotal, pagination\)/)
+  assert.match(api, /camAdvanceMatches: camAdvanceRows/)
+  assert.doesNotMatch(api, /items:\s*\[\.\.\.rows\.rows,\s*\.\.\.camAdvanceRows\]/)
+  assert.match(page, /const camAdvanceMatches = computed/)
+  assert.match(page, /<h2>CAM advances<\/h2>/)
+  assert.match(page, /v-if="camAdvanceMatches\.length > 0"/)
+})
