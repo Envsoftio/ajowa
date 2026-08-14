@@ -17,6 +17,9 @@ type OnlinePaymentStatus = {
   reference: string
   retryAllowed: boolean
   failureCode: string | null
+  title: string
+  message: string
+  pollAfterMs?: number
 }
 type OnlinePaymentStatusResponse = { ok: true; data: OnlinePaymentStatus }
 type OnlinePaymentInitiateResponse = {
@@ -130,6 +133,10 @@ const dueSourceLabel = (due: MaintenanceDue) => {
 }
 const hasActionableBalance = (due: MaintenanceDue) =>
   due.balanceAmount > 0 && !due.isCamAdvanceCovered
+const hasPaymentChargeType = (due: MaintenanceDue) =>
+  due.billingPeriodChargeType === 'GENERAL' ||
+  due.billingPeriodChargeType === 'CAM' ||
+  due.billingPeriodChargeType === 'DG_SET'
 const camAdvanceAdjustmentAmount = (due: MaintenanceDue) =>
   due.chargeBreakdown.reduce((sum, item) => {
     const adjustment = Number(item.camAdvanceAdjustmentAmount ?? 0)
@@ -187,6 +194,7 @@ const advanceStatusDetail = (due: MaintenanceDue) => {
 const canPayDue = (due: MaintenanceDue) =>
   Boolean(paymentAvailabilityData.value?.data.enabled) &&
   Boolean(due.canPayNow) &&
+  hasPaymentChargeType(due) &&
   hasActionableBalance(due)
 
 const getPayTitle = (due: MaintenanceDue) => {
@@ -253,16 +261,15 @@ const showPaymentStatus = async (paymentId: string) => {
   } else if (['FAILED', 'CANCELLED'].includes(status.status)) {
     toast.add({
       severity: 'warn',
-      summary: 'Payment not completed',
-      detail:
-        'No successful payment has been confirmed. You may try again when the Pay button is available.',
+      summary: status.title,
+      detail: `${status.message} Reference: ${status.reference}.`,
       life: 7000,
     })
   } else {
     toast.add({
       severity: 'info',
-      summary: 'Verification in progress',
-      detail: `Do not pay again. We are checking payment reference ${status.reference}.`,
+      summary: status.title,
+      detail: `${status.message} Reference: ${status.reference}.`,
       life: 8000,
     })
   }
@@ -273,6 +280,7 @@ const verifyOnlinePayment = async (paymentId: string) => {
     await api<OnlinePaymentStatusResponse>('/api/payments/online/verify', {
       method: 'POST',
       body: { paymentId },
+      showErrorToast: false,
     })
   } catch {
     // A gateway timeout is an unknown outcome. The durable worker and status
@@ -283,14 +291,17 @@ const verifyOnlinePayment = async (paymentId: string) => {
 
 const payDue = async (due: MaintenanceDue) => {
   if (!canPayDue(due) || payingDueId.value) return
+  if (!hasPaymentChargeType(due)) return
   payingDueId.value = due.id
   try {
     const response = await api<OnlinePaymentInitiateResponse>(
       '/api/payments/online/initiate',
       {
         method: 'POST',
+        showErrorToast: false,
         body: {
           flatId: due.flatId,
+          chargeType: due.billingPeriodChargeType,
           amount: due.balanceAmount,
           allocationMode: 'SELECTED_PERIODS',
           selectedDueIds: [due.id],
@@ -315,13 +326,26 @@ const payDue = async (due: MaintenanceDue) => {
       onResponse: () => void verifyOnlinePayment(payment.paymentId),
     })
   } catch (error) {
+    const fetchError = error as {
+      data?: {
+        data?: { details?: { paymentId?: unknown } }
+        details?: { paymentId?: unknown }
+      }
+    }
+    const errorPayload = fetchError.data?.data ?? fetchError.data
+    const blockingPaymentId = errorPayload?.details?.paymentId
+    if (typeof blockingPaymentId === 'string') {
+      await verifyOnlinePayment(blockingPaymentId)
+      return
+    }
     toast.add({
       severity: 'error',
       summary: 'Payment could not be started',
       detail:
-        error instanceof Error
-          ? error.message
-          : 'Please wait and refresh before trying again.',
+        getApiErrorMessage(
+          error,
+          'Please wait and refresh before trying again.',
+        ),
       life: 7000,
     })
   } finally {

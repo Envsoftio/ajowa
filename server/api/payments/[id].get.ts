@@ -17,6 +17,11 @@ export default defineEventHandler(async (event) => {
         f.flat_number,
         b.name as block_name,
         u.full_name as payer_name,
+        attempt.merchant_transaction_id as gateway_transaction_id,
+        attempt.status as gateway_attempt_status,
+        attempt.last_gateway_status as gateway_status,
+        coalesce(p.gateway_payment_id, attempt.gateway_payment_id) as gateway_payment_reference,
+        coalesce(p.bank_reference, attempt.bank_reference) as gateway_bank_reference,
         coalesce(
           jsonb_agg(
             jsonb_build_object(
@@ -78,10 +83,14 @@ export default defineEventHandler(async (event) => {
       left join payment_allocations pa on pa.payment_id = p.id
       left join maintenance_dues md on md.id = pa.maintenance_due_id
       left join billing_periods bp on bp.id = md.billing_period_id
+      left join payment_gateway_attempts attempt on attempt.payment_id = p.id
       where p.id = $1
         and p.society_id = $2
         and ($3::boolean = true or p.payer_user_id = $4)
-      group by p.id, f.flat_number, b.name, u.full_name
+      group by p.id, f.flat_number, b.name, u.full_name,
+        attempt.merchant_transaction_id, attempt.status,
+        attempt.last_gateway_status, attempt.gateway_payment_id,
+        attempt.bank_reference
       limit 1
     `,
     [id, authMe.user.societyId, isStaff, authMe.user.id],

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import test from 'node:test'
+import { readFile } from 'node:fs/promises'
 import {
   buildEasebuzzEventFingerprint,
   buildEasebuzzInitiateHash,
@@ -9,6 +10,7 @@ import {
   canonicalizeEasebuzzAmount,
   decryptEasebuzzAccessKey,
   encryptEasebuzzAccessKey,
+  extractEasebuzzTransaction,
   normalizeEasebuzzStatus,
   parseEasebuzzPaidAt,
   redactEasebuzzPayload,
@@ -88,6 +90,35 @@ test('normalizes only explicitly supported gateway states', () => {
   assert.equal(normalizeEasebuzzStatus('unexpected-new-state'), 'UNKNOWN')
 })
 
+test('extracts Transaction V2 decline details from the Easebuzz msg wrapper', () => {
+  assert.deepEqual(
+    extractEasebuzzTransaction({
+      status: true,
+      msg: {
+        txnid: 'AJDECLINED123',
+        easepayid: 'EASE123',
+        amount: 14138,
+        status: 'failure',
+        error: 'Transaction has failed.',
+      },
+    }),
+    {
+      txnid: 'AJDECLINED123',
+      easepayid: 'EASE123',
+      amount: '14138',
+      status: 'failure',
+      error: 'Transaction has failed.',
+    },
+  )
+})
+
+test('does not treat a Transaction V2 response wrapper as a transaction', () => {
+  assert.equal(
+    extractEasebuzzTransaction({ status: false, msg: 'Transaction not found' }),
+    null,
+  )
+})
+
 test('canonicalizes INR amounts and rejects invalid payment values', () => {
   assert.equal(canonicalizeEasebuzzAmount(125.5), '125.50')
   assert.throws(() => canonicalizeEasebuzzAmount(0))
@@ -107,6 +138,7 @@ test('payment intent fingerprints are stable across due ordering but change with
     societyId: 'society',
     payerUserId: 'payer',
     flatId: 'flat',
+    chargeType: 'GENERAL',
     amount: 125.5,
     allocationMode: 'SELECTED_PERIODS',
     selectedDueIds: ['due-b', 'due-a'],
@@ -121,6 +153,10 @@ test('payment intent fingerprints are stable across due ordering but change with
   assert.notEqual(
     buildOnlinePaymentRequestFingerprint(input),
     buildOnlinePaymentRequestFingerprint({ ...input, amount: 126 }),
+  )
+  assert.notEqual(
+    buildOnlinePaymentRequestFingerprint(input),
+    buildOnlinePaymentRequestFingerprint({ ...input, chargeType: 'CAM' }),
   )
 })
 
@@ -159,4 +195,88 @@ test('access keys are encrypted at rest and authenticated against tampering', ()
     null,
   )
   assert.equal(decryptEasebuzzAccessKey(encrypted, 'wrong-secret'), null)
+})
+
+test('reconciles an older active attempt before blocking a new checkout', async () => {
+  const source = await readFile(
+    new URL('../server/utils/online-payments.ts', import.meta.url),
+    'utf8',
+  )
+
+  assert.match(
+    source,
+    /await reconcileBlockingOnlinePaymentAttempt\([\s\S]*const preview = await previewPaymentAllocation/,
+  )
+  assert.match(
+    source,
+    /await retrieveAndApplyOnlinePayment\(attempt\.id\)/,
+  )
+  assert.match(source, /paymentId: blocked\.id/)
+  assert.match(source, /retryAllowed: false/)
+})
+
+test('persists authoritative decline and cancellation as retry-safe terminal states', async () => {
+  const source = await readFile(
+    new URL('../server/utils/online-payments.ts', import.meta.url),
+    'utf8',
+  )
+
+  assert.match(source, /'PAYMENT_DECLINED' : 'PAYMENT_CANCELLED'/)
+  assert.match(source, /retry_allowed = true/)
+  assert.match(source, /next_reconciliation_at = null/)
+  assert.match(
+    source,
+    /for update of attempt, payment[\s\S]*update payment_gateway_attempts[\s\S]*update payments set status = \$2[\s\S]*await client\.query\('commit'\)/,
+  )
+  assert.match(
+    source,
+    /status not in \('VERIFIED', 'FAILED', 'CANCELLED'\)/,
+  )
+})
+
+test('admin payments render gateway references separately from manual proof and UTR fields', async () => {
+  const listApi = await readFile(
+    new URL('../server/api/payments/index.get.ts', import.meta.url),
+    'utf8',
+  )
+  const detailApi = await readFile(
+    new URL('../server/api/payments/[id].get.ts', import.meta.url),
+    'utf8',
+  )
+  const page = await readFile(
+    new URL('../pages/admin/payments/index.vue', import.meta.url),
+    'utf8',
+  )
+  const payments = await readFile(
+    new URL('../server/utils/payments.ts', import.meta.url),
+    'utf8',
+  )
+
+  assert.match(listApi, /as "gatewayTransactionId"/)
+  assert.match(listApi, /as "gatewayPaymentId"/)
+  assert.match(listApi, /as "gatewayStatus"/)
+  assert.match(detailApi, /attempt\.merchant_transaction_id as gateway_transaction_id/)
+  assert.match(page, /Easebuzz payment ID/)
+  assert.match(page, /Bank reference/)
+  assert.match(page, /Verified gateway fields are read-only/)
+  assert.match(page, /class="gateway-detail-grid"/)
+  assert.match(page, /overflow-wrap: anywhere/)
+  assert.match(
+    page,
+    /const openPaymentView = \(payment: PaymentSummary\) =>\s*isOnlineGatewayPayment\(payment\)\s*\? openPaymentEdit\(payment\)\s*: openDetail\(payment\)/,
+  )
+  assert.match(page, /@click="openPaymentView\(row\)"/)
+  assert.match(
+    page,
+    /!isOnlineGatewayPayment\(row\) && row\.proofFilePath/,
+  )
+  assert.match(
+    page,
+    /v-if="!isOnlineGatewayEdit" class="admin-form-section"/,
+  )
+  assert.match(payments, /Only manually recorded payments can be edited\./)
+  assert.match(
+    payments,
+    /paymentModeSchema\.exclude\(\['ONLINE_GATEWAY', 'ADVANCE_CREDIT'\]\)/,
+  )
 })

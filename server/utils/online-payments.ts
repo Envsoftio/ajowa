@@ -9,6 +9,7 @@ import {
 import {
   allocateMaintenancePaymentWithClient,
   assignReceiptNumberForPayment,
+  paymentChargeTypeSchema,
   previewPaymentAllocation,
   type PaymentPreviewInput,
 } from './payments'
@@ -37,6 +38,7 @@ import type { AuthMe } from '~/types/auth'
 
 export const onlinePaymentInitiateSchema = z.object({
   flatId: z.string().uuid(),
+  chargeType: paymentChargeTypeSchema,
   amount: z.coerce.number().min(1),
   allocationMode: z
     .enum(['OLDEST_UNPAID_FIRST', 'SELECTED_PERIODS', 'TENURE_PACK'])
@@ -65,6 +67,20 @@ type AttemptRow = {
   access_key_ciphertext: string | null
   access_key_expires_at: string | null
 }
+
+type BlockingAttemptRow = AttemptRow & {
+  payer_user_id: string
+  received_for_flat_id: string
+}
+
+const ACTIVE_ATTEMPT_STATUSES = [
+  'CREATED',
+  'INITIATING',
+  'INITIATED',
+  'PENDING_VERIFICATION',
+  'GATEWAY_SUCCESS',
+  'MANUAL_REVIEW',
+] as const
 
 const requireEasebuzz = () => {
   const runtimeConfig = getValidatedRuntimeConfig(
@@ -133,6 +149,7 @@ const buildPreviewInput = (
   input: OnlinePaymentInitiateInput,
 ): PaymentPreviewInput => ({
   flatId: input.flatId,
+  chargeType: input.chargeType,
   amount: input.amount,
   allocationMode: input.allocationMode,
   selectedDueIds: input.selectedDueIds,
@@ -167,17 +184,78 @@ const assertAttemptMatches = (
   }
 }
 
+const findBlockingOnlinePaymentAttempt = async (input: {
+  societyId: string
+  payerUserId: string
+  flatId: string
+  idempotencyKey: string
+}) => {
+  const result = await queryRows<BlockingAttemptRow>(
+    `select
+       attempt.id, attempt.payment_id, attempt.society_id, attempt.provider,
+       attempt.merchant_transaction_id, attempt.idempotency_key,
+       attempt.request_fingerprint, attempt.status, attempt.amount::text,
+       attempt.currency, attempt.gateway_payment_id,
+       attempt.access_key_ciphertext, attempt.access_key_expires_at,
+       payment.payer_user_id, payment.received_for_flat_id
+     from payments payment
+     inner join payment_gateway_attempts attempt on attempt.payment_id = payment.id
+     where payment.society_id = $1
+       and payment.payer_user_id = $2
+       and payment.received_for_flat_id = $3
+       and payment.idempotency_key <> $4
+       and payment.status in ('INITIATED', 'PENDING_VERIFICATION')
+       and attempt.status = any($5::text[])
+     order by attempt.created_at
+     limit 1`,
+    [
+      input.societyId,
+      input.payerUserId,
+      input.flatId,
+      input.idempotencyKey,
+      [...ACTIVE_ATTEMPT_STATUSES],
+    ],
+  )
+  return result.rows[0] ?? null
+}
+
+const reconcileBlockingOnlinePaymentAttempt = async (input: {
+  societyId: string
+  payerUserId: string
+  flatId: string
+  idempotencyKey: string
+}) => {
+  const attempt = await findBlockingOnlinePaymentAttempt(input)
+  if (!attempt) return
+
+  try {
+    // Easebuzz is the source of truth. A confirmed failure/cancellation clears
+    // the local block; an unknown or unreachable result deliberately does not.
+    await retrieveAndApplyOnlinePayment(attempt.id)
+  } catch {
+    // The locked transaction below will return the existing payment reference.
+    // Reconciliation remains scheduled and a duplicate charge stays blocked.
+  }
+}
+
 export const initiateOnlinePayment = async (
   input: OnlinePaymentInitiateInput,
   authMe: AuthMe,
 ) => {
   const { runtimeConfig, config } = requireEasebuzz()
   await requireResidentPaymentAccess(authMe, input.flatId)
+  await reconcileBlockingOnlinePaymentAttempt({
+    societyId: authMe.user.societyId,
+    payerUserId: authMe.user.id,
+    flatId: input.flatId,
+    idempotencyKey: input.idempotencyKey,
+  })
   const preview = await previewPaymentAllocation(buildPreviewInput(input))
   const fingerprint = buildOnlinePaymentRequestFingerprint({
     societyId: authMe.user.societyId,
     payerUserId: authMe.user.id,
     flatId: input.flatId,
+    chargeType: input.chargeType,
     amount: input.amount,
     allocationMode: input.allocationMode,
     selectedDueIds: input.selectedDueIds,
@@ -196,8 +274,11 @@ export const initiateOnlinePayment = async (
       `select pg_advisory_xact_lock(hashtextextended($1, 0))`,
       [[authMe.user.societyId, authMe.user.id, input.flatId].join(':')],
     )
-    const activePayment = await client.query<{ id: string }>(
-      `select payment.id
+    const activePayment = await client.query<{
+      id: string
+      merchant_transaction_id: string
+    }>(
+      `select payment.id, attempt.merchant_transaction_id
        from payments payment
        inner join payment_gateway_attempts attempt on attempt.payment_id = payment.id
        where payment.society_id = $1
@@ -219,11 +300,17 @@ export const initiateOnlinePayment = async (
       ],
     )
     if (activePayment.rows[0]) {
+      const blocked = activePayment.rows[0]
       throw new AppError({
         code: 'CONFLICT',
         statusCode: 409,
         message:
           'A payment for this flat is already being verified. Do not pay again until its status is resolved.',
+        details: {
+          paymentId: blocked.id,
+          transactionReference: blocked.merchant_transaction_id,
+          retryAllowed: false,
+        },
       })
     }
     const paymentResult = await client.query<{
@@ -240,6 +327,7 @@ export const initiateOnlinePayment = async (
          society_id,
          payer_user_id,
          received_for_flat_id,
+         charge_type,
          mode,
          status,
          payment_date,
@@ -249,8 +337,8 @@ export const initiateOnlinePayment = async (
          allocation_mode,
          allocation_snapshot
        ) values (
-         $1, $2, $3, 'ONLINE_GATEWAY', 'INITIATED', current_date,
-         $4, 'EASEBUZZ', $5, $6, $7::jsonb
+         $1, $2, $3, $4, 'ONLINE_GATEWAY', 'INITIATED', current_date,
+         $5, 'EASEBUZZ', $6, $7, $8::jsonb
        )
        on conflict (idempotency_key) where idempotency_key is not null
        do update set idempotency_key = excluded.idempotency_key
@@ -267,10 +355,12 @@ export const initiateOnlinePayment = async (
         authMe.user.societyId,
         authMe.user.id,
         input.flatId,
+        input.chargeType,
         input.amount,
         input.idempotencyKey,
         input.allocationMode,
         JSON.stringify({
+          chargeType: input.chargeType,
           selectedDueIds: input.selectedDueIds,
           tenureMonths: input.tenureMonths,
           preview,
@@ -655,20 +745,58 @@ export const applyAuthoritativeEasebuzzTransaction = async (
 
   if (normalized === 'FAILED' || normalized === 'CANCELLED') {
     const localStatus = normalized === 'FAILED' ? 'FAILED' : 'CANCELLED'
-    await pool.query(
-      `update payment_gateway_attempts
-       set status = $2, last_gateway_status = $3, completed_at = now(),
-           retry_allowed = true, last_verified_at = now(),
-           access_key_ciphertext = null, access_key_expires_at = null
-       where id = $1 and status <> 'VERIFIED'`,
-      [attempt.id, localStatus, gateway.status],
-    )
-    await pool.query(
-      `update payments
-       set status = $2
-       where id = $1 and status <> 'VERIFIED'`,
-      [attempt.payment_id, localStatus],
-    )
+    const failureCode =
+      normalized === 'FAILED' ? 'PAYMENT_DECLINED' : 'PAYMENT_CANCELLED'
+    const residentMessage =
+      normalized === 'FAILED'
+        ? 'The payment was not completed by the bank or payment provider. You may try again.'
+        : 'You cancelled the checkout. No successful payment has been confirmed. You may try again.'
+    const client = await pool.connect()
+    try {
+      await client.query('begin')
+      const locked = await client.query<{
+        attempt_status: string
+        payment_status: string
+      }>(
+        `select attempt.status as attempt_status, payment.status::text as payment_status
+         from payment_gateway_attempts attempt
+         inner join payments payment on payment.id = attempt.payment_id
+         where attempt.id = $1
+         for update of attempt, payment`,
+        [attempt.id],
+      )
+      const current = locked.rows[0]
+      if (!current) throw new Error('Payment attempt was not found.')
+      if (
+        current.attempt_status === 'VERIFIED' ||
+        current.payment_status === 'VERIFIED'
+      ) {
+        await client.query('commit')
+        return { normalized: 'SUCCESS' as const, paymentId: attempt.payment_id }
+      }
+      await client.query(
+        `update payment_gateway_attempts
+         set status = $2, last_gateway_status = $3, completed_at = now(),
+             retry_allowed = true, last_verified_at = now(),
+             failure_stage = 'verification', failure_code = $4,
+             resident_message = $5, next_reconciliation_at = null,
+             manual_review_required_at = null,
+             last_error_code = null, last_error_message = null,
+             access_key_ciphertext = null, access_key_expires_at = null
+         where id = $1`,
+        [attempt.id, localStatus, gateway.status, failureCode, residentMessage],
+      )
+      await client.query(
+        `update payments set status = $2 where id = $1`,
+        [attempt.payment_id, localStatus],
+      )
+      await client.query('commit')
+    } catch (error) {
+      await client.query('rollback')
+      throw error
+    } finally {
+      client.release()
+    }
     return { normalized, paymentId: attempt.payment_id }
   }
 
@@ -676,16 +804,21 @@ export const applyAuthoritativeEasebuzzTransaction = async (
     `update payment_gateway_attempts
      set status = case when $2 = 'UNKNOWN' then 'MANUAL_REVIEW' else 'PENDING_VERIFICATION' end,
          last_gateway_status = $3,
+         failure_stage = 'verification',
+         failure_code = case when $2 = 'UNKNOWN' then 'PAYMENT_UNDER_REVIEW' else 'PAYMENT_PENDING' end,
+         resident_message = case
+           when $2 = 'UNKNOWN' then 'We could not safely verify this payment. It is under review. Do not pay again.'
+           else 'Your payment is still being processed. Please do not pay again.' end,
          last_verified_at = now(), retry_allowed = false,
          next_reconciliation_at = now() + interval '5 minutes',
          manual_review_required_at = case when $2 = 'UNKNOWN' then coalesce(manual_review_required_at, now()) else manual_review_required_at end
-     where id = $1 and status <> 'VERIFIED'`,
+     where id = $1 and status not in ('VERIFIED', 'FAILED', 'CANCELLED')`,
     [attempt.id, normalized, gateway.status ?? ''],
   )
   await pool.query(
     `update payments
      set status = 'PENDING_VERIFICATION'
-     where id = $1 and status <> 'VERIFIED'`,
+     where id = $1 and status not in ('VERIFIED', 'FAILED', 'CANCELLED')`,
     [attempt.payment_id],
   )
   return { normalized, paymentId: attempt.payment_id }
@@ -811,6 +944,7 @@ export const getSafeOnlinePaymentStatus = async (paymentId: string) => {
     attempt_status: string
     retry_allowed: boolean
     failure_code: string | null
+    resident_message: string | null
   }>(
     `select
        payment.id as payment_id,
@@ -823,7 +957,8 @@ export const getSafeOnlinePaymentStatus = async (paymentId: string) => {
        attempt.merchant_transaction_id,
        attempt.status as attempt_status,
        attempt.retry_allowed,
-       attempt.failure_code
+       attempt.failure_code,
+       attempt.resident_message
      from payments payment
      inner join payment_gateway_attempts attempt on attempt.payment_id = payment.id
      where payment.id = $1 and payment.payment_provider = 'EASEBUZZ'
@@ -831,6 +966,41 @@ export const getSafeOnlinePaymentStatus = async (paymentId: string) => {
     [paymentId],
   )
   return result.rows[0] ?? null
+}
+
+export const toResidentOnlinePaymentStatus = (
+  status: NonNullable<Awaited<ReturnType<typeof getSafeOnlinePaymentStatus>>>,
+) => {
+  const terminalFailure = ['FAILED', 'CANCELLED'].includes(status.status)
+  const verified = status.status === 'VERIFIED'
+  const underReview = status.attempt_status === 'MANUAL_REVIEW'
+  return {
+    paymentId: status.payment_id,
+    status: status.status,
+    attemptStatus: status.attempt_status,
+    amount: Number(status.amount),
+    receiptNumber: status.receipt_number,
+    reference: status.merchant_transaction_id,
+    retryAllowed: status.retry_allowed,
+    failureCode: status.failure_code,
+    title: verified
+      ? 'Payment confirmed'
+      : terminalFailure
+        ? 'Payment not completed'
+        : underReview
+          ? 'Payment under review'
+          : 'Payment verification in progress',
+    message:
+      status.resident_message ??
+      (verified
+        ? 'Your payment has been confirmed.'
+        : terminalFailure
+          ? 'No successful payment has been confirmed. You may try again.'
+          : underReview
+            ? 'We could not safely verify this payment. Do not pay again and contact support with the payment reference.'
+            : 'Your payment is still being processed. Please do not pay again.'),
+    ...(verified || terminalFailure ? {} : { pollAfterMs: 5000 }),
+  }
 }
 
 export const markEventForReconciliation = async (attemptId: string) => {

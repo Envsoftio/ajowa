@@ -2,7 +2,10 @@ import { createApiSuccess } from '~/server/utils/api'
 import { requireActiveUser } from '~/server/utils/auth'
 import { AppError } from '~/server/utils/errors'
 import { readUuidParam } from '~/server/utils/master-data'
-import { getSafeOnlinePaymentStatus } from '~/server/utils/online-payments'
+import {
+  getSafeOnlinePaymentStatus,
+  toResidentOnlinePaymentStatus,
+} from '~/server/utils/online-payments'
 
 export default defineEventHandler(async (event) => {
   const authMe = await requireActiveUser(event)
@@ -20,14 +23,5 @@ export default defineEventHandler(async (event) => {
     })
   }
 
-  return createApiSuccess(event, {
-    paymentId: status.payment_id,
-    status: status.status,
-    attemptStatus: status.attempt_status,
-    amount: Number(status.amount),
-    receiptNumber: status.receipt_number,
-    reference: status.merchant_transaction_id,
-    retryAllowed: status.retry_allowed,
-    failureCode: status.failure_code,
-  })
+  return createApiSuccess(event, toResidentOnlinePaymentStatus(status))
 })

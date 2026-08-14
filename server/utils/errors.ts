@@ -30,7 +30,10 @@ const publicClientDetailKeys = new Set([
   'fieldErrors',
   'issues',
   'linkedCount',
+  'paymentId',
   'requestId',
+  'retryAllowed',
+  'transactionReference',
   'unpostedTransactions',
 ])
 

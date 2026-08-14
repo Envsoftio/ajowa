@@ -31,6 +31,11 @@ type PaymentSummaryRow = {
   flatId: string | null
   utrReference: string | null
   bankReference: string | null
+  paymentProvider: string | null
+  gatewayTransactionId: string | null
+  gatewayPaymentId: string | null
+  gatewayStatus: string | null
+  gatewayPaidAt: string | null
   proofFilePath: string | null
   receiptNumber: string | null
   receiptFilePath: string | null
@@ -58,6 +63,11 @@ type PaymentListRow = PaymentSummaryRow | {
   flatId: string
   utrReference: string | null
   bankReference: string | null
+  paymentProvider: null
+  gatewayTransactionId: null
+  gatewayPaymentId: null
+  gatewayStatus: null
+  gatewayPaidAt: null
   proofFilePath: null
   receiptNumber: null
   receiptFilePath: null
@@ -85,6 +95,11 @@ const mapCamAdvanceMatchToPaymentRow = (row: PaymentCamAdvanceMatchRow): Payment
   flatId: row.flatId,
   utrReference: row.reference,
   bankReference: row.notes,
+  paymentProvider: null,
+  gatewayTransactionId: null,
+  gatewayPaymentId: null,
+  gatewayStatus: null,
+  gatewayPaidAt: null,
   proofFilePath: null,
   receiptNumber: null,
   receiptFilePath: null,
@@ -269,13 +284,13 @@ export default defineEventHandler(async (event) => {
   if (proofState === 'with') {
     conditions.push(`p.proof_file_path is not null`)
   } else if (proofState === 'missing') {
-    conditions.push(`p.proof_file_path is null`)
+    conditions.push(`p.mode <> 'ONLINE_GATEWAY' and p.proof_file_path is null`)
   }
 
   if (query.reference) {
     params.push(`%${String(query.reference).toLowerCase()}%`)
     conditions.push(
-      `(lower(coalesce(p.utr_reference, '')) like $${params.length} or lower(coalesce(p.bank_reference, '')) like $${params.length} or lower(coalesce(p.receipt_number, '')) like $${params.length})`,
+      `(lower(coalesce(p.utr_reference, '')) like $${params.length} or lower(coalesce(p.bank_reference, '')) like $${params.length} or lower(coalesce(p.gateway_order_id, attempt.merchant_transaction_id, '')) like $${params.length} or lower(coalesce(p.gateway_payment_id, attempt.gateway_payment_id, '')) like $${params.length} or lower(coalesce(p.receipt_number, '')) like $${params.length})`,
     )
   }
 
@@ -302,6 +317,8 @@ export default defineEventHandler(async (event) => {
         ${normalizedFlatSearchSql}
         or lower(coalesce(p.utr_reference, '')) like $${searchParamIndex}
         or lower(coalesce(p.bank_reference, '')) like $${searchParamIndex}
+        or lower(coalesce(p.gateway_order_id, attempt.merchant_transaction_id, '')) like $${searchParamIndex}
+        or lower(coalesce(p.gateway_payment_id, attempt.gateway_payment_id, '')) like $${searchParamIndex}
         or lower(coalesce(p.receipt_number, '')) like $${searchParamIndex}
       )`,
     )
@@ -335,6 +352,7 @@ export default defineEventHandler(async (event) => {
       left join flats f on f.id = p.received_for_flat_id
       left join blocks b on b.id = f.block_id
       left join users u on u.id = p.payer_user_id
+      left join payment_gateway_attempts attempt on attempt.payment_id = p.id
       ${where}
     `,
     params,
@@ -355,6 +373,11 @@ export default defineEventHandler(async (event) => {
         p.received_for_flat_id as "flatId",
         p.utr_reference as "utrReference",
         p.bank_reference as "bankReference",
+        p.payment_provider as "paymentProvider",
+        coalesce(p.gateway_order_id, attempt.merchant_transaction_id) as "gatewayTransactionId",
+        coalesce(p.gateway_payment_id, attempt.gateway_payment_id) as "gatewayPaymentId",
+        coalesce(attempt.last_gateway_status, attempt.status) as "gatewayStatus",
+        p.gateway_paid_at::text as "gatewayPaidAt",
         p.proof_file_path as "proofFilePath",
         p.receipt_number as "receiptNumber",
         p.receipt_file_path as "receiptFilePath",
@@ -371,6 +394,7 @@ export default defineEventHandler(async (event) => {
       left join flats f on f.id = p.received_for_flat_id
       left join blocks b on b.id = f.block_id
       left join users u on u.id = p.payer_user_id
+      left join payment_gateway_attempts attempt on attempt.payment_id = p.id
       ${where}
       order by p.payment_date desc, p.created_at desc
       limit $${params.length - 1} offset $${params.length}

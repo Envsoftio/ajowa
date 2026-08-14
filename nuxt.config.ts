@@ -6,6 +6,22 @@ const defaultAppUrl = 'https://ajowa.in'
 const appUrl =
   process.env.APP_URL ?? process.env.NUXT_PUBLIC_APP_URL ?? defaultAppUrl
 const publicAppUrl = process.env.NUXT_PUBLIC_APP_URL ?? appUrl
+const configuredAppHosts = [
+  appUrl,
+  publicAppUrl,
+  ...(process.env.NUXT_DEV_ALLOWED_HOSTS ?? '').split(','),
+]
+  .map((value) => value.trim())
+  .filter(Boolean)
+  .map((value) => {
+    try {
+      return value.includes('://') ? new URL(value).hostname : value
+    } catch {
+      return ''
+    }
+  })
+  .filter(Boolean)
+const viteAllowedHosts = [...new Set(configuredAppHosts)]
 const AjowaPreset = definePreset(Aura, {
   semantic: {
     primary: {
@@ -46,6 +62,12 @@ export default defineNuxtConfig({
   compatibilityDate: '2025-01-01',
   devtools: {
     enabled: true,
+  },
+  vite: {
+    server: {
+      // Keep Vite's DNS-rebinding protection while allowing configured tunnels.
+      allowedHosts: viteAllowedHosts,
+    },
   },
   modules: ['@pinia/nuxt', '@primevue/nuxt-module', '@nuxt/eslint'],
   components: [

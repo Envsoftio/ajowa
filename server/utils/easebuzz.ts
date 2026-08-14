@@ -205,6 +205,7 @@ export const buildOnlinePaymentRequestFingerprint = (input: {
   societyId: string
   payerUserId: string
   flatId: string
+  chargeType: 'GENERAL' | 'CAM' | 'DG_SET'
   amount: number
   currency?: string
   allocationMode: string
@@ -216,6 +217,7 @@ export const buildOnlinePaymentRequestFingerprint = (input: {
       societyId: input.societyId,
       payerUserId: input.payerUserId,
       flatId: input.flatId,
+      chargeType: input.chargeType,
       amount: canonicalizeEasebuzzAmount(input.amount),
       currency: input.currency ?? EASEBUZZ_CURRENCY,
       allocationMode: input.allocationMode,
@@ -377,18 +379,25 @@ export const retrieveEasebuzzTransaction = async (
 export const extractEasebuzzTransaction = (raw: unknown) => {
   const root = z.record(z.unknown()).safeParse(raw)
   if (!root.success) return null
-  const data = root.data.data
-  const candidate = Array.isArray(data)
-    ? data[0]
-    : data && typeof data === 'object'
-      ? data
-      : root.data
-  const parsed = z.record(z.unknown()).safeParse(candidate)
-  if (!parsed.success) return null
-  return Object.fromEntries(
-    Object.entries(parsed.data).map(([key, value]) => [
-      key,
-      value == null ? '' : String(value),
-    ]),
-  )
+
+  // Transaction V2 responses have appeared under both `data` and `msg`.
+  // Select only a transaction-shaped record so a wrapper such as
+  // { status: true, msg: {...transaction} } is never mistaken for the row.
+  for (const value of [root.data.data, root.data.msg, root.data]) {
+    const candidate = Array.isArray(value) ? value[0] : value
+    const parsed = z.record(z.unknown()).safeParse(candidate)
+    if (
+      !parsed.success ||
+      !['txnid', 'amount', 'easepayid'].some((key) => key in parsed.data)
+    ) {
+      continue
+    }
+    return Object.fromEntries(
+      Object.entries(parsed.data).map(([key, item]) => [
+        key,
+        item == null ? '' : String(item),
+      ]),
+    )
+  }
+  return null
 }

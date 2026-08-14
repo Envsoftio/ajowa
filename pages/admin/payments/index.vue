@@ -38,6 +38,11 @@ type PaymentSummary = {
   flatId: string | null
   utrReference: string | null
   bankReference: string | null
+  paymentProvider: string | null
+  gatewayTransactionId: string | null
+  gatewayPaymentId: string | null
+  gatewayStatus: string | null
+  gatewayPaidAt: string | null
   proofFilePath: string | null
   receiptNumber: string | null
   receiptFilePath: string | null
@@ -112,6 +117,16 @@ type PaymentDetail = {
   allocation_snapshot: PaymentSnapshot | null
   utr_reference: string | null
   bank_reference: string | null
+  payment_provider: string | null
+  gateway_order_id: string | null
+  gateway_payment_id: string | null
+  gateway_transaction_id: string | null
+  gateway_payment_reference: string | null
+  gateway_bank_reference: string | null
+  gateway_attempt_status: string | null
+  gateway_status: string | null
+  gateway_paid_at: string | null
+  verified_at: string | null
   receipt_number: string | null
   proof_file_path: string | null
   notes: string | null
@@ -287,8 +302,23 @@ const formatContact = (value: string | null | undefined) => value || 'No contact
 const flatLabel = (payment: Pick<PaymentSummary, 'blockName' | 'flatNumber'>) =>
   [payment.blockName, payment.flatNumber].filter(Boolean).join(' ') || '-'
 
-const referenceLabel = (payment: Pick<PaymentSummary, 'utrReference' | 'bankReference'>) =>
-  payment.utrReference || payment.bankReference || '-'
+const isOnlineGatewayPayment = (
+  payment: Pick<PaymentSummary, 'mode' | 'paymentProvider'>,
+) => payment.mode === 'ONLINE_GATEWAY' || payment.paymentProvider === 'EASEBUZZ'
+
+const isOnlineGatewayDetail = (
+  payment: Pick<PaymentDetail, 'mode' | 'payment_provider'>,
+) => payment.mode === 'ONLINE_GATEWAY' || payment.payment_provider === 'EASEBUZZ'
+
+const referenceLabel = (
+  payment: Pick<
+    PaymentSummary,
+    'mode' | 'paymentProvider' | 'gatewayTransactionId' | 'utrReference' | 'bankReference'
+  >,
+) =>
+  isOnlineGatewayPayment(payment)
+    ? payment.gatewayTransactionId || '-'
+    : payment.utrReference || payment.bankReference || '-'
 
 const isCamAdvancePayment = (payment: Pick<PaymentSummary, 'recordType' | 'id' | 'mode'>) =>
   payment.recordType === 'CAM_ADVANCE' ||
@@ -299,6 +329,9 @@ const paymentModeLabel = (payment: Pick<PaymentSummary, 'mode' | 'transferKind'>
   payment.mode === 'CAM_ADVANCE'
     ? [payment.transferKind, 'CAM advance'].filter(Boolean).join(' · ')
     : payment.transferKind || payment.mode
+
+const paymentDisplayModeLabel = (payment: PaymentSummary) =>
+  isOnlineGatewayPayment(payment) ? 'Easebuzz online' : paymentModeLabel(payment)
 
 const paymentDateLabel = (payment: PaymentSummary) =>
   isCamAdvancePayment(payment) && payment.coveredFrom && payment.coveredUntil
@@ -409,7 +442,12 @@ const kpis = computed(() => ({
   totalAmount: payments.value.reduce((sum, payment) => sum + Number(payment.amount), 0),
   verified: payments.value.filter((payment) => payment.status === 'VERIFIED').length,
   missingReceipts: payments.value.filter((payment) => !payment.receiptNumber).length,
-  missingProof: payments.value.filter((payment) => !payment.proofFilePath).length,
+  missingProof: payments.value.filter(
+    (payment) =>
+      !isCamAdvancePayment(payment) &&
+      !isOnlineGatewayPayment(payment) &&
+      !payment.proofFilePath,
+  ).length,
 }))
 
 const hasActiveFilters = computed(() =>
@@ -452,6 +490,9 @@ const paymentEditVisible = ref(false)
 const paymentEditLoading = ref(false)
 const paymentEditSaving = ref(false)
 const paymentEditPayment = ref<PaymentDetail | null>(null)
+const isOnlineGatewayEdit = computed(
+  () => paymentEditPayment.value?.mode === 'ONLINE_GATEWAY',
+)
 const paymentEditFlat = ref<FlatDetail | null>(null)
 const paymentEditDues = ref<MaintenanceDue[]>([])
 const paymentEditForm = reactive({
@@ -794,11 +835,18 @@ const openPaymentEdit = async (payment: PaymentSummary) => {
     const response = await api<DetailResponse>(`/api/payments/${payment.id}`)
     paymentEditPayment.value = response.data
     applyPaymentDetailToEditForm(response.data)
-    await loadPaymentEditFlatContext(response.data.received_for_flat_id)
+    if (response.data.mode !== 'ONLINE_GATEWAY') {
+      await loadPaymentEditFlatContext(response.data.received_for_flat_id)
+    }
   } finally {
     paymentEditLoading.value = false
   }
 }
+
+const openPaymentView = (payment: PaymentSummary) =>
+  isOnlineGatewayPayment(payment)
+    ? openPaymentEdit(payment)
+    : openDetail(payment)
 
 const openCamAdvanceEdit = (payment: PaymentSummary) => {
   if (!isCamAdvancePayment(payment) || !payment.camAdvanceCoverageId || !payment.flatId) return
@@ -919,7 +967,7 @@ watch(
 
 const savePaymentEdit = async () => {
   const payment = paymentEditPayment.value
-  if (!payment) return
+  if (!payment || payment.mode === 'ONLINE_GATEWAY') return
 
   paymentEditSubmitted.value = true
   if (!validatePaymentEditForm(true)) {
@@ -1197,8 +1245,13 @@ const onProofFileChange = async (event: Event) => {
         </Column>
         <Column field="mode" header="Mode">
           <template #body="{ data: row }">
-            <span>{{ paymentModeLabel(row) }}</span>
-            <p class="table-muted">{{ referenceLabel(row) }}</p>
+            <strong>{{ paymentDisplayModeLabel(row) }}</strong>
+            <template v-if="isOnlineGatewayPayment(row)">
+              <p class="table-muted">Txn: {{ row.gatewayTransactionId || '-' }}</p>
+              <p v-if="row.gatewayPaymentId" class="table-muted">Easebuzz ID: {{ row.gatewayPaymentId }}</p>
+              <p v-if="row.bankReference" class="table-muted">Bank ref: {{ row.bankReference }}</p>
+            </template>
+            <p v-else class="table-muted">{{ referenceLabel(row) }}</p>
           </template>
         </Column>
         <Column field="status" header="Status">
@@ -1225,11 +1278,17 @@ const onProofFileChange = async (event: Event) => {
                 rounded
               />
               <template v-else>
-                <Tag :severity="row.proofFilePath ? 'success' : 'warn'" :value="row.proofFilePath ? 'Proof' : 'No proof'" rounded />
+                <Tag
+                  v-if="isOnlineGatewayPayment(row)"
+                  severity="info"
+                  value="Gateway record"
+                  rounded
+                />
+                <Tag v-else :severity="row.proofFilePath ? 'success' : 'warn'" :value="row.proofFilePath ? 'Proof' : 'No proof'" rounded />
                 <Tag :severity="row.receiptNumber ? 'success' : 'warn'" :value="row.receiptNumber ? 'Receipt' : 'No receipt'" rounded />
               </template>
               <Button
-                v-if="!isCamAdvancePayment(row) && row.proofFilePath"
+                v-if="!isCamAdvancePayment(row) && !isOnlineGatewayPayment(row) && row.proofFilePath"
                 as="a"
                 :href="`/api/payments/${row.id}/proof`"
                 target="_blank"
@@ -1241,7 +1300,7 @@ const onProofFileChange = async (event: Event) => {
                 title="Open proof"
               />
               <Button
-                v-if="!isCamAdvancePayment(row)"
+                v-if="!isCamAdvancePayment(row) && !isOnlineGatewayPayment(row)"
                 type="button"
                 icon="pi pi-upload"
                 severity="secondary"
@@ -1268,9 +1327,18 @@ const onProofFileChange = async (event: Event) => {
                 title="Edit advance payment"
                 @click="openCamAdvanceEdit(row)"
               />
-              <Button v-else icon="pi pi-eye" severity="secondary" text rounded aria-label="View payment" title="View payment" @click="openDetail(row)" />
               <Button
-                v-if="canEditPayment && !isCamAdvancePayment(row)"
+                v-else
+                icon="pi pi-eye"
+                severity="secondary"
+                text
+                rounded
+                :aria-label="isOnlineGatewayPayment(row) ? 'View gateway details' : 'View payment'"
+                :title="isOnlineGatewayPayment(row) ? 'View gateway details' : 'View payment'"
+                @click="openPaymentView(row)"
+              />
+              <Button
+                v-if="canEditPayment && !isCamAdvancePayment(row) && !isOnlineGatewayPayment(row)"
                 icon="pi pi-pencil"
                 severity="secondary"
                 text
@@ -1324,9 +1392,19 @@ const onProofFileChange = async (event: Event) => {
             <strong>{{ formatPaymentChargeType(payment.chargeType) }}</strong>
           </div>
           <div class="list-card__row">
-            <span>Reference</span>
+            <span>{{ isOnlineGatewayPayment(payment) ? 'Transaction ID' : 'Reference' }}</span>
             <strong>{{ referenceLabel(payment) }}</strong>
           </div>
+          <template v-if="isOnlineGatewayPayment(payment)">
+            <div class="list-card__row">
+              <span>Easebuzz payment ID</span>
+              <strong>{{ payment.gatewayPaymentId || '-' }}</strong>
+            </div>
+            <div class="list-card__row">
+              <span>Bank reference</span>
+              <strong>{{ payment.bankReference || '-' }}</strong>
+            </div>
+          </template>
           <div class="list-card__row">
             <span>Receipt</span>
             <strong>{{ isCamAdvancePayment(payment) ? 'Advance register' : payment.receiptNumber || '-' }}</strong>
@@ -1341,9 +1419,17 @@ const onProofFileChange = async (event: Event) => {
               outlined
               @click="openCamAdvanceEdit(payment)"
             />
-            <Button v-else label="View" icon="pi pi-eye" size="small" severity="secondary" outlined @click="openDetail(payment)" />
             <Button
-              v-if="canEditPayment && !isCamAdvancePayment(payment)"
+              v-else
+              :label="isOnlineGatewayPayment(payment) ? 'Gateway details' : 'View'"
+              icon="pi pi-eye"
+              size="small"
+              severity="secondary"
+              outlined
+              @click="openPaymentView(payment)"
+            />
+            <Button
+              v-if="canEditPayment && !isCamAdvancePayment(payment) && !isOnlineGatewayPayment(payment)"
               label="Edit payment"
               icon="pi pi-pencil"
               size="small"
@@ -1352,7 +1438,7 @@ const onProofFileChange = async (event: Event) => {
               @click="openPaymentEdit(payment)"
             />
             <Button
-              v-if="!isCamAdvancePayment(payment) && payment.proofFilePath"
+              v-if="!isCamAdvancePayment(payment) && !isOnlineGatewayPayment(payment) && payment.proofFilePath"
               as="a"
               :href="`/api/payments/${payment.id}/proof`"
               target="_blank"
@@ -1363,7 +1449,7 @@ const onProofFileChange = async (event: Event) => {
               outlined
             />
             <Button
-              v-if="!isCamAdvancePayment(payment)"
+              v-if="!isCamAdvancePayment(payment) && !isOnlineGatewayPayment(payment)"
               type="button"
               :label="payment.proofFilePath ? 'Replace proof' : 'Upload proof'"
               icon="pi pi-upload"
@@ -1428,14 +1514,23 @@ const onProofFileChange = async (event: Event) => {
           <section class="surface-card">
             <p class="eyebrow">Amount</p>
             <h3>{{ formatMoney(selectedPayment.amount) }}</h3>
-            <p>{{ selectedPayment.transfer_kind || selectedPayment.mode }} · {{ referenceLabel({ utrReference: selectedPayment.utr_reference, bankReference: selectedPayment.bank_reference }) }}</p>
+            <template v-if="isOnlineGatewayDetail(selectedPayment)">
+              <p><strong>Easebuzz online</strong></p>
+              <p>Transaction ID: {{ selectedPayment.gateway_transaction_id || selectedPayment.gateway_order_id || '-' }}</p>
+              <p>Easebuzz payment ID: {{ selectedPayment.gateway_payment_reference || selectedPayment.gateway_payment_id || '-' }}</p>
+              <p>Bank reference: {{ selectedPayment.gateway_bank_reference || selectedPayment.bank_reference || '-' }}</p>
+              <p>Gateway status: {{ selectedPayment.gateway_status || selectedPayment.gateway_attempt_status || '-' }}</p>
+              <p>Paid at: {{ formatDate(selectedPayment.gateway_paid_at) }}</p>
+              <p>Verified at: {{ formatDate(selectedPayment.verified_at) }}</p>
+            </template>
+            <p v-else>{{ selectedPayment.transfer_kind || selectedPayment.mode }} · {{ selectedPayment.utr_reference || selectedPayment.bank_reference || '-' }}</p>
           </section>
           <section class="surface-card">
             <p class="eyebrow">Receipt</p>
             <h3>{{ selectedPayment.receipt_number || '-' }}</h3>
             <p>{{ formatDate(selectedPayment.payment_date) }}</p>
             <Button
-              v-if="selectedPayment.proof_file_path"
+              v-if="!isOnlineGatewayDetail(selectedPayment) && selectedPayment.proof_file_path"
               as="a"
               :href="`/api/payments/${selectedPayment.id}/proof`"
               target="_blank"
@@ -1646,10 +1741,93 @@ const onProofFileChange = async (event: Event) => {
       </form>
     </Dialog>
 
-    <Dialog v-model:visible="paymentEditVisible" header="Edit payment" modal :style="{ width: '760px' }">
+    <Dialog
+      v-model:visible="paymentEditVisible"
+      :header="isOnlineGatewayEdit ? 'Online payment details' : 'Edit payment'"
+      modal
+      :style="{
+        width: isOnlineGatewayEdit ? 'min(880px, 96vw)' : '760px',
+        maxWidth: '96vw',
+      }"
+    >
       <AppSkeletonState v-if="paymentEditLoading && !paymentEditPayment" />
       <form v-else-if="paymentEditPayment" class="admin-form-layout" novalidate @submit.prevent="savePaymentEdit">
-        <section class="admin-form-section">
+        <section v-if="isOnlineGatewayEdit" class="admin-form-section gateway-payment-panel">
+          <div class="gateway-payment-header">
+            <div>
+              <p class="eyebrow">Easebuzz gateway record</p>
+              <div class="gateway-payment-title">
+                <h2>{{ formatMoney(paymentEditPayment.amount) }}</h2>
+                <AppStatusBadge :status="paymentEditPayment.status" />
+              </div>
+              <p class="gateway-payment-intro">
+                Verified gateway fields are read-only. Use reconciliation or an audited reversal for corrections.
+              </p>
+            </div>
+          </div>
+          <dl class="gateway-detail-grid">
+            <div class="gateway-detail-item gateway-detail-item--wide">
+              <dt>Merchant transaction ID</dt>
+              <dd class="gateway-detail-reference">
+                {{ paymentEditPayment.gateway_transaction_id || paymentEditPayment.gateway_order_id || '-' }}
+              </dd>
+              <small>AJOWA reference sent to Easebuzz</small>
+            </div>
+            <div class="gateway-detail-item">
+              <dt>Easebuzz payment ID</dt>
+              <dd class="gateway-detail-reference">
+                {{ paymentEditPayment.gateway_payment_reference || paymentEditPayment.gateway_payment_id || '-' }}
+              </dd>
+              <small>Provider payment reference</small>
+            </div>
+            <div class="gateway-detail-item gateway-detail-item--wide">
+              <dt>Bank reference</dt>
+              <dd class="gateway-detail-reference">
+                {{ paymentEditPayment.gateway_bank_reference || paymentEditPayment.bank_reference || '-' }}
+              </dd>
+              <small>Separate from manually entered UTR</small>
+            </div>
+            <div class="gateway-detail-item">
+              <dt>Gateway status</dt>
+              <dd>{{ paymentEditPayment.gateway_status || paymentEditPayment.gateway_attempt_status || '-' }}</dd>
+              <small>Attempt: {{ paymentEditPayment.gateway_attempt_status || '-' }}</small>
+            </div>
+            <div class="gateway-detail-item">
+              <dt>Gateway paid at</dt>
+              <dd>{{ formatDate(paymentEditPayment.gateway_paid_at) }}</dd>
+              <small>Verified: {{ formatDate(paymentEditPayment.verified_at) }}</small>
+            </div>
+            <div class="gateway-detail-item gateway-detail-item--receipt">
+              <dt>Receipt</dt>
+              <dd class="gateway-detail-reference">{{ paymentEditPayment.receipt_number || '-' }}</dd>
+              <AppDocumentLink
+                :href="`/api/payments/${paymentEditPayment.id}/receipt`"
+                viewer-title="Receipt PDF"
+                label="Open receipt"
+                icon="pi pi-download"
+                severity="secondary"
+                outlined
+                :disabled="!paymentEditPayment.receipt_number"
+              />
+            </div>
+          </dl>
+          <AppDataTable
+            v-if="paymentEditPayment.allocations.length > 0"
+            class="gateway-allocation-table"
+            :value="paymentEditPayment.allocations"
+            responsive-layout="scroll"
+          >
+            <Column field="billingPeriodLabel" header="Allocated period" />
+            <Column field="billingPeriodChargeType" header="Type">
+              <template #body="{ data: row }">{{ formatPaymentChargeType(row.billingPeriodChargeType) }}</template>
+            </Column>
+            <Column field="allocatedAmount" header="Allocated">
+              <template #body="{ data: row }">{{ formatMoney(row.allocatedAmount) }}</template>
+            </Column>
+          </AppDataTable>
+        </section>
+
+        <section v-if="!isOnlineGatewayEdit" class="admin-form-section">
           <div class="admin-form-section__header">
             <div>
               <p class="eyebrow">Payment target</p>
@@ -1723,7 +1901,7 @@ const onProofFileChange = async (event: Event) => {
           </div>
         </section>
 
-        <section class="admin-form-section">
+        <section v-if="!isOnlineGatewayEdit" class="admin-form-section">
           <div class="admin-form-section__header">
             <div>
               <p class="eyebrow">Proof</p>
@@ -1766,7 +1944,7 @@ const onProofFileChange = async (event: Event) => {
           </div>
         </section>
 
-        <section class="admin-form-section">
+        <section v-if="!isOnlineGatewayEdit" class="admin-form-section">
           <div class="admin-form-section__header">
             <div>
               <p class="eyebrow">Mode and reference</p>
@@ -1840,7 +2018,7 @@ const onProofFileChange = async (event: Event) => {
           </div>
         </section>
 
-        <section class="admin-form-section">
+        <section v-if="!isOnlineGatewayEdit" class="admin-form-section">
           <div class="admin-form-section__header">
             <div>
               <p class="eyebrow">Allocation</p>
@@ -1921,7 +2099,7 @@ const onProofFileChange = async (event: Event) => {
           </AppDataTable>
         </section>
 
-        <div class="admin-form-actions">
+        <div v-if="!isOnlineGatewayEdit" class="admin-form-actions">
           <Button type="button" label="Cancel" severity="secondary" outlined @click="paymentEditVisible = false" />
           <Button
             type="submit"
@@ -1930,6 +2108,9 @@ const onProofFileChange = async (event: Event) => {
             :loading="paymentEditSaving"
             :disabled="paymentEditSaving || paymentEditLoading"
           />
+        </div>
+        <div v-else class="admin-form-actions">
+          <Button type="button" label="Close" severity="secondary" outlined @click="paymentEditVisible = false" />
         </div>
       </form>
     </Dialog>
@@ -1942,5 +2123,99 @@ const onProofFileChange = async (event: Event) => {
   align-items: center;
   gap: 0.65rem;
   min-width: 0;
+}
+
+.gateway-payment-panel {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.gateway-payment-header {
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.gateway-payment-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.gateway-payment-title h2 {
+  margin: 0.2rem 0;
+}
+
+.gateway-payment-intro {
+  max-width: 62ch;
+  margin: 0.35rem 0 0;
+  color: var(--color-muted);
+  line-height: 1.5;
+}
+
+.gateway-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin: 0;
+}
+
+.gateway-detail-item {
+  min-width: 0;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--color-border);
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--color-bg) 54%, var(--color-surface));
+}
+
+.gateway-detail-item dt {
+  margin-bottom: 0.35rem;
+  color: var(--color-muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.gateway-detail-item dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--color-text);
+  font-size: 0.95rem;
+  font-weight: 700;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.gateway-detail-reference {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.85rem !important;
+  word-break: break-word;
+}
+
+.gateway-detail-item small {
+  display: block;
+  margin-top: 0.3rem;
+  color: var(--color-muted);
+  line-height: 1.35;
+}
+
+.gateway-detail-item--receipt :deep(.p-button) {
+  margin-top: 0.65rem;
+}
+
+.gateway-allocation-table {
+  min-width: 0;
+  margin-top: 0.25rem;
+}
+
+@media (max-width: 640px) {
+  .gateway-detail-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .gateway-detail-item {
+    padding: 0.8rem;
+  }
 }
 </style>

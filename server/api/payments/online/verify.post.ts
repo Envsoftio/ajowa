@@ -10,6 +10,7 @@ import {
   findOnlinePaymentAttempt,
   getSafeOnlinePaymentStatus,
   retrieveAndApplyOnlinePayment,
+  toResidentOnlinePaymentStatus,
 } from '~/server/utils/online-payments'
 
 const verifySchema = z.object({ paymentId: z.string().uuid() })
@@ -35,8 +36,13 @@ export default defineEventHandler(async (event) => {
   }
 
   await retrieveAndApplyOnlinePayment(attempt.id)
-  return createApiSuccess(
-    event,
-    await getSafeOnlinePaymentStatus(input.paymentId),
-  )
+  const verifiedStatus = await getSafeOnlinePaymentStatus(input.paymentId)
+  if (!verifiedStatus) {
+    throw new AppError({
+      code: 'NOT_FOUND',
+      statusCode: 404,
+      message: 'Online payment not found.',
+    })
+  }
+  return createApiSuccess(event, toResidentOnlinePaymentStatus(verifiedStatus))
 })
