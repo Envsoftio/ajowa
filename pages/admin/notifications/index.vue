@@ -36,6 +36,7 @@ type ProcessQueueResponse = {
     retried: number
     requeued: number
     remaining: number
+    workerStarted: boolean
     eventSummary?: {
       eventStatus: string
       jobCount: number
@@ -82,8 +83,6 @@ const processQueueFilters = reactive<ProcessQueueFilters>({
   category: '',
   priority: '',
 })
-const processQueueBatchSize = 5
-const maxProcessQueueBatches = 60
 const processingEventId = ref<string | null>(null)
 const processingQueue = ref(false)
 const processQueueProgress = ref<ProcessQueueProgress | null>(null)
@@ -167,6 +166,10 @@ const processPriorityOptions = [
 const processResultDetail = (result: ProcessQueueResponse['data']) => {
   const requeued = result.requeued ?? 0
 
+  if (result.workerStarted) {
+    return `${requeued > 0 ? `${requeued} requeued. ` : ''}Background delivery started for ${formatNumber(result.remaining)} claimable job${result.remaining === 1 ? '' : 's'}.`
+  }
+
   return result.claimed > 0 || requeued > 0
     ? `${requeued > 0 ? `${requeued} requeued, ` : ''}${result.claimed} claimed, ${result.sent} sent, ${result.retried} retried, ${result.failed} failed.`
     : result.eventSummary
@@ -177,7 +180,7 @@ const processResultDetail = (result: ProcessQueueResponse['data']) => {
 }
 
 const processResultSeverity = (result: ProcessQueueResponse['data']) =>
-  result.claimed > 0 || (result.requeued ?? 0) > 0 ? 'success' : 'info'
+  result.workerStarted || result.claimed > 0 || (result.requeued ?? 0) > 0 ? 'success' : 'info'
 
 const emptyProcessResult = (): ProcessQueueResponse['data'] => ({
   claimed: 0,
@@ -186,32 +189,11 @@ const emptyProcessResult = (): ProcessQueueResponse['data'] => ({
   retried: 0,
   requeued: 0,
   remaining: 0,
+  workerStarted: false,
 })
 
-const mergeProcessResults = (
-  total: ProcessQueueResponse['data'],
-  next: ProcessQueueResponse['data'],
-): ProcessQueueResponse['data'] => ({
-  claimed: total.claimed + next.claimed,
-  sent: total.sent + next.sent,
-  failed: total.failed + next.failed,
-  retried: total.retried + next.retried,
-  requeued: (total.requeued ?? 0) + (next.requeued ?? 0),
-  remaining: next.remaining,
-})
-
-const processQueueDetail = (
-  result: ProcessQueueResponse['data'],
-  batchCount: number,
-  reachedBatchLimit: boolean,
-) => {
-  const batchLabel = batchCount === 1 ? '1 batch' : `${batchCount} batches`
-  const limitMessage = reachedBatchLimit
-    ? ' Batch safety limit reached; run Process queue again for remaining jobs.'
-    : ''
-
-  return `${processResultDetail(result)} Checked ${batchLabel}.${limitMessage}`
-}
+const processQueueDetail = (result: ProcessQueueResponse['data']) =>
+  processResultDetail(result)
 
 const activeProcessQueueFilterLabels = computed(() => {
   const labels: string[] = []
@@ -235,7 +217,6 @@ const processQueueFilterSummary = computed(() =>
 )
 
 const processQueueRequestBody = () => ({
-  limit: processQueueBatchSize,
   ...(processQueueFilters.channel ? { channel: processQueueFilters.channel } : {}),
   ...(processQueueFilters.eventKey ? { eventKey: processQueueFilters.eventKey } : {}),
   ...(processQueueFilters.category ? { category: processQueueFilters.category } : {}),
@@ -303,17 +284,19 @@ const processQueueProgressLabel = computed(() => {
   if (!progress) return ''
 
   if (progress.hasError) {
-    return `Stopped after ${formatNumber(progress.batchCount)} batch${progress.batchCount === 1 ? '' : 'es'}: ${formatNumber(progress.claimed)} claimed, ${formatNumber(progress.sent)} sent, ${formatNumber(progress.retried)} retried, ${formatNumber(progress.failed)} failed, ${formatNumber(progress.remaining)} remaining.`
+    return `Stopped while starting background delivery: ${formatNumber(progress.remaining)} remaining.`
   }
 
   const batch = progress.running
-    ? `Batch ${formatNumber(progress.currentBatch)} running`
-    : `Processed ${formatNumber(progress.batchCount)} batch${progress.batchCount === 1 ? '' : 'es'}`
+    ? 'Starting background delivery'
+    : progress.workerStarted
+      ? 'Background delivery started'
+      : 'Queue checked'
   const remaining = progress.remaining > 0
     ? `${formatNumber(progress.remaining)} remaining`
     : 'No claimable jobs remaining'
 
-  return `${batch}: ${formatNumber(progress.claimed)} claimed, ${formatNumber(progress.sent)} sent, ${formatNumber(progress.retried)} retried, ${formatNumber(progress.failed)} failed, ${remaining}.`
+  return `${batch}: ${remaining}.`
 })
 
 const updateProcessQueueProgress = (
@@ -383,51 +366,23 @@ const processQueue = async () => {
   }
 
   try {
-    let aggregate = emptyProcessResult()
-    let batchCount = 0
-    let reachedBatchLimit = false
+    const response = await api<ProcessQueueResponse>('/api/admin/notifications/process', {
+      method: 'POST',
+      body: processQueueRequestBody(),
+    })
 
-    for (let index = 0; index < maxProcessQueueBatches; index += 1) {
-      updateProcessQueueProgress(aggregate, {
-        batchCount,
-        currentBatch: index + 1,
-        running: true,
-        reachedBatchLimit: false,
-        hasError: false,
-      })
-
-      const response = await api<ProcessQueueResponse>('/api/admin/notifications/process', {
-        method: 'POST',
-        body: processQueueRequestBody(),
-      })
-      batchCount += 1
-      aggregate = mergeProcessResults(aggregate, response.data)
-      updateProcessQueueProgress(aggregate, {
-        batchCount,
-        currentBatch: batchCount,
-        running: true,
-        reachedBatchLimit,
-        hasError: false,
-      })
-
-      if (response.data.claimed < processQueueBatchSize) {
-        break
-      }
-
-      reachedBatchLimit = index === maxProcessQueueBatches - 1
-    }
-    updateProcessQueueProgress(aggregate, {
-      batchCount,
-      currentBatch: batchCount,
+    updateProcessQueueProgress(response.data, {
+      batchCount: 1,
+      currentBatch: 1,
       running: false,
-      reachedBatchLimit,
+      reachedBatchLimit: false,
       hasError: false,
     })
 
     toast.add({
-      severity: processResultSeverity(aggregate),
-      summary: 'Queue processed',
-      detail: processQueueDetail(aggregate, batchCount, reachedBatchLimit),
+      severity: processResultSeverity(response.data),
+      summary: response.data.workerStarted ? 'Queue processing started' : 'Queue checked',
+      detail: processQueueDetail(response.data),
       life: 10000,
     })
     await refresh()
