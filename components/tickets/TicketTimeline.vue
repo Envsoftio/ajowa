@@ -7,32 +7,44 @@ const props = defineProps<{
   comments: ServiceRequestComment[]
 }>()
 
-const timelineItems = computed(() => [
-  ...props.events.map((event) => ({
-    id: `event-${event.id}`,
-    at: event.occurredAt,
-    title: event.eventType.replace('_', ' '),
-    body: event.toStatus ? `Status: ${statusLabels[event.toStatus]}` : String(event.metadata?.message ?? ''),
-    actor: event.actorName || 'System',
-    type: 'event',
-  })),
-  ...props.comments.map((comment) => ({
-    id: `comment-${comment.id}`,
-    at: comment.createdAt,
-    title: comment.visibility === 'INTERNAL_NOTE' ? 'Internal note' : 'Update',
-    body: comment.commentBody,
-    actor: comment.authorName || 'Team',
-    type: 'comment',
-  })),
-].sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime()))
+const timelineItems = computed(() =>
+  [
+    ...props.events.map((event) => ({
+      id: `event-${event.id}`,
+      at: event.occurredAt,
+      title: event.eventType.replace('_', ' '),
+      body: event.toStatus
+        ? `Status: ${statusLabels[event.toStatus]}`
+        : String(event.metadata?.message ?? ''),
+      actor: event.actorName || 'System',
+      type: 'event',
+    })),
+    ...props.comments.map((comment) => ({
+      id: `comment-${comment.id}`,
+      at: comment.createdAt,
+      title:
+        comment.visibility === 'INTERNAL_NOTE' ? 'Internal note' : 'Update',
+      body: comment.commentBody,
+      actor: comment.authorName || 'Team',
+      type: 'comment',
+    })),
+  ].sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime()),
+)
 
 const formatDate = (value: string) =>
-  new Intl.DateTimeFormat('en-IN', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
+  new Intl.DateTimeFormat('en-IN', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(new Date(value))
 </script>
 
 <template>
   <div class="ticket-timeline">
-    <article v-for="item in timelineItems" :key="item.id" class="ticket-timeline__item">
+    <article
+      v-for="item in timelineItems"
+      :key="item.id"
+      class="ticket-timeline__item"
+    >
       <span class="ticket-timeline__dot" />
       <div>
         <div class="ticket-timeline__head">
@@ -82,6 +94,7 @@ const formatDate = (value: string) =>
 .ticket-timeline p {
   margin: 0.3rem 0;
   color: var(--color-muted);
+  overflow-wrap: anywhere;
 }
 
 .ticket-timeline small,

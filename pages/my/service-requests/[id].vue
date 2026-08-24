@@ -12,22 +12,33 @@ const toast = useToast()
 const serviceRequests = useServiceRequests('resident')
 const saving = ref(false)
 
-const { data, pending, refresh } = await useAsyncData(`my-service-request-${route.params.id}`, () =>
-  useApi()<{
-    ok: true
-    data: ServiceRequestDetail
-  }>(`/api/my/service-requests/${route.params.id}`),
+const { data, pending, refresh } = await useAsyncData(
+  `my-service-request-${route.params.id}`,
+  () =>
+    useApi()<{
+      ok: true
+      data: ServiceRequestDetail
+    }>(`/api/my/service-requests/${route.params.id}`),
 )
 
-const ticketState = shallowRef<ServiceRequestDetail | null>(data.value?.data ?? null)
-watch(data, (value) => {
-  if (value?.data) {
-    ticketState.value = value.data
-  }
-}, { immediate: true })
+const ticketState = shallowRef<ServiceRequestDetail | null>(
+  data.value?.data ?? null,
+)
+watch(
+  data,
+  (value) => {
+    if (value?.data) {
+      ticketState.value = value.data
+    }
+  },
+  { immediate: true },
+)
 const ticket = computed(() => ticketState.value)
 
-const addComment = async (payload: { visibility: 'RESIDENT_VISIBLE' | 'INTERNAL_NOTE' | 'SYSTEM'; commentBody: string }) => {
+const addComment = async (payload: {
+  visibility: 'RESIDENT_VISIBLE' | 'INTERNAL_NOTE' | 'SYSTEM'
+  commentBody: string
+}) => {
   saving.value = true
   try {
     await serviceRequests.addComment(String(route.params.id), payload)
@@ -46,8 +57,12 @@ const uploadAttachment = async (files: File[]) => {
     }
     toast.add({
       severity: 'success',
-      summary: files.length === 1 ? 'Attachment uploaded' : 'Attachments uploaded',
-      detail: files.length === 1 ? files[0]?.name : `${files.length} files uploaded successfully.`,
+      summary:
+        files.length === 1 ? 'Attachment uploaded' : 'Attachments uploaded',
+      detail:
+        files.length === 1
+          ? files[0]?.name
+          : `${files.length} files uploaded successfully.`,
       life: 10000,
     })
     await refresh()
@@ -56,7 +71,11 @@ const uploadAttachment = async (files: File[]) => {
   }
 }
 
-const updateStatus = async (payload: { status: ServiceRequestStatus; comment?: string | null; reason?: string | null }) => {
+const updateStatus = async (payload: {
+  status: ServiceRequestStatus
+  comment?: string | null
+  reason?: string | null
+}) => {
   saving.value = true
   try {
     await serviceRequests.updateStatus(String(route.params.id), payload)
@@ -68,17 +87,28 @@ const updateStatus = async (payload: { status: ServiceRequestStatus; comment?: s
 }
 
 const showTimeline = ref(false)
-const timelineCount = computed(() =>
-  (ticket.value?.events.length ?? 0) + (ticket.value?.comments.length ?? 0),
+const timelineCount = computed(
+  () =>
+    (ticket.value?.events.length ?? 0) + (ticket.value?.comments.length ?? 0),
 )
 </script>
 
 <template>
-  <div class="landing-page">
+  <div class="landing-page resident-ticket-detail">
     <AppSkeletonState v-if="pending && !ticket" />
     <template v-else-if="ticket">
+      <div class="resident-ticket-detail__nav">
+        <Button
+          as="a"
+          href="/my/service-requests"
+          label="My requests"
+          icon="pi pi-arrow-left"
+          severity="secondary"
+          text
+        />
+      </div>
       <TicketSummaryCard :ticket="ticket" />
-      <section class="admin-two-column--wide">
+      <section class="admin-two-column--wide resident-ticket-detail__content">
         <section class="surface-card">
           <div class="service-panel__header">
             <div>
@@ -93,7 +123,11 @@ const timelineCount = computed(() =>
             :saving="saving"
             @status="updateStatus"
           />
-          <TicketCommentPanel :comments="ticket.comments" :saving="saving" @add="addComment" />
+          <TicketCommentPanel
+            :comments="ticket.comments"
+            :saving="saving"
+            @add="addComment"
+          />
           <TicketAttachmentGallery
             :attachments="ticket.attachments"
             can-upload
@@ -113,14 +147,22 @@ const timelineCount = computed(() =>
               severity="secondary"
               text
               size="small"
-              @click="showTimeline = !showTimeline"
               :aria-expanded="showTimeline"
+              @click="showTimeline = !showTimeline"
             />
           </div>
-          <p v-if="!showTimeline && timelineCount > 0" class="service-request-detail__timeline-hint">
-            {{ timelineCount }} timeline {{ timelineCount === 1 ? 'entry' : 'entries' }} available.
+          <p
+            v-if="!showTimeline && timelineCount > 0"
+            class="service-request-detail__timeline-hint"
+          >
+            {{ timelineCount }} timeline
+            {{ timelineCount === 1 ? 'entry' : 'entries' }} available.
           </p>
-          <TicketTimeline v-if="showTimeline" :events="ticket.events" :comments="ticket.comments" />
+          <TicketTimeline
+            v-if="showTimeline"
+            :events="ticket.events"
+            :comments="ticket.comments"
+          />
           <AppState
             v-if="timelineCount === 0"
             variant="empty"
@@ -158,5 +200,38 @@ const timelineCount = computed(() =>
   margin: 0;
   color: var(--color-muted);
   font-size: 0.9rem;
+}
+
+.resident-ticket-detail__nav {
+  display: flex;
+  margin-bottom: -0.55rem;
+}
+
+.resident-ticket-detail__content > .surface-card {
+  min-width: 0;
+}
+
+@media (max-width: 768px) {
+  .resident-ticket-detail__nav {
+    margin-bottom: -0.35rem;
+  }
+
+  .resident-ticket-detail__nav :deep(.p-button) {
+    min-height: 2.4rem;
+    padding-inline: 0.25rem 0.65rem;
+  }
+
+  .resident-ticket-detail__content {
+    gap: 0.85rem;
+  }
+
+  .service-panel__header h2 {
+    margin: 0;
+    font-size: 1.05rem;
+  }
+
+  .service-panel__header :deep(.p-button) {
+    min-height: 2.35rem;
+  }
 }
 </style>

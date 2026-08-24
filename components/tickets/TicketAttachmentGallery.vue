@@ -12,7 +12,16 @@ const allowedMimeTypes = new Set([
   'image/png',
   'image/webp',
 ])
-const allowedExtensions = new Set(['pdf', 'zip', 'xls', 'xlsx', 'jpg', 'jpeg', 'png', 'webp'])
+const allowedExtensions = new Set([
+  'pdf',
+  'zip',
+  'xls',
+  'xlsx',
+  'jpg',
+  'jpeg',
+  'png',
+  'webp',
+])
 
 defineProps<{
   attachments: ServiceRequestAttachment[]
@@ -36,19 +45,24 @@ const previewVisible = computed({
   },
 })
 const accept = '.pdf,.zip,.xls,.xlsx,.jpg,.jpeg,.png,.webp'
-const uploadHelpText = 'Allowed: PDF, ZIP, XLS, XLSX, JPG, PNG, WebP. Max 5 MB each.'
+const uploadHelpText =
+  'Allowed: PDF, ZIP, XLS, XLSX, JPG, PNG, WebP. Max 5 MB each.'
 
 const pickFile = () => {
   fileInput.value?.click()
 }
 
 const isAllowedFile = (file: File) => {
-  const extension = file.name.includes('.') ? file.name.split('.').pop()?.trim().toLowerCase() ?? '' : ''
+  const extension = file.name.includes('.')
+    ? (file.name.split('.').pop()?.trim().toLowerCase() ?? '')
+    : ''
   return allowedMimeTypes.has(file.type) || allowedExtensions.has(extension)
 }
 
 const fileExtension = (fileName: string) =>
-  fileName.includes('.') ? fileName.split('.').pop()?.trim().toLowerCase() ?? '' : ''
+  fileName.includes('.')
+    ? (fileName.split('.').pop()?.trim().toLowerCase() ?? '')
+    : ''
 
 const isImageAttachment = (attachment: ServiceRequestAttachment) =>
   attachment.mimeType.startsWith('image/') ||
@@ -140,7 +154,11 @@ const onFileChange = (event: Event) => {
       {{ uploadHelpText }}
     </p>
 
-    <article v-for="attachment in attachments" :key="attachment.id" class="ticket-attachment-gallery__item">
+    <article
+      v-for="attachment in attachments"
+      :key="attachment.id"
+      class="ticket-attachment-gallery__item"
+    >
       <button
         v-if="isImageAttachment(attachment) && attachment.downloadUrl"
         type="button"
@@ -149,12 +167,19 @@ const onFileChange = (event: Event) => {
         :title="`View ${attachment.fileName}`"
         @click="openPreview(attachment)"
       >
-        <img :src="attachment.downloadUrl" :alt="attachment.fileName" loading="lazy">
+        <img
+          :src="attachment.downloadUrl"
+          :alt="attachment.fileName"
+          loading="lazy"
+        >
       </button>
       <i v-else class="pi pi-paperclip ticket-attachment-gallery__icon" />
-      <div>
-        <strong>{{ attachment.fileName }}</strong>
-        <p>{{ attachment.mimeType }} · {{ Math.ceil(attachment.sizeBytes / 1024) }} KB</p>
+      <div class="ticket-attachment-gallery__details">
+        <strong :title="attachment.fileName">{{ attachment.fileName }}</strong>
+        <p>
+          {{ attachment.mimeType }} ·
+          {{ Math.ceil(attachment.sizeBytes / 1024) }} KB
+        </p>
       </div>
       <div class="ticket-attachment-gallery__actions">
         <Button
@@ -191,11 +216,17 @@ const onFileChange = (event: Event) => {
     <Dialog
       v-model:visible="previewVisible"
       modal
-      :header="previewAttachment?.fileName || 'Attachment'"
+      header="Image preview"
       :style="{ width: 'min(920px, 96vw)' }"
       content-class="ticket-attachment-gallery__preview-content"
     >
       <div v-if="previewAttachment" class="ticket-attachment-gallery__preview">
+        <p
+          class="ticket-attachment-gallery__preview-name"
+          :title="previewAttachment.fileName"
+        >
+          {{ previewAttachment.fileName }}
+        </p>
         <img
           v-if="previewAttachment.downloadUrl"
           :src="previewAttachment.downloadUrl"
@@ -262,6 +293,11 @@ const onFileChange = (event: Event) => {
   border-radius: 0.8rem;
 }
 
+.ticket-attachment-gallery__details {
+  min-width: 0;
+  overflow: hidden;
+}
+
 .ticket-attachment-gallery__icon {
   justify-self: center;
 }
@@ -286,8 +322,11 @@ const onFileChange = (event: Event) => {
 
 .ticket-attachment-gallery__item strong {
   display: block;
+  max-width: 100%;
   font-size: 0.92rem;
   line-height: 1.3;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .ticket-attachment-gallery__item p {
@@ -309,6 +348,15 @@ const onFileChange = (event: Event) => {
   gap: 0.85rem;
 }
 
+.ticket-attachment-gallery__preview-name {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 0.84rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .ticket-attachment-gallery__preview img {
   width: 100%;
   max-height: min(70vh, 720px);
@@ -326,6 +374,50 @@ const onFileChange = (event: Event) => {
 
   .ticket-attachment-gallery__actions {
     grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 520px) {
+  .ticket-attachment-gallery__toolbar,
+  .ticket-attachment-gallery__toolbar :deep(.p-button) {
+    width: 100%;
+  }
+
+  .ticket-attachment-gallery__toolbar :deep(.p-button) {
+    justify-content: center;
+  }
+
+  .ticket-attachment-gallery__hint {
+    text-align: left;
+    line-height: 1.4;
+  }
+
+  .ticket-attachment-gallery__item {
+    grid-template-columns: 2.65rem minmax(0, 1fr) auto;
+    gap: 0.5rem;
+    padding: 0.6rem;
+  }
+
+  .ticket-attachment-gallery__thumb {
+    width: 2.65rem;
+    height: 2.65rem;
+  }
+
+  .ticket-attachment-gallery__actions {
+    flex-wrap: nowrap;
+    gap: 0;
+  }
+
+  .ticket-attachment-gallery__item strong {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    font-size: 0.84rem;
+  }
+
+  .ticket-attachment-gallery__item p {
+    font-size: 0.7rem;
   }
 }
 </style>

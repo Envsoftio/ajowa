@@ -433,4 +433,29 @@ const submitForm = () => {
   display: grid;
   gap: 1.2rem;
 }
+
+@media (max-width: 768px) {
+  .ticket-form {
+    gap: 1rem;
+  }
+
+  .ticket-form .admin-form-subsection {
+    gap: 0.8rem;
+  }
+
+  .ticket-form .admin-form-subsection h3 {
+    margin: 0;
+    font-size: 1rem;
+  }
+
+  .ticket-form > .admin-inline-actions,
+  .ticket-form > .admin-inline-actions :deep(.p-button) {
+    width: 100%;
+  }
+
+  .ticket-form > .admin-inline-actions :deep(.p-button) {
+    min-height: 2.85rem;
+    justify-content: center;
+  }
+}
 </style>

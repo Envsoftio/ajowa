@@ -45,7 +45,12 @@ const submit = async (payload: ServiceRequestCreatePayload) => {
     })
     createdTicket.value = response.data
     pendingIdempotencyKey.value = createIdempotencyKey()
-    toast.add({ severity: 'success', summary: 'Ticket created', detail: response.data.requestNumber, life: 10000 })
+    toast.add({
+      severity: 'success',
+      summary: 'Ticket created',
+      detail: response.data.requestNumber,
+      life: 10000,
+    })
   } finally {
     saving.value = false
   }
@@ -53,20 +58,36 @@ const submit = async (payload: ServiceRequestCreatePayload) => {
 </script>
 
 <template>
-  <div class="landing-page">
-    <section class="hero-panel">
+  <div class="landing-page resident-ticket-create">
+    <section class="hero-panel resident-ticket-create__hero">
       <Tag severity="info" value="Service Request" rounded />
       <h1>Raise Complaint / Service Request</h1>
-      <p>Share the issue, location, priority, and preferred visit time so the operations team can route it quickly.</p>
+      <p>
+        Share the issue, location, priority, and preferred visit time so the
+        operations team can route it quickly.
+      </p>
     </section>
 
     <section v-if="createdTicket" class="surface-card ticket-success">
       <Tag severity="success" value="Created" rounded />
       <h2>{{ createdTicket.requestNumber }}</h2>
-      <p>Your request is open. The team will review the route and update the timeline.</p>
+      <p>
+        Your request is open. The team will review the route and update the
+        timeline.
+      </p>
       <div class="admin-inline-actions">
-        <Button label="View ticket" icon="pi pi-eye" @click="router.push(`/my/service-requests/${createdTicket?.id}`)" />
-        <Button label="View my tickets" icon="pi pi-list" severity="secondary" outlined @click="router.push('/my/service-requests')" />
+        <Button
+          label="View ticket"
+          icon="pi pi-eye"
+          @click="router.push(`/my/service-requests/${createdTicket?.id}`)"
+        />
+        <Button
+          label="View my tickets"
+          icon="pi pi-list"
+          severity="secondary"
+          outlined
+          @click="router.push('/my/service-requests')"
+        />
       </div>
     </section>
 
@@ -89,5 +110,36 @@ const submit = async (payload: ServiceRequestCreatePayload) => {
 .ticket-success h2,
 .ticket-success p {
   margin: 0;
+}
+
+@media (max-width: 768px) {
+  .resident-ticket-create__hero {
+    display: grid;
+    gap: 0.45rem;
+  }
+
+  .resident-ticket-create__hero h1,
+  .resident-ticket-create__hero p {
+    margin: 0;
+  }
+
+  .resident-ticket-create__hero h1 {
+    font-size: 1.3rem;
+    line-height: 1.25;
+  }
+
+  .resident-ticket-create__hero p {
+    font-size: 0.88rem;
+    line-height: 1.45;
+  }
+
+  .ticket-success .admin-inline-actions,
+  .ticket-success .admin-inline-actions :deep(.p-button) {
+    width: 100%;
+  }
+
+  .ticket-success .admin-inline-actions :deep(.p-button) {
+    justify-content: center;
+  }
 }
 </style>

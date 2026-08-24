@@ -1,5 +1,8 @@
 <script setup lang="ts">
-import type { ServiceCommentVisibility, ServiceRequestComment } from '~/types/domain'
+import type {
+  ServiceCommentVisibility,
+  ServiceRequestComment,
+} from '~/types/domain'
 
 const props = defineProps<{
   comments: ServiceRequestComment[]
@@ -19,7 +22,9 @@ const currentUserId = computed(() => authStore.me?.user.id ?? null)
 const thread = computed(() =>
   props.comments.map((comment) => ({
     ...comment,
-    isMine: Boolean(currentUserId.value && comment.authorUserId === currentUserId.value),
+    isMine: Boolean(
+      currentUserId.value && comment.authorUserId === currentUserId.value,
+    ),
   })),
 )
 
@@ -55,15 +60,22 @@ const submit = () => {
           class="ticket-comment-panel__bubble"
           :class="{
             'ticket-comment-panel__bubble--mine': comment.isMine,
-            'ticket-comment-panel__bubble--internal': comment.visibility === 'INTERNAL_NOTE',
+            'ticket-comment-panel__bubble--internal':
+              comment.visibility === 'INTERNAL_NOTE',
           }"
         >
           <div class="ticket-comment-panel__meta">
             <strong>{{ comment.authorName || 'Team' }}</strong>
             <Tag
               v-if="allowInternal || comment.visibility === 'INTERNAL_NOTE'"
-              :severity="comment.visibility === 'INTERNAL_NOTE' ? 'warn' : 'info'"
-              :value="comment.visibility === 'INTERNAL_NOTE' ? 'Internal' : 'Resident visible'"
+              :severity="
+                comment.visibility === 'INTERNAL_NOTE' ? 'warn' : 'info'
+              "
+              :value="
+                comment.visibility === 'INTERNAL_NOTE'
+                  ? 'Internal'
+                  : 'Resident visible'
+              "
               rounded
             />
           </div>
@@ -78,13 +90,24 @@ const submit = () => {
         v-model="visibility"
         :options="[
           { label: 'Resident visible', value: 'RESIDENT_VISIBLE' },
-          { label: 'Internal note', value: 'INTERNAL_NOTE' }
+          { label: 'Internal note', value: 'INTERNAL_NOTE' },
         ]"
         option-label="label"
         option-value="value"
       />
-      <Textarea v-model="commentBody" rows="2" auto-resize placeholder="Add an update or work note" fluid />
-      <Button label="Add note" icon="pi pi-comment" :loading="saving" @click="submit" />
+      <Textarea
+        v-model="commentBody"
+        rows="2"
+        auto-resize
+        placeholder="Add an update or work note"
+        fluid
+      />
+      <Button
+        label="Add note"
+        icon="pi pi-comment"
+        :loading="saving"
+        @click="submit"
+      />
     </div>
   </section>
 </template>
@@ -119,19 +142,31 @@ const submit = () => {
   padding: 0.6rem 0.72rem;
   border: 1px solid color-mix(in srgb, var(--color-border) 85%, transparent);
   border-radius: 0.9rem 0.9rem 0.9rem 0.25rem;
-  background: linear-gradient(180deg, color-mix(in srgb, var(--color-surface) 88%, white), var(--color-bg));
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-surface) 88%, white),
+    var(--color-bg)
+  );
   box-shadow: var(--shadow-sm);
 }
 
 .ticket-comment-panel__bubble--mine {
   border-radius: 0.9rem 0.9rem 0.25rem 0.9rem;
   border-color: color-mix(in srgb, var(--color-brand) 28%, transparent);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--color-brand-soft) 78%, white), color-mix(in srgb, var(--color-brand-soft) 42%, var(--color-surface)));
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-brand-soft) 78%, white),
+    color-mix(in srgb, var(--color-brand-soft) 42%, var(--color-surface))
+  );
 }
 
 .ticket-comment-panel__bubble--internal {
   border-color: color-mix(in srgb, var(--color-warning) 28%, transparent);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--color-warning-soft) 88%, white), color-mix(in srgb, var(--color-warning-soft) 50%, var(--color-surface)));
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-warning-soft) 88%, white),
+    color-mix(in srgb, var(--color-warning-soft) 50%, var(--color-surface))
+  );
 }
 
 .ticket-comment-panel__meta {
@@ -149,6 +184,7 @@ const submit = () => {
   line-height: 1.35;
   white-space: pre-wrap;
   font-size: 0.86rem;
+  overflow-wrap: anywhere;
 }
 
 .ticket-comment-panel__bubble small {
@@ -159,5 +195,21 @@ const submit = () => {
 .ticket-comment-panel__form {
   display: grid;
   gap: 0.5rem;
+}
+
+@media (max-width: 520px) {
+  .ticket-comment-panel__thread {
+    max-height: 22rem;
+    padding-right: 0;
+  }
+
+  .ticket-comment-panel__bubble {
+    width: min(94%, 26rem);
+  }
+
+  .ticket-comment-panel__form :deep(.p-button) {
+    width: 100%;
+    justify-content: center;
+  }
 }
 </style>
