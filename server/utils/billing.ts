@@ -1364,6 +1364,7 @@ type MaintenanceBillAccess = {
 
 type MaintenanceBillDueRow = {
   id: string
+  invoice_sequence_number: string
   society_id: string
   society_code: string
   society_name: string
@@ -1756,10 +1757,17 @@ const normalizeBillChargeBreakdown = (
   return charges.length > 0 ? charges : [{ label: 'Maintenance Charges', amount: fallbackAmount }]
 }
 
-const buildMaintenanceBillNumber = (row: MaintenanceBillDueRow) => {
+type MaintenanceBillDocumentType = 'CAM' | 'DG' | 'DUES'
+
+export const buildMaintenanceBillNumber = (
+  row: Pick<MaintenanceBillDueRow, 'society_code' | 'period_start_date' | 'invoice_sequence_number'>,
+  documentType: MaintenanceBillDocumentType,
+) => {
   const periodCode = row.period_start_date.replaceAll('-', '').slice(0, 6)
-  const flatCode = sanitizeBillFileSegment(`${row.block_name}-${row.flat_number}`).toUpperCase()
-  return sanitizeBillFileSegment(`${row.society_code}-BILL-${periodCode}-${flatCode}`).toUpperCase()
+  const invoiceSerial = String(row.invoice_sequence_number).padStart(6, '0')
+  return sanitizeBillFileSegment(
+    `${row.society_code}-BILL-${periodCode}-${documentType}-${invoiceSerial}`,
+  ).toUpperCase()
 }
 
 const getBillTypeCode = (charges: ChargeBreakdownItem[]) => {
@@ -1915,6 +1923,7 @@ export const getMaintenanceBillData = async (
     `
       select
         md.id,
+        md.invoice_sequence_number::text,
         md.society_id,
         sp.code as society_code,
         sp.name as society_name,
@@ -2223,7 +2232,16 @@ export const getMaintenanceBillData = async (
       },
     )
   }
-  const billNumber = buildMaintenanceBillNumber(due)
+  const hasCamCharge = chargeBreakdown.some(isCamCharge)
+  const hasDgCharge = chargeBreakdown.some(isDgSetCharge)
+  const maintenanceBillNumber = buildMaintenanceBillNumber(
+    due,
+    hasCamCharge ? 'CAM' : 'DUES',
+  )
+  const dgBillNumber = buildMaintenanceBillNumber(due, 'DG')
+  const billNumber = hasDgCharge && !hasCamCharge
+    ? dgBillNumber
+    : maintenanceBillNumber
   const fileName = buildMaintenanceBillFileName(due, chargeBreakdown)
   const currentBalance = currentAmounts.balanceAmount
   const netPayable = roundBillMoney(currentBalance + previousOutstanding)
@@ -2232,6 +2250,8 @@ export const getMaintenanceBillData = async (
     due,
     settings,
     billNumber,
+    maintenanceBillNumber,
+    dgBillNumber,
     fileName,
     chargeBreakdown,
     previousOutstanding,
@@ -2456,7 +2476,7 @@ export const generateMaintenanceBillPdf = async (
                 colSpan: 2,
               },
               {},
-              invoiceMetaCell('Invoice No.', bill.billNumber, true),
+              invoiceMetaCell('Invoice No.', bill.maintenanceBillNumber, true),
               {},
               invoiceMetaCell('Dated', formatInvoiceDate(due.generated_at), true),
               {},
@@ -2720,7 +2740,7 @@ export const generateMaintenanceBillPdf = async (
     const dgNetPayable = dgAmounts.netPayable
     const tariffRateLabel = primaryCharge.tariffRateLabel
       ?? (ratePerUnit != null ? `Rs.${formatBillPlainNumber(ratePerUnit)}/Unit` : '-')
-    const qrPayload = buildUpiPaymentPayload(due, dgNetPayable, `${bill.billNumber}-DG`)
+    const qrPayload = buildUpiPaymentPayload(due, dgNetPayable, bill.dgBillNumber)
     const uploadedQrImage = await getUploadedPaymentQrImageForPdf(due)
     const qrImage = uploadedQrImage ?? (qrPayload
       ? await QRCode.toDataURL(qrPayload, { margin: 1, width: 180 })
@@ -2788,7 +2808,7 @@ export const generateMaintenanceBillPdf = async (
                           { text: 'Flat No.:', style: 'dgLabel' },
                           { text: compactFlatNumber, style: 'dgValueBold' },
                           { text: 'Invoice No.:', style: 'dgLabel' },
-                          { text: bill.billNumber, style: 'dgValueBold' },
+                          { text: bill.dgBillNumber, style: 'dgValueBold' },
                         ],
                         [
                           { text: 'Address:', style: 'dgLabel' },

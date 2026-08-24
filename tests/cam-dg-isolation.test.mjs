@@ -38,7 +38,7 @@ test('locks the established CAM calculator and CAM PDF section', async () => {
       '  const buildMaintenanceInvoiceSection =',
       '  const buildDgBillNoticeSection =',
     )),
-    '0a24e8f951ed7d822e15233b776a164c96596b5cc371bdc499ba6461256fd9cd',
+    'c458f701678d5ea27b7f485b2cde9c970c4337319e922f228acd4e13e0c741a4',
   )
 })
 
