@@ -95,6 +95,11 @@ export const shellNavigation: Record<AppShellType, AppNavGroup[]> = {
           to: '/my/service-requests',
           icon: 'pi pi-ticket',
         },
+        {
+          label: 'Service Statistics',
+          to: '/my/service-request-statistics',
+          icon: 'pi pi-chart-bar',
+        },
         { label: 'QR Access', to: '/my/qr', icon: 'pi pi-qrcode' },
       ],
     },

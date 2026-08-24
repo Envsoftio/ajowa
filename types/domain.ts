@@ -48,6 +48,7 @@ export type SocietyPolicySettings = {
   dgLateFeeEnabled: boolean
   dgGraceDays: number
   dgLateFeePerDay: number
+  residentServiceStatisticsEnabled: boolean
 }
 
 export type SocietyProfile = AuditFields & {
@@ -667,6 +668,76 @@ export type ServiceRequestQueueSummary = {
     overdueCount: number
   }>
 }
+
+export type ServiceRequestStatisticsGranularity = 'DAY' | 'WEEK' | 'MONTH'
+
+export type ServiceRequestStatisticsFilters = {
+  startDate: string
+  endDate: string
+  status: ServiceRequestStatus | null
+  category: string | null
+  departmentId: string | null
+  priority: ServicePriority | null
+  locationType: ServiceLocationType | null
+}
+
+export type ServiceRequestStatistics = {
+  filters: ServiceRequestStatisticsFilters
+  granularity: ServiceRequestStatisticsGranularity
+  summary: {
+    openedDuringPeriod: number
+    resolvedDuringPeriod: number
+    closedDuringPeriod: number
+    reopenedDuringPeriod: number
+    activeNow: number
+    overdueNow: number
+    slaBreachedOpenedDuringPeriod: number
+    resolutionRate: number
+    averageFirstResponseMinutes: number | null
+    averageResolutionHours: number | null
+  }
+  trend: Array<{
+    periodStart: string
+    opened: number
+    resolved: number
+    closed: number
+  }>
+  statusBreakdown: Array<{
+    status: ServiceRequestStatus
+    count: number
+  }>
+  categoryBreakdown: Array<{
+    category: string
+    opened: number
+    resolved: number
+    active: number
+    overdue: number
+  }>
+  departmentBreakdown: Array<{
+    departmentId: string | null
+    departmentName: string
+    opened: number
+    resolved: number
+    active: number
+    overdue: number
+  }>
+  priorityBreakdown: Array<{
+    priority: ServicePriority
+    count: number
+  }>
+  locationBreakdown: Array<{
+    locationType: ServiceLocationType
+    count: number
+  }>
+  options: {
+    departments: Array<{ id: string; name: string }>
+    categories: string[]
+  }
+}
+
+export type ResidentServiceRequestStatisticsResponse =
+  | { enabled: false }
+  | { enabled: true; statistics: ServiceRequestStatistics }
 
 // --- Phase 6: Billing Types ---
 

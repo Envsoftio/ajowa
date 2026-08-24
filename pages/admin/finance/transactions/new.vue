@@ -32,6 +32,7 @@ const DEFAULT_POLICY = {
   dgLateFeeEnabled: false,
   dgGraceDays: 0,
   dgLateFeePerDay: 50,
+  residentServiceStatisticsEnabled: true,
 } satisfies SocietyProfile['settings']
 
 const route = useRoute()

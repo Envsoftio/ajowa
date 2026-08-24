@@ -43,6 +43,14 @@ const onSearch = () => {
         </div>
         <div class="list-page__exports">
           <Button
+            label="View statistics"
+            icon="pi pi-chart-bar"
+            severity="secondary"
+            outlined
+            as="a"
+            href="/my/service-request-statistics"
+          />
+          <Button
             label="Raise request"
             icon="pi pi-plus"
             as="a"
@@ -50,6 +58,23 @@ const onSearch = () => {
           />
         </div>
       </header>
+      <NuxtLink
+        to="/my/service-request-statistics"
+        class="resident-service-requests__statistics-card"
+        aria-label="View society-wide service request statistics"
+      >
+        <span class="resident-service-requests__statistics-icon">
+          <i class="pi pi-chart-bar" aria-hidden="true" />
+        </span>
+        <span>
+          <strong>Service request statistics</strong>
+          <small>
+            See opened, resolved, closed, active, overdue, category, and
+            department trends across all society tickets.
+          </small>
+        </span>
+        <i class="pi pi-arrow-right" aria-hidden="true" />
+      </NuxtLink>
       <div class="list-page__toolbar resident-service-requests__toolbar">
         <IconField class="list-page__search">
           <InputIcon class="pi pi-search" />
@@ -114,6 +139,48 @@ const onSearch = () => {
   gap: 0.85rem;
 }
 
+.resident-service-requests__statistics-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.85rem;
+  margin-bottom: 1rem;
+  padding: 0.9rem 1rem;
+  color: inherit;
+  text-decoration: none;
+  border: 1px solid color-mix(in srgb, var(--color-brand) 30%, transparent);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--color-brand) 7%, var(--color-surface));
+  transition:
+    border-color 160ms ease,
+    transform 160ms ease;
+}
+
+.resident-service-requests__statistics-card:hover,
+.resident-service-requests__statistics-card:focus-visible {
+  border-color: var(--color-brand);
+  transform: translateY(-1px);
+}
+
+.resident-service-requests__statistics-card > span:nth-child(2) {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.resident-service-requests__statistics-card small {
+  color: var(--color-muted);
+}
+
+.resident-service-requests__statistics-icon {
+  display: grid;
+  width: 2.5rem;
+  height: 2.5rem;
+  place-items: center;
+  color: var(--color-brand-strong);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--color-brand) 14%, transparent);
+}
+
 .resident-ticket-list__link {
   position: relative;
   display: grid;
@@ -156,6 +223,10 @@ const onSearch = () => {
 }
 
 @media (max-width: 768px) {
+  .resident-service-requests__statistics-card {
+    align-items: start;
+  }
+
   .resident-service-requests__panel {
     gap: 0.85rem;
   }

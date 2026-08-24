@@ -108,6 +108,7 @@ export const societyPolicySchema = z.object({
   dgLateFeeEnabled: z.boolean().default(false),
   dgGraceDays: z.coerce.number().int().nonnegative().default(0),
   dgLateFeePerDay: z.coerce.number().nonnegative().default(50),
+  residentServiceStatisticsEnabled: z.boolean().default(true),
 })
 
 export const societyProfileSchema = z.object({
@@ -375,6 +376,7 @@ export const defaultSocietyPolicies: z.infer<typeof societyPolicySchema> = {
   dgLateFeeEnabled: false,
   dgGraceDays: 0,
   dgLateFeePerDay: 50,
+  residentServiceStatisticsEnabled: true,
 }
 
 const enumValue = <T extends readonly string[]>(
@@ -500,6 +502,9 @@ export const normalizeSocietySettings = (
       normalized.dgLateFeePerDay ?? settings.dgLateFeePerDay,
       defaultSocietyPolicies.dgLateFeePerDay,
     ),
+    residentServiceStatisticsEnabled:
+      normalized.residentServiceStatisticsEnabled ??
+      defaultSocietyPolicies.residentServiceStatisticsEnabled,
   }
 }
 
@@ -752,5 +757,4 @@ export const handlePgResidentError = (error: unknown): never => {
 
   throw error
 }
-
 

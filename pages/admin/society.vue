@@ -77,6 +77,7 @@ const form = reactive({
     dgLateFeeEnabled: false,
     dgGraceDays: 0,
     dgLateFeePerDay: 50,
+    residentServiceStatisticsEnabled: true,
   },
 })
 
@@ -673,6 +674,9 @@ const buildPayload = () => ({
       form.settings.dgLateFeePerDay,
       50,
     ),
+    residentServiceStatisticsEnabled: Boolean(
+      form.settings.residentServiceStatisticsEnabled,
+    ),
   },
 })
 
@@ -1022,6 +1026,13 @@ const submitBankDetails = async () => {
           <label class="admin-toggle-card">
             <span>Family access enabled</span>
             <ToggleSwitch v-model="form.settings.familyAccessEnabled" />
+          </label>
+          <label class="admin-toggle-card">
+            <span>
+              Resident service statistics
+              <small>Enabled by default. Show privacy-safe statistics for all society tickets in every resident account.</small>
+            </span>
+            <ToggleSwitch v-model="form.settings.residentServiceStatisticsEnabled" />
           </label>
           <label class="admin-toggle-card">
             <span>Finance approval required</span>
