@@ -20,7 +20,7 @@ const trackedImpressionIds = ref(new Set<string>())
 const failedImageCreativeIds = ref(new Set<string>())
 let observer: IntersectionObserver | null = null
 
-const { data, pending } = await useAsyncData(
+const { data, pending } = useResidentAsyncData(
   () => `resident-ad-${props.slotKey}`,
   () =>
     api<AdsResponse>('/api/my/ads', {

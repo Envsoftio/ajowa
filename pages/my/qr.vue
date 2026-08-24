@@ -33,7 +33,7 @@ type MyQrResponse = {
 }
 
 const api = useApi()
-const { data, pending, refresh } = await useAsyncData('my-qr', () => api<MyQrResponse>('/api/qr/my-qr'))
+const { data, pending, refresh } = useResidentAsyncData('my-qr', () => api<MyQrResponse>('/api/qr/my-qr'))
 
 const state = computed(() => data.value?.data)
 const access = computed(() => state.value?.access ?? null)

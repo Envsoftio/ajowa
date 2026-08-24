@@ -110,11 +110,11 @@ const dragState = reactive({
   offsetY: 0,
 })
 
-const { data, pending, refresh } = await useAsyncData(
+const { data, pending, refresh } = useResidentAsyncData(
   'my-profile',
   () => api<ResidentProfileResponse>('/api/my/profile'),
 )
-const { data: familyData, pending: familyPending, refresh: refreshFamilyMembers } = await useAsyncData(
+const { data: familyData, pending: familyPending, refresh: refreshFamilyMembers } = useResidentAsyncData(
   'my-family-members',
   () => api<FamilyMembersResponse>('/api/my/family-members'),
 )

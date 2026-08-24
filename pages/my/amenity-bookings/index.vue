@@ -25,17 +25,15 @@ const query = reactive({
   amenityId: '',
 })
 
-const [bookingsAsyncData, optionsAsyncData] = await Promise.all([
-  useAsyncData('my-amenity-bookings', () =>
+const bookingsAsyncData = useResidentAsyncData('my-amenity-bookings', () =>
     api<{ ok: true; data: { items: AmenityBookingSummary[]; total: number } }>('/api/my/amenity-bookings', {
       query,
     }),
     { watch: [query] },
-  ),
-  useAsyncData('my-amenity-options-list', () =>
-    api<{ ok: true; data: { amenities: AmenitySummary[] } }>('/api/my/amenities'),
-  ),
-])
+  )
+const optionsAsyncData = useResidentAsyncData('my-amenity-options-list', () =>
+  api<{ ok: true; data: { amenities: AmenitySummary[] } }>('/api/my/amenities'),
+)
 
 const { data, pending, refresh } = bookingsAsyncData
 const { data: optionsData } = optionsAsyncData

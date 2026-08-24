@@ -12,10 +12,14 @@ const appStore = useAppStore()
 const authStore = useAuthStore()
 const route = useRoute()
 const loading = useLoadingIndicator()
+const residentDataLoading = useResidentDataLoading()
 const shell = computed(() => props.shell ?? 'public')
 const shellClass = computed(() => `app-shell--${shell.value}`)
 const isCompactPublicShell = computed(() => shell.value === 'public' && route.meta.publicShell === 'compact')
 const isLoading = computed(() => loading.isLoading.value)
+const showLoadingOverlay = computed(
+  () => isLoading.value || (shell.value === 'resident' && residentDataLoading.value > 0),
+)
 const contentRef = ref<HTMLElement | null>(null)
 const residentMobileNavOrder = [
   '/my/dues',
@@ -91,7 +95,7 @@ watch(
     <ResidentPhotoPreviewDialog />
     <AppNotificationListener />
     <Transition name="app-loading-fade">
-      <div v-if="isLoading && shell !== 'resident'" class="app-loading-overlay" role="status" aria-live="polite" aria-label="Loading">
+      <div v-if="showLoadingOverlay" class="app-loading-overlay" role="status" aria-live="polite" aria-label="Loading">
         <div class="app-loading-card">
           <span class="app-loading-spinner" aria-hidden="true" />
           <span>Loading</span>

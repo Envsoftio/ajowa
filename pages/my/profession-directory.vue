@@ -18,7 +18,7 @@ type DirectoryResponse = {
 const api = useApi()
 const selectedProfessionId = ref('')
 
-const { data, pending, refresh } = await useAsyncData(
+const { data, pending, refresh } = useResidentAsyncData(
   'my-profession-directory',
   () =>
     api<{ ok: true; data: DirectoryResponse }>('/api/my/profession-directory', {

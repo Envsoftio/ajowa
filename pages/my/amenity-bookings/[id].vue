@@ -21,7 +21,7 @@ const saving = ref(false)
 
 const bookingId = computed(() => String(route.params.id))
 
-const { data, pending, refresh } = await useAsyncData(`my-amenity-booking-${bookingId.value}`, () =>
+const { data, pending, refresh } = useResidentAsyncData(`my-amenity-booking-${bookingId.value}`, () =>
   api<{ ok: true; data: AmenityBookingDetail }>(`/api/my/amenity-bookings/${bookingId.value}`),
 )
 

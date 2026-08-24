@@ -20,7 +20,7 @@ const createIdempotencyKey = () =>
     : `${Date.now()}-${Math.random()}`
 const pendingIdempotencyKey = ref(createIdempotencyKey())
 
-const { data } = await useAsyncData('service-request-options-resident', () =>
+const { data } = useResidentAsyncData('service-request-options-resident', () =>
   api<{
     ok: true
     data: {

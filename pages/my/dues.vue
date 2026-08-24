@@ -80,15 +80,15 @@ const {
   data: duesData,
   pending,
   refresh: refreshDues,
-} = await useAsyncData('my-dues', () => api<DuesResponse>('/api/my/dues'))
-const { data: paymentAvailabilityData } = await useAsyncData(
+} = useResidentAsyncData('my-dues', () => api<DuesResponse>('/api/my/dues'))
+const { data: paymentAvailabilityData } = useResidentAsyncData(
   'online-payment-availability',
   () => api<PaymentAvailabilityResponse>('/api/payments/online/availability'),
 )
 const {
   data: dgAdvanceData,
   refresh: refreshDgAdvances,
-} = useLazyAsyncData('my-dg-advances', () =>
+} = useResidentAsyncData('my-dg-advances', () =>
   api<DgAdvanceSummaryResponse>('/api/my/dg-advances').catch(() => ({
       ok: true as const,
       data: {

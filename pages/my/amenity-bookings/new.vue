@@ -52,7 +52,7 @@ const form = reactive({
   rulesAccepted: false,
 })
 
-const { data: optionsData } = await useAsyncData('my-amenity-booking-options', () =>
+const { data: optionsData } = useResidentAsyncData('my-amenity-booking-options', () =>
   api<{ ok: true; data: { amenities: AmenitySummary[]; flats: FlatOption[] } }>('/api/my/amenities'),
 )
 
@@ -60,14 +60,20 @@ const amenities = computed(() => optionsData.value?.data.amenities ?? [])
 const flats = computed(() => optionsData.value?.data.flats ?? [])
 const selectedAmenity = computed(() => amenities.value.find((amenity) => amenity.id === form.amenityId) ?? null)
 
-if (!form.amenityId && amenities.value[0]) {
-  form.amenityId = amenities.value[0].id
-}
-if (!form.flatId && flats.value[0]) {
-  form.flatId = flats.value[0].id
-}
+watch(
+  [amenities, flats],
+  ([availableAmenities, availableFlats]) => {
+    if (!form.amenityId && availableAmenities[0]) {
+      form.amenityId = availableAmenities[0].id
+    }
+    if (!form.flatId && availableFlats[0]) {
+      form.flatId = availableFlats[0].id
+    }
+  },
+  { immediate: true },
+)
 
-const { data: availabilityData, pending: availabilityPending, refresh: refreshAvailability } = await useAsyncData(
+const { data: availabilityData, pending: availabilityPending, refresh: refreshAvailability } = useResidentAsyncData(
   'my-amenity-availability',
   async (): Promise<{ ok: true; data: AmenityAvailability } | null> => {
     if (!form.amenityId || !form.date) return null
@@ -137,7 +143,7 @@ const maxBookingDate = computed(() => addDays(new Date(nowMs.value), maximumAdva
 const blockedDatesStart = computed(() => dateToKey(minBookingDate.value))
 const blockedDatesEnd = computed(() => dateToKey(maxBookingDate.value))
 
-const { data: blockedDatesData } = await useAsyncData(
+const { data: blockedDatesData } = useResidentAsyncData(
   'my-amenity-blocked-dates',
   async (): Promise<{ ok: true; data: AmenityBlockedDates } | null> => {
     if (!form.amenityId) return null

@@ -40,7 +40,7 @@ const allStatus = 'ALL'
 const anyPriority = 'ANY'
 const query = reactive({ status: allStatus, priority: anyPriority, category: '' })
 
-const { data, pending, refresh } = await useAsyncData(
+const { data, pending, refresh } = useResidentAsyncData(
   `notification-inbox-${route.path}`,
   () =>
     api<NotificationResponse>('/api/my/notifications', {

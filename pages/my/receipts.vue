@@ -104,7 +104,7 @@ const loadReceipts = () =>
     },
   })
 
-const { data, pending, refresh } = await useAsyncData('my-receipts', loadReceipts, {
+const { data, pending, refresh } = useResidentAsyncData('my-receipts', loadReceipts, {
   watch: [query],
 })
 

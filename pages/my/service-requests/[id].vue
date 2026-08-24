@@ -12,7 +12,7 @@ const toast = useToast()
 const serviceRequests = useServiceRequests('resident')
 const saving = ref(false)
 
-const { data, pending, refresh } = await useAsyncData(
+const { data, pending, refresh } = useResidentAsyncData(
   `my-service-request-${route.params.id}`,
   () =>
     useApi()<{

@@ -11,7 +11,7 @@ const api = useApi()
 const search = ref('')
 const query = reactive({ page: 1, pageSize: 20, search: '' })
 
-const { data, pending, refresh } = await useAsyncData(
+const { data, pending, refresh } = useResidentAsyncData(
   'my-service-requests',
   () =>
     api<{ ok: true; data: { items: ServiceRequestSummary[]; total: number } }>(

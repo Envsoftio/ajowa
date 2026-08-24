@@ -22,7 +22,7 @@ type Notice = {
 
 const api = useApi()
 const route = useRoute()
-const { data, pending, refresh } = await useAsyncData('my-notices', () => api<{ ok: true; data: { items: Notice[] } }>('/api/my/notices'))
+const { data, pending, refresh } = useResidentAsyncData('my-notices', () => api<{ ok: true; data: { items: Notice[] } }>('/api/my/notices'))
 const notices = computed(() => data.value?.data.items ?? [])
 const selectedNotice = ref<Notice | null>(null)
 

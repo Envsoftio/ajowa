@@ -60,8 +60,8 @@ test('keeps prior CAM and DG balances in separate PDF buckets', async () => {
 test('does not let an optional DG advance request hide resident CAM dues', async () => {
   const source = await readSource('../pages/my/dues.vue')
 
-  assert.match(source, /await useAsyncData\('my-dues'/)
-  assert.match(source, /useLazyAsyncData\('my-dg-advances'/)
+  assert.match(source, /useResidentAsyncData\('my-dues'/)
+  assert.match(source, /useResidentAsyncData\('my-dg-advances'/)
   assert.doesNotMatch(source, /Promise\.all\(\[\s*api<DuesResponse>/)
   assert.match(
     source,

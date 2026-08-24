@@ -56,12 +56,23 @@ const notificationPermissionGuide = computed(() => {
 
 const load = async () => {
   const response = await api<{ ok: true; data: { preferences: Preference[]; subscriptions: typeof subscriptions.value } }>('/api/my/settings/notifications')
-  preferences.value = response.data.preferences
-  subscriptions.value = response.data.subscriptions
   return response.data
 }
 
-await useAsyncData('my-notification-settings', load)
+const { data: settingsData, refresh: refreshSettings } = useResidentAsyncData(
+  'my-notification-settings',
+  load,
+)
+
+watch(
+  settingsData,
+  (settings) => {
+    if (!settings) return
+    preferences.value = settings.preferences
+    subscriptions.value = settings.subscriptions
+  },
+  { immediate: true },
+)
 
 const save = async () => {
   saving.value = true
@@ -79,7 +90,7 @@ const subscribePush = async () => {
   pushMessage.value = result.message ?? ''
 
   if (result.state === 'subscribed') {
-    await load()
+    await refreshSettings()
   }
 }
 </script>
