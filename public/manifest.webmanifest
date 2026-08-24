@@ -8,6 +8,26 @@
   "background_color": "#ffffff",
   "theme_color": "#0645c3",
   "orientation": "portrait",
+  "shortcuts": [
+    {
+      "name": "Dues",
+      "short_name": "Dues",
+      "url": "/my/dues",
+      "icons": [{ "src": "/icons/ajowa-icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Service Requests",
+      "short_name": "Requests",
+      "url": "/my/service-requests",
+      "icons": [{ "src": "/icons/ajowa-icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Notices",
+      "short_name": "Notices",
+      "url": "/my/notices",
+      "icons": [{ "src": "/icons/ajowa-icon-192.png", "sizes": "192x192" }]
+    }
+  ],
   "icons": [
     {
       "src": "/ajowa-icon.svg",

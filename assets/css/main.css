@@ -4592,8 +4592,11 @@ button *,
   }
 
   .app-shell--resident {
+    --resident-mobile-nav-height: 4.15rem;
     min-height: 100dvh;
     background: var(--color-bg);
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior-y: contain;
   }
 
   .app-shell--resident .app-frame {
@@ -4601,13 +4604,20 @@ button *,
   }
 
   .app-shell--resident .app-topbar {
-    min-height: calc(3.5rem + env(safe-area-inset-top));
-    padding: calc(0.55rem + env(safe-area-inset-top)) 0.75rem 0.55rem;
-    background: color-mix(in srgb, var(--admin-topbar-bg) 94%, transparent);
+    position: sticky;
+    top: 0;
+    z-index: 43;
+    min-height: calc(3.25rem + env(safe-area-inset-top));
+    padding: calc(0.45rem + env(safe-area-inset-top)) 0.75rem 0.45rem;
+    background: var(--admin-topbar-bg);
+  }
+
+  .app-shell--resident .topbar-menu-button {
+    display: none;
   }
 
   .app-shell--resident .topbar-brand {
-    display: none;
+    display: inline-flex;
   }
 
   .app-shell--resident .topbar-heading {
@@ -4623,10 +4633,10 @@ button *,
   }
 
   .app-shell--resident .app-content {
-    padding: 0.65rem 0.75rem
+    padding: 0.55rem 0.65rem
       calc(
         var(--resident-mobile-nav-height) + var(--resident-mobile-footer-height) +
-          env(safe-area-inset-bottom) + 1rem
+          env(safe-area-inset-bottom) + 0.75rem
       );
   }
 
@@ -4640,10 +4650,10 @@ button *,
     z-index: 44;
     display: flex;
     min-height: var(--resident-mobile-footer-height);
-    padding: 0.35rem 0.75rem;
-    background: color-mix(in srgb, var(--color-surface) 94%, var(--color-bg));
-    font-size: 0.68rem;
-    line-height: 1.25;
+    padding: 0.3rem 0.65rem;
+    background: var(--color-surface);
+    font-size: 0.65rem;
+    line-height: 1.2;
   }
 
   .app-shell--resident .app-footer__content {
@@ -4651,7 +4661,7 @@ button *,
   }
 
   .app-shell--resident .landing-page {
-    gap: 0.85rem;
+    gap: 0.7rem;
   }
 
   .app-shell--resident .surface-grid {
@@ -4677,7 +4687,40 @@ button *,
   .app-shell--resident .landing-page > .surface-grid:first-child > .surface-card,
   .app-shell--resident .surface-card,
   .app-shell--resident .hero-panel {
-    padding: 0.9rem;
+    padding: 0.75rem;
+    box-shadow: none;
+  }
+
+  .app-shell--resident .surface-card,
+  .app-shell--resident .hero-panel,
+  .app-shell--resident .ticket-summary-card,
+  .app-shell--resident .list-card {
+    border-color: color-mix(in srgb, var(--color-border) 78%, transparent);
+    box-shadow: none;
+  }
+
+  .app-shell--resident button,
+  .app-shell--resident a,
+  .app-shell--resident .p-button {
+    touch-action: manipulation;
+  }
+
+  .app-shell--resident .p-ink {
+    display: none;
+  }
+
+  .app-shell--resident .p-button:active,
+  .app-shell--resident .resident-mobile-nav__item:active {
+    transform: scale(0.97);
+  }
+
+  .app-shell--resident .resident-ticket-list__link,
+  .app-shell--resident .resident-due-card,
+  .app-shell--resident .resident-receipts-card,
+  .app-shell--resident .notification-row,
+  .app-shell--resident .list-card {
+    content-visibility: auto;
+    contain-intrinsic-block-size: 8rem;
   }
 
   .app-shell--resident .resident-summary-card {
@@ -4906,35 +4949,36 @@ button *,
     z-index: 45;
     display: grid;
     grid-template-columns: repeat(5, minmax(0, 1fr));
-    gap: 0.25rem;
+    gap: 0.1rem;
     min-height: calc(var(--resident-mobile-nav-height) + env(safe-area-inset-bottom));
-    padding: 0.38rem max(0.55rem, env(safe-area-inset-right))
-      calc(0.38rem + env(safe-area-inset-bottom))
-      max(0.55rem, env(safe-area-inset-left));
+    padding: 0.3rem max(0.4rem, env(safe-area-inset-right))
+      calc(0.3rem + env(safe-area-inset-bottom))
+      max(0.4rem, env(safe-area-inset-left));
     border-top: 1px solid var(--color-border);
-    background: color-mix(in srgb, var(--color-surface) 96%, var(--color-bg));
-    box-shadow: 0 -8px 22px rgba(15, 23, 42, 0.1);
+    background: var(--color-surface);
+    box-shadow: 0 -2px 12px rgba(15, 23, 42, 0.08);
   }
 
   .app-shell--resident .resident-mobile-nav__item {
     appearance: none;
     display: inline-grid;
-    min-height: 3.2rem;
+    min-height: 3rem;
     place-items: center;
-    gap: 0.2rem;
+    gap: 0.15rem;
     border: 1px solid transparent;
     border-radius: var(--radius-md);
     background: transparent;
     cursor: pointer;
     font: inherit;
-    font-size: 0.67rem;
+    font-size: 0.64rem;
     font-weight: 700;
     line-height: 1.1;
     text-align: center;
+    transition: color 100ms ease, background-color 100ms ease, transform 80ms ease;
   }
 
   .app-shell--resident .resident-mobile-nav__item i {
-    font-size: 1rem;
+    font-size: 1.08rem;
   }
 
   .app-shell--resident .resident-mobile-nav__item span {
@@ -4945,8 +4989,8 @@ button *,
   }
 
   .app-shell--resident .resident-mobile-nav__item.is-active {
-    border-color: color-mix(in srgb, var(--color-brand) 22%, transparent);
-    background: var(--color-brand-soft);
+    border-color: transparent;
+    background: color-mix(in srgb, var(--color-brand-soft) 68%, transparent);
     color: var(--color-brand-strong);
   }
 

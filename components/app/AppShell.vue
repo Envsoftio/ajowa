@@ -17,7 +17,15 @@ const shellClass = computed(() => `app-shell--${shell.value}`)
 const isCompactPublicShell = computed(() => shell.value === 'public' && route.meta.publicShell === 'compact')
 const isLoading = computed(() => loading.isLoading.value)
 const contentRef = ref<HTMLElement | null>(null)
-const residentMobileNavRoutes = new Set(['/my/dues', '/my/receipts', '/my/notices', '/my/qr'])
+const residentMobileNavOrder = [
+  '/my/dues',
+  '/my/service-requests',
+  '/my/notices',
+  '/my/qr',
+]
+const residentMobileNavRank = new Map(
+  residentMobileNavOrder.map((path, index) => [path, index]),
+)
 
 const getPathname = (value: string) => value.split(/[?#]/)[0] || '/'
 
@@ -30,8 +38,13 @@ const canShowResidentNavItem = (item: AppNavItem) => {
 const residentMobileNavItems = computed(() =>
   shellNavigation.resident
     .flatMap((group) => group.items)
-    .filter((item) => residentMobileNavRoutes.has(getPathname(item.to)))
-    .filter(canShowResidentNavItem),
+    .filter((item) => residentMobileNavRank.has(getPathname(item.to)))
+    .filter(canShowResidentNavItem)
+    .sort(
+      (left, right) =>
+        (residentMobileNavRank.get(getPathname(left.to)) ?? 0) -
+        (residentMobileNavRank.get(getPathname(right.to)) ?? 0),
+    ),
 )
 
 const showResidentMobileNav = computed(() => shell.value === 'resident' && residentMobileNavItems.value.length > 0)
@@ -43,12 +56,22 @@ const isResidentNavItemActive = (item: AppNavItem) => {
 }
 
 const getResidentMobileLabel = (item: AppNavItem) =>
-  item.label.replace(/^My\s+/i, '').replace(/\s+Access$/i, '')
+  item.label
+    .replace(/^My\s+/i, '')
+    .replace(/Service Requests/i, 'Requests')
+    .replace(/\s+Access$/i, '')
 
 watch(
   () => route.fullPath,
-  () => {
-    contentRef.value?.scrollTo({ top: 0, left: 0 })
+  async () => {
+    await nextTick()
+
+    if (import.meta.client && window.matchMedia('(max-width: 768px)').matches) {
+      window.scrollTo({ top: 0, left: 0, behavior: 'auto' })
+      return
+    }
+
+    contentRef.value?.scrollTo({ top: 0, left: 0, behavior: 'auto' })
   },
 )
 </script>
@@ -68,7 +91,7 @@ watch(
     <ResidentPhotoPreviewDialog />
     <AppNotificationListener />
     <Transition name="app-loading-fade">
-      <div v-if="isLoading" class="app-loading-overlay" role="status" aria-live="polite" aria-label="Loading">
+      <div v-if="isLoading && shell !== 'resident'" class="app-loading-overlay" role="status" aria-live="polite" aria-label="Loading">
         <div class="app-loading-card">
           <span class="app-loading-spinner" aria-hidden="true" />
           <span>Loading</span>

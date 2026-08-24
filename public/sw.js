@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ajowa-app-v5'
+const CACHE_NAME = 'ajowa-app-v6'
 const DEFAULT_NOTIFICATION_LINK = '/my/notifications'
 const APP_SHELL = [
   '/manifest.webmanifest',
@@ -75,9 +75,12 @@ self.addEventListener('install', (event) => {
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))),
-    ),
+    Promise.all([
+      caches.keys().then((keys) =>
+        Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))),
+      ),
+      self.registration.navigationPreload?.enable().catch(() => undefined),
+    ]),
   )
   self.clients.claim()
 })
@@ -89,40 +92,45 @@ self.addEventListener('fetch', (event) => {
   if (url.origin !== self.location.origin) return
   if (url.pathname.startsWith('/api/')) return
 
-  const isNavigation = request.mode === 'navigate'
-  const shouldCacheRequest =
-    request.destination !== 'audio' &&
-    request.destination !== 'video' &&
-    request.destination !== 'font' &&
-    request.destination !== '' &&
-    request.destination !== 'manifest'
+  if (request.mode === 'navigate') {
+    event.respondWith(
+      Promise.resolve(event.preloadResponse)
+        .then((preloaded) => preloaded || fetch(request))
+        .catch(
+          () =>
+            new Response('You are offline. Reconnect to open AJOWA.', {
+              status: 503,
+              statusText: 'Offline',
+              headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+            }),
+        ),
+    )
+    return
+  }
+
+  const isVersionedAppAsset = url.pathname.startsWith('/_nuxt/')
+  const isStaticAppAsset = APP_SHELL.includes(url.pathname)
+
+  if (!isVersionedAppAsset && !isStaticAppAsset) return
 
   event.respondWith(
-    fetch(request)
-      .then((response) => {
-        if (response.ok && shouldCacheRequest) {
+    caches.match(request).then((cached) => {
+      if (cached) return cached
+
+      return fetch(request).then((response) => {
+        if (response.ok) {
           const copy = response.clone()
-          caches.open(CACHE_NAME).then((cache) => cache.put(request, copy)).catch(() => undefined)
+          event.waitUntil(
+            caches
+              .open(CACHE_NAME)
+              .then((cache) => cache.put(request, copy))
+              .catch(() => undefined),
+          )
         }
 
         return response
       })
-      .catch(async () => {
-        const cached = await caches.match(request)
-        if (cached) {
-          return cached
-        }
-
-        if (isNavigation) {
-          return new Response('Offline', {
-            status: 503,
-            statusText: 'Offline',
-            headers: { 'Content-Type': 'text/plain; charset=utf-8' },
-          })
-        }
-
-        return caches.match('/').then((fallback) => fallback ?? null)
-      }),
+    }),
   )
 })
 
