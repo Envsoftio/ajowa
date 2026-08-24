@@ -825,11 +825,16 @@ export const uploadPrivateFile = async (
   }
 }
 
-export const replacePrivateFile = async (input: ReplaceStoredFileInput) => {
+export const replacePrivateFile = async (
+  input: ReplaceStoredFileInput,
+  options?: { dbClient?: StorageQueryClient },
+) => {
   const supabaseAdmin = getSupabaseAdminClient()
   const validInput = validateStorageUploadInput(input)
   const storageTarget = getStorageTarget(validInput.storageTargetKey)
-  const existingResult = await getDatabasePool().query<StorageFileRecordRow>(
+  const dbClient = options?.dbClient
+  const queryable = dbClient ?? getDatabasePool()
+  const existingResult = await queryable.query<StorageFileRecordRow>(
     `
       select ${fileRecordColumns}
       from public.file_objects
@@ -860,7 +865,7 @@ export const replacePrivateFile = async (input: ReplaceStoredFileInput) => {
     related_record_id: validInput.relation.recordId,
     upload_status: 'PENDING',
     last_error: null,
-  })
+  }, dbClient)
 
   try {
     const { error: uploadError } = await supabaseAdmin
@@ -883,7 +888,7 @@ export const replacePrivateFile = async (input: ReplaceStoredFileInput) => {
       upload_status: 'READY',
       uploaded_at: new Date().toISOString(),
       last_error: null,
-    })
+    }, dbClient)
 
     if (
       existingRecord.storage_target_key !== validInput.storageTargetKey ||
@@ -910,7 +915,7 @@ export const replacePrivateFile = async (input: ReplaceStoredFileInput) => {
         validInput.storageObjectKey,
       )
     }
-    await markFileRecordFailedQuietly(input.fileId, message)
+    await markFileRecordFailedQuietly(input.fileId, message, dbClient)
 
     throw error
   }

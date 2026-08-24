@@ -231,7 +231,6 @@ export const uploadFamilyMemberPhoto = async ({
       left join users u on u.id = $2
       where fo.storage_object_key = $1
          or fo.storage_object_key = u.profile_image_path
-         or (fo.related_record_type = 'users' and fo.related_record_id = $2 and fo.storage_target_key = 'resident_documents')
       order by
         case when fo.storage_object_key = $1 then 0 else 1 end,
         case when fo.upload_status = 'READY' then 0 else 1 end,
@@ -261,9 +260,9 @@ export const uploadFamilyMemberPhoto = async ({
     await replacePrivateFile({
       ...fileInput,
       fileId: fileResult.rows[0].file_id,
-    })
+    }, { dbClient: client })
   } else {
-    await uploadPrivateFile(fileInput)
+    await uploadPrivateFile(fileInput, { dbClient: client })
   }
 
   const updated = await client.query<{ profile_image_path: string; updated_at: string }>(
