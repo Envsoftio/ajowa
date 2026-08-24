@@ -16,10 +16,11 @@ test('resident data navigation is lazy, cached per user, and immediately revalid
   assert.match(source, /asyncData\.pending\.value && asyncData\.data\.value == null/)
 })
 
-test('resident shell shows central loading feedback for background data refreshes', async () => {
+test('resident shell does not cover the page for background data refreshes', async () => {
   const source = await readSource('../components/app/AppShell.vue')
 
-  assert.match(source, /const residentDataLoading = useResidentDataLoading\(\)/)
-  assert.match(source, /residentDataLoading\.value > 0/)
+  assert.doesNotMatch(source, /useResidentDataLoading\(\)/)
+  assert.doesNotMatch(source, /residentDataLoading\.value > 0/)
+  assert.match(source, /showLoadingOverlay = computed\(\(\) => isLoading\.value\)/)
   assert.match(source, /v-if="showLoadingOverlay"/)
 })

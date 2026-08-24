@@ -2,7 +2,7 @@
   "name": "AJOWA",
   "short_name": "AJOWA",
   "description": "AJOWA society management dashboard.",
-  "start_url": "/",
+  "start_url": "/launch.html",
   "scope": "/",
   "display": "standalone",
   "background_color": "#ffffff",

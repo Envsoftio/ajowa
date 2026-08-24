@@ -2,6 +2,25 @@ import { defineStore } from 'pinia'
 import type { AuthMe } from '~/types/auth'
 
 const fetchMeRequests = new WeakMap<object, Promise<AuthMe | null>>()
+const PWA_DESTINATION_STORAGE_KEY = 'ajowa:pwa-destination'
+
+const rememberPwaDestination = (me: AuthMe | null) => {
+  if (!import.meta.client) return
+
+  try {
+    if (
+      me?.landingRoute.startsWith('/')
+      && !me.landingRoute.startsWith('//')
+    ) {
+      window.localStorage.setItem(PWA_DESTINATION_STORAGE_KEY, me.landingRoute)
+      return
+    }
+
+    window.localStorage.removeItem(PWA_DESTINATION_STORAGE_KEY)
+  } catch {
+    // Storage can be unavailable in private browsing; auth must still succeed.
+  }
+}
 
 export const useAuthStore = defineStore('auth', {
   state: () => ({
@@ -40,6 +59,7 @@ export const useAuthStore = defineStore('auth', {
             return this.me
           }
           this.me = response.data
+          rememberPwaDestination(this.me)
           this.loaded = true
           return this.me
         } catch {
@@ -111,6 +131,7 @@ export const useAuthStore = defineStore('auth', {
 
       fetchMeRequests.delete(this)
       this.clearProfilePhotoPreview()
+      rememberPwaDestination(null)
       this.me = null
       this.loaded = true
       this.loading = false

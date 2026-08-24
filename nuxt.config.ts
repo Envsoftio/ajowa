@@ -175,8 +175,10 @@ export default defineNuxtConfig({
           crossorigin: '',
         },
         {
-          rel: 'stylesheet',
+          rel: 'preload',
+          as: 'style',
           href: 'https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&display=swap',
+          onload: "this.onload=null;this.rel='stylesheet'",
         },
         { rel: 'manifest', href: '/manifest.webmanifest' },
         { rel: 'icon', type: 'image/svg+xml', href: '/ajowa-icon.svg' },

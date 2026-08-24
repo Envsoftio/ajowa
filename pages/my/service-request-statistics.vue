@@ -164,54 +164,63 @@ const kpiCards = computed(() => [
     value: formatNumber(summary.value?.openedDuringPeriod),
     detail: 'Created in selected period',
     tone: 'info',
+    icon: 'pi pi-plus-circle',
   },
   {
     label: 'Resolved',
     value: formatNumber(summary.value?.resolvedDuringPeriod),
     detail: 'Resolved in selected period',
     tone: 'success',
+    icon: 'pi pi-check-circle',
   },
   {
     label: 'Closed',
     value: formatNumber(summary.value?.closedDuringPeriod),
     detail: 'Closed in selected period',
     tone: 'success',
+    icon: 'pi pi-lock',
   },
   {
     label: 'Active now',
     value: formatNumber(summary.value?.activeNow),
     detail: 'Current matching backlog',
     tone: 'info',
+    icon: 'pi pi-inbox',
   },
   {
     label: 'Overdue now',
     value: formatNumber(summary.value?.overdueNow),
     detail: 'Active and past SLA',
     tone: 'danger',
+    icon: 'pi pi-clock',
   },
   {
     label: 'Reopened',
     value: formatNumber(summary.value?.reopenedDuringPeriod),
     detail: 'Reopened in selected period',
     tone: 'warn',
+    icon: 'pi pi-replay',
   },
   {
     label: 'Resolution rate',
     value: `${summary.value?.resolutionRate ?? 0}%`,
     detail: 'Opened cohort now resolved or closed',
     tone: 'success',
+    icon: 'pi pi-chart-line',
   },
   {
     label: 'SLA breached',
     value: formatNumber(summary.value?.slaBreachedOpenedDuringPeriod),
     detail: 'Among tickets opened in period',
     tone: 'danger',
+    icon: 'pi pi-exclamation-triangle',
   },
 ])
 
 const serviceLevels = computed(() => [
   {
     label: 'Average first response',
+    icon: 'pi pi-bolt',
     value: formatMetricDuration(
       summary.value?.averageFirstResponseMinutes,
       'minutes',
@@ -219,6 +228,7 @@ const serviceLevels = computed(() => [
   },
   {
     label: 'Average resolution time',
+    icon: 'pi pi-stopwatch',
     value: formatMetricDuration(summary.value?.averageResolutionHours, 'hours'),
   },
 ])
@@ -429,7 +439,10 @@ const hasOpenedCohort = computed(
             class="surface-card service-statistics__kpi"
             :data-tone="card.tone"
           >
-            <p>{{ card.label }}</p>
+            <div class="service-statistics__kpi-heading">
+              <span aria-hidden="true"><i :class="card.icon" /></span>
+              <p>{{ card.label }}</p>
+            </div>
             <strong>{{ card.value }}</strong>
             <small>{{ card.detail }}</small>
           </article>
@@ -439,9 +452,12 @@ const hasOpenedCohort = computed(
           <article
             v-for="item in serviceLevels"
             :key="item.label"
-            class="surface-card"
+            class="surface-card service-statistics__service-level-card"
           >
-            <span>{{ item.label }}</span>
+            <div>
+              <span aria-hidden="true"><i :class="item.icon" /></span>
+              <span>{{ item.label }}</span>
+            </div>
             <strong>{{ item.value }}</strong>
           </article>
         </section>
@@ -494,6 +510,10 @@ const hasOpenedCohort = computed(
               <small>{{ formatPeriodLabel(item.periodStart) }}</small>
             </div>
           </div>
+          <p class="service-statistics__mobile-hint">
+            <i class="pi pi-arrows-h" aria-hidden="true" /> Swipe to explore the
+            full timeline.
+          </p>
         </section>
 
         <section class="service-statistics__breakdown-grid">
@@ -591,10 +611,10 @@ const hasOpenedCohort = computed(
                   :key="item.category"
                 >
                   <th>{{ item.category }}</th>
-                  <td>{{ item.opened }}</td>
-                  <td>{{ item.resolved }}</td>
-                  <td>{{ item.active }}</td>
-                  <td>{{ item.overdue }}</td>
+                  <td data-label="Opened">{{ item.opened }}</td>
+                  <td data-label="Resolved">{{ item.resolved }}</td>
+                  <td data-label="Active now">{{ item.active }}</td>
+                  <td data-label="Overdue now">{{ item.overdue }}</td>
                 </tr>
               </tbody>
             </table>
@@ -631,10 +651,10 @@ const hasOpenedCohort = computed(
                   :key="item.departmentId ?? 'unassigned'"
                 >
                   <th>{{ item.departmentName }}</th>
-                  <td>{{ item.opened }}</td>
-                  <td>{{ item.resolved }}</td>
-                  <td>{{ item.active }}</td>
-                  <td>{{ item.overdue }}</td>
+                  <td data-label="Opened">{{ item.opened }}</td>
+                  <td data-label="Resolved">{{ item.resolved }}</td>
+                  <td data-label="Active now">{{ item.active }}</td>
+                  <td data-label="Overdue now">{{ item.overdue }}</td>
                 </tr>
               </tbody>
             </table>
@@ -679,6 +699,7 @@ const hasOpenedCohort = computed(
 .service-statistics {
   display: grid;
   gap: 1rem;
+  min-width: 0;
 }
 .service-statistics__hero {
   display: flex;
@@ -698,6 +719,8 @@ const hasOpenedCohort = computed(
 .service-statistics__chart-card,
 .service-statistics__table-card {
   padding: 1.15rem;
+  min-width: 0;
+  max-width: 100%;
 }
 .service-statistics__section-heading {
   display: flex;
@@ -749,19 +772,80 @@ const hasOpenedCohort = computed(
   gap: 0.85rem;
 }
 .service-statistics__kpi {
+  --statistics-card-accent: var(--p-blue-500);
+  --statistics-card-tint: color-mix(
+    in srgb,
+    var(--statistics-card-accent) 8%,
+    var(--color-surface)
+  );
+  position: relative;
   display: grid;
-  gap: 0.3rem;
+  grid-template-rows: auto 1fr auto;
+  gap: 0.55rem;
+  min-height: 9rem;
+  overflow: hidden;
   padding: 1rem;
-  border-top: 3px solid var(--p-primary-color);
+  border-color: color-mix(
+    in srgb,
+    var(--statistics-card-accent) 35%,
+    var(--surface-border)
+  );
+  background: linear-gradient(
+    145deg,
+    var(--statistics-card-tint),
+    var(--color-surface) 68%
+  );
 }
 .service-statistics__kpi[data-tone='success'] {
-  border-top-color: var(--p-green-500);
+  --statistics-card-accent: var(--p-green-500);
 }
 .service-statistics__kpi[data-tone='warn'] {
-  border-top-color: var(--p-orange-500);
+  --statistics-card-accent: var(--p-orange-500);
 }
 .service-statistics__kpi[data-tone='danger'] {
-  border-top-color: var(--p-red-500);
+  --statistics-card-accent: var(--p-red-500);
+}
+.service-statistics__kpi::after {
+  position: absolute;
+  top: -1.5rem;
+  right: -1.5rem;
+  width: 4.5rem;
+  height: 4.5rem;
+  border-radius: 999px;
+  background: color-mix(
+    in srgb,
+    var(--statistics-card-accent) 10%,
+    transparent
+  );
+  content: '';
+  pointer-events: none;
+}
+.service-statistics__kpi-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.service-statistics__kpi-heading > span,
+.service-statistics__service-level-card > div > span:first-child {
+  display: inline-grid;
+  flex: 0 0 auto;
+  width: 2rem;
+  height: 2rem;
+  place-items: center;
+  border-radius: 0.6rem;
+  color: var(--statistics-card-accent);
+  background: color-mix(
+    in srgb,
+    var(--statistics-card-accent) 14%,
+    transparent
+  );
+}
+.service-statistics__kpi-heading p {
+  overflow-wrap: anywhere;
+  font-size: 0.85rem;
+  font-weight: 700;
+  line-height: 1.2;
 }
 .service-statistics__kpi p,
 .service-statistics__kpi small {
@@ -769,22 +853,40 @@ const hasOpenedCohort = computed(
   color: var(--text-color-secondary);
 }
 .service-statistics__kpi strong {
+  align-self: center;
   font-size: clamp(1.5rem, 3vw, 2.2rem);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
 }
 .service-statistics__service-levels {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.85rem;
 }
-.service-statistics__service-levels article {
+.service-statistics__service-level-card {
+  --statistics-card-accent: var(--p-primary-color);
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 1rem;
   padding: 1rem;
+  border-color: color-mix(
+    in srgb,
+    var(--statistics-card-accent) 28%,
+    var(--surface-border)
+  );
+}
+.service-statistics__service-level-card > div {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-width: 0;
+  font-weight: 600;
 }
 .service-statistics__service-levels strong {
   font-size: 1.2rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 .service-statistics__legend span {
   display: inline-flex;
@@ -843,6 +945,9 @@ const hasOpenedCohort = computed(
   white-space: nowrap;
   font-size: 0.68rem;
   color: var(--text-color-secondary);
+}
+.service-statistics__mobile-hint {
+  display: none;
 }
 .service-statistics__breakdown-grid {
   display: grid;
@@ -937,6 +1042,9 @@ const hasOpenedCohort = computed(
   }
 }
 @media (max-width: 640px) {
+  .service-statistics {
+    gap: 0.75rem;
+  }
   .service-statistics__hero,
   .service-statistics__section-heading {
     align-items: stretch;
@@ -946,16 +1054,193 @@ const hasOpenedCohort = computed(
     width: 100%;
   }
   .service-statistics__filter-grid,
-  .service-statistics__kpis,
   .service-statistics__breakdown-grid,
   .service-statistics__service-levels {
     grid-template-columns: 1fr;
   }
+  .service-statistics__kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.6rem;
+  }
+  .service-statistics__kpi {
+    gap: 0.45rem;
+    min-height: 8rem;
+    padding: 0.8rem;
+    border-radius: 0.85rem;
+  }
+  .service-statistics__kpi-heading {
+    gap: 0.4rem;
+  }
+  .service-statistics__kpi-heading > span {
+    width: 1.75rem;
+    height: 1.75rem;
+    border-radius: 0.5rem;
+    font-size: 0.8rem;
+  }
+  .service-statistics__kpi-heading p {
+    font-size: 0.78rem;
+  }
+  .service-statistics__kpi strong {
+    font-size: clamp(1.35rem, 7vw, 1.7rem);
+  }
+  .service-statistics__kpi small {
+    font-size: 0.72rem;
+    line-height: 1.25;
+  }
+  .service-statistics__service-level-card {
+    min-height: 4.5rem;
+    padding: 0.8rem;
+  }
+  .service-statistics__service-level-card > div {
+    gap: 0.5rem;
+    font-size: 0.85rem;
+  }
+  .service-statistics__service-level-card > div > span:first-child {
+    width: 1.85rem;
+    height: 1.85rem;
+    font-size: 0.82rem;
+  }
+  .service-statistics__service-levels strong {
+    font-size: 1rem;
+  }
   .service-statistics__compact-breakdowns {
     grid-template-columns: 1fr 1fr;
   }
+  .service-statistics__filters,
+  .service-statistics__chart-card,
+  .service-statistics__table-card,
+  .service-statistics__breakdown-grid > article {
+    padding: 0.85rem;
+  }
+  .service-statistics__range-actions {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .service-statistics__range-actions :deep(.p-button) {
+    width: 100%;
+    padding-inline: 0.4rem;
+  }
+  .service-statistics__filter-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
   .service-statistics__filter-actions :deep(.p-button) {
-    flex: 1 1 auto;
+    width: 100%;
+  }
+  .service-statistics__filter-actions :deep(.p-button:first-child) {
+    grid-column: 1 / -1;
+  }
+  .service-statistics__legend {
+    gap: 0.75rem;
+  }
+  .service-statistics__trend {
+    height: 13rem;
+    margin-inline: -0.25rem;
+    padding-top: 0.5rem;
+    scroll-snap-type: x proximity;
+    scrollbar-width: thin;
+  }
+  .service-statistics__trend-group {
+    flex-basis: 2.75rem;
+    min-width: 2.75rem;
+    scroll-snap-align: start;
+  }
+  .service-statistics__mobile-hint {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    margin: 0.65rem 0 0;
+    color: var(--text-color-secondary);
+    font-size: 0.78rem;
+  }
+  .service-statistics__table-scroll {
+    overflow: visible;
+  }
+  .service-statistics table,
+  .service-statistics tbody,
+  .service-statistics tr,
+  .service-statistics th,
+  .service-statistics td {
+    display: block;
+    width: 100%;
+  }
+  .service-statistics thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .service-statistics tbody {
+    display: grid;
+    gap: 0.7rem;
+  }
+  .service-statistics tbody tr {
+    overflow: hidden;
+    border: 1px solid var(--surface-border);
+    border-radius: 0.75rem;
+    background: var(--surface-ground);
+  }
+  .service-statistics tbody th {
+    padding: 0.7rem 0.75rem;
+    border-bottom: 1px solid var(--surface-border);
+    white-space: normal;
+  }
+  .service-statistics tbody td {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid var(--surface-border);
+  }
+  .service-statistics tbody td::before {
+    content: attr(data-label);
+    color: var(--text-color-secondary);
+    font-size: 0.8rem;
+    font-weight: 600;
+  }
+  .service-statistics tbody td:last-child {
+    border-bottom: 0;
+  }
+  .service-statistics__note,
+  .service-statistics__privacy {
+    padding: 0.85rem;
+  }
+}
+
+@media (max-width: 380px) {
+  .service-statistics__kpis {
+    grid-template-columns: 1fr;
+  }
+  .service-statistics__kpi {
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    min-height: 0;
+  }
+  .service-statistics__kpi-heading {
+    grid-row: 1 / -1;
+    align-self: center;
+  }
+  .service-statistics__kpi-heading p {
+    max-width: 5.5rem;
+  }
+  .service-statistics__kpi strong,
+  .service-statistics__kpi small {
+    grid-column: 2;
+  }
+  .service-statistics__compact-breakdowns {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (display-mode: standalone) and (max-width: 640px) {
+  .service-statistics__kpi,
+  .service-statistics__service-level-card {
+    -webkit-tap-highlight-color: transparent;
   }
 }
 </style>

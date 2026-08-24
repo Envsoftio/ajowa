@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#0645c3" />
+    <title>AJOWA</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #f6f8fd;
+        color: #121821;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        min-height: 100dvh;
+        margin: 0;
+        display: grid;
+        place-items: center;
+        background:
+          radial-gradient(circle at 50% 34%, rgba(6, 69, 195, 0.12), transparent 13rem),
+          #f6f8fd;
+      }
+
+      main {
+        display: grid;
+        justify-items: center;
+        gap: 1rem;
+        padding: 2rem;
+        text-align: center;
+      }
+
+      img {
+        width: 6rem;
+        height: 6rem;
+      }
+
+      h1 {
+        margin: 0;
+        color: #0645c3;
+        font-size: 1.5rem;
+        letter-spacing: 0.06em;
+      }
+
+      p {
+        min-height: 1.4rem;
+        margin: 0;
+        color: #647086;
+        font-size: 0.95rem;
+      }
+
+      .spinner {
+        width: 1.5rem;
+        height: 1.5rem;
+        border: 3px solid rgba(6, 69, 195, 0.18);
+        border-top-color: #0645c3;
+        border-radius: 50%;
+        animation: spin 0.75s linear infinite;
+      }
+
+      button {
+        display: none;
+        padding: 0.7rem 1rem;
+        border: 0;
+        border-radius: 0.4rem;
+        background: #0645c3;
+        color: #fff;
+        font: inherit;
+        font-weight: 700;
+      }
+
+      .failed .spinner {
+        display: none;
+      }
+
+      .failed button {
+        display: block;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          background: #0b1738;
+          color: #f8fbff;
+        }
+
+        body {
+          background:
+            radial-gradient(circle at 50% 34%, rgba(125, 178, 255, 0.18), transparent 13rem),
+            #0b1738;
+        }
+
+        h1 {
+          color: #9fc5ff;
+        }
+
+        p {
+          color: #b8c6dd;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main id="launch-status" aria-live="polite">
+      <img src="/ajowa-icon.svg" alt="" />
+      <h1>AJOWA</h1>
+      <span class="spinner" aria-hidden="true"></span>
+      <p id="launch-message">Opening your workspace…</p>
+      <button id="launch-retry" type="button">Try again</button>
+    </main>
+
+    <script>
+      const status = document.getElementById('launch-status')
+      const message = document.getElementById('launch-message')
+      const retry = document.getElementById('launch-retry')
+      const destinationStorageKey = 'ajowa:pwa-destination'
+
+      const isSafeAppPath = (value) =>
+        typeof value === 'string' && value.startsWith('/') && !value.startsWith('//')
+
+      const resolveDestination = (me) => {
+        if (!me) return '/login'
+        if (me.access && me.access.requiresPasswordChange) return '/change-password'
+        if (me.access && me.access.requiresEmailVerification) return '/verify-email'
+        return isSafeAppPath(me.landingRoute) ? me.landingRoute : '/'
+      }
+
+      const readRememberedDestination = () => {
+        try {
+          const destination = window.localStorage.getItem(destinationStorageKey)
+          return isSafeAppPath(destination) ? destination : null
+        } catch {
+          return null
+        }
+      }
+
+      const rememberDestination = (destination) => {
+        try {
+          if (destination === '/login') {
+            window.localStorage.removeItem(destinationStorageKey)
+          } else if (isSafeAppPath(destination)) {
+            window.localStorage.setItem(destinationStorageKey, destination)
+          }
+        } catch {
+          // Storage can be unavailable in private browsing; startup still works.
+        }
+      }
+
+      const launch = async () => {
+        status.classList.remove('failed')
+        message.textContent = 'Opening your workspace…'
+
+        const controller = new AbortController()
+        const timeout = window.setTimeout(() => controller.abort(), 10000)
+
+        try {
+          const response = await fetch('/api/auth/me', {
+            credentials: 'include',
+            headers: { Accept: 'application/json' },
+            signal: controller.signal,
+          })
+
+          if (!response.ok) throw new Error('Session check failed')
+
+          const payload = await response.json()
+          const destination = resolveDestination(payload && payload.data)
+          rememberDestination(destination)
+          window.location.replace(destination)
+        } catch {
+          status.classList.add('failed')
+          message.textContent = navigator.onLine
+            ? 'AJOWA is taking longer than expected.'
+            : 'You appear to be offline.'
+        } finally {
+          window.clearTimeout(timeout)
+        }
+      }
+
+      retry.addEventListener('click', launch)
+
+      // Let the browser paint this lightweight shell before starting network work.
+      window.requestAnimationFrame(() =>
+        window.requestAnimationFrame(() => {
+          const rememberedDestination = readRememberedDestination()
+
+          if (rememberedDestination) {
+            window.location.replace(rememberedDestination)
+            return
+          }
+
+          launch()
+        }),
+      )
+    </script>
+  </body>
+</html>

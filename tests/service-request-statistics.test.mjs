@@ -92,10 +92,26 @@ test('flat owners can open statistics directly from their service request accoun
   const requestsPage = await readSource(
     '../pages/my/service-requests/index.vue',
   )
+  const residentDashboard = await readSource('../pages/my/dues.vue')
   const shell = await readSource('../shared/shell.ts')
 
   assert.match(requestsPage, /href="\/my\/service-request-statistics"/)
   assert.match(requestsPage, /Service request statistics/)
   assert.match(requestsPage, /all society tickets/)
+  assert.match(residentDashboard, /href="\/my\/service-request-statistics"/)
+  assert.match(residentDashboard, /View statistics/)
   assert.match(shell, /to: '\/my\/service-request-statistics'/)
+})
+
+test('resident statistics use compact mobile layouts', async () => {
+  const page = await readSource('../pages/my/service-request-statistics.vue')
+
+  assert.match(page, /data-label="Opened"/)
+  assert.match(page, /Swipe to explore[\s\S]*full timeline/)
+  assert.match(page, /@media \(max-width: 640px\)/)
+  assert.match(page, /grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/)
+  assert.match(page, /content: attr\(data-label\)/)
+  assert.match(page, /service-statistics__kpi-heading/)
+  assert.match(page, /@media \(max-width: 380px\)/)
+  assert.match(page, /@media \(display-mode: standalone\)/)
 })

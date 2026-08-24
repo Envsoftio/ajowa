@@ -85,18 +85,16 @@ const { data: paymentAvailabilityData } = useResidentAsyncData(
   'online-payment-availability',
   () => api<PaymentAvailabilityResponse>('/api/payments/online/availability'),
 )
-const {
-  data: dgAdvanceData,
-  refresh: refreshDgAdvances,
-} = useResidentAsyncData('my-dg-advances', () =>
-  api<DgAdvanceSummaryResponse>('/api/my/dg-advances').catch(() => ({
+const { data: dgAdvanceData, refresh: refreshDgAdvances } =
+  useResidentAsyncData('my-dg-advances', () =>
+    api<DgAdvanceSummaryResponse>('/api/my/dg-advances').catch(() => ({
       ok: true as const,
       data: {
         items: [],
         totalAvailable: 0,
       },
     })),
-)
+  )
 
 const refresh = async () => {
   void refreshDgAdvances().catch(() => undefined)
@@ -341,11 +339,10 @@ const payDue = async (due: MaintenanceDue) => {
     toast.add({
       severity: 'error',
       summary: 'Payment could not be started',
-      detail:
-        getApiErrorMessage(
-          error,
-          'Please wait and refresh before trying again.',
-        ),
+      detail: getApiErrorMessage(
+        error,
+        'Please wait and refresh before trying again.',
+      ),
       life: 7000,
     })
   } finally {
@@ -551,6 +548,27 @@ const openBreakdown = (due: MaintenanceDue) => {
         </p>
       </section>
     </div>
+
+    <section class="surface-card resident-service-statistics-link">
+      <div class="resident-service-statistics-link__icon" aria-hidden="true">
+        <i class="pi pi-chart-bar" />
+      </div>
+      <div class="resident-service-statistics-link__content">
+        <p class="eyebrow">Service transparency</p>
+        <h2>Service request statistics</h2>
+        <p>
+          See opened, resolved, closed, active, overdue, and service-level
+          trends across all society tickets.
+        </p>
+      </div>
+      <Button
+        label="View statistics"
+        icon="pi pi-arrow-right"
+        icon-pos="right"
+        as="a"
+        href="/my/service-request-statistics"
+      />
+    </section>
 
     <section class="list-page surface-card resident-dues-panel">
       <header class="list-page__header">
@@ -870,3 +888,60 @@ const openBreakdown = (due: MaintenanceDue) => {
     </Dialog>
   </div>
 </template>
+
+<style scoped>
+.resident-service-statistics-link {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem 1.15rem;
+  border-left: 4px solid var(--p-primary-color);
+}
+
+.resident-service-statistics-link__icon {
+  display: grid;
+  width: 2.75rem;
+  height: 2.75rem;
+  place-items: center;
+  border-radius: 0.8rem;
+  color: var(--p-primary-color);
+  background: color-mix(in srgb, var(--p-primary-color) 12%, transparent);
+}
+
+.resident-service-statistics-link__icon i {
+  font-size: 1.25rem;
+}
+
+.resident-service-statistics-link__content {
+  min-width: 0;
+}
+
+.resident-service-statistics-link__content h2,
+.resident-service-statistics-link__content p {
+  margin: 0;
+}
+
+.resident-service-statistics-link__content h2 {
+  margin-top: 0.15rem;
+  font-size: 1.1rem;
+}
+
+.resident-service-statistics-link__content p:last-child {
+  margin-top: 0.3rem;
+  color: var(--text-color-secondary);
+}
+
+@media (max-width: 640px) {
+  .resident-service-statistics-link {
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.75rem;
+    padding: 0.9rem;
+  }
+
+  .resident-service-statistics-link :deep(.p-button) {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+}
+</style>

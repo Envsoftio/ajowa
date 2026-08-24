@@ -1,6 +1,7 @@
-const CACHE_NAME = 'ajowa-app-v6'
+const CACHE_NAME = 'ajowa-app-v7'
 const DEFAULT_NOTIFICATION_LINK = '/my/notifications'
 const APP_SHELL = [
+  '/launch.html',
   '/manifest.webmanifest',
   '/ajowa-icon.svg',
   '/icons/ajowa-icon-192.png',
@@ -91,6 +92,16 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(request.url)
   if (url.origin !== self.location.origin) return
   if (url.pathname.startsWith('/api/')) return
+
+  // The launch page contains no user data, so it is safe to serve immediately
+  // while the app checks the session in the background. Authenticated Nuxt
+  // documents remain network-only below to avoid caching private HTML.
+  if (request.mode === 'navigate' && url.pathname === '/launch.html') {
+    event.respondWith(
+      caches.match('/launch.html').then((cached) => cached || fetch(request)),
+    )
+    return
+  }
 
   if (request.mode === 'navigate') {
     event.respondWith(
