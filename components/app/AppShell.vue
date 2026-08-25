@@ -67,12 +67,11 @@ watch(
   async () => {
     await nextTick()
 
+    contentRef.value?.scrollTo({ top: 0, left: 0, behavior: 'auto' })
+
     if (import.meta.client && window.matchMedia('(max-width: 768px)').matches) {
       window.scrollTo({ top: 0, left: 0, behavior: 'auto' })
-      return
     }
-
-    contentRef.value?.scrollTo({ top: 0, left: 0, behavior: 'auto' })
   },
 )
 </script>
