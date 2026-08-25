@@ -737,20 +737,51 @@ const validateBookingRules = async (
   }
 
   const localStart = getLocalParts(input.startsAt, timezone)
-  const dayWindows = operatingHours[localStart.weekday] ?? []
-  const insideHours = dayWindows.some((window) => {
-    const start = timeToMinutes(window.start)
-    const end = timeToMinutes(window.end)
-    return (
-      start != null && end != null && startMinutes >= start && endMinutes <= end
-    )
-  })
+  const localEnd = getLocalParts(input.endsAt, timezone)
+  const isSameLocalDate =
+    localStart.year === localEnd.year &&
+    localStart.month === localEnd.month &&
+    localStart.day === localEnd.day
+  const startDayWindows = operatingHours[localStart.weekday] ?? []
+  const endDayWindows = operatingHours[localEnd.weekday] ?? []
+  const insideHours = isSameLocalDate
+    ? startDayWindows.some((window) => {
+        const start = timeToMinutes(window.start)
+        const end = timeToMinutes(window.end)
+        return (
+          start != null &&
+          end != null &&
+          startMinutes >= start &&
+          endMinutes <= end
+        )
+      })
+    : startDayWindows.some((window) => {
+        const start = timeToMinutes(window.start)
+        const end = timeToMinutes(window.end)
+        return (
+          start != null &&
+          end != null &&
+          startMinutes >= start &&
+          startMinutes < end
+        )
+      }) &&
+      endDayWindows.some((window) => {
+        const start = timeToMinutes(window.start)
+        const end = timeToMinutes(window.end)
+        return (
+          start != null &&
+          end != null &&
+          endMinutes >= start &&
+          endMinutes <= end
+        )
+      })
 
   if (!insideHours) {
     throw new AppError({
       code: 'VALIDATION_ERROR',
       statusCode: 400,
-      message: 'Booking time must be inside amenity operating hours.',
+      message:
+        'Booking start and end times must be inside amenity operating hours.',
     })
   }
 

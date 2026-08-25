@@ -1,5 +1,9 @@
 <script setup lang="ts">
-import type { AmenityAvailability, AmenityBlockedDates, AmenitySummary } from '~/types/domain'
+import type {
+  AmenityAvailability,
+  AmenityBlockedDates,
+  AmenitySummary,
+} from '~/types/domain'
 
 definePageMeta({
   layout: 'resident',
@@ -18,7 +22,15 @@ type TimeOption = {
   value: string
 }
 
-type BookingField = 'flatId' | 'amenityId' | 'date' | 'startTime' | 'endTime' | 'purpose' | 'rulesAccepted'
+type BookingField =
+  | 'flatId'
+  | 'amenityId'
+  | 'date'
+  | 'startTime'
+  | 'endDate'
+  | 'endTime'
+  | 'purpose'
+  | 'rulesAccepted'
 
 type ApiErrorPayloadShape = {
   message?: string
@@ -29,7 +41,15 @@ type ApiErrorPayloadShape = {
   data?: ApiErrorPayloadShape
 }
 
-const weekdayKeys = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'] as const
+const weekdayKeys = [
+  'sunday',
+  'monday',
+  'tuesday',
+  'wednesday',
+  'thursday',
+  'friday',
+  'saturday',
+] as const
 
 const api = useApi()
 const toast = useToast()
@@ -37,6 +57,7 @@ const router = useRouter()
 const saving = ref(false)
 const createdBooking = ref<{ id: string; bookingNumber: string } | null>(null)
 const dateValue = ref<Date | null>(null)
+const endDateValue = ref<Date | null>(null)
 const fieldErrors = ref<Partial<Record<BookingField, string>>>({})
 const nowMs = ref(Date.now())
 
@@ -45,6 +66,7 @@ const form = reactive({
   flatId: '',
   date: '',
   startTime: '',
+  endDate: '',
   endTime: '',
   guestCount: null as number | null,
   purpose: '',
@@ -52,13 +74,21 @@ const form = reactive({
   rulesAccepted: false,
 })
 
-const { data: optionsData } = useResidentAsyncData('my-amenity-booking-options', () =>
-  api<{ ok: true; data: { amenities: AmenitySummary[]; flats: FlatOption[] } }>('/api/my/amenities'),
+const { data: optionsData } = useResidentAsyncData(
+  'my-amenity-booking-options',
+  () =>
+    api<{
+      ok: true
+      data: { amenities: AmenitySummary[]; flats: FlatOption[] }
+    }>('/api/my/amenities'),
 )
 
 const amenities = computed(() => optionsData.value?.data.amenities ?? [])
 const flats = computed(() => optionsData.value?.data.flats ?? [])
-const selectedAmenity = computed(() => amenities.value.find((amenity) => amenity.id === form.amenityId) ?? null)
+const selectedAmenity = computed(
+  () =>
+    amenities.value.find((amenity) => amenity.id === form.amenityId) ?? null,
+)
 
 watch(
   [amenities, flats],
@@ -73,18 +103,63 @@ watch(
   { immediate: true },
 )
 
-const { data: availabilityData, pending: availabilityPending, refresh: refreshAvailability } = useResidentAsyncData(
+const {
+  data: availabilityData,
+  pending: availabilityPending,
+  refresh: refreshAvailability,
+} = useResidentAsyncData(
   'my-amenity-availability',
   async (): Promise<{ ok: true; data: AmenityAvailability } | null> => {
     if (!form.amenityId || !form.date) return null
-    return api<{ ok: true; data: AmenityAvailability }>(`/api/my/amenities/${form.amenityId}/availability`, {
-      query: { date: form.date },
-    })
+    return api<{ ok: true; data: AmenityAvailability }>(
+      `/api/my/amenities/${form.amenityId}/availability`,
+      {
+        query: { date: form.date },
+      },
+    )
   },
   { watch: [() => form.amenityId, () => form.date] },
 )
 
 const availability = computed(() => availabilityData.value?.data ?? null)
+
+const {
+  data: endAvailabilityData,
+  pending: endAvailabilityPending,
+  refresh: refreshEndAvailability,
+} = useResidentAsyncData(
+    'my-amenity-end-availability',
+    async (): Promise<{ ok: true; data: AmenityAvailability } | null> => {
+      if (!form.amenityId || !form.endDate || form.endDate === form.date)
+        return null
+      return api<{ ok: true; data: AmenityAvailability }>(
+        `/api/my/amenities/${form.amenityId}/availability`,
+        {
+          query: { date: form.endDate },
+        },
+      )
+    },
+    { watch: [() => form.amenityId, () => form.date, () => form.endDate] },
+  )
+
+const endAvailability = computed(() => endAvailabilityData.value?.data ?? null)
+const availabilityWindows = computed(() => {
+  const windows = [
+    ...(availability.value?.unavailableWindows ?? []),
+    ...(endAvailability.value?.unavailableWindows ?? []),
+  ]
+  return windows.filter(
+    (window, index) =>
+      windows.findIndex(
+        (candidate) =>
+          candidate.type === window.type && candidate.id === window.id,
+      ) === index,
+  )
+})
+
+const refreshAllAvailability = async () => {
+  await Promise.all([refreshAvailability(), refreshEndAvailability()])
+}
 
 const dateToKey = (date: Date) =>
   `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
@@ -120,7 +195,8 @@ const formatTimeLabel = (value: string) => {
   return `${hour12}:${String(minutes % 60).padStart(2, '0')} ${suffix}`
 }
 
-const alignToNextSlot = (minutes: number, interval: number) => Math.ceil(minutes / interval) * interval
+const alignToNextSlot = (minutes: number, interval: number) =>
+  Math.ceil(minutes / interval) * interval
 
 const selectedWeekday = computed(() => {
   if (!form.date) return null
@@ -128,18 +204,40 @@ const selectedWeekday = computed(() => {
   return weekdayKeys[day] ?? null
 })
 
-const slotIntervalMinutes = computed(() => selectedAmenity.value?.bookingRules.slotIntervalMinutes ?? 30)
-const minDurationMinutes = computed(() => selectedAmenity.value?.bookingRules.minDurationMinutes ?? 60)
-const maxDurationMinutes = computed(() => selectedAmenity.value?.bookingRules.maxDurationMinutes ?? 240)
-const minimumLeadHours = computed(() => selectedAmenity.value?.bookingRules.minimumLeadHours ?? 0)
-const maximumAdvanceDays = computed(() => selectedAmenity.value?.bookingRules.maximumAdvanceDays ?? 60)
+const selectedEndWeekday = computed(() => {
+  if (!form.endDate) return null
+  const day = new Date(`${form.endDate}T12:00:00`).getDay()
+  return weekdayKeys[day] ?? null
+})
+
+const slotIntervalMinutes = computed(
+  () => selectedAmenity.value?.bookingRules.slotIntervalMinutes ?? 30,
+)
+const minDurationMinutes = computed(
+  () => selectedAmenity.value?.bookingRules.minDurationMinutes ?? 60,
+)
+const maxDurationMinutes = computed(
+  () => selectedAmenity.value?.bookingRules.maxDurationMinutes ?? 240,
+)
+const minimumLeadHours = computed(
+  () => selectedAmenity.value?.bookingRules.minimumLeadHours ?? 0,
+)
+const maximumAdvanceDays = computed(
+  () => selectedAmenity.value?.bookingRules.maximumAdvanceDays ?? 60,
+)
 
 const minBookingDate = computed(() => {
   const today = new Date(nowMs.value)
   return new Date(today.getFullYear(), today.getMonth(), today.getDate())
 })
 
-const maxBookingDate = computed(() => addDays(new Date(nowMs.value), maximumAdvanceDays.value))
+const maxBookingDate = computed(() =>
+  addDays(new Date(nowMs.value), maximumAdvanceDays.value),
+)
+const maxEndDate = computed(() => {
+  const startDate = dateValue.value ?? minBookingDate.value
+  return addDays(startDate, Math.ceil(maxDurationMinutes.value / (24 * 60)))
+})
 const blockedDatesStart = computed(() => dateToKey(minBookingDate.value))
 const blockedDatesEnd = computed(() => dateToKey(maxBookingDate.value))
 
@@ -147,17 +245,22 @@ const { data: blockedDatesData } = useResidentAsyncData(
   'my-amenity-blocked-dates',
   async (): Promise<{ ok: true; data: AmenityBlockedDates } | null> => {
     if (!form.amenityId) return null
-    return api<{ ok: true; data: AmenityBlockedDates }>(`/api/my/amenities/${form.amenityId}/blocked-dates`, {
-      query: {
-        startDate: blockedDatesStart.value,
-        endDate: blockedDatesEnd.value,
+    return api<{ ok: true; data: AmenityBlockedDates }>(
+      `/api/my/amenities/${form.amenityId}/blocked-dates`,
+      {
+        query: {
+          startDate: blockedDatesStart.value,
+          endDate: blockedDatesEnd.value,
+        },
       },
-    })
+    )
   },
   { watch: [() => form.amenityId, blockedDatesStart, blockedDatesEnd] },
 )
 
-const blockedDateKeys = computed(() => new Set(blockedDatesData.value?.data.blockedDates ?? []))
+const blockedDateKeys = computed(
+  () => new Set(blockedDatesData.value?.data.blockedDates ?? []),
+)
 const disabledBookingDates = computed(() =>
   [...blockedDateKeys.value].map((date) => dateKeyToDate(date)),
 )
@@ -167,21 +270,32 @@ const selectedOperatingWindows = computed(() => {
   return selectedAmenity.value.operatingHours[selectedWeekday.value] ?? []
 })
 
+const selectedEndOperatingWindows = computed(() => {
+  if (!selectedAmenity.value || !selectedEndWeekday.value) return []
+  return selectedAmenity.value.operatingHours[selectedEndWeekday.value] ?? []
+})
+
 const uniqueTimeOptions = (values: string[]) => {
   const uniqueValues = [...new Set(values)].sort()
   return uniqueValues.map((value) => ({ label: formatTimeLabel(value), value }))
 }
 
-const dateTimeAtMinutes = (date: string, minutes: number) => new Date(`${date}T${minutesToTime(minutes)}:00`)
+const dateTimeAtMinutes = (date: string, minutes: number) =>
+  new Date(`${date}T${minutesToTime(minutes)}:00`)
 
 const slotOverlapsUnavailable = (startMinutes: number, endMinutes: number) => {
-  if (!form.date) return false
+  if (!form.date || !form.endDate) return false
 
   const startsAt = dateTimeAtMinutes(form.date, startMinutes)
-  const endsAt = dateTimeAtMinutes(form.date, endMinutes)
+  const endsAt = dateTimeAtMinutes(form.endDate, endMinutes)
+  const unavailableWindows = [
+    ...(availability.value?.unavailableWindows ?? []),
+    ...(endAvailability.value?.unavailableWindows ?? []),
+  ]
 
-  return (availability.value?.unavailableWindows ?? []).some((window) =>
-    startsAt < new Date(window.endsAt) && endsAt > new Date(window.startsAt),
+  return unavailableWindows.some(
+    (window) =>
+      startsAt < new Date(window.endsAt) && endsAt > new Date(window.startsAt),
   )
 }
 
@@ -190,7 +304,8 @@ const startMeetsBookingWindow = (startMinutes: number) => {
 
   const startsAt = dateTimeAtMinutes(form.date, startMinutes).getTime()
   const earliestStart = nowMs.value + minimumLeadHours.value * 60 * 60 * 1000
-  const latestStart = nowMs.value + maximumAdvanceDays.value * 24 * 60 * 60 * 1000
+  const latestStart =
+    nowMs.value + maximumAdvanceDays.value * 24 * 60 * 60 * 1000
   return startsAt >= earliestStart && startsAt <= latestStart
 }
 
@@ -198,19 +313,39 @@ const endTimeValuesForStart = (startTime: number) => {
   const interval = Math.max(1, slotIntervalMinutes.value)
   const values: string[] = []
 
-  if (!startMeetsBookingWindow(startTime)) {
+  if (
+    !form.date ||
+    !form.endDate ||
+    form.endDate < form.date ||
+    !startMeetsBookingWindow(startTime)
+  ) {
     return values
   }
 
-  for (const window of selectedOperatingWindows.value) {
+  const startsAt = dateTimeAtMinutes(form.date, startTime)
+
+  for (const window of selectedEndOperatingWindows.value) {
     const windowStart = timeToMinutes(window.start)
     const windowEnd = timeToMinutes(window.end)
-    if (windowStart == null || windowEnd == null || startTime < windowStart || startTime >= windowEnd) continue
+    if (windowStart == null || windowEnd == null) continue
 
-    const firstEndTime = alignToNextSlot(startTime + minDurationMinutes.value, interval)
-    const lastEndTime = Math.min(startTime + maxDurationMinutes.value, windowEnd)
-    for (let minutes = firstEndTime; minutes <= lastEndTime; minutes += interval) {
-      if (!slotOverlapsUnavailable(startTime, minutes)) {
+    const sameDate = form.endDate === form.date
+    if (sameDate && (startTime < windowStart || startTime >= windowEnd))
+      continue
+
+    for (
+      let minutes = alignToNextSlot(windowStart, interval);
+      minutes <= windowEnd;
+      minutes += interval
+    ) {
+      const endsAt = dateTimeAtMinutes(form.endDate, minutes)
+      const durationMinutes = (endsAt.getTime() - startsAt.getTime()) / 60000
+
+      if (
+        durationMinutes >= minDurationMinutes.value &&
+        durationMinutes <= maxDurationMinutes.value &&
+        !slotOverlapsUnavailable(startTime, minutes)
+      ) {
         values.push(minutesToTime(minutes))
       }
     }
@@ -230,7 +365,16 @@ const startTimeOptions = computed<TimeOption[]>(() => {
     const end = timeToMinutes(window.end)
     if (start == null || end == null) continue
 
-    for (let minutes = alignToNextSlot(start, interval); minutes + minDurationMinutes.value <= end; minutes += interval) {
+    const latestStart =
+      form.endDate === form.date
+        ? end - minDurationMinutes.value
+        : end - interval
+
+    for (
+      let minutes = alignToNextSlot(start, interval);
+      minutes <= latestStart;
+      minutes += interval
+    ) {
       if (endTimeValuesForStart(minutes).length > 0) {
         values.push(minutesToTime(minutes))
       }
@@ -254,13 +398,19 @@ const startTimePlaceholder = computed(() => {
 })
 
 const endTimePlaceholder = computed(() => {
+  if (!form.endDate) return 'Select end date first'
   if (!form.startTime) return 'Select start first'
   if (!endTimeOptions.value.length) return 'No end slots available'
   return 'Select end time'
 })
 
 const selectedDateUnavailable = computed(() =>
-  Boolean(form.date && !availabilityPending.value && availability.value && startTimeOptions.value.length === 0),
+  Boolean(
+    form.date &&
+    !availabilityPending.value &&
+    availability.value &&
+    startTimeOptions.value.length === 0,
+  ),
 )
 
 const formatDateTime = (value: string) =>
@@ -304,7 +454,10 @@ const getFirstFieldErrorMessage = (payload?: ApiErrorPayloadShape | null) => {
   return message ? `${field}: ${message}` : null
 }
 
-const getApiErrorMessage = (error: unknown, fallback = 'Booking submission failed. Please review the form and try again.') => {
+const getApiErrorMessage = (
+  error: unknown,
+  fallback = 'Booking submission failed. Please review the form and try again.',
+) => {
   const apiError = error as {
     message?: string
     statusMessage?: string
@@ -351,7 +504,8 @@ const applyApiFieldErrors = (error: unknown) => {
   if (errors.flatId?.[0]) fieldErrors.value.flatId = errors.flatId[0]
   if (errors.amenityId?.[0]) fieldErrors.value.amenityId = errors.amenityId[0]
   if (errors.purpose?.[0]) fieldErrors.value.purpose = errors.purpose[0]
-  if (errors.rulesAccepted?.[0]) fieldErrors.value.rulesAccepted = errors.rulesAccepted[0]
+  if (errors.rulesAccepted?.[0])
+    fieldErrors.value.rulesAccepted = errors.rulesAccepted[0]
 
   if (errors.startsAt?.[0]) {
     if (!form.date) {
@@ -362,8 +516,8 @@ const applyApiFieldErrors = (error: unknown) => {
   }
 
   if (errors.endsAt?.[0]) {
-    if (!form.date) {
-      fieldErrors.value.date ??= errors.endsAt[0]
+    if (!form.endDate) {
+      fieldErrors.value.endDate = errors.endsAt[0]
     } else {
       fieldErrors.value.endTime = errors.endsAt[0]
     }
@@ -372,17 +526,31 @@ const applyApiFieldErrors = (error: unknown) => {
 
 watch(dateValue, (value) => {
   form.date = value ? dateToKey(value) : ''
+  endDateValue.value = value ? new Date(value) : null
+  form.endDate = form.date
   clearFieldError('date')
+  clearFieldError('endDate')
 })
 
-watch(() => form.amenityId, () => {
-  dateValue.value = null
-  form.date = ''
-  clearFieldError('amenityId')
-  clearFieldError('date')
-  clearFieldError('startTime')
-  clearFieldError('endTime')
+watch(endDateValue, (value) => {
+  form.endDate = value ? dateToKey(value) : ''
+  clearFieldError('endDate')
 })
+
+watch(
+  () => form.amenityId,
+  () => {
+    dateValue.value = null
+    endDateValue.value = null
+    form.date = ''
+    form.endDate = ''
+    clearFieldError('amenityId')
+    clearFieldError('date')
+    clearFieldError('startTime')
+    clearFieldError('endDate')
+    clearFieldError('endTime')
+  },
+)
 
 watch(blockedDateKeys, (dates) => {
   if (!form.date || !dates.has(form.date)) return
@@ -397,13 +565,16 @@ watch(blockedDateKeys, (dates) => {
   })
 })
 
-watch([() => form.amenityId, () => form.date], () => {
+watch([() => form.amenityId, () => form.date, () => form.endDate], () => {
   form.startTime = ''
   form.endTime = ''
 })
 
 watch(startTimeOptions, (options) => {
-  if (form.startTime && !options.some((option) => option.value === form.startTime)) {
+  if (
+    form.startTime &&
+    !options.some((option) => option.value === form.startTime)
+  ) {
     form.startTime = ''
     form.endTime = ''
   }
@@ -420,11 +591,30 @@ watch(endTimeOptions, (options) => {
   }
 })
 
-watch(() => form.flatId, () => clearFieldError('flatId'))
-watch(() => form.startTime, () => clearFieldError('startTime'))
-watch(() => form.endTime, () => clearFieldError('endTime'))
-watch(() => form.purpose, () => clearFieldError('purpose'))
-watch(() => form.rulesAccepted, () => clearFieldError('rulesAccepted'))
+watch(
+  () => form.flatId,
+  () => clearFieldError('flatId'),
+)
+watch(
+  () => form.startTime,
+  () => clearFieldError('startTime'),
+)
+watch(
+  () => form.endDate,
+  () => clearFieldError('endDate'),
+)
+watch(
+  () => form.endTime,
+  () => clearFieldError('endTime'),
+)
+watch(
+  () => form.purpose,
+  () => clearFieldError('purpose'),
+)
+watch(
+  () => form.rulesAccepted,
+  () => clearFieldError('rulesAccepted'),
+)
 
 const submit = async () => {
   if (saving.value) {
@@ -434,13 +624,16 @@ const submit = async () => {
   fieldErrors.value = {}
   saving.value = true
   try {
-    const response = await api<{ ok: true; data: { id: string; bookingNumber: string } }>('/api/my/amenity-bookings', {
+    const response = await api<{
+      ok: true
+      data: { id: string; bookingNumber: string }
+    }>('/api/my/amenity-bookings', {
       method: 'POST',
       body: {
         amenityId: form.amenityId,
         flatId: form.flatId,
         startsAt: localDateTimeToIso(form.date, form.startTime),
-        endsAt: localDateTimeToIso(form.date, form.endTime),
+        endsAt: localDateTimeToIso(form.endDate, form.endTime),
         guestCount: form.guestCount,
         purpose: form.purpose,
         residentNotes: form.residentNotes || null,
@@ -448,7 +641,12 @@ const submit = async () => {
       },
     })
     createdBooking.value = response.data
-    toast.add({ severity: 'success', summary: 'Booking submitted', detail: response.data.bookingNumber, life: 10000 })
+    toast.add({
+      severity: 'success',
+      summary: 'Booking submitted',
+      detail: response.data.bookingNumber,
+      life: 10000,
+    })
   } catch (error) {
     applyApiFieldErrors(error)
     toast.add({
@@ -468,7 +666,10 @@ const submit = async () => {
     <section class="hero-panel">
       <Tag severity="info" value="Amenity Booking" rounded />
       <h1>Request an amenity booking</h1>
-      <p>Select a flat, amenity, date, and time. The request goes to admins for approval.</p>
+      <p>
+        Select a flat, amenity, date, and time. The request goes to admins for
+        approval.
+      </p>
     </section>
 
     <section v-if="createdBooking" class="surface-card booking-success">
@@ -476,8 +677,18 @@ const submit = async () => {
       <h2>{{ createdBooking.bookingNumber }}</h2>
       <p>Your booking request is waiting for admin approval.</p>
       <div class="admin-inline-actions">
-        <Button label="View booking" icon="pi pi-eye" @click="router.push(`/my/amenity-bookings/${createdBooking?.id}`)" />
-        <Button label="My bookings" icon="pi pi-list" severity="secondary" outlined @click="router.push('/my/amenity-bookings')" />
+        <Button
+          label="View booking"
+          icon="pi pi-eye"
+          @click="router.push(`/my/amenity-bookings/${createdBooking?.id}`)"
+        />
+        <Button
+          label="My bookings"
+          icon="pi pi-list"
+          severity="secondary"
+          outlined
+          @click="router.push('/my/amenity-bookings')"
+        />
       </div>
     </section>
 
@@ -493,7 +704,9 @@ const submit = async () => {
             placeholder="Select flat"
             :invalid="Boolean(fieldError('flatId'))"
           />
-          <small v-if="fieldError('flatId')" class="field-error">{{ fieldError('flatId') }}</small>
+          <small v-if="fieldError('flatId')" class="field-error">{{
+            fieldError('flatId')
+          }}</small>
         </label>
 
         <label>
@@ -506,11 +719,13 @@ const submit = async () => {
             placeholder="Select amenity"
             :invalid="Boolean(fieldError('amenityId'))"
           />
-          <small v-if="fieldError('amenityId')" class="field-error">{{ fieldError('amenityId') }}</small>
+          <small v-if="fieldError('amenityId')" class="field-error">{{
+            fieldError('amenityId')
+          }}</small>
         </label>
 
         <label>
-          <span>Date <span class="required-marker">*</span></span>
+          <span>Start date <span class="required-marker">*</span></span>
           <DatePicker
             v-model="dateValue"
             :min-date="minBookingDate"
@@ -523,7 +738,9 @@ const submit = async () => {
             :manual-input="false"
             :invalid="Boolean(fieldError('date'))"
           />
-          <small v-if="fieldError('date')" class="field-error">{{ fieldError('date') }}</small>
+          <small v-if="fieldError('date')" class="field-error">{{
+            fieldError('date')
+          }}</small>
         </label>
 
         <label>
@@ -538,7 +755,28 @@ const submit = async () => {
             fluid
             :invalid="Boolean(fieldError('startTime'))"
           />
-          <small v-if="fieldError('startTime')" class="field-error">{{ fieldError('startTime') }}</small>
+          <small v-if="fieldError('startTime')" class="field-error">{{
+            fieldError('startTime')
+          }}</small>
+        </label>
+
+        <label>
+          <span>End date <span class="required-marker">*</span></span>
+          <DatePicker
+            v-model="endDateValue"
+            :min-date="dateValue ?? minBookingDate"
+            :max-date="maxEndDate"
+            date-format="dd/mm/yy"
+            placeholder="Select end date"
+            show-icon
+            fluid
+            :manual-input="false"
+            :disabled="!form.date"
+            :invalid="Boolean(fieldError('endDate'))"
+          />
+          <small v-if="fieldError('endDate')" class="field-error">{{
+            fieldError('endDate')
+          }}</small>
         </label>
 
         <label>
@@ -549,16 +787,25 @@ const submit = async () => {
             option-label="label"
             option-value="value"
             :placeholder="endTimePlaceholder"
-            :disabled="!form.startTime || !endTimeOptions.length"
+            :disabled="
+              !form.endDate || !form.startTime || !endTimeOptions.length
+            "
             fluid
             :invalid="Boolean(fieldError('endTime'))"
           />
-          <small v-if="fieldError('endTime')" class="field-error">{{ fieldError('endTime') }}</small>
+          <small v-if="fieldError('endTime')" class="field-error">{{
+            fieldError('endTime')
+          }}</small>
         </label>
 
         <label>
           <span>Guests</span>
-          <InputNumber v-model="form.guestCount" :min="1" :max="selectedAmenity?.capacity ?? undefined" fluid />
+          <InputNumber
+            v-model="form.guestCount"
+            :min="1"
+            :max="selectedAmenity?.capacity ?? undefined"
+            fluid
+          />
         </label>
 
         <label class="admin-form-grid__full">
@@ -570,12 +817,19 @@ const submit = async () => {
             placeholder="Family function, meeting, celebration..."
             :invalid="Boolean(fieldError('purpose'))"
           />
-          <small v-if="fieldError('purpose')" class="field-error">{{ fieldError('purpose') }}</small>
+          <small v-if="fieldError('purpose')" class="field-error">{{
+            fieldError('purpose')
+          }}</small>
         </label>
 
         <label class="admin-form-grid__full">
           <span>Notes</span>
-          <Textarea v-model="form.residentNotes" rows="3" auto-resize placeholder="Special instructions or setup notes" />
+          <Textarea
+            v-model="form.residentNotes"
+            rows="3"
+            auto-resize
+            placeholder="Special instructions or setup notes"
+          />
         </label>
       </div>
 
@@ -583,12 +837,26 @@ const submit = async () => {
         <div>
           <p class="eyebrow">Rules</p>
           <h3>{{ selectedAmenity.name }}</h3>
-          <p>{{ selectedAmenity.rulesText || 'Follow society rules, approved timing, cleanliness, and guest limits.' }}</p>
+          <p>
+            {{
+              selectedAmenity.rulesText ||
+              'Follow society rules, approved timing, cleanliness, and guest limits.'
+            }}
+          </p>
         </div>
         <div class="booking-rule-metrics">
           <span>Capacity {{ selectedAmenity.capacity ?? '-' }}</span>
-          <span>Lead {{ selectedAmenity.bookingRules.minimumLeadHours ?? 0 }}h</span>
-          <span>Duration {{ selectedAmenity.bookingRules.minDurationMinutes ?? 60 }}-{{ selectedAmenity.bookingRules.maxDurationMinutes ?? 240 }} min</span>
+          <span
+            >Lead
+            {{ selectedAmenity.bookingRules.minimumLeadHours ?? 0 }}h</span
+          >
+          <span
+            >Duration
+            {{ selectedAmenity.bookingRules.minDurationMinutes ?? 60 }}-{{
+              selectedAmenity.bookingRules.maxDurationMinutes ?? 240
+            }}
+            min</span
+          >
         </div>
       </section>
 
@@ -598,18 +866,45 @@ const submit = async () => {
             <p class="eyebrow">Availability</p>
             <h3>Unavailable windows</h3>
           </div>
-          <Button icon="pi pi-refresh" text rounded aria-label="Refresh availability" @click="() => refreshAvailability()" />
+          <Button
+            icon="pi pi-refresh"
+            text
+            rounded
+            aria-label="Refresh availability"
+            @click="refreshAllAvailability"
+          />
         </header>
 
-        <AppState v-if="availabilityPending" variant="loading" title="Checking availability" message="Loading approved bookings and blackouts." />
+        <AppState
+          v-if="availabilityPending || endAvailabilityPending"
+          variant="loading"
+          title="Checking availability"
+          message="Loading approved bookings and blackouts."
+        />
         <template v-else>
-          <Message v-if="selectedDateUnavailable && availability?.unavailableWindows.length" severity="warn" :closable="false">
+          <Message
+            v-if="
+              selectedDateUnavailable && availabilityWindows.length
+            "
+            severity="warn"
+            :closable="false"
+          >
             This date has no available booking slots. Choose another date.
           </Message>
-          <div v-if="availability?.unavailableWindows.length" class="availability-list">
-            <article v-for="window in availability.unavailableWindows" :key="`${window.type}-${window.id}`" class="availability-window">
+          <div
+            v-if="availabilityWindows.length"
+            class="availability-list"
+          >
+            <article
+              v-for="window in availabilityWindows"
+              :key="`${window.type}-${window.id}`"
+              class="availability-window"
+            >
               <strong>{{ window.title }}</strong>
-              <span>{{ formatDateTime(window.startsAt) }} - {{ formatDateTime(window.endsAt) }}</span>
+              <span
+                >{{ formatDateTime(window.startsAt) }} -
+                {{ formatDateTime(window.endsAt) }}</span
+              >
             </article>
           </div>
           <AppState
@@ -618,19 +913,44 @@ const submit = async () => {
             title="No slots available"
             message="This date has no available booking slots. Choose another date."
           />
-          <AppState v-else variant="empty" title="No unavailable windows" message="No approved booking or blackout is listed for this date." />
+          <AppState
+            v-else
+            variant="empty"
+            title="No unavailable windows"
+            message="No approved booking or blackout is listed for this date."
+          />
         </template>
       </section>
 
       <label class="booking-agreement">
-        <Checkbox v-model="form.rulesAccepted" binary :invalid="Boolean(fieldError('rulesAccepted'))" />
-        <span>I agree to follow the society amenity rules and approved booking time.</span>
+        <Checkbox
+          v-model="form.rulesAccepted"
+          binary
+          :invalid="Boolean(fieldError('rulesAccepted'))"
+        />
+        <span
+          >I agree to follow the society amenity rules and approved booking
+          time.</span
+        >
       </label>
-      <small v-if="fieldError('rulesAccepted')" class="field-error">{{ fieldError('rulesAccepted') }}</small>
+      <small v-if="fieldError('rulesAccepted')" class="field-error">{{
+        fieldError('rulesAccepted')
+      }}</small>
 
       <div class="admin-inline-actions booking-actions">
-        <Button label="Submit request" icon="pi pi-send" :loading="saving" @click="submit" />
-        <Button label="Cancel" icon="pi pi-times" severity="secondary" outlined @click="router.push('/my/amenity-bookings')" />
+        <Button
+          label="Submit request"
+          icon="pi pi-send"
+          :loading="saving"
+          @click="submit"
+        />
+        <Button
+          label="Cancel"
+          icon="pi pi-times"
+          severity="secondary"
+          outlined
+          @click="router.push('/my/amenity-bookings')"
+        />
       </div>
     </section>
   </div>
