@@ -9,7 +9,6 @@ import { getDatabasePool } from '~/server/utils/database'
 import { AppError } from '~/server/utils/errors'
 import {
   ensureResidentRelationshipsAreValid,
-  handlePgResidentError,
   readUuidParam,
   residentSchema,
   writeMasterAudit,
@@ -17,6 +16,7 @@ import {
 import { upsertResidentProfessionProfile } from '~/server/utils/professions'
 import { recomputeUserAccessForActiveBillingPeriods } from '~/server/utils/qr-access'
 import { resolveAuthUserForResidentLogin } from '~/server/utils/resident-login'
+import { defineResidentSaveHandler } from '~/server/utils/resident-api'
 
 type ResidentRow = {
   auth_user_id: string | null
@@ -59,15 +59,7 @@ const residentUpdateSchema = residentSchema.extend({
   mobileNumber: nullableMobileNumberSchema,
 })
 
-type PgError = Error & {
-  code?: string
-  constraint?: string
-}
-
-const isPgError = (error: unknown): error is PgError =>
-  error instanceof Error && 'code' in error
-
-export default defineEventHandler(async (event) => {
+export default defineResidentSaveHandler(async (event) => {
   const authMe = await requireRole(event, ['ADMIN', 'MANAGER'])
   const id = readUuidParam(event)
   const body = validateInput(residentUpdateSchema, await readJsonBody(event))
@@ -354,7 +346,7 @@ export default defineEventHandler(async (event) => {
     return createApiSuccess(event, { id, updated: true })
   } catch (error) {
     await client.query('rollback')
-    handlePgResidentError(error)
+    throw error
   } finally {
     client.release()
   }

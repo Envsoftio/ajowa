@@ -15,13 +15,13 @@ import {
 } from '~/server/utils/invite-email'
 import {
   ensureResidentRelationshipsAreValid,
-  handlePgResidentError,
   residentSchema,
   validatePayload,
   writeMasterAudit,
 } from '~/server/utils/master-data'
 import { upsertResidentProfessionProfile } from '~/server/utils/professions'
 import { recomputeUserAccessForActiveBillingPeriods } from '~/server/utils/qr-access'
+import { defineResidentSaveHandler } from '~/server/utils/resident-api'
 
 type ExistingUserRow = {
   auth_user_id: string
@@ -196,7 +196,7 @@ const insertInviteIfRequested = async ({
   }
 }
 
-export default defineEventHandler(async (event) => {
+export default defineResidentSaveHandler(async (event) => {
   const authMe = await requireRole(event, ['ADMIN', 'MANAGER'])
   const rawBody = await readJsonBody<Record<string, unknown>>(event)
   const body = validatePayload(residentSchema, { ...rawBody, role: 'RESIDENT' })
@@ -432,7 +432,7 @@ export default defineEventHandler(async (event) => {
     if (!committed) {
       await client.query('rollback')
     }
-    handlePgResidentError(error)
+    throw error
   } finally {
     client.release()
   }

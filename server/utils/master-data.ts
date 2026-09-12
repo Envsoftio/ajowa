@@ -199,8 +199,6 @@ export const residentRelationshipSchema = z
     }
   })
 
-
-
 export const professionSchema = z.object({
   name: z.string().trim().min(2).max(120),
   description: z.string().trim().max(600).nullable().optional(),
@@ -521,7 +519,8 @@ export const ensureResidentRelationshipsAreValid = (input: {
         throw new AppError({
           code: 'VALIDATION_ERROR',
           statusCode: 400,
-          message: 'Lease start date and lease end date are required for tenant relationships.',
+          message:
+            'Lease start date and lease end date are required for tenant relationships.',
         })
       }
       if (relationship.leaseEndDate < relationship.leaseStartDate) {
@@ -666,6 +665,10 @@ export const isPgError = (error: unknown): error is PgError =>
   error instanceof Error && 'code' in error
 
 export const handlePgResidentError = (error: unknown): never => {
+  if (error instanceof AppError) {
+    throw error
+  }
+
   if (isPgError(error)) {
     if (error.code === '23505') {
       const constraint = error.constraint ?? ''
@@ -691,6 +694,14 @@ export const handlePgResidentError = (error: unknown): never => {
           statusCode: 409,
           message:
             'This flat already has an active tenant. Please end or deactivate the existing tenant relationship first.',
+        })
+      }
+      if (constraint === 'users_auth_user_id_key') {
+        throw new AppError({
+          code: 'CONFLICT',
+          statusCode: 409,
+          message:
+            'This email is already linked to an existing user account. Use a different email or update the existing user.',
         })
       }
       if (constraint.includes('email')) {
@@ -727,7 +738,8 @@ export const handlePgResidentError = (error: unknown): never => {
       throw new AppError({
         code: 'VALIDATION_ERROR',
         statusCode: 400,
-        message: error.message || 'Validation constraint failed for resident details.',
+        message:
+          error.message || 'Validation constraint failed for resident details.',
       })
     }
 
@@ -751,10 +763,10 @@ export const handlePgResidentError = (error: unknown): never => {
     throw new AppError({
       code: 'INTERNAL_ERROR',
       statusCode: 500,
-      message: error.message || 'Database error occurred while saving resident.',
+      message:
+        error.message || 'Database error occurred while saving resident.',
     })
   }
 
   throw error
 }
-
