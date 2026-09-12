@@ -17,6 +17,7 @@ import { upsertResidentProfessionProfile } from '~/server/utils/professions'
 import { recomputeUserAccessForActiveBillingPeriods } from '~/server/utils/qr-access'
 import { resolveAuthUserForResidentLogin } from '~/server/utils/resident-login'
 import { defineResidentSaveHandler } from '~/server/utils/resident-api'
+import { releasePreviousFlatContacts } from '~/server/utils/resident-relationships'
 
 type ResidentRow = {
   auth_user_id: string | null
@@ -223,6 +224,8 @@ export default defineResidentSaveHandler(async (event) => {
     }
 
     for (const relationship of body.relationships) {
+      await releasePreviousFlatContacts(client, relationship)
+
       if (relationship.id) {
         await client.query(
           `
