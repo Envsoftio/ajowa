@@ -182,10 +182,11 @@ export default defineEventHandler(async (event) => {
   }
 
   try {
-    const requeued = body.eventId && body.retryFailed
+    const requeued = body.retryFailed
       ? await requeueFailedNotificationJobs(client, {
           societyId: authMe.user.societyId,
-          eventId: body.eventId,
+          ...(body.eventId ? { eventId: body.eventId } : {}),
+          ...processFilters,
         })
       : 0
     const lockTimeoutMinutes = body.eventId ? 1 : 10

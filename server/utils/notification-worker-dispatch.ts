@@ -97,6 +97,7 @@ export const dispatchQueuedNotificationBatch = async (payload: NotificationWorke
       ...(payload.eventKey ? { eventKey: payload.eventKey } : {}),
       ...(payload.category ? { category: payload.category } : {}),
       ...(payload.priority ? { priority: payload.priority } : {}),
+      ...(payload.jobIds?.length ? { jobIds: payload.jobIds } : {}),
     })
   } finally {
     client.release()

@@ -32,6 +32,7 @@ export type NotificationJobClaimFilters = {
   eventKey?: string
   category?: NotificationCategory
   priority?: NotificationPriority
+  jobIds?: string[]
 }
 
 export type NotificationUser = {
@@ -1008,6 +1009,7 @@ export const claimNotificationJobs = async (
           and ($7::text is null or ne.event_key = $7::text)
           and ($8::notification_event_category is null or ne.category = $8::notification_event_category)
           and ($9::service_priority is null or nj.priority = $9::service_priority)
+          and ($10::uuid[] is null or nj.id = any($10::uuid[]))
           and coalesce(nj.scheduled_for, ne.scheduled_for, now()) <= now()
           and coalesce(nj.next_attempt_at, now()) <= now()
           and (
@@ -1067,6 +1069,7 @@ export const claimNotificationJobs = async (
       input.eventKey ?? null,
       input.category ?? null,
       input.priority ?? null,
+      input.jobIds?.length ? input.jobIds : null,
     ],
   )
 
@@ -1077,13 +1080,14 @@ export const requeueFailedNotificationJobs = async (
   client: PoolClient,
   input: {
     societyId: string
-    eventId: string
-  },
+    eventId?: string
+  } & NotificationJobClaimFilters,
 ) => {
   const result = await client.query<{ id: string }>(
     `
       update notification_jobs nj
       set status = 'RETRYING',
+          attempt_count = 0,
           next_attempt_at = now(),
           locked_at = null,
           locked_by = null,
@@ -1093,12 +1097,25 @@ export const requeueFailedNotificationJobs = async (
           updated_at = now()
       from notification_events ne
       where ne.id = nj.notification_event_id
-        and ne.id = $1
-        and ne.society_id = $2
+        and ne.society_id = $1
+        and ($2::uuid is null or ne.id = $2::uuid)
+        and ($3::notification_channel is null or nj.channel = $3::notification_channel)
+        and ($4::text is null or ne.event_key = $4::text)
+        and ($5::notification_event_category is null or ne.category = $5::notification_event_category)
+        and ($6::service_priority is null or nj.priority = $6::service_priority)
+        and ($7::uuid[] is null or nj.id = any($7::uuid[]))
         and nj.status = 'FAILED'
       returning nj.id
     `,
-    [input.eventId, input.societyId],
+    [
+      input.societyId,
+      input.eventId ?? null,
+      input.channel ?? null,
+      input.eventKey ?? null,
+      input.category ?? null,
+      input.priority ?? null,
+      input.jobIds?.length ? input.jobIds : null,
+    ],
   )
 
   if ((result.rowCount ?? 0) > 0) {
@@ -1109,10 +1126,14 @@ export const requeueFailedNotificationJobs = async (
             processed_at = null,
             completed_at = null,
             updated_at = now()
-        where id = $1
-          and society_id = $2
+        where society_id = $1
+          and id in (
+            select distinct notification_event_id
+            from notification_jobs
+            where id = any($2::uuid[])
+          )
       `,
-      [input.eventId, input.societyId],
+      [input.societyId, result.rows.map((row) => row.id)],
     )
   }
 
