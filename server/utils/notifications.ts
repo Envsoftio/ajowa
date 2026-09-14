@@ -1250,7 +1250,7 @@ const sendPushForJob = async (
   }
 
   webpush.setVapidDetails(status.config.subject, status.config.publicKey, status.config.privateKey)
-  const runtimeConfig = getValidatedRuntimeConfig(useRuntimeConfig())
+  const runtimeConfig = getValidatedRuntimeConfig()
   const link = typeof job.payload.deepLinkUrl === 'string' ? job.payload.deepLinkUrl : '/my/notifications'
   const actions = getPushActions(job.payload.actions)
   const payload = JSON.stringify({

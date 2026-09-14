@@ -69,10 +69,12 @@ let partialsRegistered = false
 const templateRoot = path.resolve(process.cwd(), 'server/email-templates')
 
 const readTemplateFile = async (relativePath: string) => {
-  const bundledTemplate = await useStorage('assets:emailTemplates').getItem<string>(relativePath)
+  if (typeof useStorage === 'function') {
+    const bundledTemplate = await useStorage('assets:emailTemplates').getItem<string>(relativePath)
 
-  if (typeof bundledTemplate === 'string') {
-    return bundledTemplate
+    if (typeof bundledTemplate === 'string') {
+      return bundledTemplate
+    }
   }
 
   return fs.readFile(path.join(templateRoot, relativePath), 'utf8')
@@ -145,7 +147,7 @@ const getTransporter = (settings: EmailDeliverySettings) =>
 const isValidEmailAddress = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
 
 const getRuntimeEmailSettings = (): EmailDeliverySettings => {
-  const runtimeConfig = getValidatedRuntimeConfig(useRuntimeConfig())
+  const runtimeConfig = getValidatedRuntimeConfig()
 
   return {
     enabled: false,
@@ -291,7 +293,7 @@ export const getResolvedEmailIntegrationStatus = async (
 }
 
 const getRuntimeAppUrl = () => {
-  const runtimeConfig = getValidatedRuntimeConfig(useRuntimeConfig())
+  const runtimeConfig = getValidatedRuntimeConfig()
   return new URL(runtimeConfig.appUrl)
 }
 
