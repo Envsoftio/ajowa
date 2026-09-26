@@ -812,7 +812,7 @@ export const recomputeAccessForAffectedDuesWithClient = async (
   ]
 
   if (duePairs.length === 0) {
-    return { recomputed: 0, revoked: 0 }
+    return { targeted: 0, recomputed: 0, revoked: 0 }
   }
 
   const users = await client.query<{
@@ -834,6 +834,9 @@ export const recomputeAccessForAffectedDuesWithClient = async (
       inner join flat_residents fr
         on fr.flat_id = affected_dues.flat_id
         and fr.is_active = true
+      inner join users u
+        on u.id = fr.user_id
+        and u.is_active = true
     `,
     [
       JSON.stringify(
@@ -845,13 +848,18 @@ export const recomputeAccessForAffectedDuesWithClient = async (
     ],
   )
 
-  return recomputeUserAccessForPairs(
+  const result = await recomputeUserAccessForPairs(
     client,
     users.rows.map((user) => ({
       userId: user.user_id,
       billingPeriodId: user.billing_period_id,
     })),
   )
+
+  return {
+    targeted: users.rows.length,
+    ...result,
+  }
 }
 
 const recomputeAccessForAffectedDues = async (

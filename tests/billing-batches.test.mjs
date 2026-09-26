@@ -80,15 +80,30 @@ test('handles a timeout after commit without creating a duplicate due', async ()
 })
 
 test('keeps batch writes atomic and database-enforced against duplicate dues', async () => {
-  const [migration, endpoint] = await Promise.all([
+  const [migration, endpoint, payments] = await Promise.all([
     readFile(new URL('../supabase/migrations/20260615083000_phase_3_schema_foundation.sql', import.meta.url), 'utf8'),
     readFile(new URL('../server/api/admin/billing/dues/index.post.ts', import.meta.url), 'utf8'),
+    readFile(new URL('../server/utils/payments.ts', import.meta.url), 'utf8'),
   ])
 
   assert.match(migration, /unique \(billing_period_id, flat_id\)/)
   assert.match(endpoint, /on conflict \(billing_period_id, flat_id\) do nothing/)
   assert.match(endpoint, /await client\.query\('commit'\)/)
   assert.match(endpoint, /await client\.query\('rollback'\)/)
+  assert.match(
+    endpoint,
+    /consumeAdvanceCreditsForDueWithClient\(client, due\.dueId, \{\s*recomputeAccess: false,/,
+  )
+  assert.match(
+    endpoint,
+    /const affectedAccessPairs: AffectedDueAccessPair\[\] = isCamPeriod\s*\? generatedDues\.map/,
+  )
+  assert.match(
+    endpoint,
+    /if \(affectedAccessPairs\.length > 0\) \{\s*const accessResult = await recomputeAccessForAffectedDuesWithClient/,
+  )
+  assert.match(endpoint, /if \(accessRecomputedCount !== accessTargetCount\)/)
+  assert.match(payments, /targeted: users\.rows\.length/)
 })
 
 test('keeps notification requests within the server queue limit', () => {

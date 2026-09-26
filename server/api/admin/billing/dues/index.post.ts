@@ -588,7 +588,15 @@ export default defineEventHandler(async (event) => {
     completePhase({ skippedCount: skipped })
 
     startPhase('advance_credit_consumption')
-    const affectedAccessPairs: AffectedDueAccessPair[] = []
+    const affectedAccessPairs: AffectedDueAccessPair[] = isCamPeriod
+      ? generatedDues.map((due) => ({
+          billingPeriodId: body.billingPeriodId,
+          flatId: due.flatId,
+        }))
+      : []
+    let accessTargetCount = 0
+    let accessRecomputedCount = 0
+    let accessRevokedCount = 0
     const advanceConsumptionDues = getAdvanceConsumptionDueTargets({
       chargeType: period.charge_type as 'GENERAL' | 'CAM' | 'DG_SET',
       generatedDues,
@@ -636,9 +644,18 @@ export default defineEventHandler(async (event) => {
               flatId: due.flatId,
               recomputeAccess: false,
             })
-          : await consumeAdvanceCreditsForDueWithClient(client, due.dueId)
+          : await consumeAdvanceCreditsForDueWithClient(client, due.dueId, {
+              recomputeAccess: false,
+            })
         if (isDgGeneration && 'affectedAccessPairs' in advanceResult) {
           affectedAccessPairs.push(...advanceResult.affectedAccessPairs)
+        } else if (
+          !isDgGeneration &&
+          'affectedAccessPair' in advanceResult &&
+          advanceResult.affectedAccessPair &&
+          advanceResult.consumedAmount > 0
+        ) {
+          affectedAccessPairs.push(advanceResult.affectedAccessPair)
         }
         if (advanceResult.consumedAmount > 0) {
           advanceAppliedCount += 1
@@ -646,11 +663,22 @@ export default defineEventHandler(async (event) => {
         }
       }
 
-      if (isDgGeneration && affectedAccessPairs.length > 0) {
-        await recomputeAccessForAffectedDuesWithClient(
+      if (affectedAccessPairs.length > 0) {
+        const accessResult = await recomputeAccessForAffectedDuesWithClient(
           client,
           affectedAccessPairs,
         )
+        accessTargetCount = accessResult.targeted
+        accessRecomputedCount = accessResult.recomputed
+        accessRevokedCount = accessResult.revoked
+
+        if (accessRecomputedCount !== accessTargetCount) {
+          throw new AppError({
+            code: 'INTERNAL_ERROR',
+            statusCode: 500,
+            message: 'Resident QR access recalculation could not be verified.',
+          })
+        }
       }
     }
 
@@ -658,6 +686,9 @@ export default defineEventHandler(async (event) => {
       advanceAppliedCount,
       advanceAppliedAmount,
       affectedAccessPairCount: affectedAccessPairs.length,
+      accessTargetCount,
+      accessRecomputedCount,
+      accessRevokedCount,
     })
 
     if (isDgGeneration) {
