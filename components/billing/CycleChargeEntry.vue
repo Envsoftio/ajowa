@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import {
+  BILLING_BATCH_MAX_ATTEMPTS,
   BILL_NOTIFICATION_REQUEST_BATCH_SIZE,
+  CAM_DUE_GENERATION_BATCH_SIZE,
   DG_DUE_GENERATION_BATCH_SIZE,
+  runBillingBatchWithRetry,
 } from '~/shared/billing'
 import type {
   BillingFrequency,
@@ -1816,6 +1819,12 @@ const generateDues = async () => {
   if (props.camRunFlow) {
     const groups = [...camRunGroups.value]
     if (groups.length === 0) return
+    const totalCamBatchCount = groups.reduce(
+      (total, group) =>
+        total + Math.ceil(group.entries.length / CAM_DUE_GENERATION_BATCH_SIZE),
+      0,
+    )
+    let completedCamBatchCount = 0
 
     setGenerationProgressSteps(buildCamGenerationProgressSteps(groups))
     generating.value = true
@@ -1883,54 +1892,98 @@ const generateDues = async () => {
           },
         )
 
-        updateGenerationProgressStep(groupStepId, {
-          detail: `Generating bill records for ${formatUnit(group.billableCount, 'flat')}.`,
-        })
-        const response = await api<GenerationResponse>(
-          '/api/admin/billing/dues',
-          {
-            method: 'POST',
-            showErrorToast: false,
-            body: {
-              billingPeriodId: periodId,
-              flatIds: group.entries.map((entry) => entry.flatId),
-              billDate: camRunBillDate.value,
-            },
-          },
+        const flatIdBatches = chunkFlatIds(
+          group.entries.map((entry) => entry.flatId),
+          CAM_DUE_GENERATION_BATCH_SIZE,
         )
+        let groupGenerated = 0
+        let groupSkipped = 0
+        let groupAdvanceCoveredCount = 0
+        let groupAdvanceProratedCount = 0
+        let groupAdvanceProratedAmount = 0
+        let groupOverlapSkippedCount = 0
+        let groupAdvanceAppliedCount = 0
+        let groupAdvanceAppliedAmount = 0
 
-        generated += response.data.generated
-        skipped += response.data.skipped
-        advanceCoveredCount += response.data.advanceCoveredCount
-        advanceProratedCount += response.data.advanceProratedCount ?? 0
+        for (const [batchIndex, flatIds] of flatIdBatches.entries()) {
+          const batchNumber = batchIndex + 1
+          const processedBeforeBatch = batchIndex * CAM_DUE_GENERATION_BATCH_SIZE
+
+          updateGenerationProgressStep(groupStepId, {
+            detail: `Batch ${batchNumber} of ${flatIdBatches.length}: generating flats ${processedBeforeBatch + 1}-${processedBeforeBatch + flatIds.length} of ${group.entries.length}.`,
+            progress: batchIndex / flatIdBatches.length,
+          })
+          const response = await runBillingBatchWithRetry(
+            () => api<GenerationResponse>(
+              '/api/admin/billing/dues',
+              {
+                method: 'POST',
+                showErrorToast: false,
+                body: {
+                  billingPeriodId: periodId,
+                  flatIds,
+                  billDate: camRunBillDate.value,
+                },
+              },
+            ),
+            {
+              onRetry: ({ nextAttempt, maxAttempts }) => {
+                updateGenerationProgressStep(groupStepId, {
+                  detail: `Batch ${batchNumber} of ${flatIdBatches.length} did not confirm. Retrying safely (${nextAttempt}/${maxAttempts}); already-created dues will be skipped.`,
+                  progress: batchIndex / flatIdBatches.length,
+                })
+              },
+            },
+          )
+
+          groupGenerated += response.data.generated
+          groupSkipped += response.data.skipped
+          groupAdvanceCoveredCount += response.data.advanceCoveredCount
+          groupAdvanceProratedCount += response.data.advanceProratedCount ?? 0
+          groupAdvanceProratedAmount = roundChargeValue(
+            groupAdvanceProratedAmount + (response.data.advanceProratedAmount ?? 0),
+          )
+          groupOverlapSkippedCount += response.data.overlapSkippedCount
+          groupAdvanceAppliedCount += response.data.advanceAppliedCount
+          groupAdvanceAppliedAmount = roundChargeValue(
+            groupAdvanceAppliedAmount + response.data.advanceAppliedAmount,
+          )
+          billSendTargets.push(
+            ...response.data.generatedDues,
+            ...response.data.skippedDues,
+          )
+          lastGeneratedDueIds.value = getUniqueDueIds(billSendTargets)
+          completedCamBatchCount += 1
+        }
+
+        generated += groupGenerated
+        skipped += groupSkipped
+        advanceCoveredCount += groupAdvanceCoveredCount
+        advanceProratedCount += groupAdvanceProratedCount
         advanceProratedAmount = roundChargeValue(
-          advanceProratedAmount + (response.data.advanceProratedAmount ?? 0),
+          advanceProratedAmount + groupAdvanceProratedAmount,
         )
-        overlapSkippedCount += response.data.overlapSkippedCount
-        advanceAppliedCount += response.data.advanceAppliedCount
-        billSendTargets.push(
-          ...response.data.generatedDues,
-          ...response.data.skippedDues,
-        )
+        overlapSkippedCount += groupOverlapSkippedCount
+        advanceAppliedCount += groupAdvanceAppliedCount
         advanceAppliedAmount = roundChargeValue(
-          advanceAppliedAmount + response.data.advanceAppliedAmount,
+          advanceAppliedAmount + groupAdvanceAppliedAmount,
         )
         completeGenerationProgressStep(
           groupStepId,
           [
-            `${response.data.generated} created`,
-            `${response.data.skipped} skipped`,
-            response.data.advanceCoveredCount > 0
-              ? `${formatUnit(response.data.advanceCoveredCount, 'advance flat')} covered`
+            `${groupGenerated} created`,
+            `${groupSkipped} skipped`,
+            groupAdvanceCoveredCount > 0
+              ? `${formatUnit(groupAdvanceCoveredCount, 'advance flat')} covered`
               : '',
-            (response.data.advanceProratedCount ?? 0) > 0
-              ? `${formatMoney(response.data.advanceProratedAmount ?? 0)} advance deducted`
+            groupAdvanceProratedCount > 0
+              ? `${formatMoney(groupAdvanceProratedAmount)} advance deducted`
               : '',
-            response.data.overlapSkippedCount > 0
-              ? `${formatUnit(response.data.overlapSkippedCount, 'overlap')} skipped`
+            groupOverlapSkippedCount > 0
+              ? `${formatUnit(groupOverlapSkippedCount, 'overlap')} skipped`
               : '',
-            response.data.advanceAppliedAmount > 0
-              ? `${formatMoney(response.data.advanceAppliedAmount)} advance applied`
+            groupAdvanceAppliedAmount > 0
+              ? `${formatMoney(groupAdvanceAppliedAmount)} advance applied`
               : '',
           ]
             .filter(Boolean)
@@ -1994,10 +2047,15 @@ const generateDues = async () => {
 
       generationDialogVisible.value = false
     } catch (error) {
-      const detail = getApiErrorMessage(
+      const errorDetail = getApiErrorMessage(
         error,
         'CAM bill generation stopped before completion. Please check the current step and try again.',
       )
+      const detail = [
+        errorDetail,
+        `${completedCamBatchCount} of ${totalCamBatchCount} batches were confirmed saved after up to ${BILLING_BATCH_MAX_ATTEMPTS} attempts.`,
+        'Retry the CAM run to continue; committed dues are detected and skipped, so duplicates are not created.',
+      ].join(' ')
       failActiveGenerationProgressStep(
         detail,
       )
@@ -2049,14 +2107,24 @@ const generateDues = async () => {
         progress: batchIndex / flatIdBatches.length,
       })
 
-      const response = await api<GenerationResponse>(
-        '/api/admin/billing/dues',
+      const response = await runBillingBatchWithRetry(
+        () => api<GenerationResponse>(
+          '/api/admin/billing/dues',
+          {
+            method: 'POST',
+            showErrorToast: false,
+            body: {
+              billingPeriodId,
+              flatIds,
+            },
+          },
+        ),
         {
-          method: 'POST',
-          showErrorToast: false,
-          body: {
-            billingPeriodId,
-            flatIds,
+          onRetry: ({ nextAttempt, maxAttempts }) => {
+            updateGenerationProgressStep('generate-dues', {
+              detail: `Batch ${batchNumber} of ${flatIdBatches.length} did not confirm. Retrying safely (${nextAttempt}/${maxAttempts}); already-created dues will be skipped.`,
+              progress: batchIndex / flatIdBatches.length,
+            })
           },
         },
       )

@@ -1,5 +1,10 @@
 <script setup lang="ts">
-import { getDueGenerationFlatIdBatches } from '~/shared/billing'
+import { getApiErrorMessage } from '~/composables/useApi'
+import {
+  BILLING_BATCH_MAX_ATTEMPTS,
+  getDueGenerationFlatIdBatches,
+  runBillingBatchWithRetry,
+} from '~/shared/billing'
 import type {
   BillingFrequency,
   BillingPeriod,
@@ -489,10 +494,11 @@ watch(
 )
 
 const generateDues = async () => {
-  if (!generationTarget.value) return
-  const isDgGeneration = generationTarget.value.chargeType === 'DG_SET'
+  const targetPeriod = generationTarget.value
+  if (!targetPeriod) return
+  const isDgGeneration = targetPeriod.chargeType === 'DG_SET'
   const batches = getDueGenerationFlatIdBatches({
-    chargeType: generationTarget.value.chargeType,
+    chargeType: targetPeriod.chargeType,
     selectedFlatIds: selectedFlatIds.value,
     availableFlatIds: flatOptions.value.map((flat) => flat.value),
   })
@@ -508,6 +514,7 @@ const generateDues = async () => {
   }
 
   generating.value = true
+  let completedBatchCount = 0
 
   try {
     let generated = 0
@@ -518,13 +525,26 @@ const generateDues = async () => {
     const dueIds: string[] = []
 
     for (const flatIds of batches) {
-      const response = await api<GenerationResponse>('/api/admin/billing/dues', {
-        method: 'POST',
-        body: {
-          billingPeriodId: generationTarget.value.id,
-          flatIds,
+      const response = await runBillingBatchWithRetry(
+        () => api<GenerationResponse>('/api/admin/billing/dues', {
+          method: 'POST',
+          showErrorToast: false,
+          body: {
+            billingPeriodId: targetPeriod.id,
+            flatIds,
+          },
+        }),
+        {
+          onRetry: ({ nextAttempt, maxAttempts }) => {
+            toast.add({
+              severity: 'warn',
+              summary: 'Confirming bill batch',
+              detail: `The last batch did not confirm. Retrying safely (${nextAttempt}/${maxAttempts}); existing dues will be skipped.`,
+              life: 5000,
+            })
+          },
         },
-      })
+      )
 
       generated += response.data.generated
       skipped += response.data.skipped
@@ -540,6 +560,7 @@ const generateDues = async () => {
         dueIds.push(...response.data.dueIds)
       }
       lastGeneratedDueIds.value = Array.from(new Set(dueIds))
+      completedBatchCount += 1
     }
 
     toast.add({
@@ -560,6 +581,19 @@ const generateDues = async () => {
       life: 10000,
     })
     generationDialogVisible.value = false
+    await refreshPeriods()
+  } catch (error) {
+    const detail = [
+      getApiErrorMessage(error, 'Bill generation stopped before completion.'),
+      `${completedBatchCount} of ${batches.length} batches were confirmed saved after up to ${BILLING_BATCH_MAX_ATTEMPTS} attempts.`,
+      'Retry to continue; committed dues are detected and skipped, so duplicates are not created.',
+    ].join(' ')
+    toast.add({
+      severity: 'error',
+      summary: 'Bill generation paused',
+      detail,
+      life: 15000,
+    })
     await refreshPeriods()
   } finally {
     generating.value = false
