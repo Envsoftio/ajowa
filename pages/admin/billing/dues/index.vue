@@ -309,7 +309,9 @@ const canRecordPayment = (due: MaintenanceDue) => {
   }
 
   if (due.billingPeriodChargeType === 'DG_SET') {
-    const previousOutstanding = Number(due.previousDgOutstandingAmount ?? 0)
+    const previousOutstanding = Number(
+      due.previousDgBalanceAmount ?? due.previousDgOutstandingAmount ?? 0,
+    )
     const combinedPayable = Math.max(0, due.balanceAmount + previousOutstanding)
     return combinedPayable > 0
   }
@@ -344,7 +346,7 @@ const canEditDue = (due: MaintenanceDue) =>
 const getRecordPaymentRoute = (due: MaintenanceDue) => {
   const isDg = due.billingPeriodChargeType === 'DG_SET'
   const previousOutstanding = isDg
-    ? Number(due.previousDgOutstandingAmount ?? 0)
+    ? Number(due.previousDgBalanceAmount ?? due.previousDgOutstandingAmount ?? 0)
     : 0
   const combinedPayable = Math.max(0, due.balanceAmount + previousOutstanding)
 
@@ -376,11 +378,25 @@ const getDgStatementSummary = (due: MaintenanceDue) =>
     availableAdvanceAmount: Number(due.availableDgAdvanceAmount ?? 0),
   })
 const previousDgOutstandingNote = (due: MaintenanceDue) => {
-  const count = Number(due.previousDgOutstandingCount ?? 0)
-  if (count <= 0) return 'No earlier DG due remains outstanding.'
-  return `Includes ${count} earlier unpaid DG due${count === 1 ? '' : 's'}. Recording payment from this bill pays prior DG dues first.`
+  const summary = getDgStatementSummary(due)
+  if (summary.previousOutstandingAmount <= 0) return 'Only this DG bill is included.'
+  const earlierCleared = Math.max(
+    0,
+    summary.previousOutstandingAmount - summary.previousBalanceAmount,
+  )
+  return `${formatDgMoney(due.paidAmount)} applied to this bill; ${formatDgMoney(earlierCleared)} cleared on earlier DG bills. Earlier unpaid balance: ${formatDgMoney(summary.previousBalanceAmount)}.`
 }
 const isCoverageRow = (due: MaintenanceDue) => Boolean(due.isAdvanceCoverageRow)
+const isPaidCamPeriod = (due: MaintenanceDue) =>
+  !isCoverageRow(due) &&
+  due.isCamAdvanceCovered &&
+  due.camAdvanceCoverageSource === 'PAYMENT'
+const appliedCreditAmount = (due: MaintenanceDue) =>
+  Number(due.advanceAppliedAmount ?? 0)
+const appliedPaymentAmount = (due: MaintenanceDue) =>
+  Number(due.cashPaidAmount ?? due.paidAmount - appliedCreditAmount(due))
+const appliedCreditLabel = (due: MaintenanceDue) =>
+  isDgDue(due) ? 'DG credit' : isCamDue(due) ? 'CAM credit' : 'Credit'
 const billTypeLabel = (due: MaintenanceDue) => {
   if (due.billingPeriodChargeType === 'CAM') return 'CAM'
   if (due.origin === 'DG_OPENING_BALANCE') return 'DG carried-forward'
@@ -436,6 +452,7 @@ const advanceStatusKind = (due: MaintenanceDue) => {
 
 const advanceStatusLabel = (due: MaintenanceDue) => {
   if (isCoverageRow(due)) return 'Coverage marker'
+  if (isPaidCamPeriod(due)) return 'Paid CAM period'
   if (due.isCamAdvanceCovered) return 'Covered'
   if (hasCamAdvanceAdjustment(due)) return 'Advance deducted'
   if (
@@ -455,6 +472,9 @@ const advanceStatusLabel = (due: MaintenanceDue) => {
 const advanceStatusDetail = (due: MaintenanceDue) => {
   if (isCoverageRow(due))
     return 'This row is a CAM coverage marker only. No bill or payment action is available.'
+  if (isPaidCamPeriod(due)) {
+    return `Bill paid; this CAM period is marked covered from ${formatDate(due.camAdvanceCoveredFrom)} to ${formatDate(due.camAdvancePaidUntil)}.`
+  }
   if (due.isCamAdvanceCovered) {
     return `Covered ${formatDate(due.camAdvanceCoveredFrom)} to ${formatDate(due.camAdvancePaidUntil)}. Bill and reminder actions are off.`
   }
@@ -467,7 +487,12 @@ const advanceStatusDetail = (due: MaintenanceDue) => {
     const available = Number(due.availableDgAdvanceAmount ?? 0)
     return `Applied to this DG due: ${formatDgMoney(applied)}. Available DG advance: ${formatDgMoney(available)}${available > 0 ? ' (not deducted until applied).' : '.'}`
   }
-  if (isCamDue(due)) return 'No advance coverage for this CAM period.'
+  if (isCamDue(due)) {
+    const credit = appliedCreditAmount(due)
+    return credit > 0
+      ? `No prepaid period coverage. ${formatMoney(credit)} CAM credit applied to this bill.`
+      : 'No prepaid period coverage for this CAM bill.'
+  }
   return 'Advance coverage applies only to CAM bills.'
 }
 
@@ -478,7 +503,7 @@ const getRecordPaymentTitle = (due: MaintenanceDue) => {
 
   const isDg = due.billingPeriodChargeType === 'DG_SET'
   const previousOutstanding = isDg
-    ? Number(due.previousDgOutstandingAmount ?? 0)
+    ? Number(due.previousDgBalanceAmount ?? due.previousDgOutstandingAmount ?? 0)
     : 0
   const combinedPayable = Math.max(0, due.balanceAmount + previousOutstanding)
 
@@ -1740,15 +1765,18 @@ watch(
             <p class="table-muted">
               {{ billTypeLabel(row) }} · Due {{ formatDate(row.dueDate) }}
             </p>
+            <p v-if="row.installmentPlanApplied && row.nextInstallmentDueDate" class="table-muted">
+              Unpaid installment checkpoint: {{ formatDate(row.nextInstallmentDueDate) }}
+            </p>
             <p
-              v-if="row.penaltyFreeUntilDate && row.penaltyFreeUntilDate > row.dueDate"
+              v-else-if="row.penaltyFreeUntilDate && row.penaltyFreeUntilDate > row.dueDate && row.lateFeeAmount <= 0"
               class="table-muted"
             >
               No late fee through {{ formatDate(row.penaltyFreeUntilDate) }}
             </p>
           </template>
         </Column>
-        <Column header="Advance" style="min-width: 13rem">
+        <Column header="Advance status" style="min-width: 13rem">
           <template #body="{ data: row }">
             <div
               class="billing-advance-state"
@@ -1774,12 +1802,23 @@ watch(
         <Column field="lateFeeAmount" header="Late fee">
           <template #body="{ data: row }">
             <span v-if="isDgDue(row)">Not charged</span>
-            <template v-else>{{ formatMoney(row.lateFeeAmount) }}</template>
+            <div v-else class="billing-balance-cell">
+              <strong>{{ formatMoney(row.lateFeeAmount) }}</strong>
+              <span v-if="row.installmentPlanApplied && Number(row.lateFeeDays ?? 0) > 0">
+                {{ row.lateFeeDays }} chargeable days across monthly installments
+              </span>
+            </div>
           </template>
         </Column>
-        <Column field="paidAmount" header="Paid">
+        <Column field="paidAmount" header="Applied to bill">
           <template #body="{ data: row }">
-            {{ formatMoney(row.paidAmount) }}
+            <div class="billing-balance-cell">
+              <strong>{{ formatMoney(row.paidAmount) }}</strong>
+              <template v-if="appliedCreditAmount(row) > 0">
+                <span>Payments {{ formatMoney(appliedPaymentAmount(row)) }}</span>
+                <span>{{ appliedCreditLabel(row) }} {{ formatMoney(appliedCreditAmount(row)) }}</span>
+              </template>
+            </div>
           </template>
         </Column>
         <Column field="balanceAmount" header="Balance">
@@ -1796,19 +1835,19 @@ watch(
                   <dd>{{ formatDgMoney(getDgStatementSummary(row).currentChargeAmount) }}</dd>
                 </div>
                 <div>
-                  <dt>Previous DG outstanding</dt>
+                  <dt>Earlier DG billed</dt>
                   <dd>{{ formatDgMoney(getDgStatementSummary(row).previousOutstandingAmount) }}</dd>
                 </div>
                 <div>
-                  <dt>Combined DG total</dt>
+                  <dt>Total DG billed (this + earlier)</dt>
                   <dd>{{ formatDgMoney(getDgStatementSummary(row).combinedTotalAmount) }}</dd>
                 </div>
                 <div>
-                  <dt>Combined DG paid</dt>
+                  <dt>Total cleared across DG bills</dt>
                   <dd>{{ formatDgMoney(getDgStatementSummary(row).combinedPaidAmount) }}</dd>
                 </div>
                 <div class="billing-dg-statement__total">
-                  <dt>Combined DG payable</dt>
+                  <dt>DG balance still payable</dt>
                   <dd>{{ formatDgMoney(getDgStatementSummary(row).combinedPayableAmount) }}</dd>
                 </div>
               </dl>
@@ -1821,7 +1860,7 @@ watch(
         <Column field="status" header="Status">
           <template #body="{ data: row }">
             <span v-if="row.isCamAdvanceCovered" class="billing-advance-pill">
-              {{ isCoverageRow(row) ? 'Coverage marker' : 'Covered' }}
+              {{ isCoverageRow(row) ? 'Coverage marker' : isPaidCamPeriod(row) ? 'Paid CAM period' : 'Covered' }}
             </span>
             <AppStatusBadge v-else :status="row.status" />
           </template>
@@ -1932,14 +1971,17 @@ watch(
                 {{ due.billingPeriodLabel }} · {{ billTypeLabel(due) }} · Due
                 {{ formatDate(due.dueDate) }}
               </p>
-              <p v-if="due.penaltyFreeUntilDate && due.penaltyFreeUntilDate > due.dueDate">
+              <p v-if="due.installmentPlanApplied && due.nextInstallmentDueDate">
+                Unpaid installment checkpoint: {{ formatDate(due.nextInstallmentDueDate) }}
+              </p>
+              <p v-else-if="due.penaltyFreeUntilDate && due.penaltyFreeUntilDate > due.dueDate && due.lateFeeAmount <= 0">
                 No late fee through {{ formatDate(due.penaltyFreeUntilDate) }}
               </p>
             </div>
             <div>
-            <span v-if="due.isCamAdvanceCovered" class="billing-advance-pill">
-              {{ isCoverageRow(due) ? 'Coverage marker' : 'Covered' }}
-            </span>
+              <span v-if="due.isCamAdvanceCovered" class="billing-advance-pill">
+                {{ isCoverageRow(due) ? 'Coverage marker' : isPaidCamPeriod(due) ? 'Paid CAM period' : 'Covered' }}
+              </span>
               <AppStatusBadge v-else :status="due.status" />
             </div>
           </div>
@@ -1952,22 +1994,29 @@ watch(
             </span>
             <p>{{ advanceStatusDetail(due) }}</p>
           </div>
+          <p v-if="isCamDue(due) && due.installmentPlanApplied && Number(due.lateFeeDays ?? 0) > 0" class="table-muted">
+            Late fee includes {{ due.lateFeeDays }} chargeable days across monthly installments.
+          </p>
           <div
             v-if="!isGeneratedDgDue(due)"
             class="billing-balance-cell billing-balance-cell--card"
           >
             <strong>{{ formatMoney(due.balanceAmount) }}</strong>
             <span v-if="due.isCamAdvanceCovered">
-              {{ isCoverageRow(due) ? 'Coverage marker row' : 'Covered by CAM advance' }}
+              {{ isCoverageRow(due) ? 'Coverage marker row' : isPaidCamPeriod(due) ? 'Paid CAM period' : 'Covered by CAM advance' }}
             </span>
             <span v-else-if="hasCamAdvanceAdjustment(due)">
               {{ formatMoney(camAdvanceAdjustmentAmount(due)) }} advance deducted;
-              {{ formatMoney(due.paidAmount) }} paid of
+              {{ formatMoney(due.paidAmount) }} applied to
               {{ formatMoney(due.totalAmount) }} remaining bill
             </span>
             <span v-else>
-              {{ formatMoney(due.paidAmount) }} paid of
+              {{ formatMoney(due.paidAmount) }} applied to
               {{ formatMoney(due.totalAmount) }}
+            </span>
+            <span v-if="appliedCreditAmount(due) > 0">
+              Payments {{ formatMoney(appliedPaymentAmount(due)) }} ·
+              {{ appliedCreditLabel(due) }} {{ formatMoney(appliedCreditAmount(due)) }}
             </span>
             <div class="billing-progress-track">
               <span :style="{ width: `${paymentProgress(due)}%` }" />
@@ -1980,19 +2029,19 @@ watch(
                 <dd>{{ formatDgMoney(getDgStatementSummary(due).currentChargeAmount) }}</dd>
               </div>
               <div>
-                <dt>Previous DG outstanding</dt>
+                <dt>Earlier DG billed</dt>
                 <dd>{{ formatDgMoney(getDgStatementSummary(due).previousOutstandingAmount) }}</dd>
               </div>
               <div>
-                <dt>Combined DG total</dt>
+                <dt>Total DG billed (this + earlier)</dt>
                 <dd>{{ formatDgMoney(getDgStatementSummary(due).combinedTotalAmount) }}</dd>
               </div>
               <div>
-                <dt>Combined DG paid</dt>
+                <dt>Total cleared across DG bills</dt>
                 <dd>{{ formatDgMoney(getDgStatementSummary(due).combinedPaidAmount) }}</dd>
               </div>
               <div class="billing-dg-statement__total">
-                <dt>Combined DG payable</dt>
+                <dt>DG balance still payable</dt>
                 <dd>{{ formatDgMoney(getDgStatementSummary(due).combinedPayableAmount) }}</dd>
               </div>
             </dl>
@@ -2145,9 +2194,19 @@ watch(
             <strong>{{ formatMoney(selectedDue.totalAmount) }}</strong>
           </div>
           <div>
-            <span>Amount paid</span>
+            <span>Applied to this bill</span>
             <strong>{{ formatMoney(selectedDue.paidAmount) }}</strong>
           </div>
+          <template v-if="appliedCreditAmount(selectedDue) > 0">
+            <div>
+              <span>Payments</span>
+              <strong>{{ formatMoney(appliedPaymentAmount(selectedDue)) }}</strong>
+            </div>
+            <div>
+              <span>{{ appliedCreditLabel(selectedDue) }} applied</span>
+              <strong>{{ formatMoney(appliedCreditAmount(selectedDue)) }}</strong>
+            </div>
+          </template>
           <div>
             <span>Remaining balance</span>
             <strong>{{ formatMoney(selectedDue.balanceAmount) }}</strong>

@@ -987,6 +987,7 @@ export type MaintenanceDue = AuditFields & {
   isCamAdvanceCovered?: boolean
   isAdvanceCoverageRow?: boolean
   camAdvanceCoverageId?: string | null
+  camAdvanceCoverageSource?: string | null
   camAdvanceCoveredFrom?: string | null
   camAdvancePaidUntil?: string | null
   relationshipType?: string

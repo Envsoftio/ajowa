@@ -33,8 +33,9 @@ test('enriches generated DG rows after the unchanged dues mapper', async () => {
   assert.match(source, /previousDgOutstandingCount: previous\.count/)
 })
 
-test('renders the combined figure as DG-only context and pre-fills combined payable', async () => {
+test('separates current and earlier DG figures and pre-fills only unpaid balances', async () => {
   const source = await readSource('../pages/admin/billing/dues/index.vue')
+  const paymentSource = await readSource('../pages/admin/payments/new.vue')
 
   assert.match(
     source,
@@ -44,8 +45,12 @@ test('renders the combined figure as DG-only context and pre-fills combined paya
     source,
     /v-if="isGeneratedDgDue\(row\)" class="billing-dg-statement"/,
   )
-  assert.match(source, /Previous DG outstanding/)
-  assert.match(source, /Combined DG payable/)
+  assert.match(source, /Earlier DG billed/)
+  assert.match(source, /Total cleared across DG bills/)
+  assert.match(source, /DG balance still payable/)
+  assert.match(source, /applied to this bill;.*cleared on earlier DG bills/)
+  assert.match(source, /due\.previousDgBalanceAmount \?\? due\.previousDgOutstandingAmount \?\? 0/)
+  assert.match(paymentSource, /due\.previousDgBalanceAmount \?\? due\.previousDgOutstandingAmount \?\? 0/)
   assert.match(source, /Available DG advance:/)
   assert.match(
     source,

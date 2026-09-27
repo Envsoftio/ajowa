@@ -312,7 +312,7 @@ const dueOptions = computed(() =>
   eligibleOpenDues.value.map((due) => {
     const isDg = due.billingPeriodChargeType === 'DG_SET'
     const prevOutstanding = isDg
-      ? Number(due.previousDgOutstandingAmount ?? 0)
+      ? Number(due.previousDgBalanceAmount ?? due.previousDgOutstandingAmount ?? 0)
       : 0
     const combinedPayable = Math.max(0, due.balanceAmount + prevOutstanding)
     const labelText =

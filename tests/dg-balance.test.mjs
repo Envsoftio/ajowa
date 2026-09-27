@@ -76,6 +76,21 @@ test('shows previous and current DG balances once in the statement payable', () 
   )
 })
 
+test('a fully paid earlier DG bill contributes no prior payable balance', () => {
+  const statement = buildDgDueStatementSummary({
+    currentChargeAmount: 2_000,
+    currentBalanceAmount: 0,
+    previousOutstandingAmount: 725,
+    previousBalanceAmount: 0,
+    advanceAppliedAmount: 0,
+    availableAdvanceAmount: 0,
+  })
+
+  assert.equal(statement.combinedTotalAmount, 2_725)
+  assert.equal(statement.combinedPaidAmount, 2_725)
+  assert.equal(statement.combinedPayableAmount, 0)
+})
+
 test('does not deduct an unapplied DG advance or an applied advance twice', () => {
   assert.deepEqual(
     buildDgDueStatementSummary({

@@ -40,6 +40,7 @@ type DueRow = {
   block_name: string
   unit_type: string
   cam_advance_coverage_id: string | null
+  cam_advance_coverage_source: string | null
   cam_advance_covered_from: string | null
   cam_advance_paid_until: string | null
   due_date: string
@@ -99,6 +100,7 @@ const combinedDuesSql = `
       b.sort_order as block_sort_order,
       f.unit_type,
       coverage.id::text as cam_advance_coverage_id,
+      coverage.source::text as cam_advance_coverage_source,
       coverage.covered_from::text as cam_advance_covered_from,
       coverage.covered_until::text as cam_advance_paid_until,
       md.due_date::text as due_date,
@@ -146,7 +148,7 @@ const combinedDuesSql = `
       from payment_allocations pa
       inner join payments p on p.id = pa.payment_id
       where pa.maintenance_due_id = md.id
-    ) payment_summary on bp.charge_type = 'DG_SET'
+    ) payment_summary on bp.charge_type in ('CAM', 'DG_SET')
     left join lateral (
       select coalesce(sum(rac.current_balance), 0) as available_amount
       from resident_advance_credits rac
@@ -188,6 +190,7 @@ const combinedDuesSql = `
       b.sort_order as block_sort_order,
       f.unit_type,
       coverage.id::text as cam_advance_coverage_id,
+      coverage.source::text as cam_advance_coverage_source,
       coverage.covered_from::text as cam_advance_covered_from,
       coverage.covered_until::text as cam_advance_paid_until,
       bp.due_date::text as due_date,
@@ -524,6 +527,7 @@ const mapDueRows = (
       isCamAdvanceCovered: row.is_cam_advance_covered,
       isAdvanceCoverageRow,
       camAdvanceCoverageId: row.cam_advance_coverage_id,
+      camAdvanceCoverageSource: row.cam_advance_coverage_source,
       camAdvanceCoveredFrom: row.cam_advance_covered_from,
       camAdvancePaidUntil: row.cam_advance_paid_until,
       createdAt: row.created_at,
@@ -548,8 +552,6 @@ const enrichGeneratedDgRows = async (
     .map((item) => item.id)
 
   if (generatedDgDueIds.length === 0) return items
-
-  const generatedDgDueIdSet = new Set(generatedDgDueIds)
 
   const previousByDueId = await getPreviousDgOutstandingByDueId(
     pool,
@@ -675,7 +677,9 @@ const mapDueWorkbookRow = (due: MaintenanceDue, includeDgSource: boolean) => ({
   'Base amount': due.baseAmount,
   'Late fee': due.lateFeeAmount,
   'Waived amount': due.waivedAmount,
-  'Paid amount': due.paidAmount,
+  'Applied to bill': due.paidAmount,
+  'Payments applied': due.cashPaidAmount ?? 0,
+  'Credit applied': due.advanceAppliedAmount ?? 0,
   'Total amount': due.totalAmount,
   'Balance amount': due.balanceAmount,
   Status: due.status,
@@ -721,6 +725,8 @@ const buildDueWorkbook = (
     { wch: 14 },
     { wch: 16 },
     { wch: 16 },
+    { wch: 16 },
+    { wch: 16 },
     { wch: 20 },
     { wch: 22 },
     { wch: 12 },
@@ -732,6 +738,8 @@ const buildDueWorkbook = (
   const billRows = items.filter((item) => !item.isAdvanceCoverageRow)
   const totalDue = billRows.reduce((sum, item) => sum + item.totalAmount, 0)
   const totalPaid = billRows.reduce((sum, item) => sum + item.paidAmount, 0)
+  const totalPayments = billRows.reduce((sum, item) => sum + (item.cashPaidAmount ?? 0), 0)
+  const totalCredits = billRows.reduce((sum, item) => sum + (item.advanceAppliedAmount ?? 0), 0)
   const totalBalance = billRows.reduce((sum, item) => sum + item.balanceAmount, 0)
   const summarySheet = XLSX.utils.json_to_sheet([
     { Metric: 'Report', Value: 'Maintenance bills' },
@@ -747,7 +755,9 @@ const buildDueWorkbook = (
         : 'All matching rows exported.',
     },
     { Metric: 'Exported total due', Value: totalDue },
-    { Metric: 'Exported total paid', Value: totalPaid },
+    { Metric: 'Exported total applied to bills', Value: totalPaid },
+    { Metric: 'Exported payments applied', Value: totalPayments },
+    { Metric: 'Exported credits applied', Value: totalCredits },
     { Metric: 'Exported total balance', Value: totalBalance },
     {
       Metric: 'Exported overdue rows',
