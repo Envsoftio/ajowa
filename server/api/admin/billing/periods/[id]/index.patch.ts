@@ -29,6 +29,7 @@ export default defineEventHandler(async (event) => {
         select id, label, frequency::text, charge_type::text, is_locked, start_date::text, end_date::text, due_date::text
         from billing_periods
         where id = $1 and society_id = $2
+        for update
       `,
       [periodId, authMe.user.societyId],
     )
@@ -63,6 +64,24 @@ export default defineEventHandler(async (event) => {
     const nextEndDate = body.endDate ?? current.end_date
     const nextDueDate = body.dueDate ?? current.due_date
     const nextChargeType = body.chargeType ?? current.charge_type
+
+    if (nextDueDate !== current.due_date) {
+      const existingDues = await client.query<{ exists: boolean }>(
+        `select exists (
+          select 1 from maintenance_dues
+          where society_id = $1 and billing_period_id = $2
+        ) as exists`,
+        [authMe.user.societyId, periodId],
+      )
+
+      if (existingDues.rows[0]?.exists) {
+        throw new AppError({
+          code: 'VALIDATION_ERROR',
+          statusCode: 400,
+          message: 'This billing period already has bills. Correct their due dates through the bill correction workflow.',
+        })
+      }
+    }
 
     if (nextStartDate > nextEndDate) {
       throw new AppError({

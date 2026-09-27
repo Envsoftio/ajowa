@@ -141,6 +141,7 @@ export default defineEventHandler(async (event) => {
         from billing_periods
         where id = $1 and society_id = $2
         limit 1
+        for share
       `,
       [body.billingPeriodId, authMe.user.societyId],
     )
@@ -159,6 +160,14 @@ export default defineEventHandler(async (event) => {
         code: 'VALIDATION_ERROR',
         statusCode: 400,
         message: 'Cannot generate dues for a locked billing period.',
+      })
+    }
+
+    if (body.expectedDueDate && period.due_date !== body.expectedDueDate) {
+      throw new AppError({
+        code: 'VALIDATION_ERROR',
+        statusCode: 400,
+        message: `This billing period is due ${period.due_date}, but the CAM run selected ${body.expectedDueDate}. Refresh the page and select the period's due date before retrying.`,
       })
     }
 

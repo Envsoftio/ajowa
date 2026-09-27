@@ -1395,6 +1395,27 @@ const createPeriod = async () => {
 const ensureCamRunPeriod = async (
   period: ReturnType<typeof getCamPeriodForCycle>,
 ) => {
+  const useExistingPeriod = async (existing: BillingPeriod) => {
+    if (existing.dueDate === period.dueDate) return existing.id
+
+    if ((existing.dueCount ?? 0) > 0) {
+      throw new Error(
+        `${period.label} already has bills due ${formatDate(existing.dueDate)}. Select that due date to resume this run; changing the deadline for issued bills requires a separate correction.`,
+      )
+    }
+
+    await api<PeriodCreateResponse>(
+      `/api/admin/billing/periods/${existing.id}`,
+      {
+        method: 'PATCH',
+        showErrorToast: false,
+        body: { dueDate: period.dueDate },
+      },
+    )
+    await refreshPeriods()
+    return existing.id
+  }
+
   const existing = periods.value.find(
     (item) =>
       item.chargeType === periodChargeType.value &&
@@ -1402,7 +1423,7 @@ const ensureCamRunPeriod = async (
       item.endDate === period.endDate,
   )
 
-  if (existing) return existing.id
+  if (existing) return useExistingPeriod(existing)
 
   try {
     const response = await api<PeriodCreateResponse>(
@@ -1428,7 +1449,7 @@ const ensureCamRunPeriod = async (
         item.endDate === period.endDate,
     )
 
-    if (afterCreateRace) return afterCreateRace.id
+    if (afterCreateRace) return useExistingPeriod(afterCreateRace)
     throw error
   }
 }
@@ -1925,6 +1946,7 @@ const generateDues = async () => {
                   billingPeriodId: periodId,
                   flatIds: batchFlatIds,
                   billDate: camRunBillDate.value,
+                  expectedDueDate: group.period.dueDate,
                   queueCreatedNotifications: false,
                 },
               },
