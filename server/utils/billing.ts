@@ -111,6 +111,7 @@ export const dueGenerationSchema = z.object({
   billingPeriodId: z.string().uuid(),
   flatIds: z.array(z.string().uuid()).optional(),
   billDate: z.string().date().optional(),
+  queueCreatedNotifications: z.boolean().optional().default(true),
 })
 
 export const camDueRecomputeSchema = z.object({

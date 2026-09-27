@@ -10,6 +10,7 @@ import {
   getAdvanceConsumptionDueTargets,
   getDueGenerationFlatIdBatches,
   runBillingBatchWithRetry,
+  runBillingFlatBatchWithRecovery,
 } from '../shared/billing.ts'
 
 test('keeps DG due generation below the production timeout batch size', () => {
@@ -18,8 +19,59 @@ test('keeps DG due generation below the production timeout batch size', () => {
 })
 
 test('keeps CAM due generation within bounded production requests', () => {
-  assert.equal(CAM_DUE_GENERATION_BATCH_SIZE, 40)
+  assert.equal(CAM_DUE_GENERATION_BATCH_SIZE, 10)
   assert.equal(BILLING_BATCH_MAX_ATTEMPTS, 3)
+})
+
+test('splits a failing CAM batch and records each committed result once', async () => {
+  const saved = []
+  const attemptedSizes = []
+
+  await runBillingFlatBatchWithRecovery(
+    ['flat-1', 'flat-2', 'flat-3', 'flat-4'],
+    async (flatIds) => {
+      attemptedSizes.push(flatIds.length)
+      if (flatIds.length > 2) throw { statusCode: 502 }
+      return flatIds
+    },
+    (flatIds) => { saved.push(...flatIds) },
+    { maxAttempts: 1 },
+  )
+
+  assert.deepEqual(attemptedSizes, [4, 2, 2])
+  assert.deepEqual(saved, ['flat-1', 'flat-2', 'flat-3', 'flat-4'])
+})
+
+test('does not split a validation failure into smaller writes', async () => {
+  const attemptedSizes = []
+  await assert.rejects(
+    runBillingFlatBatchWithRecovery(
+      ['flat-1', 'flat-2'],
+      async (flatIds) => {
+        attemptedSizes.push(flatIds.length)
+        throw { statusCode: 400 }
+      },
+      () => {},
+      { maxAttempts: 1 },
+    ),
+  )
+  assert.deepEqual(attemptedSizes, [2])
+})
+
+test('does not multiply rate-limited requests by splitting them', async () => {
+  const attemptedSizes = []
+  await assert.rejects(
+    runBillingFlatBatchWithRecovery(
+      ['flat-1', 'flat-2'],
+      async (flatIds) => {
+        attemptedSizes.push(flatIds.length)
+        throw { statusCode: 429 }
+      },
+      () => {},
+      { maxAttempts: 1 },
+    ),
+  )
+  assert.deepEqual(attemptedSizes, [2])
 })
 
 test('retries transient billing failures with bounded backoff', async () => {
@@ -79,6 +131,29 @@ test('handles a timeout after commit without creating a duplicate due', async ()
   assert.equal(attempts, 2)
 })
 
+test('confirms a whole committed batch after its response is lost', async () => {
+  const storedDues = new Set()
+  const confirmed = []
+  let attempts = 0
+
+  await runBillingFlatBatchWithRecovery(
+    ['flat-1', 'flat-2'],
+    async (flatIds) => {
+      attempts += 1
+      const created = flatIds.filter((id) => !storedDues.has(id))
+      flatIds.forEach((id) => storedDues.add(id))
+      if (attempts === 1) throw { statusCode: 502 }
+      return { created, skipped: flatIds.filter((id) => !created.includes(id)) }
+    },
+    (result) => { confirmed.push(result) },
+    { wait: async () => {} },
+  )
+
+  assert.equal(attempts, 2)
+  assert.equal(storedDues.size, 2)
+  assert.deepEqual(confirmed, [{ created: [], skipped: ['flat-1', 'flat-2'] }])
+})
+
 test('keeps batch writes atomic and database-enforced against duplicate dues', async () => {
   const [migration, endpoint, payments] = await Promise.all([
     readFile(new URL('../supabase/migrations/20260615083000_phase_3_schema_foundation.sql', import.meta.url), 'utf8'),
@@ -104,6 +179,19 @@ test('keeps batch writes atomic and database-enforced against duplicate dues', a
   )
   assert.match(endpoint, /if \(accessRecomputedCount !== accessTargetCount\)/)
   assert.match(payments, /targeted: users\.rows\.length/)
+})
+
+test('the CAM run keeps optional notifications outside the due write', async () => {
+  const [screen, endpoint, schema] = await Promise.all([
+    readFile(new URL('../components/billing/CycleChargeEntry.vue', import.meta.url), 'utf8'),
+    readFile(new URL('../server/api/admin/billing/dues/index.post.ts', import.meta.url), 'utf8'),
+    readFile(new URL('../server/utils/billing.ts', import.meta.url), 'utf8'),
+  ])
+
+  assert.match(screen, /queueCreatedNotifications: false/)
+  assert.match(schema, /queueCreatedNotifications: z\.boolean\(\)\.optional\(\)\.default\(true\)/)
+  assert.match(endpoint, /if \(isCamPeriod \|\| isDgGeneration\) \{\s*startPhase\('database_transaction_commit'\)/)
+  assert.match(endpoint, /\} else if \(body\.queueCreatedNotifications\) \{/)
 })
 
 test('keeps notification requests within the server queue limit', () => {
@@ -154,7 +242,7 @@ test('batches selected CAM generation while keeping general generation unchanged
       selectedFlatIds,
       availableFlatIds: ['unused-available-flat'],
     }).map((batch) => batch?.length),
-    [40, 40, 3],
+    [10, 10, 10, 10, 10, 10, 10, 10, 3],
   )
   assert.deepEqual(
     getDueGenerationFlatIdBatches({
@@ -175,7 +263,7 @@ test('batches all-flat CAM generation while keeping general generation unfiltere
       selectedFlatIds: [],
       availableFlatIds,
     }).map((batch) => batch?.length),
-    [40, 1],
+    [10, 10, 10, 10, 1],
   )
   assert.deepEqual(
     getDueGenerationFlatIdBatches({

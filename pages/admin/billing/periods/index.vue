@@ -4,6 +4,7 @@ import {
   BILLING_BATCH_MAX_ATTEMPTS,
   getDueGenerationFlatIdBatches,
   runBillingBatchWithRetry,
+  runBillingFlatBatchWithRecovery,
 } from '~/shared/billing'
 import type {
   BillingFrequency,
@@ -525,41 +526,58 @@ const generateDues = async () => {
     const dueIds: string[] = []
 
     for (const flatIds of batches) {
-      const response = await runBillingBatchWithRetry(
-        () => api<GenerationResponse>('/api/admin/billing/dues', {
+      const saveBatch = (batchFlatIds?: string[]) => api<GenerationResponse>('/api/admin/billing/dues', {
           method: 'POST',
           showErrorToast: false,
           body: {
             billingPeriodId: targetPeriod.id,
-            flatIds,
+            flatIds: batchFlatIds,
           },
-        }),
-        {
-          onRetry: ({ nextAttempt, maxAttempts }) => {
-            toast.add({
-              severity: 'warn',
-              summary: 'Confirming bill batch',
-              detail: `The last batch did not confirm. Retrying safely (${nextAttempt}/${maxAttempts}); existing dues will be skipped.`,
-              life: 5000,
-            })
-          },
+        })
+      const recordResponse = (response: GenerationResponse) => {
+        generated += response.data.generated
+        skipped += response.data.skipped
+        advanceAppliedAmount += response.data.advanceAppliedAmount
+        emailJobCount += response.data.notificationJobCount ?? 0
+        emailWorkerStarted ||= Boolean(response.data.notificationWorkerStarted)
+        if (isDgGeneration) {
+          dueIds.push(
+            ...response.data.generatedDues.map((due) => due.dueId),
+            ...response.data.skippedDues.map((due) => due.dueId),
+          )
+        } else {
+          dueIds.push(...response.data.dueIds)
+        }
+        lastGeneratedDueIds.value = Array.from(new Set(dueIds))
+      }
+      const retryOptions = {
+        onRetry: ({ nextAttempt, maxAttempts }: { nextAttempt: number; maxAttempts: number }) => {
+          toast.add({
+            severity: 'warn',
+            summary: 'Confirming bill batch',
+            detail: `The last batch did not confirm. Retrying safely (${nextAttempt}/${maxAttempts}); existing dues will be skipped.`,
+            life: 5000,
+          })
         },
-      )
-
-      generated += response.data.generated
-      skipped += response.data.skipped
-      advanceAppliedAmount += response.data.advanceAppliedAmount
-      emailJobCount += response.data.notificationJobCount ?? 0
-      emailWorkerStarted ||= Boolean(response.data.notificationWorkerStarted)
-      if (isDgGeneration) {
-        dueIds.push(
-          ...response.data.generatedDues.map((due) => due.dueId),
-          ...response.data.skippedDues.map((due) => due.dueId),
+        onSplit: (failedFlatIds: readonly string[]) => {
+          toast.add({
+            severity: 'warn',
+            summary: 'Using smaller bill batches',
+            detail: `Continuing ${failedFlatIds.length} flats in smaller groups.`,
+            life: 5000,
+          })
+        },
+      }
+      if (flatIds) {
+        await runBillingFlatBatchWithRecovery(
+          flatIds,
+          saveBatch,
+          recordResponse,
+          retryOptions,
         )
       } else {
-        dueIds.push(...response.data.dueIds)
+        recordResponse(await runBillingBatchWithRetry(() => saveBatch(), retryOptions))
       }
-      lastGeneratedDueIds.value = Array.from(new Set(dueIds))
       completedBatchCount += 1
     }
 

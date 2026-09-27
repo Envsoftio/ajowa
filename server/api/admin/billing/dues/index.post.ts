@@ -30,6 +30,7 @@ import {
   type AffectedDueAccessPair,
 } from '~/server/utils/payments'
 import {
+  CAM_DUE_GENERATION_BATCH_SIZE,
   DG_DUE_GENERATION_BATCH_SIZE,
   getAdvanceConsumptionDueTargets,
 } from '~/shared/billing'
@@ -174,6 +175,19 @@ export default defineEventHandler(async (event) => {
         code: 'VALIDATION_ERROR',
         statusCode: 400,
         message: `DG Set bills must be generated in explicit batches of 1 to ${DG_DUE_GENERATION_BATCH_SIZE} flats.`,
+      })
+    }
+
+    if (
+      period.charge_type === 'CAM' &&
+      (!body.flatIds ||
+        body.flatIds.length === 0 ||
+        body.flatIds.length > CAM_DUE_GENERATION_BATCH_SIZE)
+    ) {
+      throw new AppError({
+        code: 'VALIDATION_ERROR',
+        statusCode: 400,
+        message: `CAM bills must be generated in explicit batches of 1 to ${CAM_DUE_GENERATION_BATCH_SIZE} flats.`,
       })
     }
 
@@ -691,11 +705,11 @@ export default defineEventHandler(async (event) => {
       accessRevokedCount,
     })
 
-    if (isDgGeneration) {
+    if (isCamPeriod || isDgGeneration) {
       startPhase('database_transaction_commit')
       await client.query('commit')
       transactionOpen = false
-      completePhase({ commitMode: 'dg_early' })
+      completePhase({ commitMode: 'dues_and_advances' })
     }
 
     let queued = { eventCount: 0, audienceCount: 0, jobCount: 0 }
@@ -749,22 +763,36 @@ export default defineEventHandler(async (event) => {
             notificationEnqueueSkipped: true,
           })
         }
-      } else {
+      } else if (body.queueCreatedNotifications) {
         startPhase('created_notification_enqueue')
-        queued = await enqueueDueBillingContactNotifications(client, {
-          societyId: authMe.user.societyId,
-          dueIds: generatedDueIds,
-          eventKey: 'maintenance_due.created',
-          title: 'Maintenance due generated',
-          bodyPrefix: 'A new maintenance due has been generated for',
-          triggeredByUserId: authMe.user.id,
-        })
-        completePhase({
-          notificationEventCount: queued.eventCount,
-          notificationAudienceCount: queued.audienceCount,
-          notificationJobCount: queued.jobCount,
-          notificationEnqueueSkipped: false,
-        })
+        try {
+          queued = await enqueueDueBillingContactNotifications(client, {
+            societyId: authMe.user.societyId,
+            dueIds: generatedDueIds,
+            eventKey: 'maintenance_due.created',
+            title: 'Maintenance due generated',
+            bodyPrefix: 'A new maintenance due has been generated for',
+            triggeredByUserId: authMe.user.id,
+          })
+          completePhase({
+            notificationEventCount: queued.eventCount,
+            notificationAudienceCount: queued.audienceCount,
+            notificationJobCount: queued.jobCount,
+            notificationEnqueueSkipped: false,
+          })
+        } catch (error) {
+          completePhase({ notificationEnqueueFailed: true })
+          logger.error('Generated-dues notification enqueue failed.', {
+            operation: 'maintenance_dues.generate',
+            billingPeriodId: body.billingPeriodId,
+            generatedCount: generated,
+            cause: error instanceof Error ? error.message : String(error),
+          })
+          if (!isCamPeriod) throw error
+        }
+      } else {
+        startPhase('created_notification_skip')
+        completePhase({ notificationEnqueueSkipped: true })
       }
 
       const writeGenerationAudit = () =>
@@ -806,30 +834,26 @@ export default defineEventHandler(async (event) => {
         })
 
       startPhase('master_audit')
-      if (isDgGeneration) {
-        try {
-          await writeGenerationAudit()
-          completePhase({ auditWriteFailed: false })
-        } catch (error) {
-          completePhase({ auditWriteFailed: true })
-          logger.error('Generated-dues audit enqueue failed after commit.', {
-            operation: 'maintenance_dues.generate',
-            billingPeriodId: body.billingPeriodId,
-            generatedCount: generated,
-            cause: error instanceof Error ? error.message : String(error),
-          })
-        }
-      } else {
+      try {
         await writeGenerationAudit()
         completePhase({ auditWriteFailed: false })
+      } catch (error) {
+        completePhase({ auditWriteFailed: true })
+        logger.error('Generated-dues audit enqueue failed.', {
+          operation: 'maintenance_dues.generate',
+          billingPeriodId: body.billingPeriodId,
+          generatedCount: generated,
+          cause: error instanceof Error ? error.message : String(error),
+        })
+        if (!isCamPeriod && !isDgGeneration) throw error
       }
     }
 
-    if (!isDgGeneration) {
+    if (!isCamPeriod && !isDgGeneration) {
       startPhase('database_transaction_commit')
       await client.query('commit')
       transactionOpen = false
-      completePhase({ commitMode: 'cam_general_atomic' })
+      completePhase({ commitMode: 'general_atomic' })
     }
 
     startPhase('request_complete')

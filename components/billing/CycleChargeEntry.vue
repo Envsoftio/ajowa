@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import {
-  BILLING_BATCH_MAX_ATTEMPTS,
   BILL_NOTIFICATION_REQUEST_BATCH_SIZE,
   CAM_DUE_GENERATION_BATCH_SIZE,
   DG_DUE_GENERATION_BATCH_SIZE,
   runBillingBatchWithRetry,
+  runBillingFlatBatchWithRecovery,
 } from '~/shared/billing'
 import type {
   BillingFrequency,
@@ -1825,6 +1825,7 @@ const generateDues = async () => {
       0,
     )
     let completedCamBatchCount = 0
+    let confirmedCamFlatCount = 0
 
     setGenerationProgressSteps(buildCamGenerationProgressSteps(groups))
     generating.value = true
@@ -1913,19 +1914,41 @@ const generateDues = async () => {
             detail: `Batch ${batchNumber} of ${flatIdBatches.length}: generating flats ${processedBeforeBatch + 1}-${processedBeforeBatch + flatIds.length} of ${group.entries.length}.`,
             progress: batchIndex / flatIdBatches.length,
           })
-          const response = await runBillingBatchWithRetry(
-            () => api<GenerationResponse>(
+          await runBillingFlatBatchWithRecovery(
+            flatIds,
+            (batchFlatIds) => api<GenerationResponse>(
               '/api/admin/billing/dues',
               {
                 method: 'POST',
                 showErrorToast: false,
                 body: {
                   billingPeriodId: periodId,
-                  flatIds,
+                  flatIds: batchFlatIds,
                   billDate: camRunBillDate.value,
+                  queueCreatedNotifications: false,
                 },
               },
             ),
+            (response, savedFlatIds) => {
+              confirmedCamFlatCount += savedFlatIds.length
+              groupGenerated += response.data.generated
+              groupSkipped += response.data.skipped
+              groupAdvanceCoveredCount += response.data.advanceCoveredCount
+              groupAdvanceProratedCount += response.data.advanceProratedCount ?? 0
+              groupAdvanceProratedAmount = roundChargeValue(
+                groupAdvanceProratedAmount + (response.data.advanceProratedAmount ?? 0),
+              )
+              groupOverlapSkippedCount += response.data.overlapSkippedCount
+              groupAdvanceAppliedCount += response.data.advanceAppliedCount
+              groupAdvanceAppliedAmount = roundChargeValue(
+                groupAdvanceAppliedAmount + response.data.advanceAppliedAmount,
+              )
+              billSendTargets.push(
+                ...response.data.generatedDues,
+                ...response.data.skippedDues,
+              )
+              lastGeneratedDueIds.value = getUniqueDueIds(billSendTargets)
+            },
             {
               onRetry: ({ nextAttempt, maxAttempts }) => {
                 updateGenerationProgressStep(groupStepId, {
@@ -1933,26 +1956,14 @@ const generateDues = async () => {
                   progress: batchIndex / flatIdBatches.length,
                 })
               },
+              onSplit: (failedFlatIds) => {
+                updateGenerationProgressStep(groupStepId, {
+                  detail: `Batch ${batchNumber} did not complete. Continuing in smaller groups of ${Math.ceil(failedFlatIds.length / 2)} flats.`,
+                  progress: batchIndex / flatIdBatches.length,
+                })
+              },
             },
           )
-
-          groupGenerated += response.data.generated
-          groupSkipped += response.data.skipped
-          groupAdvanceCoveredCount += response.data.advanceCoveredCount
-          groupAdvanceProratedCount += response.data.advanceProratedCount ?? 0
-          groupAdvanceProratedAmount = roundChargeValue(
-            groupAdvanceProratedAmount + (response.data.advanceProratedAmount ?? 0),
-          )
-          groupOverlapSkippedCount += response.data.overlapSkippedCount
-          groupAdvanceAppliedCount += response.data.advanceAppliedCount
-          groupAdvanceAppliedAmount = roundChargeValue(
-            groupAdvanceAppliedAmount + response.data.advanceAppliedAmount,
-          )
-          billSendTargets.push(
-            ...response.data.generatedDues,
-            ...response.data.skippedDues,
-          )
-          lastGeneratedDueIds.value = getUniqueDueIds(billSendTargets)
           completedCamBatchCount += 1
         }
 
@@ -2053,7 +2064,7 @@ const generateDues = async () => {
       )
       const detail = [
         errorDetail,
-        `${completedCamBatchCount} of ${totalCamBatchCount} batches were confirmed saved after up to ${BILLING_BATCH_MAX_ATTEMPTS} attempts.`,
+        `${confirmedCamFlatCount} of ${camRunGenerationEntries.value.length} flats were confirmed processed across ${completedCamBatchCount} of ${totalCamBatchCount} planned batches.`,
         'Retry the CAM run to continue; committed dues are detected and skipped, so duplicates are not created.',
       ].join(' ')
       failActiveGenerationProgressStep(

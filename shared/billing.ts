@@ -1,5 +1,5 @@
 export const DG_DUE_GENERATION_BATCH_SIZE = 10
-export const CAM_DUE_GENERATION_BATCH_SIZE = 40
+export const CAM_DUE_GENERATION_BATCH_SIZE = 10
 export const BILL_NOTIFICATION_REQUEST_BATCH_SIZE = 40
 export const BILLING_BATCH_MAX_ATTEMPTS = 3
 
@@ -34,6 +34,11 @@ export const isRetryableBillingBatchError = (error: unknown) => {
   const status = getBillingBatchErrorStatus(error)
 
   return status == null || status === 408 || status === 425 || status === 429 || status >= 500
+}
+
+const isSplittableBillingBatchError = (error: unknown) => {
+  const status = getBillingBatchErrorStatus(error)
+  return status === 408 || (status != null && status >= 500)
 }
 
 export const getBillingBatchRetryDelayMs = (failedAttempt: number) =>
@@ -73,6 +78,37 @@ export const runBillingBatchWithRetry = async <T>(
   }
 
   throw new Error('Billing batch retry loop ended unexpectedly.')
+}
+
+export const runBillingFlatBatchWithRecovery = async <T>(
+  flatIds: readonly string[],
+  operation: (flatIds: string[]) => Promise<T>,
+  onSaved: (result: T, flatIds: readonly string[]) => void | Promise<void>,
+  options: BillingBatchRetryOptions & {
+    onSplit?: (flatIds: readonly string[]) => void | Promise<void>
+  } = {},
+): Promise<void> => {
+  if (flatIds.length === 0) return
+
+  let result: T
+  try {
+    result = await runBillingBatchWithRetry(
+      () => operation([...flatIds]),
+      options,
+    )
+  } catch (error) {
+    if (flatIds.length === 1 || !isSplittableBillingBatchError(error)) {
+      throw error
+    }
+
+    await options.onSplit?.(flatIds)
+    const middle = Math.ceil(flatIds.length / 2)
+    await runBillingFlatBatchWithRecovery(flatIds.slice(0, middle), operation, onSaved, options)
+    await runBillingFlatBatchWithRecovery(flatIds.slice(middle), operation, onSaved, options)
+    return
+  }
+
+  await onSaved(result, flatIds)
 }
 
 export const chunkBillingRequestIds = (

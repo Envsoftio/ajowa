@@ -12,7 +12,7 @@ test('queues DG Set bill emails from due creation through notification jobs', as
   assert.match(source, /channels: \['EMAIL'\]/)
   assert.match(source, /recipientRelationshipTypes: \['OWNER'\]/)
   assert.match(source, /invokeBillEmailNotificationWorker\(authMe\.user\.societyId\)/)
-  assert.doesNotMatch(source, /startPhase\('created_notification_skip'\)/)
+  assert.match(source, /if \(isDgGeneration\) \{[\s\S]*?eventKey: 'maintenance_due\.bill'[\s\S]*?\} else if \(body\.queueCreatedNotifications\) \{/)
 })
 
 test('reuses the bill notification queue worker from manual bill sends', async () => {
