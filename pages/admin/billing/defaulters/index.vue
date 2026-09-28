@@ -6,6 +6,7 @@ import type {
   DefaulterSummary,
 } from '~/types/domain'
 import ResidentAvatar from '~/components/residents/ResidentAvatar.vue'
+import DefaulterDuesList from '~/components/billing/DefaulterDuesList.vue'
 
 definePageMeta({
   layout: 'admin',
@@ -31,13 +32,6 @@ const formatMoney = (value: number) =>
 
 const formatNumber = (value: number) =>
   new Intl.NumberFormat('en-IN').format(value)
-
-const formatDate = (value: string | null | undefined) =>
-  value
-    ? new Date(`${value}T00:00:00`).toLocaleDateString('en-IN', {
-        dateStyle: 'medium',
-      })
-    : '-'
 
 const formatPlural = (
   count: number,
@@ -103,36 +97,32 @@ const contactOptions = [
   { label: 'Missing email', value: 'missing' },
 ]
 
-const [
-  defaultersAsyncData,
-  periodsAsyncData,
-  blocksAsyncData,
-] = await Promise.all([
-  useAsyncData(
-    'admin-billing-defaulters',
-    () => api<DefaulterResponse>('/api/admin/billing/defaulters'),
-  ),
-  useAsyncData('defaulter-period-options', () =>
-    api<PeriodResponse>('/api/admin/billing/periods', {
-      query: {
-        page: 1,
-        pageSize: 2000,
-        sortBy: 'startDate',
-        sortDirection: 'desc',
-      },
-    }),
-  ),
-  useAsyncData('defaulter-block-options', () =>
-    api<BlockResponse>('/api/admin/blocks', {
-      query: {
-        page: 1,
-        pageSize: 2000,
-        sortBy: 'sortOrder',
-        sortDirection: 'asc',
-      },
-    }),
-  ),
-])
+const [defaultersAsyncData, periodsAsyncData, blocksAsyncData] =
+  await Promise.all([
+    useAsyncData('admin-billing-defaulters', () =>
+      api<DefaulterResponse>('/api/admin/billing/defaulters'),
+    ),
+    useAsyncData('defaulter-period-options', () =>
+      api<PeriodResponse>('/api/admin/billing/periods', {
+        query: {
+          page: 1,
+          pageSize: 2000,
+          sortBy: 'startDate',
+          sortDirection: 'desc',
+        },
+      }),
+    ),
+    useAsyncData('defaulter-block-options', () =>
+      api<BlockResponse>('/api/admin/blocks', {
+        query: {
+          page: 1,
+          pageSize: 2000,
+          sortBy: 'sortOrder',
+          sortDirection: 'asc',
+        },
+      }),
+    ),
+  ])
 
 const { data, pending, refresh } = defaultersAsyncData
 const { data: periodsData } = periodsAsyncData
@@ -156,8 +146,7 @@ const blockOptions = computed(() => [
   })),
 ])
 
-const hasReminderContact = (row: DefaulterSummary) =>
-  Boolean(row.residentEmail)
+const hasReminderContact = (row: DefaulterSummary) => Boolean(row.residentEmail)
 
 const chargeTypeLabel = (value: string | null | undefined) => {
   if (value === 'CAM') return 'CAM'
@@ -220,7 +209,10 @@ const flatSearchText = (flat: DefaulterFlat) =>
     .toLowerCase()
 
 const flatMatchesFilters = (flat: DefaulterFlat) => {
-  if (billingPeriodFilter.value && flat.billingPeriodId !== billingPeriodFilter.value) {
+  if (
+    billingPeriodFilter.value &&
+    flat.billingPeriodId !== billingPeriodFilter.value
+  ) {
     return false
   }
 
@@ -228,11 +220,17 @@ const flatMatchesFilters = (flat: DefaulterFlat) => {
     return false
   }
 
-  if (chargeTypeFilter.value && flat.billingPeriodChargeType !== chargeTypeFilter.value) {
+  if (
+    chargeTypeFilter.value &&
+    flat.billingPeriodChargeType !== chargeTypeFilter.value
+  ) {
     return false
   }
 
-  return overdueBucketMatches(flat.daysOverdue) && balanceBucketMatches(flat.balanceAmount)
+  return (
+    overdueBucketMatches(flat.daysOverdue) &&
+    balanceBucketMatches(flat.balanceAmount)
+  )
 }
 
 const summarizeDefaulter = (
@@ -245,7 +243,10 @@ const summarizeDefaulter = (
   totalDue: flats.reduce((sum, flat) => sum + flat.totalAmount, 0),
   totalPaid: flats.reduce((sum, flat) => sum + flat.paidAmount, 0),
   totalBalance: flats.reduce((sum, flat) => sum + flat.balanceAmount, 0),
-  maxDaysOverdue: flats.reduce((max, flat) => Math.max(max, flat.daysOverdue), 0),
+  maxDaysOverdue: flats.reduce(
+    (max, flat) => Math.max(max, flat.daysOverdue),
+    0,
+  ),
 })
 
 const filteredDefaulters = computed(() => {
@@ -268,9 +269,7 @@ const filteredDefaulters = computed(() => {
 
       if (!term) return summarizeDefaulter(row, matchingFlats)
 
-      const flatText = matchingFlats
-        .map(flatSearchText)
-        .join(' ')
+      const flatText = matchingFlats.map(flatSearchText).join(' ')
       const ownerText = [
         row.residentName,
         row.residentEmail,
@@ -485,7 +484,11 @@ watch(filteredDefaulters, (rows) => {
       <section class="surface-card">
         <p class="eyebrow">Oldest due</p>
         <h3>
-          {{ summary.maxDays > 0 ? formatPlural(summary.maxDays, 'day') : 'Not overdue' }}
+          {{
+            summary.maxDays > 0
+              ? formatPlural(summary.maxDays, 'day')
+              : 'Not overdue'
+          }}
         </h3>
         <p v-if="summary.maxDays > 0">
           {{ formatPlural(summary.critical, 'owner') }} past 45 days.
@@ -615,9 +618,7 @@ watch(filteredDefaulters, (rows) => {
           <label>
             <span class="field-label">
               Tower
-              <AppHelpIcon
-                text="Show unpaid dues for flats in one tower."
-              />
+              <AppHelpIcon text="Show unpaid dues for flats in one tower." />
             </span>
             <Select
               v-model="blockFilter"
@@ -630,9 +631,7 @@ watch(filteredDefaulters, (rows) => {
           <label>
             <span class="field-label">
               Bill type
-              <AppHelpIcon
-                text="Filter unpaid dues by billing charge type."
-              />
+              <AppHelpIcon text="Filter unpaid dues by billing charge type." />
             </span>
             <Select
               v-model="chargeTypeFilter"
@@ -706,7 +705,7 @@ watch(filteredDefaulters, (rows) => {
         :rows="25"
         :rows-per-page-options="[10, 25, 50]"
         responsive-layout="scroll"
-        class="list-page__table"
+        class="list-page__table defaulters-table"
         data-key="userId"
       >
         <Column selection-mode="multiple" header-style="width: 3rem" />
@@ -768,27 +767,7 @@ watch(filteredDefaulters, (rows) => {
         </Column>
         <Column header="Pending dues">
           <template #body="{ data: row }">
-            <div class="defaulter-flat-list">
-              <div
-                v-for="flat in row.flats"
-                :key="flat.dueId"
-                class="defaulter-flat-pill"
-              >
-                <div class="defaulter-flat-pill__header">
-                  <span>{{ flat.blockName }} {{ flat.flatNumber }}</span>
-                  <strong>{{ formatMoney(flat.balanceAmount) }}</strong>
-                </div>
-                <small>
-                  {{ flat.billingPeriodLabel }} ·
-                  {{ chargeTypeLabel(flat.billingPeriodChargeType) }} · Due
-                  {{ formatDate(flat.dueDate) }} ·
-                  {{ overdueLabel(flat.daysOverdue) }}
-                </small>
-                <p v-if="flat.camAdvanceNote" class="table-muted">
-                  CAM advance: {{ flat.camAdvanceNote }}
-                </p>
-              </div>
-            </div>
+            <DefaulterDuesList :dues="row.flats" :flat-count="row.flatCount" />
           </template>
         </Column>
         <Column header="Actions" style="width: 120px">
@@ -862,27 +841,7 @@ watch(filteredDefaulters, (rows) => {
               <span :style="{ width: `${paymentProgress(row)}%` }" />
             </div>
           </div>
-          <div class="defaulter-flat-list">
-            <div
-              v-for="flat in row.flats"
-              :key="flat.dueId"
-              class="defaulter-flat-pill"
-            >
-              <div class="defaulter-flat-pill__header">
-                <span>{{ flat.blockName }} {{ flat.flatNumber }}</span>
-                <strong>{{ formatMoney(flat.balanceAmount) }}</strong>
-              </div>
-              <small>
-                {{ flat.billingPeriodLabel }} ·
-                {{ chargeTypeLabel(flat.billingPeriodChargeType) }} · Due
-                {{ formatDate(flat.dueDate) }} ·
-                {{ overdueLabel(flat.daysOverdue) }}
-              </small>
-              <p v-if="flat.camAdvanceNote" class="table-muted">
-                CAM advance: {{ flat.camAdvanceNote }}
-              </p>
-            </div>
-          </div>
+          <DefaulterDuesList :dues="row.flats" :flat-count="row.flatCount" />
           <div class="admin-inline-actions">
             <Button
               as="a"
@@ -913,8 +872,65 @@ watch(filteredDefaulters, (rows) => {
 <style scoped>
 .defaulter-owner {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 0.65rem;
   min-width: 0;
+}
+
+.defaulter-owner > div:last-child {
+  min-width: 0;
+}
+
+.defaulter-owner .table-muted,
+.defaulter-owner p {
+  overflow-wrap: anywhere;
+}
+
+.defaulters-table :deep(.p-datatable-table) {
+  min-width: 78rem;
+  table-layout: fixed;
+}
+
+.defaulters-table :deep(.p-datatable-thead > tr > th:first-child),
+.defaulters-table :deep(.p-datatable-tbody > tr > td:first-child) {
+  width: 3.25rem;
+}
+
+.defaulters-table :deep(.p-datatable-thead > tr > th:nth-child(2)),
+.defaulters-table :deep(.p-datatable-tbody > tr > td:nth-child(2)) {
+  width: 24%;
+}
+
+.defaulters-table :deep(.p-datatable-thead > tr > th:nth-child(3)),
+.defaulters-table :deep(.p-datatable-tbody > tr > td:nth-child(3)) {
+  width: 12%;
+}
+
+.defaulters-table :deep(.p-datatable-thead > tr > th:nth-child(4)),
+.defaulters-table :deep(.p-datatable-tbody > tr > td:nth-child(4)) {
+  width: 18%;
+}
+
+.defaulters-table :deep(.p-datatable-thead > tr > th:last-child),
+.defaulters-table :deep(.p-datatable-tbody > tr > td:last-child) {
+  width: 7rem;
+}
+
+.defaulters-table :deep(.p-datatable-tbody > tr > td) {
+  vertical-align: top;
+  padding-top: 0.9rem;
+  padding-bottom: 0.9rem;
+}
+
+.defaulters-table .billing-balance-cell {
+  min-width: 0;
+}
+
+.defaulters-table .billing-balance-cell strong {
+  line-height: 1.35;
+}
+
+.defaulters-table .admin-inline-actions {
+  flex-wrap: wrap;
 }
 </style>
