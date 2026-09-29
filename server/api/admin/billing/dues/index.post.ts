@@ -33,6 +33,7 @@ import {
   CAM_DUE_GENERATION_BATCH_SIZE,
   DG_DUE_GENERATION_BATCH_SIZE,
   getAdvanceConsumptionDueTargets,
+  isDgDueDateAfterPeriod,
 } from '~/shared/billing'
 import type { ChargeBreakdownItem } from '~/types/domain'
 
@@ -202,6 +203,20 @@ export default defineEventHandler(async (event) => {
 
     const periodDueDate = period.due_date
     const generatedAtDate = body.billDate ?? new Date().toISOString().slice(0, 10)
+    if (isDgGeneration && !isDgDueDateAfterPeriod(period.end_date, periodDueDate)) {
+      throw new AppError({
+        code: 'VALIDATION_ERROR',
+        statusCode: 400,
+        message: 'DG Set due date must be after the billing period end date. Correct the period before generating bills.',
+      })
+    }
+    if (isDgGeneration && periodDueDate < generatedAtDate) {
+      throw new AppError({
+        code: 'VALIDATION_ERROR',
+        statusCode: 400,
+        message: 'DG Set due date cannot be before the bill date. Correct the period before generating bills.',
+      })
+    }
     const cycleMultiplier = getBillingCycleMultiplier(period)
     const cycleLabel = getBillingCycleLabel(cycleMultiplier)
     completePhase({ cycleMultiplier, cycleLabel })

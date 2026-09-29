@@ -56,6 +56,7 @@ type BulkDueDateUpdateResponse = {
     skippedClosed: number
     skippedCovered: number
     skippedBeforePeriodStart: number
+    skippedBeforeDgPeriodEnd: number
     skippedPaymentConflict: number
   }
 }
@@ -875,6 +876,8 @@ const sumBulkDueDateResponses = (responses: BulkDueDateUpdateResponse['data'][])
       skippedCovered: total.skippedCovered + item.skippedCovered,
       skippedBeforePeriodStart:
         total.skippedBeforePeriodStart + item.skippedBeforePeriodStart,
+      skippedBeforeDgPeriodEnd:
+        total.skippedBeforeDgPeriodEnd + item.skippedBeforeDgPeriodEnd,
       skippedPaymentConflict:
         total.skippedPaymentConflict + item.skippedPaymentConflict,
     }),
@@ -890,6 +893,7 @@ const sumBulkDueDateResponses = (responses: BulkDueDateUpdateResponse['data'][])
       skippedClosed: 0,
       skippedCovered: 0,
       skippedBeforePeriodStart: 0,
+      skippedBeforeDgPeriodEnd: 0,
       skippedPaymentConflict: 0,
     },
   )
@@ -1073,6 +1077,7 @@ const submitBulkDueDate = async () => {
       result.skippedClosed +
       result.skippedCovered +
       result.skippedBeforePeriodStart +
+      result.skippedBeforeDgPeriodEnd +
       result.skippedPaymentConflict
 
     toast.add({

@@ -21,6 +21,7 @@ import {
 } from '~/server/utils/billing'
 import { recomputeUserAccess } from '~/server/utils/qr-access'
 import type { ChargeBreakdownItem } from '~/types/domain'
+import { isDgDueDateAfterPeriod } from '~/shared/billing'
 
 type DueEditRow = {
   id: string
@@ -150,6 +151,13 @@ export default defineEventHandler(async (event) => {
         code: 'VALIDATION_ERROR',
         statusCode: 400,
         message: 'Due date cannot be before the billing period start date.',
+      })
+    }
+    if (due.billing_period_charge_type === 'DG_SET' && !isDgDueDateAfterPeriod(due.billing_period_end_date, nextDueDate)) {
+      throw new AppError({
+        code: 'VALIDATION_ERROR',
+        statusCode: 400,
+        message: 'DG Set due date must be after the billing period end date.',
       })
     }
 

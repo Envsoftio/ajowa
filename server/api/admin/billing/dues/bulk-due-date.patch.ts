@@ -20,6 +20,7 @@ import {
   writeMasterAudit,
 } from '~/server/utils/master-data'
 import { recomputeUserAccessForPairs } from '~/server/utils/qr-access'
+import { isDgDueDateAfterPeriod } from '~/shared/billing'
 
 type BulkDueDateRow = {
   id: string
@@ -279,6 +280,7 @@ export default defineEventHandler(async (event) => {
       closed: 0,
       covered: 0,
       beforePeriodStart: 0,
+      beforeDgPeriodEnd: 0,
       paymentConflict: 0,
     }
     const previousDueDateCounts: Record<string, number> = {}
@@ -319,6 +321,11 @@ export default defineEventHandler(async (event) => {
 
       if (body.dueDate < due.billing_period_start_date) {
         skipped.beforePeriodStart += 1
+        continue
+      }
+
+      if (due.billing_period_charge_type === 'DG_SET' && !isDgDueDateAfterPeriod(due.billing_period_end_date, body.dueDate)) {
+        skipped.beforeDgPeriodEnd += 1
         continue
       }
 
@@ -493,6 +500,7 @@ export default defineEventHandler(async (event) => {
       skippedClosed: skipped.closed,
       skippedCovered: skipped.covered,
       skippedBeforePeriodStart: skipped.beforePeriodStart,
+      skippedBeforeDgPeriodEnd: skipped.beforeDgPeriodEnd,
       skippedPaymentConflict: skipped.paymentConflict,
       accessRecomputed,
       accessRevoked,

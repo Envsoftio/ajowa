@@ -3,6 +3,9 @@ export const CAM_DUE_GENERATION_BATCH_SIZE = 10
 export const BILL_NOTIFICATION_REQUEST_BATCH_SIZE = 40
 export const BILLING_BATCH_MAX_ATTEMPTS = 3
 
+export const isDgDueDateAfterPeriod = (periodEndDate: string, dueDate: string) =>
+  dueDate > periodEndDate
+
 type BillingBatchRetryContext = {
   failedAttempt: number
   nextAttempt: number

@@ -3,6 +3,7 @@ import {
   BILL_NOTIFICATION_REQUEST_BATCH_SIZE,
   CAM_DUE_GENERATION_BATCH_SIZE,
   DG_DUE_GENERATION_BATCH_SIZE,
+  isDgDueDateAfterPeriod,
   runBillingBatchWithRetry,
   runBillingFlatBatchWithRecovery,
 } from '~/shared/billing'
@@ -1359,6 +1360,16 @@ const createPeriod = async () => {
       severity: 'warn',
       summary: 'Check dates',
       detail: 'Start date must be before or equal to end date.',
+      life: 10000,
+    })
+    return
+  }
+
+  if (periodChargeType.value === 'DG_SET' && !isDgDueDateAfterPeriod(periodForm.endDate, periodForm.dueDate)) {
+    toast.add({
+      severity: 'warn',
+      summary: 'Check due date',
+      detail: 'DG Set due date must be after the period end date.',
       life: 10000,
     })
     return
@@ -3061,7 +3072,12 @@ watch(
               Due date
               <AppHelpIcon text="Payment deadline shown on generated bills." />
             </span>
-            <InputText v-model="periodForm.dueDate" type="date" required />
+            <InputText
+              v-model="periodForm.dueDate"
+              type="date"
+              :min="periodChargeType === 'DG_SET' && periodForm.endDate ? toDateInput(addDays(new Date(`${periodForm.endDate}T00:00:00Z`), 1)) : undefined"
+              required
+            />
           </label>
         </div>
 

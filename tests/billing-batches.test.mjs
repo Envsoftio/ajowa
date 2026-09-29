@@ -9,9 +9,16 @@ import {
   chunkBillingRequestIds,
   getAdvanceConsumptionDueTargets,
   getDueGenerationFlatIdBatches,
+  isDgDueDateAfterPeriod,
   runBillingBatchWithRetry,
   runBillingFlatBatchWithRecovery,
 } from '../shared/billing.ts'
+
+test('DG due dates must follow the full billing period', () => {
+  assert.equal(isDgDueDateAfterPeriod('2026-09-30', '2026-09-10'), false)
+  assert.equal(isDgDueDateAfterPeriod('2026-09-30', '2026-09-30'), false)
+  assert.equal(isDgDueDateAfterPeriod('2026-09-30', '2026-10-10'), true)
+})
 
 test('keeps DG due generation below the production timeout batch size', () => {
   assert.equal(DG_DUE_GENERATION_BATCH_SIZE, 10)

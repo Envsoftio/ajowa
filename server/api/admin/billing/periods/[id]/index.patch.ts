@@ -4,6 +4,7 @@ import { getDatabasePool } from '~/server/utils/database'
 import { validatePayload, writeMasterAudit, readUuidParam } from '~/server/utils/master-data'
 import { billingPeriodUpdateSchema, type BillingPeriodUpdateInput } from '~/server/utils/billing'
 import { AppError } from '~/server/utils/errors'
+import { isDgDueDateAfterPeriod } from '~/shared/billing'
 
 export default defineEventHandler(async (event) => {
   const authMe = await requireRole(event, ['ADMIN', 'MANAGER'])
@@ -96,6 +97,14 @@ export default defineEventHandler(async (event) => {
         code: 'VALIDATION_ERROR',
         statusCode: 400,
         message: 'Due date must be on or after start date.',
+      })
+    }
+
+    if (nextChargeType === 'DG_SET' && !isDgDueDateAfterPeriod(nextEndDate, nextDueDate)) {
+      throw new AppError({
+        code: 'VALIDATION_ERROR',
+        statusCode: 400,
+        message: 'DG Set due date must be after the billing period end date.',
       })
     }
 
