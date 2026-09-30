@@ -460,6 +460,27 @@ type HomeBillTab = 'open' | 'history'
 const homeBillTab = ref<HomeBillTab>('open')
 const visibleBillCount = ref(5)
 const billsSection = ref<HTMLElement | null>(null)
+const expandedDueIds = ref<Set<string>>(new Set())
+const isDueExpanded = (id: string) => expandedDueIds.value.has(id)
+const toggleDueExpanded = (id: string) => {
+  const next = new Set(expandedDueIds.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  expandedDueIds.value = next
+}
+const dueTypeLabel = (due: MaintenanceDue) =>
+  due.billingPeriodChargeType === 'CAM'
+    ? 'CAM'
+    : due.billingPeriodChargeType === 'DG_SET'
+      ? 'DG Set'
+      : 'Other due'
+const dueTypeIcon = (due: MaintenanceDue) =>
+  due.billingPeriodChargeType === 'CAM'
+    ? 'pi pi-building'
+    : due.billingPeriodChargeType === 'DG_SET'
+      ? 'pi pi-bolt'
+      : 'pi pi-file'
+const dueDetailsId = (due: MaintenanceDue) => `due-details-${due.id}`
 const isOpenDue = (due: MaintenanceDue) =>
   !due.isCamAdvanceCovered &&
   !due.isAdvanceCoverageRow &&
@@ -493,6 +514,7 @@ const selectHomeBillTab = (tab: HomeBillTab, scroll = false) => {
   if (homeBillTab.value !== tab) {
     homeBillTab.value = tab
     visibleBillCount.value = 5
+    expandedDueIds.value = new Set()
   }
   if (scroll) {
     nextTick(() =>
@@ -1018,18 +1040,109 @@ const openBreakdown = (due: MaintenanceDue) => {
               :key="row.id"
               class="list-card resident-due-card"
               :class="{
-                'resident-due-card--history':
-                  isStandaloneHome && homeBillTab === 'history',
+                'resident-due-card--cam':
+                  isStandaloneHome && row.billingPeriodChargeType === 'CAM',
+                'resident-due-card--dg':
+                  isStandaloneHome && row.billingPeriodChargeType === 'DG_SET',
               }"
             >
-              <div class="list-card__header resident-due-card__header">
-                <div>
-                  <h3>{{ row.billingPeriodLabel }}</h3>
-                  <p v-if="isStandaloneHome" class="resident-due-card__flat">
-                    {{ row.blockName }} {{ row.flatNumber }}
-                  </p>
+              <template v-if="isStandaloneHome">
+                <div class="mobile-bill__topline">
+                  <span class="mobile-bill__type">
+                    <i :class="dueTypeIcon(row)" aria-hidden="true" />
+                    {{ dueTypeLabel(row) }}
+                  </span>
+                  <span
+                    v-if="row.isCamAdvanceCovered"
+                    class="billing-advance-pill"
+                    >Covered</span
+                  >
+                  <AppStatusBadge v-else :status="row.status" />
+                </div>
+
+                <div class="mobile-bill__main">
+                  <div class="mobile-bill__identity">
+                    <h3>{{ row.billingPeriodLabel }}</h3>
+                    <p>
+                      {{ row.blockName }} {{ row.flatNumber }} · Due
+                      {{ formatDate(row.dueDate) }}
+                    </p>
+                  </div>
+                  <div class="mobile-bill__amount">
+                    <span>{{
+                      homeBillTab === 'history' ? 'Billed' : 'Balance'
+                    }}</span>
+                    <strong>{{
+                      formatMoney(
+                        homeBillTab === 'history'
+                          ? row.totalAmount
+                          : row.balanceAmount,
+                      )
+                    }}</strong>
+                  </div>
+                </div>
+
+                <div class="mobile-bill__actions">
+                  <Button
+                    v-if="isOpenDue(row) && canPayDue(row)"
+                    label="Pay"
+                    icon="pi pi-credit-card"
+                    :disabled="Boolean(payingDueId)"
+                    :loading="payingDueId === row.id"
+                    @click="reviewPayment(row)"
+                  />
+                  <AppDocumentLink
+                    v-if="!row.isAdvanceCoverageRow"
+                    :href="`/api/my/dues/${row.id}/bill`"
+                    viewer-title="Bill PDF"
+                    label="Bill"
+                    icon="pi pi-file-pdf"
+                    severity="secondary"
+                    outlined
+                  />
+                  <button
+                    type="button"
+                    class="mobile-bill__details-toggle"
+                    :aria-expanded="isDueExpanded(row.id)"
+                    :aria-controls="dueDetailsId(row)"
+                    @click="toggleDueExpanded(row.id)"
+                  >
+                    {{ isDueExpanded(row.id) ? 'Less' : 'Details' }}
+                    <i
+                      :class="
+                        isDueExpanded(row.id)
+                          ? 'pi pi-chevron-up'
+                          : 'pi pi-chevron-down'
+                      "
+                      aria-hidden="true"
+                    />
+                  </button>
+                </div>
+
+                <div
+                  v-show="isDueExpanded(row.id)"
+                  :id="dueDetailsId(row)"
+                  class="mobile-bill__details"
+                >
+                  <div class="mobile-bill__facts">
+                    <div>
+                      <span>Base</span
+                      ><strong>{{ formatMoney(row.baseAmount) }}</strong>
+                    </div>
+                    <div>
+                      <span>Late fee</span
+                      ><strong>{{ formatMoney(row.lateFeeAmount) }}</strong>
+                    </div>
+                    <div>
+                      <span>Paid</span
+                      ><strong>{{ formatMoney(row.paidAmount) }}</strong>
+                    </div>
+                    <div>
+                      <span>Total billed</span
+                      ><strong>{{ formatMoney(row.totalAmount) }}</strong>
+                    </div>
+                  </div>
                   <p v-if="dueSourceLabel(row)">{{ dueSourceLabel(row) }}</p>
-                  <p>Due {{ formatDate(row.dueDate) }}</p>
                   <p
                     v-if="
                       row.penaltyFreeUntilDate &&
@@ -1037,105 +1150,123 @@ const openBreakdown = (due: MaintenanceDue) => {
                     "
                   >
                     No late fee through
-                    {{ formatDate(row.penaltyFreeUntilDate) }}
+                    {{ formatDate(row.penaltyFreeUntilDate) }}.
                   </p>
+                  <p v-if="hasCamAdvanceAdjustment(row)">
+                    {{ formatMoney(camAdvanceAdjustmentAmount(row)) }} CAM
+                    advance deducted.
+                  </p>
+                  <p v-if="advanceStatusKind(row) !== 'not-cam'">
+                    <strong>{{ advanceStatusLabel(row) }}:</strong>
+                    {{ advanceStatusDetail(row) }}
+                  </p>
+                  <p v-if="isOpenDue(row) && !canPayDue(row)">
+                    {{ getPayTitle(row) }}
+                  </p>
+                  <Button
+                    label="View charge breakdown"
+                    icon="pi pi-list"
+                    severity="secondary"
+                    text
+                    @click="openBreakdown(row)"
+                  />
                 </div>
-                <span
-                  v-if="row.isCamAdvanceCovered"
-                  class="billing-advance-pill"
-                >
-                  Covered
-                </span>
-                <AppStatusBadge v-else :status="row.status" />
-              </div>
+              </template>
+              <template v-else>
+                <div class="list-card__header resident-due-card__header">
+                  <div>
+                    <h3>{{ row.billingPeriodLabel }}</h3>
+                    <p v-if="dueSourceLabel(row)">{{ dueSourceLabel(row) }}</p>
+                    <p>Due {{ formatDate(row.dueDate) }}</p>
+                    <p
+                      v-if="
+                        row.penaltyFreeUntilDate &&
+                        row.penaltyFreeUntilDate > row.dueDate
+                      "
+                    >
+                      No late fee through
+                      {{ formatDate(row.penaltyFreeUntilDate) }}
+                    </p>
+                  </div>
+                  <span
+                    v-if="row.isCamAdvanceCovered"
+                    class="billing-advance-pill"
+                  >
+                    Covered
+                  </span>
+                  <AppStatusBadge v-else :status="row.status" />
+                </div>
 
-              <div class="resident-due-card__amount-strip">
+                <div class="resident-due-card__amount-strip">
+                  <div
+                    class="resident-due-card__amount resident-due-card__amount--balance"
+                  >
+                    <span>Balance</span>
+                    <strong>{{ formatMoney(row.balanceAmount) }}</strong>
+                    <small v-if="hasCamAdvanceAdjustment(row)">
+                      {{ formatMoney(camAdvanceAdjustmentAmount(row)) }} advance
+                      deducted
+                    </small>
+                  </div>
+                  <div class="resident-due-card__amount">
+                    <span>Paid</span>
+                    <strong>{{ formatMoney(row.paidAmount) }}</strong>
+                  </div>
+                </div>
+
                 <div
-                  class="resident-due-card__amount resident-due-card__amount--balance"
+                  class="billing-advance-state billing-advance-state--card"
+                  :class="`billing-advance-state--${advanceStatusKind(row)}`"
                 >
-                  <span>{{
-                    isStandaloneHome && homeBillTab === 'history'
-                      ? 'Amount'
-                      : 'Balance'
-                  }}</span>
-                  <strong>{{
-                    formatMoney(
-                      isStandaloneHome && homeBillTab === 'history'
-                        ? row.totalAmount
-                        : row.balanceAmount,
-                    )
-                  }}</strong>
-                  <small v-if="hasCamAdvanceAdjustment(row)">
-                    {{ formatMoney(camAdvanceAdjustmentAmount(row)) }} advance
-                    deducted
-                  </small>
+                  <span class="billing-advance-pill">
+                    {{ advanceStatusLabel(row) }}
+                  </span>
+                  <p>{{ advanceStatusDetail(row) }}</p>
                 </div>
-                <div class="resident-due-card__amount">
-                  <span>Paid</span>
-                  <strong>{{ formatMoney(row.paidAmount) }}</strong>
-                </div>
-              </div>
 
-              <div
-                v-if="!isStandaloneHome || advanceStatusKind(row) !== 'not-cam'"
-                class="billing-advance-state billing-advance-state--card"
-                :class="`billing-advance-state--${advanceStatusKind(row)}`"
-              >
-                <span class="billing-advance-pill">
-                  {{ advanceStatusLabel(row) }}
-                </span>
-                <p>{{ advanceStatusDetail(row) }}</p>
-              </div>
-
-              <div class="resident-due-card__meta-grid">
-                <div>
-                  <span>Base</span>
-                  <strong>{{ formatMoney(row.baseAmount) }}</strong>
+                <div class="resident-due-card__meta-grid">
+                  <div>
+                    <span>Base</span>
+                    <strong>{{ formatMoney(row.baseAmount) }}</strong>
+                  </div>
+                  <div>
+                    <span>Late fee</span>
+                    <strong>{{ formatMoney(row.lateFeeAmount) }}</strong>
+                  </div>
                 </div>
-                <div>
-                  <span>Late fee</span>
-                  <strong>{{ formatMoney(row.lateFeeAmount) }}</strong>
-                </div>
-              </div>
 
-              <div
-                class="resident-mobile-actions"
-                :class="{
-                  'resident-mobile-actions--history':
-                    isStandaloneHome && homeBillTab === 'history',
-                }"
-              >
-                <AppDocumentLink
-                  v-if="!row.isAdvanceCoverageRow"
-                  :href="`/api/my/dues/${row.id}/bill`"
-                  viewer-title="Bill PDF"
-                  label="Bill"
-                  icon="pi pi-file-pdf"
-                  severity="secondary"
-                  outlined
-                  size="small"
-                />
-                <Button
-                  label="Breakdown"
-                  icon="pi pi-list"
-                  severity="secondary"
-                  outlined
-                  size="small"
-                  @click="openBreakdown(row)"
-                />
-                <Button
-                  v-if="!isStandaloneHome || isOpenDue(row)"
-                  label="Pay"
-                  icon="pi pi-credit-card"
-                  severity="secondary"
-                  outlined
-                  size="small"
-                  :title="getPayTitle(row)"
-                  :disabled="!canPayDue(row) || Boolean(payingDueId)"
-                  :loading="payingDueId === row.id"
-                  @click="reviewPayment(row)"
-                />
-              </div>
+                <div class="resident-mobile-actions">
+                  <AppDocumentLink
+                    v-if="!row.isAdvanceCoverageRow"
+                    :href="`/api/my/dues/${row.id}/bill`"
+                    viewer-title="Bill PDF"
+                    label="Bill"
+                    icon="pi pi-file-pdf"
+                    severity="secondary"
+                    outlined
+                    size="small"
+                  />
+                  <Button
+                    label="Breakdown"
+                    icon="pi pi-list"
+                    severity="secondary"
+                    outlined
+                    size="small"
+                    @click="openBreakdown(row)"
+                  />
+                  <Button
+                    label="Pay"
+                    icon="pi pi-credit-card"
+                    severity="secondary"
+                    outlined
+                    size="small"
+                    :title="getPayTitle(row)"
+                    :disabled="!canPayDue(row) || Boolean(payingDueId)"
+                    :loading="payingDueId === row.id"
+                    @click="reviewPayment(row)"
+                  />
+                </div>
+              </template>
             </article>
           </div>
         </section>
@@ -1527,45 +1658,176 @@ const openBreakdown = (due: MaintenanceDue) => {
   outline-offset: 2px;
 }
 
-.resident-home--standalone .resident-dues-panel .resident-due-group__header {
-  padding: 0.75rem 0.2rem 0.4rem;
-  border: 0;
-  background: transparent;
-}
-
 .resident-home--standalone .resident-dues-panel .resident-due-card {
+  --bill-accent: var(--color-brand);
   border-radius: 1.1rem;
   background: var(--color-surface);
 }
 
-.resident-home--standalone .resident-dues-panel .resident-due-card__flat {
-  color: var(--color-brand-strong);
+.resident-home--standalone .resident-dues-panel .resident-due-card--cam {
+  --bill-accent: #0f766e;
+}
+
+.resident-home--standalone .resident-dues-panel .resident-due-card--dg {
+  --bill-accent: #a45c08;
+}
+
+:global(.app-theme-dark) .resident-home--standalone .resident-due-card--cam {
+  --bill-accent: #5eead4;
+}
+
+:global(.app-theme-dark) .resident-home--standalone .resident-due-card--dg {
+  --bill-accent: #fbbf67;
+}
+
+.resident-home--standalone .resident-dues-panel .resident-due-card::before {
+  background: var(--bill-accent);
+}
+
+.mobile-bill__topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding-left: 0.25rem;
+}
+
+.mobile-bill__type {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.55rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bill-accent) 12%, var(--color-surface));
+  color: var(--bill-accent);
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.mobile-bill__main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.6rem;
+  padding-left: 0.25rem;
+}
+
+.mobile-bill__identity {
+  min-width: 0;
+}
+
+.mobile-bill__identity h3,
+.mobile-bill__identity p {
+  margin: 0;
+}
+
+.mobile-bill__identity h3 {
+  font-size: 0.98rem;
+  line-height: 1.25;
+}
+
+.mobile-bill__identity p {
+  margin-top: 0.25rem;
+  color: var(--color-muted);
+  font-size: 0.73rem;
+  line-height: 1.35;
+}
+
+.mobile-bill__amount {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+  max-width: 10rem;
+  text-align: right;
+}
+
+.mobile-bill__amount span {
+  color: var(--color-muted);
+  font-size: 0.67rem;
+}
+
+.mobile-bill__amount strong {
+  overflow-wrap: anywhere;
+  color: var(--bill-accent);
+  font-size: clamp(1rem, 4.3vw, 1.22rem);
+  line-height: 1.15;
+}
+
+.mobile-bill__actions {
+  display: flex;
+  gap: 0.45rem;
+  padding-top: 0.15rem;
+}
+
+.mobile-bill__actions :deep(.p-button),
+.mobile-bill__details-toggle {
+  display: inline-flex;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 2.6rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  padding: 0.45rem 0.35rem;
+  border-radius: 0.7rem;
+  font-size: 0.78rem;
   font-weight: 700;
+  white-space: nowrap;
 }
 
-.resident-home--standalone
-  .resident-dues-panel
-  .resident-due-card--history
-  .billing-advance-state
-  p {
-  display: none;
+.mobile-bill__details-toggle {
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+  cursor: pointer;
+  font-family: inherit;
 }
 
-.resident-home--standalone .resident-due-card__meta-grid {
-  display: none;
+.mobile-bill__details-toggle:focus-visible {
+  outline: 2px solid var(--bill-accent);
+  outline-offset: 2px;
 }
 
-.resident-home--standalone
-  .resident-dues-panel
-  .resident-mobile-actions--history {
+.mobile-bill__details {
+  display: grid;
+  gap: 0.6rem;
+  padding: 0.8rem 0.2rem 0.15rem;
+  border-top: 1px solid var(--color-border);
+  color: var(--color-muted);
+  font-size: 0.77rem;
+  line-height: 1.4;
+}
+
+.mobile-bill__details p {
+  margin: 0;
+}
+
+.mobile-bill__details p strong {
+  color: var(--color-text);
+}
+
+.mobile-bill__facts {
+  display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem 1rem;
 }
 
-.resident-home--standalone
-  .resident-dues-panel
-  .resident-mobile-actions
-  :deep(.p-button) {
-  min-height: 2.7rem;
+.mobile-bill__facts > div {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.mobile-bill__facts strong {
+  color: var(--color-text);
+  font-size: 0.85rem;
+}
+
+.mobile-bill__details :deep(.p-button) {
+  justify-self: start;
+  padding: 0.35rem 0;
+  font-size: 0.8rem;
 }
 
 .resident-home__show-more {
@@ -1593,6 +1855,14 @@ const openBreakdown = (due: MaintenanceDue) => {
 }
 
 @media (max-width: 380px) {
+  .mobile-bill__main {
+    grid-template-columns: 1fr;
+  }
+
+  .mobile-bill__amount {
+    text-align: left;
+  }
+
   .resident-home__mini-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
