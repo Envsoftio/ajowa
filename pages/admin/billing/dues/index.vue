@@ -20,6 +20,14 @@ type DueResponse = {
   }
 }
 type PeriodResponse = { ok: true; data: { items: BillingPeriod[] } }
+type GatewayException = {
+  paymentId: string
+  flatNumber: string
+  amount: string
+  reference: string
+  lastError: string | null
+}
+type GatewayExceptionsResponse = { ok: true; data: GatewayException[] }
 type BillChannel = 'PUSH' | 'EMAIL' | 'WHATSAPP' | 'IN_APP'
 type NotificationQueueResponse = {
   ok: true
@@ -243,6 +251,24 @@ const [
 ])
 
 const { data, pending, refresh } = duesAsyncData
+const { data: gatewayExceptionsData, refresh: refreshGatewayExceptions } =
+  await useAsyncData('dues-gateway-exceptions', () =>
+    api<GatewayExceptionsResponse>('/api/admin/payments/exceptions'),
+  )
+const gatewayExceptions = computed(() => gatewayExceptionsData.value?.data ?? [])
+const retryingGatewayPaymentId = ref<string | null>(null)
+const retryGatewayPayment = async (paymentId: string) => {
+  retryingGatewayPaymentId.value = paymentId
+  try {
+    await api(`/api/admin/payments/${paymentId}/retry`, { method: 'POST' })
+    toast.add({ severity: 'success', summary: 'Payment reconciled', detail: 'Receipt processing has been queued.', life: 7000 })
+  } catch (error) {
+    toast.add({ severity: 'error', summary: 'Recovery needs attention', detail: getApiErrorMessage(error, 'Check the latest error in Payments.'), life: 9000 })
+  } finally {
+    retryingGatewayPaymentId.value = null
+    await Promise.all([refresh(), refreshGatewayExceptions()])
+  }
+}
 const { data: periodsData } = periodsAsyncData
 
 const dues = computed(() => data.value?.data.items ?? [])
@@ -1379,6 +1405,20 @@ watch(
 
 <template>
   <div class="landing-page">
+    <section v-if="gatewayExceptions.length" class="surface-card" role="alert">
+      <h2>Gateway paid · AJOWA processing needed</h2>
+      <p>These dues still show a balance because a confirmed online payment has not been posted. Do not record another payment.</p>
+      <div v-for="item in gatewayExceptions" :key="item.paymentId" class="list-card">
+        <strong>{{ item.flatNumber }} · {{ formatMoney(Number(item.amount)) }}</strong>
+        <p>Transaction: {{ item.reference }}<template v-if="item.lastError"> · Latest error: {{ item.lastError }}</template></p>
+        <Button
+          label="Check Easebuzz and recover" icon="pi pi-refresh" size="small"
+          :loading="retryingGatewayPaymentId === item.paymentId"
+          :disabled="Boolean(retryingGatewayPaymentId) || !canManageDues"
+          @click="retryGatewayPayment(item.paymentId)" />
+        <Button label="Review payment" as="a" href="/admin/payments" size="small" severity="secondary" outlined />
+      </div>
+    </section>
     <div class="surface-grid">
       <section class="surface-card">
         <p class="eyebrow">Visible due</p>

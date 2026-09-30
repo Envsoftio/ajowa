@@ -144,6 +144,19 @@ type PaymentsResponse = {
   }
 }
 type DetailResponse = { ok: true; data: PaymentDetail }
+type GatewayException = {
+  paymentId: string
+  flatNumber: string
+  payerName: string
+  amount: string
+  reference: string
+  gatewayPaymentId: string | null
+  gatewayPaidAt: string | null
+  attemptStatus: string
+  lastError: string | null
+  lastAttemptAt: string | null
+}
+type GatewayExceptionsResponse = { ok: true; data: GatewayException[] }
 type PaymentUpdateResponse = {
   ok: true
   data: {
@@ -392,6 +405,24 @@ const [
 ])
 
 const { data, pending, refresh } = paymentsAsyncData
+const { data: gatewayExceptionsData, refresh: refreshGatewayExceptions } =
+  await useAsyncData('admin-payment-gateway-exceptions', () =>
+    api<GatewayExceptionsResponse>('/api/admin/payments/exceptions'),
+  )
+const gatewayExceptions = computed(() => gatewayExceptionsData.value?.data ?? [])
+const retryingGatewayPaymentId = ref<string | null>(null)
+const retryGatewayPayment = async (paymentId: string) => {
+  retryingGatewayPaymentId.value = paymentId
+  try {
+    await api(`/api/admin/payments/${paymentId}/retry`, { method: 'POST' })
+    toast.add({ severity: 'success', summary: 'Payment reconciled', detail: 'Receipt processing has been queued.', life: 7000 })
+  } catch (error) {
+    toast.add({ severity: 'error', summary: 'Recovery needs attention', detail: getApiErrorMessage(error, 'Check the latest processing error and retry after fixing it.'), life: 9000 })
+  } finally {
+    retryingGatewayPaymentId.value = null
+    await Promise.all([refresh(), refreshGatewayExceptions()])
+  }
+}
 const { data: flatsData } = flatsAsyncData
 const { data: residentsData } = residentsAsyncData
 const { data: periodsData } = periodsAsyncData
@@ -454,6 +485,9 @@ const hasActiveFilters = computed(() =>
   Object.entries(query).some(([key, value]) => !['page', 'pageSize'].includes(key) && Boolean(value)),
 )
 const canEditPayment = computed(() => ['ADMIN', 'MANAGER'].includes(authStore.me?.user.role ?? ''))
+const canRecoverGatewayPayment = computed(() =>
+  authStore.me?.user.permissions?.includes('dues.manage') ?? false,
+)
 
 watch(
   () => [
@@ -1092,6 +1126,23 @@ const onProofFileChange = async (event: Event) => {
 
 <template>
   <div class="landing-page">
+    <section v-if="gatewayExceptions.length" class="surface-card" role="alert">
+      <h2>Gateway paid · AJOWA processing needed</h2>
+      <p>Easebuzz confirmed these payments, but AJOWA has not posted them or generated receipts. Recovery checks the same transaction with Easebuzz before posting it. Do not record another payment.</p>
+      <div v-for="item in gatewayExceptions" :key="item.paymentId" class="list-card">
+        <strong>{{ item.flatNumber }} · {{ item.payerName }} · {{ formatMoney(item.amount) }}</strong>
+        <p>Transaction: {{ item.reference }} · Easebuzz ID: {{ item.gatewayPaymentId || '-' }}</p>
+        <p>AJOWA status: {{ item.attemptStatus }}<template v-if="item.lastError"> · Latest error: {{ item.lastError }}</template></p>
+        <Button
+          label="View payment" icon="pi pi-eye" size="small" severity="secondary" outlined
+          @click="openDetail({ id: item.paymentId })" />
+        <Button
+          label="Check Easebuzz and recover" icon="pi pi-refresh" size="small"
+          :loading="retryingGatewayPaymentId === item.paymentId"
+          :disabled="Boolean(retryingGatewayPaymentId) || !canRecoverGatewayPayment"
+          @click="retryGatewayPayment(item.paymentId)" />
+      </div>
+    </section>
     <input
       ref="proofInput"
       type="file"
@@ -1257,6 +1308,9 @@ const onProofFileChange = async (event: Event) => {
         <Column field="status" header="Status">
           <template #body="{ data: row }">
             <AppStatusBadge :status="row.status" />
+            <Tag
+              v-if="row.status !== 'VERIFIED' && row.gatewayStatus?.toLowerCase() === 'success'"
+              value="Gateway paid · AJOWA pending" severity="warn" rounded />
           </template>
         </Column>
         <Column field="receiptNumber" header="Receipt">

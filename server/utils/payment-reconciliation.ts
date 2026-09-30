@@ -12,7 +12,7 @@ export const PAYMENT_RECONCILIATION_WORKER_PATH =
   '/api/background/payment-reconciliation'
 export const PAYMENT_RECONCILIATION_WORKER_SECRET_HEADER =
   'x-ajowa-payment-worker-secret'
-export const PAYMENT_RECONCILIATION_BATCH_SIZE = 20
+export const PAYMENT_RECONCILIATION_BATCH_SIZE = 5
 
 export const getPaymentReconciliationWorkerSecret = () => {
   try {
@@ -144,18 +144,22 @@ const processEffectJob = async (job: EffectJob, workerId: string) => {
 export const runPaymentReconciliationBatch = async () => {
   const workerId = randomUUID()
   const attempts = await claimReconciliationAttempts(workerId)
-  const reconciliationResults = await Promise.all(
-    attempts.map((id) => reconcileAttempt(id, workerId)),
-  )
+  // Production uses a single database connection. Serial processing also
+  // avoids competing finalization transactions for the same dues.
+  let attemptsCompleted = 0
+  for (const id of attempts) {
+    if (await reconcileAttempt(id, workerId)) attemptsCompleted += 1
+  }
   const jobs = await claimEffectJobs(workerId)
-  const jobResults = await Promise.all(
-    jobs.map((job) => processEffectJob(job, workerId)),
-  )
+  let jobsCompleted = 0
+  for (const job of jobs) {
+    if (await processEffectJob(job, workerId)) jobsCompleted += 1
+  }
 
   return {
     attemptsClaimed: attempts.length,
-    attemptsCompleted: reconciliationResults.filter(Boolean).length,
+    attemptsCompleted,
     jobsClaimed: jobs.length,
-    jobsCompleted: jobResults.filter(Boolean).length,
+    jobsCompleted,
   }
 }

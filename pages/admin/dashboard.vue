@@ -51,6 +51,7 @@ type DashboardResponse = {
   residents: Paginated<ResidentSummary>
   recentOutstanding: Paginated<MaintenanceDue>
   topDefaulters: DefaulterSummary[]
+  gatewayExceptions: Array<{ paymentId: string; flatNumber: string; amount: string; reference: string }>
 }
 
 const api = useApi()
@@ -78,7 +79,7 @@ const overdueLabel = (days: number) =>
 const statusBadge = (value: boolean) => (value ? 'success' : 'secondary')
 
 const loadDashboard = async () => {
-  const [overview, blocks, flats, residents, recentOutstanding] = await Promise.all([
+  const [overview, blocks, flats, residents, recentOutstanding, gatewayExceptions] = await Promise.all([
     api<{ ok: true; data: DashboardOverviewResponse }>('/api/admin/dashboard'),
     api<{ ok: true; data: Paginated<BlockSummary> }>('/api/admin/blocks', {
       query: { page: 1, pageSize: 1000, sortBy: 'name', sortDirection: 'asc' },
@@ -92,6 +93,7 @@ const loadDashboard = async () => {
     api<{ ok: true; data: Paginated<MaintenanceDue> }>('/api/admin/billing/dues', {
       query: { page: 1, pageSize: 8, balance: 'outstanding', sortBy: 'dueDate', sortDirection: 'desc' },
     }),
+    api<{ ok: true; data: DashboardResponse['gatewayExceptions'] }>('/api/admin/payments/exceptions'),
   ])
 
   return {
@@ -101,6 +103,7 @@ const loadDashboard = async () => {
     residents: residents.data,
     recentOutstanding: recentOutstanding.data,
     topDefaulters: overview.data.topDefaulters,
+    gatewayExceptions: gatewayExceptions.data,
   } as DashboardResponse
 }
 
@@ -204,6 +207,14 @@ const hasWelcomeName = computed(() => authStore.me?.user?.fullName || authStore.
 
 <template>
   <div class="landing-page">
+    <section v-if="dashboard?.gatewayExceptions.length" class="surface-card" role="alert">
+      <h2>Gateway paid · AJOWA processing needed</h2>
+      <p>{{ dashboard.gatewayExceptions.length }} online payment(s) confirmed by Easebuzz are awaiting AJOWA posting and receipts.</p>
+      <p v-for="payment in dashboard.gatewayExceptions" :key="payment.paymentId">
+        {{ payment.flatNumber }} · {{ formatMoney(Number(payment.amount)) }} · {{ payment.reference }}
+      </p>
+      <Button label="Review and recover payments" as="a" href="/admin/payments" severity="warn" outlined />
+    </section>
     <section class="hero-panel dashboard-hero">
       <div class="dashboard-hero__head">
         <Tag severity="contrast" value="Admin Command Center" rounded />

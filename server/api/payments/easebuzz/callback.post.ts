@@ -13,9 +13,12 @@ export default defineEventHandler(async (event) => {
     })
     paymentId = result.paymentId ?? null
     accepted = result.accepted
-  } catch {
+  } catch (error) {
     // The browser is always returned to a safe local page. Malformed messages
     // must not disclose verification details or block the resident indefinitely.
+    console.error('Easebuzz callback could not be recorded.', {
+      message: error instanceof Error ? error.message : 'Unknown callback error.',
+    })
   }
 
   const params = new URLSearchParams({

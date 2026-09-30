@@ -22,6 +22,15 @@ type OnlinePaymentStatus = {
   pollAfterMs?: number
 }
 type OnlinePaymentStatusResponse = { ok: true; data: OnlinePaymentStatus }
+type ActiveOnlinePayment = {
+  paymentId: string
+  flatId: string
+  flatNumber: string
+  amount: string
+  reference: string
+  gatewayPaid: boolean
+}
+type ActiveOnlinePaymentsResponse = { ok: true; data: ActiveOnlinePayment[] }
 type OnlinePaymentInitiateResponse = {
   ok: true
   data: {
@@ -85,6 +94,14 @@ const { data: paymentAvailabilityData } = useResidentAsyncData(
   'online-payment-availability',
   () => api<PaymentAvailabilityResponse>('/api/payments/online/availability'),
 )
+const { data: activePaymentsData, refresh: refreshActivePayments } =
+  useResidentAsyncData('my-active-online-payments', () =>
+    api<ActiveOnlinePaymentsResponse>('/api/payments/online/active'),
+  )
+const activePayments = computed(() => activePaymentsData.value?.data ?? [])
+const activePaymentByFlat = computed(() =>
+  new Map(activePayments.value.map((payment) => [payment.flatId, payment])),
+)
 const { data: dgAdvanceData, refresh: refreshDgAdvances } =
   useResidentAsyncData('my-dg-advances', () =>
     api<DgAdvanceSummaryResponse>('/api/my/dg-advances').catch(() => ({
@@ -98,7 +115,7 @@ const { data: dgAdvanceData, refresh: refreshDgAdvances } =
 
 const refresh = async () => {
   void refreshDgAdvances().catch(() => undefined)
-  await refreshDues()
+  await Promise.all([refreshDues(), refreshActivePayments()])
 }
 
 const dues = computed(() => duesData.value?.data ?? [])
@@ -191,11 +208,14 @@ const advanceStatusDetail = (due: MaintenanceDue) => {
 
 const canPayDue = (due: MaintenanceDue) =>
   Boolean(paymentAvailabilityData.value?.data.enabled) &&
+  !activePaymentByFlat.value.has(due.flatId) &&
   Boolean(due.canPayNow) &&
   hasPaymentChargeType(due) &&
   hasActionableBalance(due)
 
 const getPayTitle = (due: MaintenanceDue) => {
+  if (activePaymentByFlat.value.has(due.flatId))
+    return 'An online payment for this flat is being verified. Do not pay again.'
   if (due.isCamAdvanceCovered)
     return 'No payment needed. CAM advance covers this period.'
   if (due.balanceAmount <= 0) return 'No balance pending.'
@@ -262,6 +282,7 @@ const showPaymentStatus = async (paymentId: string) => {
     `/api/payments/${paymentId}/status`,
   )
   const status = response.data
+  await refreshActivePayments()
   if (status.status === 'VERIFIED') {
     toast.add({
       severity: 'success',
@@ -272,7 +293,7 @@ const showPaymentStatus = async (paymentId: string) => {
       life: 7000,
     })
     await refresh()
-  } else if (['FAILED', 'CANCELLED'].includes(status.status)) {
+  } else if (['FAILED', 'CANCELLED'].includes(status.status) && status.retryAllowed) {
     toast.add({
       severity: 'warn',
       summary: status.title,
@@ -370,6 +391,16 @@ onMounted(() => {
   const callbackPaymentId =
     typeof route.query.paymentId === 'string' ? route.query.paymentId : null
   if (callbackPaymentId) void verifyOnlinePayment(callbackPaymentId)
+})
+
+let activePaymentTimer: ReturnType<typeof setInterval> | null = null
+onMounted(() => {
+  activePaymentTimer = setInterval(() => {
+    if (activePayments.value.length > 0) void refresh().catch(() => undefined)
+  }, 15000)
+})
+onUnmounted(() => {
+  if (activePaymentTimer) clearInterval(activePaymentTimer)
 })
 
 const summary = computed(() => {
@@ -606,6 +637,17 @@ const openBreakdown = (due: MaintenanceDue) => {
           />
         </div>
       </header>
+
+      <section v-if="activePayments.length" class="surface-card" role="status">
+        <h2>Online payment in progress</h2>
+        <p v-for="payment in activePayments" :key="payment.paymentId">
+          <strong>{{ payment.flatNumber }} · {{ formatMoney(Number(payment.amount)) }}</strong>
+          — {{ payment.gatewayPaid
+            ? 'Easebuzz confirmed payment. AJOWA is completing the receipt; an administrator can review it.'
+            : 'Payment verification is in progress.' }}
+          Do not pay again. Reference: {{ payment.reference }}.
+        </p>
+      </section>
 
       <AppSkeletonState v-if="pending" />
       <AppState

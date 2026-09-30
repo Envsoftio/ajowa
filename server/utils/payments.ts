@@ -2875,7 +2875,9 @@ export const assignReceiptNumberForPayment = async (
     return payment.receipt_number
   }
 
-  const runtimeConfig = getValidatedRuntimeConfig(useRuntimeConfig())
+  // Receipt finalization also runs from the Netlify reconciliation worker,
+  // where Nuxt composables are unavailable.
+  const runtimeConfig = getValidatedRuntimeConfig()
   const year = new Date().getFullYear()
   const seq = await client.query<{ value: string }>(
     `select next_yearly_sequence('RECEIPT', $1)::text as value`,

@@ -204,8 +204,9 @@ const findBlockingOnlinePaymentAttempt = async (input: {
        and payment.payer_user_id = $2
        and payment.received_for_flat_id = $3
        and payment.idempotency_key <> $4
-       and payment.status in ('INITIATED', 'PENDING_VERIFICATION')
-       and attempt.status = any($5::text[])
+       and payment.status <> 'VERIFIED'
+       and (attempt.status = any($5::text[])
+         or attempt.authoritative_gateway_success_at is not null)
      order by attempt.created_at
      limit 1`,
     [
@@ -285,11 +286,11 @@ export const initiateOnlinePayment = async (
          and payment.payer_user_id = $2
          and payment.received_for_flat_id = $3
          and payment.idempotency_key <> $4
-         and payment.status in ('INITIATED', 'PENDING_VERIFICATION')
-         and attempt.status in (
+         and payment.status <> 'VERIFIED'
+         and (attempt.status in (
            'CREATED', 'INITIATING', 'INITIATED', 'PENDING_VERIFICATION',
            'GATEWAY_SUCCESS', 'MANUAL_REVIEW'
-         )
+         ) or attempt.authoritative_gateway_success_at is not null)
        limit 1
        for update of payment, attempt`,
       [
@@ -680,6 +681,10 @@ const finalizeVerifiedPayment = async (
     await client.query('commit')
     return attempt.payment_id
   } catch (error) {
+    const failureMessage =
+      error instanceof Error
+        ? error.message.slice(0, 1000)
+        : 'Unknown payment finalization error.'
     try {
       await client.query('rollback')
       await client.query(
@@ -687,9 +692,11 @@ const finalizeVerifiedPayment = async (
          set status = 'MANUAL_REVIEW', manual_review_required_at = now(),
              failure_stage = 'finalization',
              failure_code = 'PAYMENT_RECEIVED_PROCESSING', retry_allowed = false,
-             next_reconciliation_at = now() + interval '5 minutes'
+             next_reconciliation_at = now() + interval '5 minutes',
+             last_error_code = 'PAYMENT_FINALIZATION_FAILED',
+             last_error_message = $2
          where id = $1`,
-        [attemptId],
+        [attemptId, failureMessage],
       )
     } catch (recoveryError) {
       console.warn('Failed to mark online payment for manual review.', {
@@ -729,6 +736,16 @@ export const applyAuthoritativeEasebuzzTransaction = async (
           'The successful transaction has no Easebuzz payment identifier.',
       })
     }
+    if (
+      attempt.gateway_payment_id &&
+      attempt.gateway_payment_id !== gateway.easepayid
+    ) {
+      throw new AppError({
+        code: 'CONFLICT',
+        statusCode: 409,
+        message: 'Easebuzz returned a different payment ID for this transaction.',
+      })
+    }
     await pool.query(
       `update payment_gateway_attempts
        set status = 'GATEWAY_SUCCESS', last_gateway_status = $2,
@@ -764,8 +781,10 @@ export const applyAuthoritativeEasebuzzTransaction = async (
       const locked = await client.query<{
         attempt_status: string
         payment_status: string
+        gateway_success_recorded: boolean
       }>(
-        `select attempt.status as attempt_status, payment.status::text as payment_status
+        `select attempt.status as attempt_status, payment.status::text as payment_status,
+           (attempt.authoritative_gateway_success_at is not null) as gateway_success_recorded
          from payment_gateway_attempts attempt
          inner join payments payment on payment.id = attempt.payment_id
          where attempt.id = $1
@@ -780,6 +799,20 @@ export const applyAuthoritativeEasebuzzTransaction = async (
       ) {
         await client.query('commit')
         return { normalized: 'SUCCESS' as const, paymentId: attempt.payment_id }
+      }
+      if (current.gateway_success_recorded) {
+        await client.query(
+          `update payment_gateway_attempts
+           set status = 'MANUAL_REVIEW', last_gateway_status = $2,
+               failure_stage = 'verification', failure_code = 'GATEWAY_STATUS_CONFLICT',
+               resident_message = 'The gateway returned conflicting payment states. Do not pay again; an administrator is reviewing this payment.',
+               retry_allowed = false, next_reconciliation_at = now() + interval '5 minutes',
+               manual_review_required_at = coalesce(manual_review_required_at, now())
+           where id = $1`,
+          [attempt.id, gateway.status],
+        )
+        await client.query('commit')
+        return { normalized: 'UNKNOWN' as const, paymentId: attempt.payment_id }
       }
       await client.query(
         `update payment_gateway_attempts
@@ -949,6 +982,7 @@ export const getSafeOnlinePaymentStatus = async (paymentId: string) => {
     receipt_number: string | null
     merchant_transaction_id: string
     attempt_status: string
+    gateway_success: boolean
     retry_allowed: boolean
     failure_code: string | null
     resident_message: string | null
@@ -963,6 +997,7 @@ export const getSafeOnlinePaymentStatus = async (paymentId: string) => {
        payment.receipt_number,
        attempt.merchant_transaction_id,
        attempt.status as attempt_status,
+       (attempt.authoritative_gateway_success_at is not null) as gateway_success,
        attempt.retry_allowed,
        attempt.failure_code,
        attempt.resident_message
@@ -981,6 +1016,7 @@ export const toResidentOnlinePaymentStatus = (
   const terminalFailure = ['FAILED', 'CANCELLED'].includes(status.status)
   const verified = status.status === 'VERIFIED'
   const underReview = status.attempt_status === 'MANUAL_REVIEW'
+  const gatewaySuccess = status.gateway_success && !verified
   return {
     paymentId: status.payment_id,
     status: status.status,
@@ -988,25 +1024,28 @@ export const toResidentOnlinePaymentStatus = (
     amount: Number(status.amount),
     receiptNumber: status.receipt_number,
     reference: status.merchant_transaction_id,
-    retryAllowed: status.retry_allowed,
+    retryAllowed: status.retry_allowed && !gatewaySuccess,
     failureCode: status.failure_code,
     title: verified
       ? 'Payment confirmed'
-      : terminalFailure
-        ? 'Payment not completed'
+      : gatewaySuccess
+        ? 'Gateway paid — receipt processing'
+        : terminalFailure
+          ? 'Payment not completed'
         : underReview
           ? 'Payment under review'
           : 'Payment verification in progress',
-    message:
-      status.resident_message ??
+    message: gatewaySuccess
+      ? 'Easebuzz confirmed your payment. AJOWA is completing the receipt. Do not pay again; an administrator can review this payment.'
+      : status.resident_message ??
       (verified
         ? 'Your payment has been confirmed.'
         : terminalFailure
           ? 'No successful payment has been confirmed. You may try again.'
-          : underReview
+        : underReview
             ? 'We could not safely verify this payment. Do not pay again and contact support with the payment reference.'
             : 'Your payment is still being processed. Please do not pay again.'),
-    ...(verified || terminalFailure ? {} : { pollAfterMs: 5000 }),
+    ...(verified || (terminalFailure && !gatewaySuccess) ? {} : { pollAfterMs: 5000 }),
   }
 }
 
