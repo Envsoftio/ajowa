@@ -106,6 +106,16 @@ const totalRecords = computed(() => data.value?.data.total ?? 0)
 const first = computed(() => (query.page - 1) * query.pageSize)
 const formatNumber = (value: number) =>
   new Intl.NumberFormat('en-IN').format(value)
+const indiaDateTime = new Intl.DateTimeFormat('en-IN', {
+  timeZone: 'Asia/Kolkata',
+  day: '2-digit',
+  month: 'short',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+})
+const formatIndiaDateTime = (value: string) =>
+  `${indiaDateTime.format(new Date(value))} IST`
 
 const statusOptions = [
   { label: 'All statuses', value: allNotificationStatuses },
@@ -689,7 +699,9 @@ watch(
         <Column field="jobCount" header="Jobs" />
         <Column field="sentCount" header="Sent" />
         <Column field="failedCount" header="Failed" />
-        <Column field="createdAt" header="Created" />
+        <Column field="createdAt" header="Created (IST)">
+          <template #body="{ data: row }">{{ formatIndiaDateTime(row.createdAt) }}</template>
+        </Column>
         <Column header="Actions">
           <template #body="{ data: row }">
             <div class="row-actions">

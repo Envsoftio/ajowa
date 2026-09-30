@@ -12,8 +12,8 @@ type EventRow = {
   title: string | null
   body: string | null
   triggered_by_user_id: string | null
-  created_at: string
-  scheduled_for: string | null
+  created_at: Date
+  scheduled_for: Date | null
   job_count: string
   sent_count: string
   failed_count: string
@@ -65,8 +65,8 @@ export default defineEventHandler(async (event) => {
           ne.title,
           ne.body,
           ne.triggered_by_user_id,
-          ne.created_at::text,
-          ne.scheduled_for::text,
+          ne.created_at,
+          ne.scheduled_for,
           count(nj.id)::text as job_count,
           count(nj.id) filter (where nj.status in ('SENT', 'DELIVERED', 'READ'))::text as sent_count,
           count(nj.id) filter (where nj.status = 'FAILED')::text as failed_count,
@@ -128,8 +128,8 @@ export default defineEventHandler(async (event) => {
       title: row.title,
       body: row.body,
       triggeredByUserId: row.triggered_by_user_id,
-      createdAt: row.created_at,
-      scheduledFor: row.scheduled_for,
+      createdAt: row.created_at.toISOString(),
+      scheduledFor: row.scheduled_for?.toISOString() ?? null,
       jobCount: Number(row.job_count),
       sentCount: Number(row.sent_count),
       failedCount: Number(row.failed_count),
