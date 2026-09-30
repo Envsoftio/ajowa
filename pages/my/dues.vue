@@ -71,7 +71,34 @@ const authStore = useAuthStore()
 const toast = useToast()
 const route = useRoute()
 const openingStatistics = ref(false)
+const isStandaloneHome = ref(false)
 
+const updateStandaloneHome = () => {
+  if (!import.meta.client) return
+  const iosStandalone =
+    (window.navigator as Navigator & { standalone?: boolean }).standalone ===
+    true
+  isStandaloneHome.value =
+    (window.matchMedia('(display-mode: standalone)').matches ||
+      iosStandalone) &&
+    window.matchMedia('(max-width: 768px)').matches
+}
+
+onMounted(() => {
+  updateStandaloneHome()
+  window.addEventListener('resize', updateStandaloneHome)
+})
+onUnmounted(() => window.removeEventListener('resize', updateStandaloneHome))
+
+const residentFirstName = computed(
+  () => authStore.me?.user.fullName?.trim().split(/\s+/)[0] || 'there',
+)
+const homeFlatLabel = computed(() => {
+  const flats = authStore.me?.flatAccess ?? []
+  if (flats.length === 0) return 'Your residence'
+  const first = `${flats[0]?.blockName} ${flats[0]?.flatNumber}`
+  return flats.length === 1 ? first : `${first} +${flats.length - 1} more`
+})
 const formatMoney = (value: number) =>
   new Intl.NumberFormat('en-IN', {
     style: 'currency',
@@ -100,8 +127,9 @@ const { data: activePaymentsData, refresh: refreshActivePayments } =
     api<ActiveOnlinePaymentsResponse>('/api/payments/online/active'),
   )
 const activePayments = computed(() => activePaymentsData.value?.data ?? [])
-const activePaymentByFlat = computed(() =>
-  new Map(activePayments.value.map((payment) => [payment.flatId, payment])),
+const activePaymentByFlat = computed(
+  () =>
+    new Map(activePayments.value.map((payment) => [payment.flatId, payment])),
 )
 const { data: dgAdvanceData, refresh: refreshDgAdvances } =
   useResidentAsyncData('my-dg-advances', () =>
@@ -294,7 +322,10 @@ const showPaymentStatus = async (paymentId: string) => {
       life: 7000,
     })
     await refresh()
-  } else if (['FAILED', 'CANCELLED'].includes(status.status) && status.retryAllowed) {
+  } else if (
+    ['FAILED', 'CANCELLED'].includes(status.status) &&
+    status.retryAllowed
+  ) {
     toast.add({
       severity: 'warn',
       summary: status.title,
@@ -493,8 +524,57 @@ const openBreakdown = (due: MaintenanceDue) => {
 </script>
 
 <template>
-  <div class="landing-page">
-    <div class="surface-grid resident-summary-grid">
+  <div
+    class="landing-page resident-home"
+    :class="{ 'resident-home--standalone': isStandaloneHome }"
+  >
+    <template v-if="isStandaloneHome">
+      <header class="resident-home__welcome">
+        <p class="resident-home__welcome-label">{{ homeFlatLabel }}</p>
+        <h1>Hello, {{ residentFirstName }}</h1>
+        <p>Here's what's happening at home.</p>
+      </header>
+
+      <section
+        class="resident-home__balance"
+        aria-labelledby="home-balance-title"
+      >
+        <div class="resident-home__balance-top">
+          <span id="home-balance-title">Current balance</span>
+          <i class="pi pi-wallet" aria-hidden="true" />
+        </div>
+        <Skeleton v-if="pending" width="11rem" height="2.5rem" />
+        <strong v-else class="resident-home__balance-amount">{{
+          formatMoney(summary.totalBalance)
+        }}</strong>
+        <p v-if="!pending">
+          {{
+            summary.overdueCount > 0
+              ? `${summary.overdueCount} overdue ${summary.overdueCount === 1 ? 'bill' : 'bills'} need attention`
+              : summary.totalBalance > 0
+                ? 'Review your open bills below'
+                : 'Your account is up to date'
+          }}
+        </p>
+      </section>
+
+      <section class="resident-home__mini-summary" aria-label="Account summary">
+        <div>
+          <span>DG advance</span
+          ><strong>{{ formatMoney(dgAdvanceSummary.totalAvailable) }}</strong>
+        </div>
+        <div>
+          <span>Total billed</span
+          ><strong>{{ formatMoney(summary.totalDue) }}</strong>
+        </div>
+        <div>
+          <span>Linked flats</span
+          ><strong>{{ authStore.me?.flatAccess.length ?? 0 }}</strong>
+        </div>
+      </section>
+    </template>
+
+    <div v-if="!isStandaloneHome" class="surface-grid resident-summary-grid">
       <section class="surface-card resident-summary-card">
         <div class="resident-summary-card__topline">
           <p class="eyebrow">Current balance</p>
@@ -616,6 +696,7 @@ const openBreakdown = (due: MaintenanceDue) => {
         :loading="openingStatistics"
         as="router-link"
         to="/my/service-request-statistics"
+        aria-label="View service request statistics"
         @click="openingStatistics = true"
       />
     </section>
@@ -623,7 +704,8 @@ const openBreakdown = (due: MaintenanceDue) => {
     <section class="list-page surface-card resident-dues-panel">
       <header class="list-page__header">
         <div>
-          <h1>My dues</h1>
+          <h2 v-if="isStandaloneHome">Bills</h2>
+          <h1 v-else>My dues</h1>
           <p>
             Maintenance dues are shown for flats connected to your active
             resident relationships.
@@ -644,10 +726,16 @@ const openBreakdown = (due: MaintenanceDue) => {
       <section v-if="activePayments.length" class="surface-card" role="status">
         <h2>Online payment in progress</h2>
         <p v-for="payment in activePayments" :key="payment.paymentId">
-          <strong>{{ payment.flatNumber }} · {{ formatMoney(Number(payment.amount)) }}</strong>
-          — {{ payment.gatewayPaid
-            ? 'Easebuzz confirmed payment. AJOWA is completing the receipt; an administrator can review it.'
-            : 'Payment verification is in progress.' }}
+          <strong
+            >{{ payment.flatNumber }} ·
+            {{ formatMoney(Number(payment.amount)) }}</strong
+          >
+          —
+          {{
+            payment.gatewayPaid
+              ? 'Easebuzz confirmed payment. AJOWA is completing the receipt; an administrator can review it.'
+              : 'Payment verification is in progress.'
+          }}
           Do not pay again. Reference: {{ payment.reference }}.
         </p>
       </section>
@@ -1005,6 +1093,212 @@ const openBreakdown = (due: MaintenanceDue) => {
 </template>
 
 <style scoped>
+.resident-home--standalone {
+  gap: 1.15rem;
+  padding: 0.25rem 0.1rem 1.25rem;
+}
+
+.resident-home__welcome {
+  padding: 0.3rem 0.15rem 0;
+}
+
+.resident-home__welcome-label {
+  margin: 0 0 0.35rem;
+  color: var(--color-brand);
+  font-size: 0.76rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.resident-home__welcome h1 {
+  margin: 0;
+  font-size: clamp(1.55rem, 7vw, 2rem);
+  line-height: 1.12;
+  letter-spacing: -0.04em;
+}
+
+.resident-home__welcome > p:last-child {
+  margin: 0.35rem 0 0;
+  color: var(--color-muted);
+  font-size: 0.9rem;
+}
+
+.resident-home__balance {
+  display: grid;
+  gap: 0.5rem;
+  min-width: 0;
+  padding: 1.25rem;
+  border-radius: 1.4rem;
+  background: linear-gradient(140deg, #123a8d, #0645c3 58%, #3674e7);
+  box-shadow: 0 12px 28px rgba(6, 69, 195, 0.18);
+  color: #fff;
+}
+
+.resident-home__balance-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.resident-home__balance-top i {
+  display: grid;
+  width: 2.3rem;
+  height: 2.3rem;
+  place-items: center;
+  border-radius: 0.75rem;
+  background: rgba(255, 255, 255, 0.16);
+  font-size: 1.1rem;
+}
+
+.resident-home__balance-amount {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: clamp(2.2rem, 10vw, 3rem);
+  font-weight: 800;
+  letter-spacing: -0.055em;
+  line-height: 1.05;
+}
+
+.resident-home__balance p {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.84);
+  font-size: 0.82rem;
+}
+
+.resident-home__mini-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.35rem;
+  padding: 0.8rem 0.35rem;
+  border: 1px solid var(--color-border);
+  border-radius: 1.1rem;
+  background: var(--color-surface);
+}
+
+.resident-home__mini-summary > div {
+  display: grid;
+  align-content: start;
+  gap: 0.35rem;
+  min-width: 0;
+  padding: 0 0.5rem;
+}
+
+.resident-home__mini-summary > div + div {
+  border-left: 1px solid var(--color-border);
+}
+
+.resident-home__mini-summary span {
+  color: var(--color-muted);
+  font-size: 0.68rem;
+  line-height: 1.2;
+}
+
+.resident-home__mini-summary strong {
+  overflow-wrap: anywhere;
+  font-size: clamp(0.8rem, 3.5vw, 1rem);
+  line-height: 1.2;
+}
+
+.resident-home--standalone .resident-service-statistics-link {
+  grid-template-columns: 2.5rem minmax(0, 1fr) auto;
+  gap: 0.7rem;
+  padding: 0.95rem;
+  border: 1px solid var(--color-border);
+  border-radius: 1.1rem;
+  background: var(--color-surface);
+}
+
+.resident-home--standalone .resident-service-statistics-link__icon {
+  width: 2.5rem;
+  height: 2.5rem;
+}
+
+.resident-home--standalone .resident-service-statistics-link__content h2 {
+  margin-top: 0.1rem;
+  font-size: 0.98rem;
+  line-height: 1.25;
+}
+
+.resident-home--standalone
+  .resident-service-statistics-link__content
+  p:last-child {
+  display: none;
+}
+
+.resident-home--standalone .resident-service-statistics-link :deep(.p-button) {
+  grid-column: auto;
+  width: auto;
+  min-width: 2.5rem;
+  height: 2.5rem;
+  padding: 0;
+  border-radius: 0.8rem;
+  font-size: 0;
+}
+
+.resident-home--standalone
+  .resident-service-statistics-link
+  :deep(.p-button-label) {
+  display: none;
+}
+
+.resident-home--standalone
+  .resident-service-statistics-link
+  :deep(.p-button-icon) {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.resident-home--standalone .resident-dues-panel > .list-page__header {
+  padding: 0.2rem 0.1rem;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.resident-home--standalone .resident-dues-panel .list-page__header h2 {
+  font-size: 1.2rem;
+  letter-spacing: -0.025em;
+}
+
+.resident-home--standalone .resident-dues-panel .resident-due-group__header {
+  padding: 0.75rem 0.2rem 0.4rem;
+  border: 0;
+  background: transparent;
+}
+
+.resident-home--standalone .resident-dues-panel .resident-due-card {
+  border-radius: 1.1rem;
+  background: var(--color-surface);
+}
+
+.resident-home--standalone .resident-due-card__meta-grid {
+  display: none;
+}
+
+.resident-home--standalone
+  .resident-dues-panel
+  .resident-mobile-actions
+  :deep(.p-button) {
+  min-height: 2.7rem;
+}
+
+@media (max-width: 380px) {
+  .resident-home__mini-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .resident-home__mini-summary > div:last-child {
+    grid-column: 1 / -1;
+    padding-top: 0.65rem;
+    border-top: 1px solid var(--color-border);
+    border-left: 0;
+  }
+}
+
 .resident-payment-review__content {
   display: grid;
   gap: 1rem;
