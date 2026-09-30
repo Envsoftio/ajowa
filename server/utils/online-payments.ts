@@ -680,16 +680,23 @@ const finalizeVerifiedPayment = async (
     await client.query('commit')
     return attempt.payment_id
   } catch (error) {
-    await client.query('rollback')
-    await pool.query(
-      `update payment_gateway_attempts
-       set status = 'MANUAL_REVIEW', manual_review_required_at = now(),
-           failure_stage = 'finalization',
-           failure_code = 'PAYMENT_RECEIVED_PROCESSING', retry_allowed = false,
-           next_reconciliation_at = now() + interval '5 minutes'
-       where id = $1`,
-      [attemptId],
-    )
+    try {
+      await client.query('rollback')
+      await client.query(
+        `update payment_gateway_attempts
+         set status = 'MANUAL_REVIEW', manual_review_required_at = now(),
+             failure_stage = 'finalization',
+             failure_code = 'PAYMENT_RECEIVED_PROCESSING', retry_allowed = false,
+             next_reconciliation_at = now() + interval '5 minutes'
+         where id = $1`,
+        [attemptId],
+      )
+    } catch (recoveryError) {
+      console.warn('Failed to mark online payment for manual review.', {
+        attemptId,
+        error: recoveryError,
+      })
+    }
     throw error
   } finally {
     client.release()
