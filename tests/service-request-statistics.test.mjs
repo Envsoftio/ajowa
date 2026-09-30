@@ -98,8 +98,9 @@ test('flat owners can open statistics directly from their service request accoun
   assert.match(requestsPage, /href="\/my\/service-request-statistics"/)
   assert.match(requestsPage, /Service request statistics/)
   assert.match(requestsPage, /all society tickets/)
-  assert.match(residentDashboard, /href="\/my\/service-request-statistics"/)
+  assert.match(residentDashboard, /as="router-link"\s+to="\/my\/service-request-statistics"/)
   assert.match(residentDashboard, /View statistics/)
+  assert.match(residentDashboard, /:loading="openingStatistics"/)
   assert.match(shell, /to: '\/my\/service-request-statistics'/)
 })
 

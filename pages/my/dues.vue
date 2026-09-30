@@ -70,6 +70,7 @@ const api = useApi()
 const authStore = useAuthStore()
 const toast = useToast()
 const route = useRoute()
+const openingStatistics = ref(false)
 
 const formatMoney = (value: number) =>
   new Intl.NumberFormat('en-IN', {
@@ -609,11 +610,13 @@ const openBreakdown = (due: MaintenanceDue) => {
         </p>
       </div>
       <Button
-        label="View statistics"
+        :label="openingStatistics ? 'Opening statistics' : 'View statistics'"
         icon="pi pi-arrow-right"
         icon-pos="right"
-        as="a"
-        href="/my/service-request-statistics"
+        :loading="openingStatistics"
+        as="router-link"
+        to="/my/service-request-statistics"
+        @click="openingStatistics = true"
       />
     </section>
 
