@@ -455,6 +455,55 @@ const summary = computed(() => {
     advanceCoveredCount,
   }
 })
+
+type HomeBillTab = 'open' | 'history'
+const homeBillTab = ref<HomeBillTab>('open')
+const visibleBillCount = ref(5)
+const billsSection = ref<HTMLElement | null>(null)
+const isOpenDue = (due: MaintenanceDue) =>
+  !due.isCamAdvanceCovered &&
+  !due.isAdvanceCoverageRow &&
+  due.balanceAmount > 0 &&
+  ['OPEN', 'PARTIALLY_PAID', 'OVERDUE'].includes(due.status)
+const openDues = computed(() =>
+  dues.value
+    .filter(isOpenDue)
+    .sort(
+      (a, b) =>
+        Number(b.status === 'OVERDUE') - Number(a.status === 'OVERDUE') ||
+        a.dueDate.localeCompare(b.dueDate),
+    ),
+)
+const nextPayableDue = computed(() => openDues.value.find(canPayDue) ?? null)
+const historyDues = computed(() =>
+  dues.value
+    .filter((due) => !isOpenDue(due))
+    .sort((a, b) => b.dueDate.localeCompare(a.dueDate)),
+)
+const selectedHomeDues = computed(() =>
+  homeBillTab.value === 'open' ? openDues.value : historyDues.value,
+)
+const visibleHomeDues = computed(() =>
+  selectedHomeDues.value.slice(0, visibleBillCount.value),
+)
+const remainingHomeDues = computed(() =>
+  Math.max(0, selectedHomeDues.value.length - visibleBillCount.value),
+)
+const selectHomeBillTab = (tab: HomeBillTab, scroll = false) => {
+  if (homeBillTab.value !== tab) {
+    homeBillTab.value = tab
+    visibleBillCount.value = 5
+  }
+  if (scroll) {
+    nextTick(() =>
+      billsSection.value?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      }),
+    )
+  }
+}
+
 const activeSummaryHelp = ref<SummaryCardKey | null>(null)
 const isSummaryHelpOpen = (key: SummaryCardKey) =>
   activeSummaryHelp.value === key
@@ -513,6 +562,23 @@ const flatGroups = computed(() => {
     a.label.localeCompare(b.label),
   )
 })
+const visibleDueGroups = computed(() =>
+  isStandaloneHome.value
+    ? visibleHomeDues.value.length
+      ? [
+          {
+            flatId: 'pwa-visible-bills',
+            label: '',
+            relationshipType: '',
+            totalBalance: 0,
+            openCount: 0,
+            availableDgAdvance: 0,
+            rows: visibleHomeDues.value,
+          },
+        ]
+      : []
+    : flatGroups.value,
+)
 
 const selectedDue = ref<MaintenanceDue | null>(null)
 const breakdownVisible = ref(false)
@@ -556,6 +622,40 @@ const openBreakdown = (due: MaintenanceDue) => {
                 : 'Your account is up to date'
           }}
         </p>
+        <div
+          v-if="!pending && dues.length"
+          class="resident-home__balance-actions"
+        >
+          <button
+            v-if="nextPayableDue"
+            type="button"
+            class="resident-home__balance-button resident-home__balance-button--primary"
+            :disabled="Boolean(payingDueId)"
+            @click="reviewPayment(nextPayableDue)"
+          >
+            Pay next bill · {{ formatMoney(nextPayableDue.balanceAmount) }}
+            <i class="pi pi-credit-card" aria-hidden="true" />
+          </button>
+          <button
+            v-else
+            type="button"
+            class="resident-home__balance-button resident-home__balance-button--primary"
+            @click="
+              selectHomeBillTab(openDues.length ? 'open' : 'history', true)
+            "
+          >
+            {{ openDues.length ? 'View open bills' : 'View bill history' }}
+            <i class="pi pi-arrow-right" aria-hidden="true" />
+          </button>
+          <button
+            v-if="nextPayableDue && openDues.length"
+            type="button"
+            class="resident-home__balance-button resident-home__balance-button--secondary"
+            @click="selectHomeBillTab('open', true)"
+          >
+            Open bills
+          </button>
+        </div>
       </section>
 
       <section class="resident-home__mini-summary" aria-label="Account summary">
@@ -701,7 +801,10 @@ const openBreakdown = (due: MaintenanceDue) => {
       />
     </section>
 
-    <section class="list-page surface-card resident-dues-panel">
+    <section
+      ref="billsSection"
+      class="list-page surface-card resident-dues-panel"
+    >
       <header class="list-page__header">
         <div>
           <h2 v-if="isStandaloneHome">Bills</h2>
@@ -740,6 +843,30 @@ const openBreakdown = (due: MaintenanceDue) => {
         </p>
       </section>
 
+      <div
+        v-if="isStandaloneHome && !pending && dues.length"
+        class="resident-home__bill-tabs"
+        role="group"
+        aria-label="Bill status"
+      >
+        <button
+          type="button"
+          :aria-pressed="homeBillTab === 'open'"
+          :class="{ 'is-active': homeBillTab === 'open' }"
+          @click="selectHomeBillTab('open')"
+        >
+          Open <span>{{ openDues.length }}</span>
+        </button>
+        <button
+          type="button"
+          :aria-pressed="homeBillTab === 'history'"
+          :class="{ 'is-active': homeBillTab === 'history' }"
+          @click="selectHomeBillTab('history')"
+        >
+          History <span>{{ historyDues.length }}</span>
+        </button>
+      </div>
+
       <AppSkeletonState v-if="pending" />
       <AppState
         v-else-if="dues.length === 0"
@@ -749,12 +876,22 @@ const openBreakdown = (due: MaintenanceDue) => {
       />
 
       <div v-else class="resident-due-groups">
+        <AppState
+          v-if="isStandaloneHome && selectedHomeDues.length === 0"
+          variant="empty"
+          :title="homeBillTab === 'open' ? 'No open bills' : 'No bill history'"
+          :message="
+            homeBillTab === 'open'
+              ? 'You are all caught up.'
+              : 'Settled and covered bills will appear here.'
+          "
+        />
         <section
-          v-for="group in flatGroups"
+          v-for="group in visibleDueGroups"
           :key="group.flatId"
           class="resident-due-group"
         >
-          <header class="resident-due-group__header">
+          <header v-if="!isStandaloneHome" class="resident-due-group__header">
             <div>
               <h2>{{ group.label }}</h2>
               <p>
@@ -880,10 +1017,17 @@ const openBreakdown = (due: MaintenanceDue) => {
               v-for="row in group.rows"
               :key="row.id"
               class="list-card resident-due-card"
+              :class="{
+                'resident-due-card--history':
+                  isStandaloneHome && homeBillTab === 'history',
+              }"
             >
               <div class="list-card__header resident-due-card__header">
                 <div>
                   <h3>{{ row.billingPeriodLabel }}</h3>
+                  <p v-if="isStandaloneHome" class="resident-due-card__flat">
+                    {{ row.blockName }} {{ row.flatNumber }}
+                  </p>
                   <p v-if="dueSourceLabel(row)">{{ dueSourceLabel(row) }}</p>
                   <p>Due {{ formatDate(row.dueDate) }}</p>
                   <p
@@ -909,8 +1053,18 @@ const openBreakdown = (due: MaintenanceDue) => {
                 <div
                   class="resident-due-card__amount resident-due-card__amount--balance"
                 >
-                  <span>Balance</span>
-                  <strong>{{ formatMoney(row.balanceAmount) }}</strong>
+                  <span>{{
+                    isStandaloneHome && homeBillTab === 'history'
+                      ? 'Amount'
+                      : 'Balance'
+                  }}</span>
+                  <strong>{{
+                    formatMoney(
+                      isStandaloneHome && homeBillTab === 'history'
+                        ? row.totalAmount
+                        : row.balanceAmount,
+                    )
+                  }}</strong>
                   <small v-if="hasCamAdvanceAdjustment(row)">
                     {{ formatMoney(camAdvanceAdjustmentAmount(row)) }} advance
                     deducted
@@ -923,6 +1077,7 @@ const openBreakdown = (due: MaintenanceDue) => {
               </div>
 
               <div
+                v-if="!isStandaloneHome || advanceStatusKind(row) !== 'not-cam'"
                 class="billing-advance-state billing-advance-state--card"
                 :class="`billing-advance-state--${advanceStatusKind(row)}`"
               >
@@ -943,7 +1098,13 @@ const openBreakdown = (due: MaintenanceDue) => {
                 </div>
               </div>
 
-              <div class="resident-mobile-actions">
+              <div
+                class="resident-mobile-actions"
+                :class="{
+                  'resident-mobile-actions--history':
+                    isStandaloneHome && homeBillTab === 'history',
+                }"
+              >
                 <AppDocumentLink
                   v-if="!row.isAdvanceCoverageRow"
                   :href="`/api/my/dues/${row.id}/bill`"
@@ -963,6 +1124,7 @@ const openBreakdown = (due: MaintenanceDue) => {
                   @click="openBreakdown(row)"
                 />
                 <Button
+                  v-if="!isStandaloneHome || isOpenDue(row)"
                   label="Pay"
                   icon="pi pi-credit-card"
                   severity="secondary"
@@ -977,6 +1139,15 @@ const openBreakdown = (due: MaintenanceDue) => {
             </article>
           </div>
         </section>
+        <button
+          v-if="isStandaloneHome && remainingHomeDues > 0"
+          type="button"
+          class="resident-home__show-more"
+          @click="visibleBillCount += 5"
+        >
+          Show more bills <span>{{ remainingHomeDues }} remaining</span>
+          <i class="pi pi-chevron-down" aria-hidden="true" />
+        </button>
       </div>
     </section>
 
@@ -1169,6 +1340,49 @@ const openBreakdown = (due: MaintenanceDue) => {
   font-size: 0.82rem;
 }
 
+.resident-home__balance-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-top: 0.55rem;
+}
+
+.resident-home__balance-button {
+  display: inline-flex;
+  min-height: 2.65rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  padding: 0.55rem 0.9rem;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  border-radius: 0.8rem;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.resident-home__balance-button--primary {
+  border-color: #fff;
+  background: #fff;
+  color: #123a8d;
+}
+
+.resident-home__balance-button--secondary {
+  background: transparent;
+  color: #fff;
+}
+
+.resident-home__balance-button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.resident-home__balance-button:focus-visible {
+  outline: 3px solid #fff;
+  outline-offset: 3px;
+}
+
 .resident-home__mini-summary {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1264,6 +1478,55 @@ const openBreakdown = (due: MaintenanceDue) => {
   letter-spacing: -0.025em;
 }
 
+.resident-home__bill-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.3rem;
+  padding: 0.3rem;
+  border-radius: 0.9rem;
+  background: color-mix(in srgb, var(--color-brand) 7%, var(--color-surface));
+}
+
+.resident-home__bill-tabs button {
+  display: inline-flex;
+  min-height: 2.75rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.45rem;
+  border: 0;
+  border-radius: 0.7rem;
+  background: transparent;
+  color: var(--color-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.86rem;
+  font-weight: 750;
+}
+
+.resident-home__bill-tabs button.is-active {
+  background: var(--color-surface);
+  box-shadow: var(--shadow-sm);
+  color: var(--color-brand-strong);
+}
+
+.resident-home__bill-tabs span {
+  display: inline-grid;
+  min-width: 1.35rem;
+  height: 1.35rem;
+  place-items: center;
+  padding: 0 0.25rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-brand) 10%, var(--color-surface));
+  font-size: 0.7rem;
+}
+
+.resident-home__bill-tabs button:focus-visible,
+.resident-home__show-more:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+}
+
 .resident-home--standalone .resident-dues-panel .resident-due-group__header {
   padding: 0.75rem 0.2rem 0.4rem;
   border: 0;
@@ -1275,8 +1538,27 @@ const openBreakdown = (due: MaintenanceDue) => {
   background: var(--color-surface);
 }
 
+.resident-home--standalone .resident-dues-panel .resident-due-card__flat {
+  color: var(--color-brand-strong);
+  font-weight: 700;
+}
+
+.resident-home--standalone
+  .resident-dues-panel
+  .resident-due-card--history
+  .billing-advance-state
+  p {
+  display: none;
+}
+
 .resident-home--standalone .resident-due-card__meta-grid {
   display: none;
+}
+
+.resident-home--standalone
+  .resident-dues-panel
+  .resident-mobile-actions--history {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .resident-home--standalone
@@ -1284,6 +1566,30 @@ const openBreakdown = (due: MaintenanceDue) => {
   .resident-mobile-actions
   :deep(.p-button) {
   min-height: 2.7rem;
+}
+
+.resident-home__show-more {
+  display: flex;
+  width: 100%;
+  min-height: 2.8rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.7rem;
+  border: 1px solid var(--color-border);
+  border-radius: 0.85rem;
+  background: var(--color-surface);
+  color: var(--color-brand-strong);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 800;
+}
+
+.resident-home__show-more span {
+  color: var(--color-muted);
+  font-size: 0.73rem;
+  font-weight: 500;
 }
 
 @media (max-width: 380px) {
