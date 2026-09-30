@@ -6,6 +6,31 @@ export const BILLING_BATCH_MAX_ATTEMPTS = 3
 export const isDgDueDateAfterPeriod = (periodEndDate: string, dueDate: string) =>
   dueDate > periodEndDate
 
+export const getOverdueBalancesByChargeType = (dues: readonly {
+  billingPeriodChargeType?: string | null
+  balanceAmount: number
+  daysOverdue: number
+}[]) => {
+  const balances = { dgSet: 0, cam: 0, general: 0 }
+
+  for (const due of dues) {
+    if (due.daysOverdue <= 0 || due.balanceAmount <= 0) continue
+    if (due.billingPeriodChargeType === 'DG_SET') {
+      balances.dgSet += due.balanceAmount
+    } else if (due.billingPeriodChargeType === 'CAM') {
+      balances.cam += due.balanceAmount
+    } else {
+      balances.general += due.balanceAmount
+    }
+  }
+
+  return [
+    { label: 'DG overdue', amount: balances.dgSet },
+    { label: 'CAM overdue', amount: balances.cam },
+    { label: 'General overdue', amount: balances.general },
+  ].filter((item) => item.amount > 0)
+}
+
 type BillingBatchRetryContext = {
   failedAttempt: number
   nextAttempt: number

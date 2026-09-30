@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { BlockSummary, DefaulterSummary, FlatSummary, MaintenanceDue, ResidentSummary } from '~/types/domain'
 import ResidentAvatar from '~/components/residents/ResidentAvatar.vue'
+import { getOverdueBalancesByChargeType } from '~/shared/billing'
 
 definePageMeta({
   layout: 'admin',
@@ -278,7 +279,13 @@ const hasWelcomeName = computed(() => authStore.me?.user?.fullName || authStore.
                 </div>
               </div>
             </div>
-            <strong>{{ formatMoney(person.totalBalance) }}</strong>
+            <div class="dashboard-priority-item__balance">
+              <strong v-for="item in getOverdueBalancesByChargeType(person.flats)" :key="item.label">
+                {{ item.label }}: {{ formatMoney(item.amount) }}
+              </strong>
+              <strong v-if="person.maxDaysOverdue === 0">Outstanding: {{ formatMoney(person.totalBalance) }}</strong>
+              <span v-else>Total outstanding: {{ formatMoney(person.totalBalance) }}</span>
+            </div>
           </section>
         </article>
       </section>
@@ -496,6 +503,18 @@ const hasWelcomeName = computed(() => authStore.me?.user?.fullName || authStore.
 
 .dashboard-priority-item strong {
   color: var(--color-brand-strong);
+}
+
+.dashboard-priority-item__balance {
+  display: grid;
+  gap: 0.2rem;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.dashboard-priority-item__balance span {
+  color: var(--color-muted);
+  font-size: 0.82rem;
 }
 
 :global(.app-theme-dark) .dashboard-priority-item strong {

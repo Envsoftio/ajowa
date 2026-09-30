@@ -7,6 +7,7 @@ import type {
 } from '~/types/domain'
 import ResidentAvatar from '~/components/residents/ResidentAvatar.vue'
 import DefaulterDuesList from '~/components/billing/DefaulterDuesList.vue'
+import { getOverdueBalancesByChargeType } from '~/shared/billing'
 
 definePageMeta({
   layout: 'admin',
@@ -374,9 +375,6 @@ const overdueSeverity = (days: number) => {
 
 const overdueLabel = (days: number) =>
   days > 0 ? `Overdue by: ${formatPlural(days, 'day')}` : 'Not overdue'
-
-const balanceStatusLabel = (daysOverdue: number) =>
-  daysOverdue > 0 ? 'Overdue' : 'Outstanding'
 
 const paymentSummaryLabel = (paidAmount: number, totalAmount: number) => {
   if (paidAmount <= 0) {
@@ -752,10 +750,11 @@ watch(filteredDefaulters, (rows) => {
         <Column field="totalBalance" header="Balance">
           <template #body="{ data: row }">
             <div class="billing-balance-cell">
-              <strong>
-                {{ balanceStatusLabel(row.maxDaysOverdue) }}:
-                {{ formatMoney(row.totalBalance) }}
+              <strong v-for="item in getOverdueBalancesByChargeType(row.flats)" :key="item.label">
+                {{ item.label }}: {{ formatMoney(item.amount) }}
               </strong>
+              <strong v-if="row.maxDaysOverdue === 0">Outstanding: {{ formatMoney(row.totalBalance) }}</strong>
+              <span v-else>Total outstanding: {{ formatMoney(row.totalBalance) }}</span>
               <span>
                 {{ paymentSummaryLabel(row.totalPaid, row.totalDue) }}
               </span>
@@ -830,10 +829,11 @@ watch(filteredDefaulters, (rows) => {
             />
           </div>
           <div class="billing-balance-cell billing-balance-cell--card">
-            <strong>
-              {{ balanceStatusLabel(row.maxDaysOverdue) }}:
-              {{ formatMoney(row.totalBalance) }}
+            <strong v-for="item in getOverdueBalancesByChargeType(row.flats)" :key="item.label">
+              {{ item.label }}: {{ formatMoney(item.amount) }}
             </strong>
+            <strong v-if="row.maxDaysOverdue === 0">Outstanding: {{ formatMoney(row.totalBalance) }}</strong>
+            <span v-else>Total outstanding: {{ formatMoney(row.totalBalance) }}</span>
             <span>
               {{ paymentSummaryLabel(row.totalPaid, row.totalDue) }}
             </span>

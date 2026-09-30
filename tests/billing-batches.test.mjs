@@ -9,6 +9,7 @@ import {
   chunkBillingRequestIds,
   getAdvanceConsumptionDueTargets,
   getDueGenerationFlatIdBatches,
+  getOverdueBalancesByChargeType,
   isDgDueDateAfterPeriod,
   runBillingBatchWithRetry,
   runBillingFlatBatchWithRecovery,
@@ -18,6 +19,18 @@ test('DG due dates must follow the full billing period', () => {
   assert.equal(isDgDueDateAfterPeriod('2026-09-30', '2026-09-10'), false)
   assert.equal(isDgDueDateAfterPeriod('2026-09-30', '2026-09-30'), false)
   assert.equal(isDgDueDateAfterPeriod('2026-09-30', '2026-10-10'), true)
+})
+
+test('overdue balances stay with their bill type and exclude future CAM', () => {
+  assert.deepEqual(getOverdueBalancesByChargeType([
+    { billingPeriodChargeType: 'DG_SET', balanceAmount: 58, daysOverdue: 123 },
+    { billingPeriodChargeType: 'DG_SET', balanceAmount: 116, daysOverdue: 123 },
+    { billingPeriodChargeType: 'CAM', balanceAmount: 21840, daysOverdue: 0 },
+    { billingPeriodChargeType: 'CAM', balanceAmount: 500, daysOverdue: 19 },
+  ]), [
+    { label: 'DG overdue', amount: 174 },
+    { label: 'CAM overdue', amount: 500 },
+  ])
 })
 
 test('keeps DG due generation below the production timeout batch size', () => {

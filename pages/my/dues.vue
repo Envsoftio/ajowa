@@ -207,6 +207,22 @@ const getPayTitle = (due: MaintenanceDue) => {
 }
 
 const payingDueId = ref<string | null>(null)
+const paymentReviewDue = ref<MaintenanceDue | null>(null)
+const paymentReviewVisible = ref(false)
+
+const reviewPayment = (due: MaintenanceDue) => {
+  if (!canPayDue(due) || payingDueId.value) return
+  paymentReviewDue.value = due
+  paymentReviewVisible.value = true
+}
+
+const continueToPayment = () => {
+  const due = paymentReviewDue.value
+  if (!due) return
+  paymentReviewVisible.value = false
+  void payDue(due)
+}
+
 let checkoutScriptPromise: Promise<EasebuzzCheckoutConstructor> | null = null
 
 const loadEasebuzzCheckout = () => {
@@ -719,7 +735,7 @@ const openBreakdown = (due: MaintenanceDue) => {
                     :title="getPayTitle(row)"
                     :disabled="!canPayDue(row) || Boolean(payingDueId)"
                     :loading="payingDueId === row.id"
-                    @click="payDue(row)"
+                    @click="reviewPayment(row)"
                   />
                 </div>
               </template>
@@ -822,7 +838,7 @@ const openBreakdown = (due: MaintenanceDue) => {
                   :title="getPayTitle(row)"
                   :disabled="!canPayDue(row) || Boolean(payingDueId)"
                   :loading="payingDueId === row.id"
-                  @click="payDue(row)"
+                  @click="reviewPayment(row)"
                 />
               </div>
             </article>
@@ -830,6 +846,60 @@ const openBreakdown = (due: MaintenanceDue) => {
         </section>
       </div>
     </section>
+
+    <Dialog
+      v-model:visible="paymentReviewVisible"
+      header="Payment gateway charges"
+      modal
+      class="p-dialog-custom resident-payment-review"
+      :style="{ width: 'min(94vw, 760px)' }"
+    >
+      <div v-if="paymentReviewDue" class="resident-payment-review__content">
+        <p>
+          Payment for {{ paymentReviewDue.billingPeriodLabel }} ·
+          {{ paymentReviewDue.blockName }} {{ paymentReviewDue.flatNumber }}:
+          <strong>{{ formatMoney(paymentReviewDue.balanceAmount) }}</strong>
+        </p>
+        <p>
+          Gateway charges depend on the payment method you select. Please review
+          the charges before continuing to Easebuzz.
+        </p>
+        <div
+          class="resident-payment-review__image"
+          role="region"
+          aria-label="Payment gateway charge rates"
+          tabindex="0"
+        >
+          <img
+            src="/images/payment-gateway-charges.jpeg"
+            alt="Payment gateway charges for debit cards, UPI, credit cards, netbanking, wallets, international cards, and eNACH"
+            width="1280"
+            height="1222"
+          />
+        </div>
+        <a
+          href="/images/payment-gateway-charges.jpeg"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Open full-size charges image
+        </a>
+        <div class="resident-payment-review__actions">
+          <Button
+            label="Cancel"
+            severity="secondary"
+            outlined
+            @click="paymentReviewVisible = false"
+          />
+          <Button
+            label="Continue to payment"
+            icon="pi pi-arrow-right"
+            icon-pos="right"
+            @click="continueToPayment"
+          />
+        </div>
+      </div>
+    </Dialog>
 
     <Dialog
       v-model:visible="breakdownVisible"
@@ -890,6 +960,36 @@ const openBreakdown = (due: MaintenanceDue) => {
 </template>
 
 <style scoped>
+.resident-payment-review__content {
+  display: grid;
+  gap: 1rem;
+}
+
+.resident-payment-review__content p {
+  margin: 0;
+}
+
+.resident-payment-review__image {
+  max-height: min(55vh, 580px);
+  overflow: auto;
+  border: 1px solid var(--p-content-border-color);
+  border-radius: 0.5rem;
+}
+
+.resident-payment-review__image img {
+  display: block;
+  width: 100%;
+  min-width: 640px;
+  height: auto;
+}
+
+.resident-payment-review__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
 .resident-service-statistics-link {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
