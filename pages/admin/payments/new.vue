@@ -99,17 +99,23 @@ const getQueryAmount = (value: unknown) => {
 const initialFlatId = getQueryText(route.query.flatId)
 const initialDueId = getQueryText(route.query.dueId)
 const initialBillingPeriodId = getQueryText(route.query.billingPeriodId)
+const requestedChargeType = getQueryText(route.query.chargeType)
+const initialChargeType: BillingPeriodChargeType =
+  requestedChargeType === 'CAM' || requestedChargeType === 'DG_SET' || requestedChargeType === 'GENERAL'
+    ? requestedChargeType
+    : 'CAM'
+const isOfflineReplacement = getQueryText(route.query.offlineReplacement) === 'true'
 
 const form = reactive({
   flatId: initialFlatId,
-  chargeType: 'CAM' as BillingPeriodChargeType,
+  chargeType: initialChargeType,
   payerUserId: '',
   amount: getQueryAmount(route.query.amount),
   paymentDate: todayDate(),
   mode: 'UPI',
   transferKind: '',
   allocationMode: initialDueId || initialBillingPeriodId ? 'SELECTED_PERIODS' : 'OLDEST_UNPAID_FIRST',
-  advanceCreditScope: 'CAM' as AdvanceCreditScope,
+  advanceCreditScope: initialChargeType as AdvanceCreditScope,
   selectedDueIds: initialDueId ? [initialDueId] : [] as string[],
   tenureMonths: '3',
   utrReference: '',
@@ -331,6 +337,7 @@ const routeDuePrefillApplied = ref(false)
 const applyRouteDuePrefill = () => {
   if (routeDuePrefillApplied.value) return
   if (!form.flatId || (!initialDueId && !initialBillingPeriodId)) return
+  if (duesPending.value) return
 
   const matchingDue = openDues.value.find((due) =>
     initialDueId
@@ -339,6 +346,7 @@ const applyRouteDuePrefill = () => {
   )
 
   if (!matchingDue) {
+    form.selectedDueIds = []
     routeDuePrefillApplied.value = true
     return
   }
@@ -537,7 +545,7 @@ watch(
   },
 )
 
-watch(openDues, applyRouteDuePrefill, { immediate: true })
+watch([openDues, duesPending], applyRouteDuePrefill, { immediate: true })
 
 watch(
   () => [form.flatId, defaultPayerUserId.value, residentOptions.value.map((option) => option.value).join(',')],
@@ -793,6 +801,9 @@ const resetForm = () => {
           </div>
           <Button as="router-link" to="/admin/payments" label="All payments" icon="pi pi-list" severity="secondary" outlined />
         </header>
+        <Message v-if="isOfflineReplacement" severity="info">
+          The earlier online attempt was cancelled or failed. Record the office payment as a new transaction using its actual payment date, mode, deposit account, and reference. Check the selected bill before saving.
+        </Message>
 
         <section class="admin-form-section">
           <div class="admin-form-section__header">

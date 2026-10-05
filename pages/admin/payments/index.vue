@@ -319,6 +319,60 @@ const isOnlineGatewayPayment = (
   payment: Pick<PaymentSummary, 'mode' | 'paymentProvider'>,
 ) => payment.mode === 'ONLINE_GATEWAY' || payment.paymentProvider === 'EASEBUZZ'
 
+const canRecordOfflineForGateway = (payment: PaymentSummary) =>
+  canEditPayment.value &&
+  isOnlineGatewayPayment(payment) &&
+  ['FAILED', 'CANCELLED'].includes(payment.status) &&
+  !payment.gatewayPaidAt &&
+  payment.gatewayStatus?.toLowerCase() !== 'success' &&
+  Boolean(payment.flatId)
+
+const openingOfflinePaymentId = ref<string | null>(null)
+
+const recordOfflineForGateway = async (payment: PaymentSummary) => {
+  if (!canRecordOfflineForGateway(payment)) return
+
+  openingOfflinePaymentId.value = payment.id
+  try {
+    const { data: current } = await api<DetailResponse>(`/api/payments/${payment.id}`)
+    if (
+      !['FAILED', 'CANCELLED'].includes(current.status) ||
+      current.gateway_paid_at ||
+      current.gateway_status?.toLowerCase() === 'success'
+    ) {
+      toast.add({
+        severity: 'warn',
+        summary: 'Check gateway payment',
+        detail: 'This gateway attempt has changed. Review its latest status before recording an office payment.',
+        life: 8000,
+      })
+      await refresh()
+      return
+    }
+
+    const selectedDueIds = current.allocation_snapshot?.selectedDueIds
+    await navigateTo({
+      path: '/admin/payments/new',
+      query: {
+        flatId: current.received_for_flat_id,
+        chargeType: current.charge_type ?? undefined,
+        dueId: selectedDueIds?.length === 1 ? selectedDueIds[0] : undefined,
+        amount: current.amount,
+        offlineReplacement: 'true',
+      },
+    })
+  } catch (error) {
+    toast.add({
+      severity: 'error',
+      summary: 'Could not open payment form',
+      detail: getApiErrorMessage(error, 'Try again from the payment record.'),
+      life: 8000,
+    })
+  } finally {
+    openingOfflinePaymentId.value = null
+  }
+}
+
 const isOnlineGatewayDetail = (
   payment: Pick<PaymentDetail, 'mode' | 'payment_provider'>,
 ) => payment.mode === 'ONLINE_GATEWAY' || payment.payment_provider === 'EASEBUZZ'
@@ -1368,7 +1422,7 @@ const onProofFileChange = async (event: Event) => {
             </div>
           </template>
         </Column>
-        <Column header="Actions" style="width: 150px">
+        <Column header="Actions" style="min-width: 260px">
           <template #body="{ data: row }">
             <div class="admin-inline-actions">
               <Button
@@ -1390,6 +1444,17 @@ const onProofFileChange = async (event: Event) => {
                 :aria-label="isOnlineGatewayPayment(row) ? 'View gateway details' : 'View payment'"
                 :title="isOnlineGatewayPayment(row) ? 'View gateway details' : 'View payment'"
                 @click="openPaymentView(row)"
+              />
+              <Button
+                v-if="canRecordOfflineForGateway(row)"
+                label="Record office payment"
+                icon="pi pi-plus-circle"
+                size="small"
+                severity="secondary"
+                outlined
+                title="Record office payment for this flat and bill"
+                :loading="openingOfflinePaymentId === row.id"
+                @click="recordOfflineForGateway(row)"
               />
               <Button
                 v-if="canEditPayment && !isCamAdvancePayment(row) && !isOnlineGatewayPayment(row)"
@@ -1481,6 +1546,16 @@ const onProofFileChange = async (event: Event) => {
               severity="secondary"
               outlined
               @click="openPaymentView(payment)"
+            />
+            <Button
+              v-if="canRecordOfflineForGateway(payment)"
+              label="Record office payment"
+              icon="pi pi-plus-circle"
+              size="small"
+              severity="secondary"
+              outlined
+              :loading="openingOfflinePaymentId === payment.id"
+              @click="recordOfflineForGateway(payment)"
             />
             <Button
               v-if="canEditPayment && !isCamAdvancePayment(payment) && !isOnlineGatewayPayment(payment)"
