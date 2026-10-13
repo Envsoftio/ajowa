@@ -766,13 +766,16 @@ const paymentEditDueOptions = computed(() => {
   for (const due of paymentEditDues.value) {
     if (due.isAdvanceCoverageRow || due.isCamAdvanceCovered) continue
     if (due.billingPeriodChargeType !== paymentEditForm.chargeType) continue
+    if (['PAID', 'WAIVED', 'CANCELLED'].includes(due.status)) continue
     options.set(
       due.id,
       `${due.billingPeriodLabel} · ${formatMoney(due.balanceAmount)} balance`,
     )
   }
 
-  for (const allocation of paymentEditPayment.value?.allocations ?? []) {
+  for (const allocation of paymentEditForm.flatId === paymentEditPayment.value?.received_for_flat_id
+    ? paymentEditPayment.value?.allocations ?? []
+    : []) {
     if (allocation.billingPeriodChargeType !== paymentEditForm.chargeType) continue
     if (options.has(allocation.dueId)) continue
     options.set(
@@ -830,6 +833,10 @@ const validatePaymentEditForm = (showToast = false) => {
 
   if (paymentEditForm.allocationMode === 'SELECTED_PERIODS') {
     requirePaymentEditField('selectedDueIds', paymentEditForm.selectedDueIds, 'Select at least one due row.')
+    const availableDueIds = new Set(paymentEditDueOptions.value.map((option) => option.value))
+    if (paymentEditForm.selectedDueIds.some((dueId) => !availableDueIds.has(dueId))) {
+      setPaymentEditFieldError('selectedDueIds', 'Select a bill for the chosen flat.')
+    }
   }
 
   if (paymentEditForm.allocationMode === 'TENURE_PACK') {
@@ -1881,6 +1888,10 @@ const onProofFileChange = async (event: Event) => {
     >
       <AppSkeletonState v-if="paymentEditLoading && !paymentEditPayment" />
       <form v-else-if="paymentEditPayment" class="admin-form-layout" novalidate @submit.prevent="savePaymentEdit">
+        <p v-if="!isOnlineGatewayEdit" class="field-help">
+          Editing receipt {{ paymentEditPayment.receipt_number || 'pending' }} for
+          {{ [paymentEditPayment.block_name, paymentEditPayment.flat_number].filter(Boolean).join(' ') }}.
+        </p>
         <section v-if="isOnlineGatewayEdit" class="admin-form-section gateway-payment-panel">
           <div class="gateway-payment-header">
             <div>
