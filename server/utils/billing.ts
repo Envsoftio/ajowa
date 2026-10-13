@@ -2302,6 +2302,7 @@ export const generateMaintenanceBillPdf = async (
     }, 0),
   )
   const invoiceStampImage = await getSocietyStampImageForPdf()
+  const uploadedPaymentQrImage = await getUploadedPaymentQrImageForPdf(due)
   const societyBankAccounts = getSocietyBankAccountsForPdf(due)
   let maintenanceSectionTotal: number | null = null
 
@@ -2463,7 +2464,7 @@ export const generateMaintenanceBillPdf = async (
                 if (rowIndex === 7) return 206
                 if (rowIndex === 8) return 20
                 if (rowIndex === 9) return 40
-                if (rowIndex === 10) return 96
+                if (rowIndex === 10) return uploadedPaymentQrImage ? 184 : 96
                 return 20
               },
               body: [
@@ -2669,6 +2670,15 @@ export const generateMaintenanceBillPdf = async (
                     },
                     layout: camSignatureTopLineLayout,
                   },
+                  ...(uploadedPaymentQrImage
+                    ? [{
+                        stack: [
+                          { image: uploadedPaymentQrImage, fit: [72, 72], alignment: 'center' },
+                          { text: 'Scan to pay', style: 'camTinyText', alignment: 'center' },
+                        ],
+                        margin: [0, 3, 0, 0],
+                      }]
+                    : []),
                 ],
                 margin: [4, 5, 0, 0],
                 colSpan: 4,
@@ -2743,8 +2753,7 @@ export const generateMaintenanceBillPdf = async (
     const tariffRateLabel = primaryCharge.tariffRateLabel
       ?? (ratePerUnit != null ? `Rs.${formatBillPlainNumber(ratePerUnit)}/Unit` : '-')
     const qrPayload = buildUpiPaymentPayload(due, dgNetPayable, bill.dgBillNumber)
-    const uploadedQrImage = await getUploadedPaymentQrImageForPdf(due)
-    const qrImage = uploadedQrImage ?? (qrPayload
+    const qrImage = uploadedPaymentQrImage ?? (qrPayload
       ? await QRCode.toDataURL(qrPayload, { margin: 1, width: 180 })
       : null)
 
