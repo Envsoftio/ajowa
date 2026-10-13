@@ -304,27 +304,55 @@ const initiateResponseSchema = z.object({
   data: z.unknown(),
 })
 
-const classifyEasebuzzInitiationFailure = (raw: unknown) => {
+const getEasebuzzInitiationErrorText = (raw: unknown) => {
   const response = z.record(z.unknown()).safeParse(raw)
-  if (!response.success) return 'UNRECOGNIZED_RESPONSE'
-  const explanation = [
-    response.data.data,
-    response.data.error,
+  if (!response.success) return ''
+  const nested = z.record(z.unknown()).safeParse(response.data.data)
+  return [
+    response.data.error_desc,
+    response.data.msg_desc,
     response.data.message,
+    response.data.error,
+    response.data.msg,
+    nested.success ? nested.data.error_desc : null,
+    nested.success ? nested.data.message : null,
+    nested.success ? nested.data.error : null,
+    response.data.data,
   ]
     .filter((value): value is string => typeof value === 'string')
     .join(' ')
-    .toLowerCase()
-  if (/hash|checksum/.test(explanation)) return 'INVALID_HASH'
-  if (/merchant|credential|\bkey\b|\bsalt\b/.test(explanation))
+    .trim()
+}
+
+const classifyEasebuzzInitiationFailure = (explanation: string) => {
+  const lower = explanation.toLowerCase()
+  if (!lower) return 'UNRECOGNIZED_RESPONSE'
+  if (/hash|checksum/.test(lower)) return 'INVALID_HASH'
+  if (/merchant|credential|\bkey\b|\bsalt\b/.test(lower))
     return 'MERCHANT_CREDENTIALS'
-  if (/phone|mobile/.test(explanation)) return 'INVALID_PHONE'
-  if (/email/.test(explanation)) return 'INVALID_EMAIL'
-  if (/amount/.test(explanation)) return 'INVALID_AMOUNT'
-  if (/txnid|transaction/.test(explanation)) return 'INVALID_TRANSACTION'
-  if (/callback|domain|\burl\b|surl|furl/.test(explanation))
-    return 'CALLBACK_URL'
+  if (/phone|mobile/.test(lower)) return 'INVALID_PHONE'
+  if (/email/.test(lower)) return 'INVALID_EMAIL'
+  if (/amount/.test(lower)) return 'INVALID_AMOUNT'
+  if (/txnid|transaction/.test(lower)) return 'INVALID_TRANSACTION'
+  if (/callback|domain|\burl\b|surl|furl/.test(lower)) return 'CALLBACK_URL'
   return 'GATEWAY_REJECTED'
+}
+
+const redactEasebuzzInitiationError = (
+  explanation: string,
+  secrets: string[],
+) => {
+  let safe = explanation
+  for (const secret of secrets.filter(Boolean)) {
+    const escaped = secret.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    safe = safe.replace(new RegExp(escaped, 'gi'), '[REDACTED]')
+  }
+  return safe
+    .replace(/https?:\/\/\S+/gi, '[URL]')
+    .replace(/\b[^\s@]+@[^\s@]+\.[^\s@]+\b/g, '[EMAIL]')
+    .replace(/\+?\d[\d\s-]{8,}\d/g, '[NUMBER]')
+    .replace(/\b[a-z0-9_-]{25,}\b/gi, '[TOKEN]')
+    .slice(0, 300)
 }
 
 const getBaseUrls = (environment: 'test' | 'prod') => ({
@@ -382,9 +410,17 @@ export const initiateEasebuzzPayment = async (
   const accessKey =
     typeof response.data === 'string' ? response.data.trim() : null
   if (!success) {
+    const explanation = getEasebuzzInitiationErrorText(raw)
     return {
       ok: false as const,
-      reason: classifyEasebuzzInitiationFailure(raw),
+      reason: classifyEasebuzzInitiationFailure(explanation),
+      gatewayError: redactEasebuzzInitiationError(explanation, [
+        config.key,
+        config.salt,
+        input.email ?? '',
+        input.phone ?? '',
+        input.firstname ?? '',
+      ]),
       gatewayStatus: String(response.status),
     }
   }
@@ -392,6 +428,7 @@ export const initiateEasebuzzPayment = async (
     return {
       ok: false as const,
       reason: 'INVALID_ACCESS_KEY',
+      gatewayError: '',
       gatewayStatus: String(response.status),
     }
   }

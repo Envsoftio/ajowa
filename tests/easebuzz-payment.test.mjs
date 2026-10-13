@@ -75,8 +75,32 @@ test('classifies gateway initiation rejection without returning its raw response
   assert.deepEqual(result, {
     ok: false,
     reason: 'INVALID_HASH',
+    gatewayError: 'Invalid hash',
     gatewayStatus: '0',
   })
+})
+
+test('captures and redacts Easebuzz error_desc from a rejected initiation', async (t) => {
+  const originalFetch = globalThis.fetch
+  t.after(() => {
+    globalThis.fetch = originalFetch
+  })
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        status: 0,
+        data: '',
+        error_desc: `Merchant key ${fixture.key} is inactive for resident@example.test`,
+      }),
+    )
+  const result = await initiateEasebuzzPayment(
+    { environment: 'test', key: fixture.key, salt: 'merchant-salt' },
+    fixture,
+  )
+  assert.equal(result.reason, 'MERCHANT_CREDENTIALS')
+  assert.equal(result.gatewayError.includes(fixture.key), false)
+  assert.equal(result.gatewayError.includes('resident@example.test'), false)
+  assert.match(result.gatewayError, /inactive/)
 })
 
 test('matches the documented Easebuzz initiation field order including empty UDFs', () => {

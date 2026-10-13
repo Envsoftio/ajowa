@@ -518,6 +518,7 @@ export const initiateOnlinePayment = async (
           transactionReference: attempt.merchant_transaction_id,
           gatewayStatus: initiated.gatewayStatus,
           reason: initiated.reason,
+          gatewayError: initiated.gatewayError,
         }),
       )
       await pool.query(
@@ -526,7 +527,8 @@ export const initiateOnlinePayment = async (
              failure_code = 'PAYMENT_INITIATION_FAILED', retry_allowed = true,
              last_error_message = $2,
              initiation_response = jsonb_build_object(
-               'status', $3::text, 'reason', $4::text
+               'status', $3::text, 'reason', $4::text,
+               'gatewayError', $5::text
              )
          where id = $1`,
         [
@@ -534,6 +536,7 @@ export const initiateOnlinePayment = async (
           `Easebuzz rejected payment initiation: ${initiated.reason}.`,
           initiated.gatewayStatus,
           initiated.reason,
+          initiated.gatewayError,
         ],
       )
       await pool.query(
