@@ -11,6 +11,7 @@ import {
   decryptEasebuzzAccessKey,
   encryptEasebuzzAccessKey,
   extractEasebuzzTransaction,
+  initiateEasebuzzPayment,
   normalizeEasebuzzStatus,
   parseEasebuzzPaidAt,
   redactEasebuzzPayload,
@@ -38,6 +39,45 @@ const fixture = {
   udf9: '',
   udf10: '',
 }
+
+test('accepts gateway access keys without an invented 64-character requirement and omits empty optional fields', async (t) => {
+  const originalFetch = globalThis.fetch
+  t.after(() => {
+    globalThis.fetch = originalFetch
+  })
+  let sent
+  globalThis.fetch = async (_url, options) => {
+    sent = new URLSearchParams(options.body)
+    return new Response(JSON.stringify({ status: 1, data: 'a'.repeat(32) }))
+  }
+  const result = await initiateEasebuzzPayment(
+    { environment: 'test', key: fixture.key, salt: 'merchant-salt' },
+    { ...fixture, udf3: '', udf8: '' },
+  )
+  assert.equal(result.ok, true)
+  assert.equal(result.accessKey, 'a'.repeat(32))
+  assert.equal(sent.has('udf3'), false)
+  assert.equal(sent.has('udf8'), false)
+  assert.equal(sent.has('udf1'), true)
+})
+
+test('classifies gateway initiation rejection without returning its raw response', async (t) => {
+  const originalFetch = globalThis.fetch
+  t.after(() => {
+    globalThis.fetch = originalFetch
+  })
+  globalThis.fetch = async () =>
+    new Response(JSON.stringify({ status: 0, data: 'Invalid hash' }))
+  const result = await initiateEasebuzzPayment(
+    { environment: 'test', key: fixture.key, salt: 'merchant-salt' },
+    fixture,
+  )
+  assert.deepEqual(result, {
+    ok: false,
+    reason: 'INVALID_HASH',
+    gatewayStatus: '0',
+  })
+})
 
 test('matches the documented Easebuzz initiation field order including empty UDFs', () => {
   const source = [

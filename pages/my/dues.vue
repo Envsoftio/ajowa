@@ -285,23 +285,28 @@ const loadEasebuzzCheckout = () => {
   if (existing) return Promise.resolve(existing)
   if (checkoutScriptPromise) return checkoutScriptPromise
 
-  checkoutScriptPromise = new Promise((resolve, reject) => {
-    const script = document.createElement('script')
-    script.src =
-      'https://ebz-static.s3.ap-south-1.amazonaws.com/easecheckout/v2.0.0/easebuzz-checkout-v2.min.js'
-    script.async = true
-    script.onload = () => {
-      const constructor = (
-        window as typeof window & {
-          EasebuzzCheckout?: EasebuzzCheckoutConstructor
-        }
-      ).EasebuzzCheckout
-      if (constructor) resolve(constructor)
-      else reject(new Error('Easebuzz checkout did not initialize.'))
-    }
-    script.onerror = () =>
-      reject(new Error('Easebuzz checkout could not be loaded.'))
-    document.head.appendChild(script)
+  checkoutScriptPromise = new Promise<EasebuzzCheckoutConstructor>(
+    (resolve, reject) => {
+      const script = document.createElement('script')
+      script.src =
+        'https://ebz-static.s3.ap-south-1.amazonaws.com/easecheckout/v2.0.0/easebuzz-checkout-v2.min.js'
+      script.async = true
+      script.onload = () => {
+        const constructor = (
+          window as typeof window & {
+            EasebuzzCheckout?: EasebuzzCheckoutConstructor
+          }
+        ).EasebuzzCheckout
+        if (constructor) resolve(constructor)
+        else reject(new Error('Easebuzz checkout did not initialize.'))
+      }
+      script.onerror = () =>
+        reject(new Error('Easebuzz checkout could not be loaded.'))
+      document.head.appendChild(script)
+    },
+  ).catch((error: unknown) => {
+    checkoutScriptPromise = null
+    throw error
   })
   return checkoutScriptPromise
 }
@@ -361,6 +366,8 @@ const payDue = async (due: MaintenanceDue) => {
   if (!hasPaymentChargeType(due)) return
   payingDueId.value = due.id
   try {
+    // A failed script load must not leave a durable gateway attempt behind.
+    const EasebuzzCheckout = await loadEasebuzzCheckout()
     const response = await api<OnlinePaymentInitiateResponse>(
       '/api/payments/online/initiate',
       {
@@ -382,7 +389,6 @@ const payDue = async (due: MaintenanceDue) => {
       return
     }
 
-    const EasebuzzCheckout = await loadEasebuzzCheckout()
     const checkout = new EasebuzzCheckout(
       payment.merchantKey,
       payment.environment,
@@ -408,10 +414,15 @@ const payDue = async (due: MaintenanceDue) => {
     toast.add({
       severity: 'error',
       summary: 'Payment could not be started',
-      detail: getApiErrorMessage(
-        error,
-        'Please wait and refresh before trying again.',
-      ),
+      detail:
+        error instanceof Error &&
+        (error.message === 'Easebuzz checkout could not be loaded.' ||
+          error.message === 'Easebuzz checkout did not initialize.')
+          ? 'Secure checkout could not be loaded. Check your connection and try again.'
+          : getApiErrorMessage(
+              error,
+              'Please wait and refresh before trying again.',
+            ),
       life: 7000,
     })
   } finally {

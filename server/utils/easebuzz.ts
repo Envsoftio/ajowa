@@ -304,6 +304,29 @@ const initiateResponseSchema = z.object({
   data: z.unknown(),
 })
 
+const classifyEasebuzzInitiationFailure = (raw: unknown) => {
+  const response = z.record(z.unknown()).safeParse(raw)
+  if (!response.success) return 'UNRECOGNIZED_RESPONSE'
+  const explanation = [
+    response.data.data,
+    response.data.error,
+    response.data.message,
+  ]
+    .filter((value): value is string => typeof value === 'string')
+    .join(' ')
+    .toLowerCase()
+  if (/hash|checksum/.test(explanation)) return 'INVALID_HASH'
+  if (/merchant|credential|\bkey\b|\bsalt\b/.test(explanation))
+    return 'MERCHANT_CREDENTIALS'
+  if (/phone|mobile/.test(explanation)) return 'INVALID_PHONE'
+  if (/email/.test(explanation)) return 'INVALID_EMAIL'
+  if (/amount/.test(explanation)) return 'INVALID_AMOUNT'
+  if (/txnid|transaction/.test(explanation)) return 'INVALID_TRANSACTION'
+  if (/callback|domain|\burl\b|surl|furl/.test(explanation))
+    return 'CALLBACK_URL'
+  return 'GATEWAY_REJECTED'
+}
+
 const getBaseUrls = (environment: 'test' | 'prod') => ({
   pay:
     environment === 'prod'
@@ -343,10 +366,12 @@ export const initiateEasebuzzPayment = async (
   }
   payload.hash = buildEasebuzzInitiateHash(payload, config.salt)
 
-  const outgoing = { ...payload }
-  delete outgoing.udf8
-  delete outgoing.udf9
-  delete outgoing.udf10
+  const outgoing = Object.fromEntries(
+    Object.entries(payload).filter(
+      ([field, value]) =>
+        !['udf8', 'udf9', 'udf10'].includes(field) && value !== '',
+    ),
+  )
 
   const raw = await postForm(
     `${getBaseUrls(config.environment).pay}payment/initiateLink`,
@@ -354,9 +379,21 @@ export const initiateEasebuzzPayment = async (
   )
   const response = initiateResponseSchema.parse(raw)
   const success = Number(response.status) === 1
-  const accessKey = typeof response.data === 'string' ? response.data : null
-  if (!success || !accessKey || !/^[a-f0-9]{64}$/i.test(accessKey)) {
-    return { ok: false as const, raw }
+  const accessKey =
+    typeof response.data === 'string' ? response.data.trim() : null
+  if (!success) {
+    return {
+      ok: false as const,
+      reason: classifyEasebuzzInitiationFailure(raw),
+      gatewayStatus: String(response.status),
+    }
+  }
+  if (!accessKey || !/^[a-z0-9_-]{16,512}$/i.test(accessKey)) {
+    return {
+      ok: false as const,
+      reason: 'INVALID_ACCESS_KEY',
+      gatewayStatus: String(response.status),
+    }
   }
   return { ok: true as const, accessKey, raw }
 }

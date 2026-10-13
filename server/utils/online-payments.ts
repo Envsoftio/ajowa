@@ -510,13 +510,31 @@ export const initiateOnlinePayment = async (
       udf10: '',
     })
     if (!initiated.ok) {
+      console.error(
+        JSON.stringify({
+          level: 'error',
+          message: 'Easebuzz payment initiation was rejected.',
+          paymentId,
+          transactionReference: attempt.merchant_transaction_id,
+          gatewayStatus: initiated.gatewayStatus,
+          reason: initiated.reason,
+        }),
+      )
       await pool.query(
         `update payment_gateway_attempts
          set status = 'FAILED', failure_stage = 'initiation',
              failure_code = 'PAYMENT_INITIATION_FAILED', retry_allowed = true,
-             last_error_message = 'Easebuzz rejected payment initiation.'
+             last_error_message = $2,
+             initiation_response = jsonb_build_object(
+               'status', $3::text, 'reason', $4::text
+             )
          where id = $1`,
-        [attempt.id],
+        [
+          attempt.id,
+          `Easebuzz rejected payment initiation: ${initiated.reason}.`,
+          initiated.gatewayStatus,
+          initiated.reason,
+        ],
       )
       await pool.query(
         `update payments set status = 'FAILED' where id = $1 and status = 'INITIATED'`,
