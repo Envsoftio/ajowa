@@ -2328,7 +2328,7 @@ export const generateMaintenanceBillPdf = async (
     paddingBottom: () => 1.6,
   }
 
-  const buildMaintenanceInvoiceSection = (): Record<string, unknown>[] => {
+  const buildMaintenanceInvoiceSection = async (): Promise<Record<string, unknown>[]> => {
     if (invoiceCharges.length === 0) {
       return []
     }
@@ -2373,6 +2373,10 @@ export const generateMaintenanceBillPdf = async (
         : []),
     ]
     const invoiceTotal = roundBillMoney(invoiceLineItems.reduce((sum, item) => sum + item.amount, 0))
+    const camQrPayload = buildUpiPaymentPayload(due, invoiceTotal, bill.maintenanceBillNumber)
+    const camQrImage = uploadedPaymentQrImage ?? (camQrPayload
+      ? await QRCode.toDataURL(camQrPayload, { margin: 1, width: 180 })
+      : null)
     maintenanceSectionTotal = invoiceTotal
     const primaryInvoiceCharge = invoiceCharges.find(isCamCharge) ?? invoiceCharges[0]
     const areaSqFt = primaryInvoiceCharge?.areaSqFt
@@ -2464,7 +2468,7 @@ export const generateMaintenanceBillPdf = async (
                 if (rowIndex === 7) return 206
                 if (rowIndex === 8) return 20
                 if (rowIndex === 9) return 40
-                if (rowIndex === 10) return uploadedPaymentQrImage ? 184 : 96
+                if (rowIndex === 10) return camQrImage ? 184 : 96
                 return 20
               },
               body: [
@@ -2670,10 +2674,10 @@ export const generateMaintenanceBillPdf = async (
                     },
                     layout: camSignatureTopLineLayout,
                   },
-                  ...(uploadedPaymentQrImage
+                  ...(camQrImage
                     ? [{
                         stack: [
-                          { image: uploadedPaymentQrImage, fit: [72, 72], alignment: 'center' },
+                          { image: camQrImage, fit: [72, 72], alignment: 'center' },
                           { text: 'Scan to pay', style: 'camTinyText', alignment: 'center' },
                         ],
                         margin: [0, 3, 0, 0],
@@ -3071,7 +3075,7 @@ export const generateMaintenanceBillPdf = async (
   }
 
   const content: Record<string, unknown>[] = [
-    ...buildMaintenanceInvoiceSection(),
+    ...await buildMaintenanceInvoiceSection(),
   ]
   const dgSection = await buildDgBillNoticeSection()
 

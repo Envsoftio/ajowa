@@ -16,6 +16,7 @@ export default defineEventHandler(async (event) => {
     headers: {
       'content-type': 'application/pdf',
       'content-disposition': `${disposition}; filename="${fileName}"`,
+      'cache-control': 'private, no-store',
     },
   })
 })
