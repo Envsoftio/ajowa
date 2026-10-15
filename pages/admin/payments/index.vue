@@ -578,6 +578,7 @@ const paymentEditVisible = ref(false)
 const paymentEditLoading = ref(false)
 const paymentEditSaving = ref(false)
 const paymentEditPayment = ref<PaymentDetail | null>(null)
+const paymentEditWaivedAllocations = ref<PaymentAllocation[]>([])
 const isOnlineGatewayEdit = computed(
   () => paymentEditPayment.value?.mode === 'ONLINE_GATEWAY',
 )
@@ -788,6 +789,28 @@ const paymentEditDueOptions = computed(() => {
 })
 
 const paymentEditAmount = computed(() => Number(paymentEditForm.amount ?? 0))
+const paymentEditChangesAllocation = computed(() => {
+  const payment = paymentEditPayment.value
+  if (!payment || payment.status !== 'VERIFIED') return false
+
+  const previousMode = payment.allocation_mode || 'OLDEST_UNPAID_FIRST'
+  const previousChargeType = payment.charge_type ?? payment.allocations[0]?.billingPeriodChargeType
+  const previousDueIds = payment.allocation_snapshot?.selectedDueIds?.length
+    ? payment.allocation_snapshot.selectedDueIds
+    : payment.allocations.map((allocation) => allocation.dueId)
+  const selectedDuesChanged = paymentEditForm.allocationMode === 'SELECTED_PERIODS' &&
+    (paymentEditForm.selectedDueIds.length !== previousDueIds.length ||
+      paymentEditForm.selectedDueIds.some((dueId, index) => dueId !== previousDueIds[index]))
+
+  return paymentEditAmount.value !== Number(payment.amount) ||
+    paymentEditForm.paymentDate !== payment.payment_date ||
+    paymentEditForm.flatId !== payment.received_for_flat_id ||
+    paymentEditForm.chargeType !== previousChargeType ||
+    paymentEditForm.allocationMode !== previousMode ||
+    selectedDuesChanged ||
+    (paymentEditForm.allocationMode === 'TENURE_PACK' &&
+      Number(paymentEditForm.tenureMonths) !== payment.allocation_snapshot?.tenureMonths)
+})
 const paymentEditNeedsReference = computed(() =>
   ['UPI', 'BANK_TRANSFER'].includes(paymentEditForm.mode),
 )
@@ -850,11 +873,18 @@ const validatePaymentEditForm = (showToast = false) => {
     requirePaymentEditField('overrideReason', paymentEditForm.overrideReason, 'Enter the duplicate reference approval reason.')
   }
 
+  if (paymentEditWaivedAllocations.value.length && paymentEditChangesAllocation.value) {
+    setPaymentEditFieldError(
+      'allocation',
+      'Undo the linked bill waiver in Billing Dues before changing this payment’s date, amount, or allocation.',
+    )
+  }
+
   const messages = Object.values(paymentEditFieldErrors).filter(Boolean)
   if (showToast && messages.length > 0) {
     toast.add({
       severity: 'warn',
-      summary: 'Complete required fields',
+      summary: paymentEditFieldErrors.allocation ? 'Payment change blocked' : 'Complete required fields',
       detail: messages[0],
       life: 8000,
     })
@@ -879,6 +909,12 @@ const loadPaymentEditFlatContext = async (flatId: string) => {
 
   paymentEditFlat.value = flatResponse.data
   paymentEditDues.value = duesResponse.data.items
+  if (flatId === paymentEditPayment.value?.received_for_flat_id) {
+    const dueById = new Map(paymentEditDues.value.map((due) => [due.id, due]))
+    paymentEditWaivedAllocations.value = paymentEditPayment.value.allocations.filter(
+      (allocation) => dueById.get(allocation.dueId)?.status === 'WAIVED',
+    )
+  }
 }
 
 const applyPaymentDetailToEditForm = (payment: PaymentDetail) => {
@@ -921,6 +957,7 @@ const openPaymentEdit = async (payment: PaymentSummary) => {
   paymentEditVisible.value = true
   paymentEditLoading.value = true
   paymentEditPayment.value = null
+  paymentEditWaivedAllocations.value = []
   paymentEditFlat.value = null
   paymentEditDues.value = []
   paymentEditSubmitted.value = false
@@ -933,6 +970,9 @@ const openPaymentEdit = async (payment: PaymentSummary) => {
     if (response.data.mode !== 'ONLINE_GATEWAY') {
       await loadPaymentEditFlatContext(response.data.received_for_flat_id)
     }
+  } catch {
+    // useApi already displays the request error; leave the page usable.
+    paymentEditVisible.value = false
   } finally {
     paymentEditLoading.value = false
   }
@@ -1117,6 +1157,8 @@ const savePaymentEdit = async () => {
     if (detailVisible.value && selectedPayment.value?.id === payment.id) {
       await openDetail({ id: payment.id })
     }
+  } catch {
+    // useApi already displays the request error; keep the edit form available.
   } finally {
     paymentEditSaving.value = false
   }
@@ -1974,6 +2016,16 @@ const onProofFileChange = async (event: Event) => {
               <h2>{{ formatMoney(paymentEditForm.amount) }}</h2>
             </div>
           </div>
+          <Message v-if="paymentEditWaivedAllocations.length" severity="warn" :closable="false">
+            This payment includes a waived bill:
+            {{ paymentEditWaivedAllocations.map((allocation) => allocation.billingPeriodLabel).join(', ') }}.
+            Undo the waiver in Billing Dues before changing this payment's date,
+            amount, or allocation. Recheck the late fee after saving.
+            <NuxtLink to="/admin/billing/dues">Open Billing Dues</NuxtLink>
+          </Message>
+          <small v-if="paymentEditFieldError('allocation')" class="field-error">
+            {{ paymentEditFieldError('allocation') }}
+          </small>
           <div class="admin-form-grid">
             <label>
               <span class="field-label">Flat <span class="required-marker">*</span></span>

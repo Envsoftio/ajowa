@@ -1228,6 +1228,8 @@ export const updatePaymentWithClient = async (
     allocation_order: number
     allocated_amount: string
     billing_period_charge_type: BillingPeriodChargeType
+    billing_period_label: string
+    due_status: string
   }>(
     `
       select
@@ -1235,7 +1237,9 @@ export const updatePaymentWithClient = async (
         pa.maintenance_due_id,
         pa.allocation_order,
         pa.allocated_amount::text,
-        bp.charge_type::text as billing_period_charge_type
+        bp.charge_type::text as billing_period_charge_type,
+        bp.label as billing_period_label,
+        md.status::text as due_status
       from payment_allocations pa
       inner join maintenance_dues md on md.id = pa.maintenance_due_id
       inner join billing_periods bp on bp.id = md.billing_period_id
@@ -1603,6 +1607,16 @@ export const updatePaymentWithClient = async (
     paymentAllocationChanged || creditScopeChanged
   const reallocatePayment =
     payment.status === 'VERIFIED' && paymentAllocationChanged
+  const waivedAllocation = reallocatePayment
+    ? existingAllocations.rows.find((allocation) => allocation.due_status === 'WAIVED')
+    : undefined
+  if (waivedAllocation) {
+    throw new AppError({
+      code: 'CONFLICT',
+      statusCode: 409,
+      message: `${waivedAllocation.billing_period_label} is waived. Undo its waiver in Billing Dues before changing this payment's date, amount, or allocation. Recheck the late fee after saving.`,
+    })
+  }
   const changed =
     allocationAffectingChanged ||
     payerChanged ||
