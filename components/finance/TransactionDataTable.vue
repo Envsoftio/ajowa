@@ -26,6 +26,7 @@ const transactionDetailPath = (row: FinanceTransaction) =>
 
   <AppDataTable
     v-else
+    :exportable="false"
     :value="transactions"
     :loading="loading"
     :paginator="true"

@@ -10,6 +10,7 @@ import type {
   ServicePriority,
   ServiceRequestStatus,
 } from '~/types/domain'
+import { downloadTableExcel } from '~/composables/useTableExcelExport'
 
 definePageMeta({
   layout: 'resident',
@@ -77,6 +78,22 @@ const response = computed(() => data.value?.data)
 const statistics = computed(() =>
   response.value?.enabled ? response.value.statistics : null,
 )
+const exportBreakdown = async (kind: 'category' | 'department') => {
+  const rows = kind === 'category'
+    ? statistics.value?.categoryBreakdown ?? []
+    : statistics.value?.departmentBreakdown ?? []
+  await downloadTableExcel(
+    rows as unknown as Record<string, unknown>[],
+    [
+      { field: kind === 'category' ? 'category' : 'departmentName', header: kind === 'category' ? 'Category' : 'Department' },
+      { field: 'opened', header: 'Opened' },
+      { field: 'resolved', header: 'Resolved' },
+      { field: 'active', header: 'Active now' },
+      { field: 'overdue', header: 'Overdue now' },
+    ],
+    `service-request-${kind}-performance`,
+  )
+}
 const enabled = computed(() => response.value?.enabled !== false)
 const summary = computed(() => statistics.value?.summary)
 const options = computed(() => statistics.value?.options)
@@ -593,6 +610,7 @@ const hasOpenedCohort = computed(
               <p class="eyebrow">Service areas</p>
               <h2>Category performance</h2>
             </div>
+            <Button label="Excel" icon="pi pi-file-excel" severity="secondary" outlined :disabled="!statistics.categoryBreakdown.length" @click="exportBreakdown('category')" />
           </div>
           <div class="service-statistics__table-scroll">
             <table>
@@ -633,6 +651,7 @@ const hasOpenedCohort = computed(
               <p class="eyebrow">Operations</p>
               <h2>Department performance</h2>
             </div>
+            <Button label="Excel" icon="pi pi-file-excel" severity="secondary" outlined :disabled="!statistics.departmentBreakdown.length" @click="exportBreakdown('department')" />
           </div>
           <div class="service-statistics__table-scroll">
             <table>

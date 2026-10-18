@@ -180,6 +180,9 @@ const submit = async () => {
 
         <AppDataTable
           :value="filteredBlocks"
+          export-source="/api/admin/blocks"
+          :export-query="{ search: globalSearch, isActive: activeFilter, sortBy: 'sortOrder', sortDirection: 'asc' }"
+          export-name="blocks"
           :loading="pending"
           responsive-layout="scroll"
           class="list-page__table"

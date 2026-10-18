@@ -576,7 +576,7 @@ const publish = async (notice: NoticeRow) => {
         </div>
       </div>
 
-      <AppDataTable :value="rows" :loading="pending" responsive-layout="scroll" class="list-page__table">
+      <AppDataTable :value="rows" :loading="pending" export-source="/api/admin/notices" export-name="notices" responsive-layout="scroll" class="list-page__table">
         <Column field="title" header="Title" />
         <Column field="priority" header="Priority"><template #body="{ data: row }"><Tag :value="row.priority" /></template></Column>
         <Column field="status" header="Status"><template #body="{ data: row }"><AppStatusBadge :status="row.status" /></template></Column>

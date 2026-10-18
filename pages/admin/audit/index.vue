@@ -337,6 +337,9 @@ const onSort = (event: DataTableSortEvent) => {
 
       <AppDataTable
         :value="rows"
+        export-source="/api/admin/audit"
+        :export-query="query"
+        export-name="audit-log"
         :loading="pending"
         paginator
         :rows="query.pageSize"

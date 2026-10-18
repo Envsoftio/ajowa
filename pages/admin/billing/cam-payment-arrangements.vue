@@ -369,6 +369,9 @@ const summary = computed(() => {
 
       <AppDataTable
         :value="arrangements"
+        export-source="/api/admin/billing/cam-payment-arrangements"
+        :export-query="buildArrangementQuery()"
+        export-name="cam-payment-arrangements"
         :loading="pending"
         paginator
         :rows="query.pageSize"

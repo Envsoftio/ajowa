@@ -529,6 +529,7 @@ const relationshipSeverity = (type: string) => {
 
         <AppDataTable
           :value="data?.data.items ?? []"
+          :exportable="false"
           :loading="pending"
           :lazy="true"
           paginator

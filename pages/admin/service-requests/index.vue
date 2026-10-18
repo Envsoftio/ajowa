@@ -256,6 +256,8 @@ const createTicket = async (payload: ServiceRequestCreatePayload) => {
 
       <TicketDataTable
         :tickets="tickets"
+        export-source="/api/admin/service-requests"
+        :export-query="{ search: query.search, sortBy: query.sortBy, sortDirection: query.sortDirection, ...Object.fromEntries(Object.entries(query.filters).map(([key, value]) => [key, value[0]])) }"
         :loading="pending"
         @open="router.push(`/admin/service-requests/${$event.id}`)"
         @assign="openAssign"

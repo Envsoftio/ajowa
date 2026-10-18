@@ -235,6 +235,9 @@ const deleteProfession = async (profession: ProfessionSummary) => {
 
       <AppDataTable
         :value="filteredProfessions"
+        export-source="/api/admin/professions"
+        :export-query="{ search: globalSearch, isActive: activeFilter, isPublicAllowed: publicFilter, sortBy: 'sortOrder', sortDirection: 'asc' }"
+        export-name="professions"
         :loading="pending"
         responsive-layout="scroll"
         class="list-page__table"

@@ -264,6 +264,9 @@ const deleteFlat = async (flat: FlatSummary) => {
 
         <AppDataTable
           :value="filteredFlats"
+          export-source="/api/admin/flats"
+          :export-query="{ search: globalSearch, blockId: blockFilter, occupancyStatus: occupancyFilter, isActive: activeFilter, sortBy: 'flatNumber', sortDirection: 'asc' }"
+          export-name="flats"
           :loading="pending"
           paginator
           :rows="20"

@@ -525,6 +525,9 @@ const onPage = (event: { page: number; rows: number }) => {
 
       <AppDataTable
         :value="transactions"
+        export-source="/api/admin/finance/transactions"
+        :export-query="{ search, status: statusFilter, transactionType: typeFilter }"
+        export-name="journal-transactions"
         :loading="pending"
         :paginator="true"
         :rows="pageSize"

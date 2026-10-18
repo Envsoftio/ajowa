@@ -6,6 +6,8 @@ import ResidentAvatar from '~/components/residents/ResidentAvatar.vue'
 defineProps<{
   tickets: ServiceRequestSummary[]
   loading?: boolean
+  exportSource?: string
+  exportQuery?: Record<string, unknown>
 }>()
 
 const emit = defineEmits<{
@@ -29,6 +31,22 @@ const isClosedTicket = (status: ServiceRequestSummary['status']) => closedTicket
   <AppDataTable
     :value="tickets"
     :loading="loading"
+    :export-source="exportSource"
+    :export-query="exportQuery"
+    export-name="service-requests"
+    :export-columns="[
+      { field: 'requestNumber', header: 'Ticket' },
+      { field: 'createdAt', header: 'Created' },
+      { field: 'requesterName', header: 'Requester' },
+      { field: 'flatLabel', header: 'Flat' },
+      { field: 'title', header: 'Issue' },
+      { field: 'category', header: 'Category' },
+      { field: 'departmentName', header: 'Department' },
+      { field: 'assigneeName', header: 'Assignee' },
+      { field: 'priority', header: 'Priority' },
+      { field: 'status', header: 'Status' },
+      { field: 'dueByAt', header: 'SLA due' },
+    ]"
     :row-class="(row: ServiceRequestSummary) => (isClosedTicket(row.status) ? 'ticket-data-table__row--closed' : 'ticket-data-table__row')"
     responsive-layout="scroll"
     class="list-page__table"

@@ -512,6 +512,9 @@ const onStaffPhotoUploaded = (payload: {
 
       <AppDataTable
         :value="data?.data.items ?? []"
+        export-source="/api/admin/staff"
+        :export-query="{ search: query.search, sortBy: query.sortBy, sortDirection: query.sortDirection, role: query.filters.role?.[0], canLogin: query.filters.canLogin?.[0], isActive: query.filters.isActive?.[0] }"
+        export-name="staff"
         :loading="pending"
         :lazy="true"
         paginator

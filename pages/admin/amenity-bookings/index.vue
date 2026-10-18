@@ -320,6 +320,9 @@ const clearBlackout = async (blackout: AmenityBlackoutSummary) => {
       <AppDataTable
         v-else
         :value="bookings"
+        export-source="/api/admin/amenity-bookings"
+        :export-query="query"
+        export-name="amenity-bookings"
         paginator
         :rows="query.pageSize"
         :total-records="totalRecords"

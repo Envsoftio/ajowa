@@ -34,7 +34,7 @@ export default defineEventHandler(async (event) => {
 
   if (query.search) {
     values.push(`%${query.search}%`)
-    where.push(`(b.name ilike $${values.length} or b.code ilike $${values.length})`)
+    where.push(`(b.name ilike $${values.length} or b.code ilike $${values.length} or coalesce(b.description, '') ilike $${values.length})`)
   }
 
   const activeFilter = query.filters.isActive?.[0]

@@ -75,6 +75,18 @@ const buildCoverageQuery = (overrides: Partial<typeof query> = {}) => ({
   sortDirection: query.sortDirection,
 })
 
+const coverageExcelExportUrl = computed(() => {
+  const params = new URLSearchParams({
+    export: 'xlsx',
+    sortBy: query.sortBy,
+    sortDirection: query.sortDirection,
+  })
+  if (query.search) params.set('search', query.search)
+  if (query.state) params.set('state', query.state)
+  if (query.source) params.set('source', query.source)
+  return `/api/admin/billing/cam-advance-coverages?${params.toString()}`
+})
+
 const [
   coveragesAsyncData,
   flatsAsyncData,
@@ -319,6 +331,17 @@ const summary = computed(() => {
         <div class="list-page__exports">
           <Button label="Refresh" icon="pi pi-refresh" severity="secondary" outlined @click="() => refresh()" />
           <Button
+            as="a"
+            :href="coverageExcelExportUrl"
+            label="Excel"
+            icon="pi pi-file-excel"
+            severity="secondary"
+            outlined
+            target="_blank"
+            rel="noopener"
+            title="Export up to 10,000 CAM advance records matching the current filters."
+          />
+          <Button
             label="Clear filters"
             icon="pi pi-filter-slash"
             severity="secondary"
@@ -351,6 +374,7 @@ const summary = computed(() => {
 
       <AppDataTable
         :value="coverages"
+        :exportable="false"
         :loading="pending"
         paginator
         :rows="query.pageSize"

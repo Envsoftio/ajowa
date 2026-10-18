@@ -698,6 +698,21 @@ if (
 
       <AppDataTable
         :value="moves"
+        export-source="/api/admin/finance/tenant-moves"
+        :export-query="query"
+        export-name="tenant-moves"
+        :export-columns="[
+          { field: 'tenantName', header: 'Tenant' },
+          { field: 'flatLabel', header: 'Flat' },
+          { field: 'tenantMobileNumber', header: 'Mobile' },
+          { field: 'moveInDate', header: 'Move in' },
+          { field: 'actualMoveOutDate', header: 'Move out' },
+          { field: 'expectedDepositAmount', header: 'Expected deposit' },
+          { field: 'receivedAmount', header: 'Received' },
+          { field: 'heldAmount', header: 'Held' },
+          { field: 'refundableAmount', header: 'Refundable' },
+          { field: 'status', header: 'Status' },
+        ]"
         :loading="pending"
         responsive-layout="scroll"
         class="list-page__table"

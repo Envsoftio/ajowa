@@ -538,6 +538,9 @@ const statusSeverity = (status: DgAdvanceCredit['status']) => {
 
       <AppDataTable
         :value="credits"
+        export-source="/api/admin/billing/dg-advances"
+        :export-query="buildCreditQuery()"
+        export-name="dg-advances"
         :loading="pending"
         paginator
         :first="tableFirst"

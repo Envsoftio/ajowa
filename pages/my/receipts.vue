@@ -307,6 +307,9 @@ const resetFilters = () => {
       <template v-else>
         <AppDataTable
           :value="receipts"
+          export-source="/api/my/receipts"
+          :export-query="query"
+          export-name="my-receipts"
           paginator
           :rows="query.pageSize"
           :total-records="totalRecords"

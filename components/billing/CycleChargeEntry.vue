@@ -1167,6 +1167,9 @@ const variableChargeExportUrl = (format: 'pdf' | 'xlsx') => {
     chargeName: props.chargeName,
     export: format,
   })
+  if (chargeSearch.value.trim()) {
+    params.set('search', chargeSearch.value.trim())
+  }
 
   return `/api/admin/billing/periods/${selectedPeriod.value.id}/variable-charges?${params.toString()}`
 }
@@ -2562,6 +2565,7 @@ watch(
             target="_blank"
             rel="noopener"
             :disabled="!selectedPeriod"
+            title="Export saved charges matching the selected period and flat search."
           />
           <Button
             v-if="!camRunFlow"

@@ -1782,6 +1782,7 @@ watch(
       <AppDataTable
         v-model:selection="selectedDues"
         :value="dues"
+        :exportable="false"
         :loading="pending"
         paginator
         :rows="query.pageSize"

@@ -115,6 +115,9 @@ const updateFilter = (key: 'status' | 'amenityId', value: string | null) => {
       <template v-else>
         <AppDataTable
           :value="bookings"
+          export-source="/api/my/amenity-bookings"
+          :export-query="query"
+          export-name="my-amenity-bookings"
           paginator
           :rows="query.pageSize"
           :total-records="totalRecords"

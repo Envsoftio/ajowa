@@ -745,6 +745,9 @@ const downloadLastGeneratedBillPdfs = () => {
 
       <AppDataTable
         :value="periods"
+        export-source="/api/admin/billing/periods"
+        :export-query="{ ...periodQuery, sortBy: 'startDate', sortDirection: 'desc' }"
+        export-name="billing-periods"
         :loading="periodsPending"
         responsive-layout="scroll"
         class="list-page__table"

@@ -697,6 +697,7 @@ watch(filteredDefaulters, (rows) => {
       <AppDataTable
         v-else
         v-model:selection="selectedDefaulters"
+        :exportable="false"
         :value="filteredDefaulters"
         :loading="pending"
         paginator

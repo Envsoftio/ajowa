@@ -439,7 +439,7 @@ const exportUrl = (format: 'pdf' | 'xlsx') => {
         </table>
       </div>
 
-      <AppDataTable :value="rows" :loading="pending" responsive-layout="scroll" class="list-page__table" scrollable scroll-height="32rem">
+      <AppDataTable :value="rows" :loading="pending" :exportable="false" responsive-layout="scroll" class="list-page__table" scrollable scroll-height="32rem">
         <Column v-for="column in columns" :key="column.key" :field="column.key" :header="column.label">
           <template #body="{ data: row }">
             {{ formatCell(column, row[column.key]) }}

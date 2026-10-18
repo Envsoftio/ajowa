@@ -140,6 +140,7 @@ type PaymentDetail = {
 type PaymentsResponse = {
   ok: true
   data: Paginated<PaymentSummary> & {
+    collectedAmount: string
     camAdvanceMatches?: PaymentSummary[]
   }
 }
@@ -286,7 +287,7 @@ const formatMoney = (value: number | string | null | undefined) =>
   new Intl.NumberFormat('en-IN', {
     style: 'currency',
     currency: 'INR',
-    maximumFractionDigits: 0,
+    maximumFractionDigits: 2,
   }).format(Number(value ?? 0))
 
 const formatAdvanceCreditScope = (scope: AdvanceCreditScope | null) => {
@@ -405,25 +406,33 @@ const paymentDateLabel = (payment: PaymentSummary) =>
     ? `${formatDate(payment.coveredFrom)} - ${formatDate(payment.coveredUntil)}`
     : formatDate(payment.paymentDate)
 
+const buildPaymentFilters = () => ({
+  search: query.search || undefined,
+  fromDate: query.fromDate || undefined,
+  toDate: query.toDate || undefined,
+  flatId: query.flatId || undefined,
+  payerUserId: query.payerUserId || undefined,
+  billingPeriodId: query.billingPeriodId || undefined,
+  chargeType: query.chargeType || undefined,
+  mode: query.mode || undefined,
+  status: query.status || undefined,
+  receipt: query.receipt || undefined,
+  proof: query.proof || undefined,
+  minAmount: query.minAmount || undefined,
+  maxAmount: query.maxAmount || undefined,
+})
+
+const paymentExcelExportUrl = computed(() => {
+  const params = new URLSearchParams({ export: 'xlsx' })
+  Object.entries(buildPaymentFilters()).forEach(([key, value]) => {
+    if (value) params.set(key, value)
+  })
+  return `/api/payments?${params.toString()}`
+})
+
 const loadPayments = () =>
   api<PaymentsResponse>('/api/payments', {
-    query: {
-      page: query.page,
-      pageSize: query.pageSize,
-      search: query.search || undefined,
-      fromDate: query.fromDate || undefined,
-      toDate: query.toDate || undefined,
-      flatId: query.flatId || undefined,
-      payerUserId: query.payerUserId || undefined,
-      billingPeriodId: query.billingPeriodId || undefined,
-      chargeType: query.chargeType || undefined,
-      mode: query.mode || undefined,
-      status: query.status || undefined,
-      receipt: query.receipt || undefined,
-      proof: query.proof || undefined,
-      minAmount: query.minAmount || undefined,
-      maxAmount: query.maxAmount || undefined,
-    },
+    query: { page: query.page, pageSize: query.pageSize, ...buildPaymentFilters() },
   })
 
 const [
@@ -524,7 +533,6 @@ const autoDepositAccountId = computed(() => {
 })
 
 const kpis = computed(() => ({
-  totalAmount: payments.value.reduce((sum, payment) => sum + Number(payment.amount), 0),
   verified: payments.value.filter((payment) => payment.status === 'VERIFIED').length,
   missingReceipts: payments.value.filter((payment) => !payment.receiptNumber).length,
   missingProof: payments.value.filter(
@@ -709,6 +717,7 @@ const classifyAdvanceAsDg = async () => {
 }
 
 const resetFilters = () => {
+  query.page = 1
   query.search = ''
   query.fromDate = ''
   query.toDate = ''
@@ -1256,9 +1265,9 @@ const onProofFileChange = async (event: Event) => {
 
     <div class="surface-grid">
       <section class="surface-card">
-        <p class="eyebrow">Visible collected</p>
-        <h3>{{ formatMoney(kpis.totalAmount) }}</h3>
-        <p>{{ totalRecords }} payment records match the current filters.</p>
+        <p class="eyebrow">Collected in filtered payments</p>
+        <h3>{{ formatMoney(data?.data.collectedAmount) }}</h3>
+        <p>{{ totalRecords }} payment records match the current filters. Only verified payments count toward collected.</p>
       </section>
       <section class="surface-card">
         <p class="eyebrow">Verified</p>
@@ -1281,6 +1290,17 @@ const onProofFileChange = async (event: Event) => {
         <div class="list-page__exports">
           <Button as="router-link" to="/admin/payments/new" label="Record payment" icon="pi pi-plus" />
           <Button label="Refresh" icon="pi pi-refresh" severity="secondary" outlined :loading="pending" @click="() => refresh()" />
+          <Button
+            as="a"
+            :href="paymentExcelExportUrl"
+            label="Excel"
+            icon="pi pi-file-excel"
+            severity="secondary"
+            outlined
+            target="_blank"
+            rel="noopener"
+            title="Export up to 10,000 payments matching the current filters."
+          />
           <Button label="Clear filters" icon="pi pi-filter-slash" severity="secondary" outlined :disabled="!hasActiveFilters" @click="resetFilters" />
         </div>
       </header>
@@ -1347,8 +1367,10 @@ const onProofFileChange = async (event: Event) => {
 
       <AppDataTable
         :value="payments"
+        :exportable="false"
         :loading="pending"
         paginator
+        :first="(query.page - 1) * query.pageSize"
         :rows="query.pageSize"
         :total-records="totalRecords"
         :lazy="true"

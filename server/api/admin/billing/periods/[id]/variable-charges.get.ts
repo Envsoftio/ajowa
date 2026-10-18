@@ -11,6 +11,7 @@ import { createPdfBuffer } from '~/server/utils/pdf'
 
 const querySchema = z.object({
   chargeName: z.string().trim().min(1).max(80).optional().default('DG Set'),
+  search: z.string().trim().max(200).optional(),
   export: z.string().trim().optional(),
   format: z.string().trim().optional(),
 })
@@ -453,6 +454,7 @@ export default defineEventHandler(async (event) => {
        and mc.is_active = true
       where f.society_id = $1
         and f.is_active = true
+        and ($4::text is null or position(lower($4::text) in lower(concat_ws(' ', b.name, f.flat_number, f.unit_type))) > 0)
       order by
         b.sort_order asc,
         b.name asc,
@@ -460,7 +462,12 @@ export default defineEventHandler(async (event) => {
         nullif(regexp_replace(f.flat_number, '\\D', '', 'g'), '')::integer asc nulls last,
         f.flat_number asc
     `,
-    [authMe.user.societyId, periodId, query.chargeName],
+    [
+      authMe.user.societyId,
+      periodId,
+      query.chargeName,
+      query.search || null,
+    ],
   )
   const items = result.rows.map(mapChargeRow)
   const exportFormat = getExportFormat(query)

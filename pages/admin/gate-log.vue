@@ -115,7 +115,7 @@ const exportUrl = (format: 'csv' | 'excel' | 'pdf') =>
       </div>
 
       <AppSkeletonState v-if="pending" />
-      <AppDataTable v-else :value="rows" responsive-layout="scroll" class="list-page__table">
+      <AppDataTable v-else :value="rows" :exportable="false" responsive-layout="scroll" class="list-page__table">
         <Column field="scannedAt" header="Time">
           <template #body="{ data: row }">{{ new Date(row.scannedAt).toLocaleString('en-IN') }}</template>
         </Column>

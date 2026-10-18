@@ -1,6 +1,8 @@
+import * as XLSX from 'xlsx/xlsx.mjs'
 import { createApiSuccess, getPaginationParams } from '~/server/utils/api'
 import { requireActiveUser } from '~/server/utils/auth'
 import { queryRows } from '~/server/utils/database'
+import { setEventHeader } from '~/server/utils/http-event'
 import { getQuerySafe } from '~/server/utils/master-data'
 import { createPaginatedResult } from '~/shared/api'
 
@@ -80,6 +82,61 @@ type PaymentListRow = PaymentSummaryRow | {
   camAdvanceCoverageId: string
   coveredFrom: string
   coveredUntil: string
+}
+
+const paymentExportLimit = 10000
+
+const buildPaymentWorkbook = (
+  rows: PaymentSummaryRow[],
+  total: number,
+  query: Record<string, unknown>,
+) => {
+  const workbook = XLSX.utils.book_new()
+  const worksheet = XLSX.utils.json_to_sheet(
+    rows.length
+      ? rows.map((row) => ({
+          Date: row.paymentDate,
+          Block: row.blockName ?? '',
+          Flat: row.flatNumber ?? '',
+          Payer: row.payerName ?? '',
+          Amount: Number(row.amount),
+          'Payment type': row.chargeType ?? '',
+          Mode: row.mode,
+          'Transfer kind': row.transferKind ?? '',
+          Status: row.status,
+          'Receipt number': row.receiptNumber ?? '',
+          UTR: row.utrReference ?? '',
+          'Bank reference': row.bankReference ?? '',
+          'Payment provider': row.paymentProvider ?? '',
+          'Gateway transaction ID': row.gatewayTransactionId ?? '',
+          'Gateway payment ID': row.gatewayPaymentId ?? '',
+          'Gateway status': row.gatewayStatus ?? '',
+          'Gateway paid at': row.gatewayPaidAt ?? '',
+          Proof: row.proofFilePath ? 'Yes' : 'No',
+          Receipt: row.receiptFilePath ? 'Yes' : 'No',
+          'Created at': row.createdAt,
+        }))
+      : [{ Note: 'No payments found for the selected filters.' }],
+  )
+  const filters = Object.entries(query)
+    .filter(([key, value]) => !['page', 'pageSize', 'export'].includes(key) && value != null && value !== '')
+    .map(([key, value]) => `${key}: ${String(value)}`)
+    .join(' | ')
+  const summary = XLSX.utils.json_to_sheet([
+    { Metric: 'Report', Value: 'Payments' },
+    { Metric: 'Filters', Value: filters || 'All payments' },
+    { Metric: 'Matching rows', Value: total },
+    { Metric: 'Exported rows', Value: rows.length },
+    { Metric: 'Export limit', Value: paymentExportLimit },
+    { Metric: 'Export note', Value: total > rows.length
+      ? `Exported first ${rows.length} of ${total} matching rows. Narrow filters to export a smaller set.`
+      : 'All matching rows exported.' },
+    { Metric: 'Exported amount', Value: rows.reduce((sum, row) => sum + Number(row.amount), 0) },
+    { Metric: 'Generated at', Value: new Date().toISOString() },
+  ])
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Payments')
+  XLSX.utils.book_append_sheet(workbook, summary, 'Summary')
+  return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer
 }
 
 const mapCamAdvanceMatchToPaymentRow = (row: PaymentCamAdvanceMatchRow): PaymentListRow => ({
@@ -345,9 +402,11 @@ export default defineEventHandler(async (event) => {
   }
 
   const where = conditions.length ? `where ${conditions.join(' and ')}` : ''
-  const totalResult = await queryRows<{ count: string }>(
+  const totalResult = await queryRows<{ count: string; collectedAmount: string }>(
     `
-      select count(*)::text as count
+      select
+        count(*)::text as count,
+        coalesce(sum(p.amount) filter (where p.status = 'VERIFIED'), 0)::text as "collectedAmount"
       from payments p
       left join flats f on f.id = p.received_for_flat_id
       left join blocks b on b.id = f.block_id
@@ -357,9 +416,7 @@ export default defineEventHandler(async (event) => {
     `,
     params,
   )
-  params.push(pagination.pageSize, offset)
-  const rows = await queryRows<PaymentSummaryRow>(
-    `
+  const rowSql = `
       select
         p.id,
         'PAYMENT'::text as "recordType",
@@ -397,8 +454,22 @@ export default defineEventHandler(async (event) => {
       left join payment_gateway_attempts attempt on attempt.payment_id = p.id
       ${where}
       order by p.payment_date desc, p.created_at desc
-      limit $${params.length - 1} offset $${params.length}
-    `,
+    `
+  const paymentTotal = Number(totalResult.rows[0]?.count ?? 0)
+
+  if (query.export === 'xlsx' || query.export === 'excel') {
+    const exportRows = await queryRows<PaymentSummaryRow>(
+      `${rowSql} limit $${params.length + 1}`,
+      [...params, paymentExportLimit],
+    )
+    setEventHeader(event, 'content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    setEventHeader(event, 'content-disposition', `attachment; filename="payments-${new Date().toISOString().slice(0, 10)}.xlsx"`)
+    return buildPaymentWorkbook(exportRows.rows, paymentTotal, query)
+  }
+
+  params.push(pagination.pageSize, offset)
+  const rows = await queryRows<PaymentSummaryRow>(
+    `${rowSql} limit $${params.length - 1} offset $${params.length}`,
     params,
   )
 
@@ -406,10 +477,9 @@ export default defineEventHandler(async (event) => {
     ? await loadPaymentCamAdvanceMatches(authMe.user.societyId, query)
     : []
   const camAdvanceRows = camAdvanceMatches.map(mapCamAdvanceMatchToPaymentRow)
-  const paymentTotal = Number(totalResult.rows[0]?.count ?? 0)
-
   return createApiSuccess(event, {
     ...createPaginatedResult(rows.rows, paymentTotal, pagination),
+    collectedAmount: totalResult.rows[0]?.collectedAmount ?? '0',
     camAdvanceMatches: camAdvanceRows,
   })
 })

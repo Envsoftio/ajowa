@@ -376,6 +376,9 @@ const statusSeverity = (status: DgBalance['status']) => {
 
       <AppDataTable
         :value="balances"
+        export-source="/api/admin/billing/dg-balances"
+        :export-query="buildQuery()"
+        export-name="dg-balances"
         :loading="pending"
         paginator
         :first="tableFirst"

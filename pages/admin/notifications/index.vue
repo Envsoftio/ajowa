@@ -669,6 +669,9 @@ watch(
 
       <AppDataTable
         :value="rows"
+        export-source="/api/admin/notifications"
+        :export-query="{ search: query.search, status: query.status === allNotificationStatuses ? undefined : query.status }"
+        export-name="notifications"
         :loading="pending"
         :lazy="true"
         paginator

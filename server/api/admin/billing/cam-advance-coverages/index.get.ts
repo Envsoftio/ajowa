@@ -1,7 +1,9 @@
+import * as XLSX from 'xlsx/xlsx.mjs'
 import { createPaginatedSuccess } from '~/server/utils/api'
 import { requireRole } from '~/server/utils/auth'
 import { getDatabasePool } from '~/server/utils/database'
-import { parseListQuery } from '~/server/utils/master-data'
+import { getQuerySafe, parseListQuery } from '~/server/utils/master-data'
+import { setEventHeader } from '~/server/utils/http-event'
 import type { CamAdvanceCoverage } from '~/types/domain'
 
 type CoverageRow = {
@@ -54,8 +56,66 @@ const mapCoverage = (row: CoverageRow): CamAdvanceCoverage => ({
   updatedAt: row.updated_at,
 })
 
+const exportLimit = 10000
+
+const buildCoverageWorkbook = (
+  items: CamAdvanceCoverage[],
+  total: number,
+  filters: {
+    search: string | undefined
+    state: string | undefined
+    source: string | undefined
+  },
+) => {
+  const workbook = XLSX.utils.book_new()
+  const worksheet = XLSX.utils.json_to_sheet(
+    items.length
+      ? items.map((item) => ({
+          Block: item.blockName,
+          Flat: item.flatNumber,
+          'Unit type': item.unitType,
+          'Billing contact': item.primaryResidentName ?? '',
+          'Covered from': item.coveredFrom,
+          'Covered until': item.coveredUntil,
+          Amount: item.amount ?? '',
+          Source: item.source,
+          Reference: item.reference ?? '',
+          Notes: item.notes ?? '',
+          State: item.isActive ? 'Active' : 'Inactive',
+          'Created at': item.createdAt,
+          'Updated at': item.updatedAt,
+        }))
+      : [{ Note: 'No CAM advance records found for the selected filters.' }],
+  )
+  const summary = XLSX.utils.json_to_sheet([
+    { Metric: 'Report', Value: 'CAM advance coverage' },
+    { Metric: 'Search', Value: filters.search ?? '' },
+    { Metric: 'State', Value: filters.state || 'All records' },
+    { Metric: 'Source', Value: filters.source || 'All sources' },
+    { Metric: 'Matching rows', Value: total },
+    { Metric: 'Exported rows', Value: items.length },
+    { Metric: 'Export limit', Value: exportLimit },
+    {
+      Metric: 'Export note',
+      Value:
+        total > items.length
+          ? `Exported first ${items.length} of ${total} matching rows. Narrow filters to export a smaller set.`
+          : 'All matching rows exported.',
+    },
+    {
+      Metric: 'Exported amount',
+      Value: items.reduce((sum, item) => sum + Number(item.amount ?? 0), 0),
+    },
+    { Metric: 'Generated at', Value: new Date().toISOString() },
+  ])
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'CAM Advance')
+  XLSX.utils.book_append_sheet(workbook, summary, 'Summary')
+  return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer
+}
+
 export default defineEventHandler(async (event) => {
   const authMe = await requireRole(event, ['ADMIN', 'MANAGER'])
+  const rawQuery = getQuerySafe(event)
   const query = parseListQuery(event)
   const pool = getDatabasePool()
   const where: string[] = ['cac.society_id = $1']
@@ -63,7 +123,9 @@ export default defineEventHandler(async (event) => {
 
   if (query.search) {
     values.push(`%${query.search}%`)
-    where.push(`(f.flat_number ilike $${values.length} or b.name ilike $${values.length} or u.full_name ilike $${values.length} or cac.reference ilike $${values.length})`)
+    where.push(
+      `(f.flat_number ilike $${values.length} or b.name ilike $${values.length} or u.full_name ilike $${values.length} or cac.reference ilike $${values.length})`,
+    )
   }
 
   const flatFilter = query.filters.flatId?.[0]
@@ -84,19 +146,18 @@ export default defineEventHandler(async (event) => {
   } else if (stateFilter === 'inactive') {
     where.push('cac.is_active = false')
   } else if (stateFilter === 'current') {
-    where.push('cac.is_active = true and cac.covered_from <= current_date and cac.covered_until >= current_date')
+    where.push(
+      'cac.is_active = true and cac.covered_from <= current_date and cac.covered_until >= current_date',
+    )
   } else if (stateFilter === 'expired') {
     where.push('cac.covered_until < current_date')
   }
 
   const whereSql = where.join(' and ')
-  const orderBy = sortColumns[query.sortBy ?? 'coveredUntil'] ?? 'cac.covered_until'
+  const orderBy =
+    sortColumns[query.sortBy ?? 'coveredUntil'] ?? 'cac.covered_until'
   const direction = query.sortDirection === 'asc' ? 'asc' : 'desc'
-  values.push(query.pageSize, (query.page - 1) * query.pageSize)
-
-  const [dataResult, countResult] = await Promise.all([
-    pool.query<CoverageRow>(
-      `
+  const selectSql = `
         select
           cac.id,
           cac.society_id,
@@ -128,13 +189,9 @@ export default defineEventHandler(async (event) => {
         ) u on true
         where ${whereSql}
         order by ${orderBy} ${direction}, b.sort_order asc, ${flatNumberSortExpression} asc, f.flat_number asc
-        limit $${values.length - 1}
-        offset $${values.length}
-      `,
-      values,
-    ),
-    pool.query<{ count: string }>(
       `
+  const countPromise = pool.query<{ count: string }>(
+    `
         select count(*)::text as count
         from cam_advance_coverages cac
         inner join flats f on f.id = cac.flat_id
@@ -150,8 +207,44 @@ export default defineEventHandler(async (event) => {
         ) u on true
         where ${whereSql}
       `,
-      values.slice(0, values.length - 2),
+    values,
+  )
+
+  if (rawQuery.export === 'xlsx' || rawQuery.export === 'excel') {
+    const [dataResult, countResult] = await Promise.all([
+      pool.query<CoverageRow>(`${selectSql} limit $${values.length + 1}`, [
+        ...values,
+        exportLimit,
+      ]),
+      countPromise,
+    ])
+    setEventHeader(
+      event,
+      'content-type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
+    setEventHeader(
+      event,
+      'content-disposition',
+      `attachment; filename="cam-advance-${new Date().toISOString().slice(0, 10)}.xlsx"`,
+    )
+    return buildCoverageWorkbook(
+      dataResult.rows.map(mapCoverage),
+      Number(countResult.rows[0]?.count ?? 0),
+      {
+        search: query.search,
+        state: query.filters.state?.[0],
+        source: query.filters.source?.[0],
+      },
+    )
+  }
+
+  const [dataResult, countResult] = await Promise.all([
+    pool.query<CoverageRow>(
+      `${selectSql} limit $${values.length + 1} offset $${values.length + 2}`,
+      [...values, query.pageSize, (query.page - 1) * query.pageSize],
     ),
+    countPromise,
   ])
 
   return createPaginatedSuccess(
