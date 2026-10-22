@@ -437,6 +437,10 @@ const camAdvanceAdjustmentAmount = (due: MaintenanceDue) =>
       ? sum + adjustment
       : sum
   }, 0)
+const paidCamPeriodAmount = (due: MaintenanceDue) =>
+  isPaidCamPeriod(due) && due.paidAmount === 0
+    ? due.totalAmount + camAdvanceAdjustmentAmount(due)
+    : due.paidAmount
 const hasCamAdvanceAdjustment = (due: MaintenanceDue) =>
   camAdvanceAdjustmentAmount(due) > 0 ||
   due.chargeBreakdown.some(
@@ -1856,10 +1860,13 @@ watch(
             </div>
           </template>
         </Column>
-        <Column field="paidAmount" header="Applied to bill">
+        <Column field="paidAmount" header="Paid / covered">
           <template #body="{ data: row }">
             <div class="billing-balance-cell">
-              <strong>{{ formatMoney(row.paidAmount) }}</strong>
+              <strong>{{ formatMoney(paidCamPeriodAmount(row)) }}</strong>
+              <span v-if="isPaidCamPeriod(row) && paidCamPeriodAmount(row) > row.paidAmount">
+                Generated quarter charge covered by advance payment
+              </span>
               <template v-if="appliedCreditAmount(row) > 0">
                 <span>Payments {{ formatMoney(appliedPaymentAmount(row)) }}</span>
                 <span>{{ appliedCreditLabel(row) }} {{ formatMoney(appliedCreditAmount(row)) }}</span>
@@ -2059,6 +2066,9 @@ watch(
             <span v-else>
               {{ formatMoney(due.paidAmount) }} applied to
               {{ formatMoney(due.totalAmount) }}
+            </span>
+            <span v-if="isPaidCamPeriod(due) && paidCamPeriodAmount(due) > due.paidAmount">
+              {{ formatMoney(paidCamPeriodAmount(due)) }} generated quarter charge covered by advance payment
             </span>
             <span v-if="appliedCreditAmount(due) > 0">
               Payments {{ formatMoney(appliedPaymentAmount(due)) }} ·
