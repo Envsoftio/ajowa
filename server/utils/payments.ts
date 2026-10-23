@@ -435,6 +435,21 @@ const getPaymentPolicy = async (client: PoolClient, societyId: string) => {
   }
 }
 
+export const takeTenureBills = <T extends { computedBalance: number; computedLateFee: number }>(
+  dues: T[],
+  tenureMonths: number,
+) => {
+  let principalBearingBills = 0
+
+  return dues.filter((due) => {
+    if (principalBearingBills >= tenureMonths) return false
+    if (due.computedBalance - due.computedLateFee > 0.005) {
+      principalBearingBills += 1
+    }
+    return true
+  })
+}
+
 const selectAllocatableDues = async (
   client: PoolClient,
   input: {
@@ -483,11 +498,6 @@ const selectAllocatableDues = async (
     )`)
   }
 
-  const limitClause =
-    input.mode === 'TENURE_PACK' && input.tenureMonths
-      ? `limit ${Number(input.tenureMonths)}`
-      : ''
-
   const result = await client.query<DueRow>(
     `
       select
@@ -514,7 +524,6 @@ const selectAllocatableDues = async (
       inner join billing_periods bp on bp.id = md.billing_period_id
       where ${filters.join(' and ')}
       order by bp.start_date asc, md.due_date asc, md.created_at asc
-      ${limitClause}
       ${input.lockRows ? 'for update of md' : ''}
     `,
     params,
@@ -540,7 +549,7 @@ const selectAllocatableDues = async (
     result.rows.map((due) => due.id),
   )
 
-  return result.rows.map((due) => {
+  const allocatableDues = result.rows.map((due) => {
     const paymentEvents = paymentEventsByDueId.get(due.id) ?? []
     const computed = computeDgAwareBillingDueAmounts(
       {
@@ -574,6 +583,10 @@ const selectAllocatableDues = async (
       computedStatus: computed.status,
     }
   })
+
+  return input.mode === 'TENURE_PACK' && input.tenureMonths
+    ? takeTenureBills(allocatableDues, input.tenureMonths)
+    : allocatableDues
 }
 
 const previewPaymentAllocationWithClient = async (
@@ -3021,7 +3034,7 @@ export const enqueueReceiptReadyNotification = async (paymentId: string) => {
   }
 }
 
-export const searchPaymentByReference = async (reference: string) =>
+export const searchPaymentByReference = async (reference: string, societyId: string) =>
   queryRows(
     `
       select
@@ -3036,10 +3049,13 @@ export const searchPaymentByReference = async (reference: string) =>
         f.flat_number
       from payments p
       left join flats f on f.id = p.received_for_flat_id
-      where lower(coalesce(p.utr_reference, '')) = lower($1)
-         or lower(coalesce(p.bank_reference, '')) = lower($1)
-         or lower(coalesce(p.gateway_payment_id, '')) = lower($1)
+      where p.society_id = $2
+        and (
+          lower(coalesce(p.utr_reference, '')) = lower($1)
+          or lower(coalesce(p.bank_reference, '')) = lower($1)
+          or lower(coalesce(p.gateway_payment_id, '')) = lower($1)
+        )
       order by p.created_at desc
     `,
-    [reference],
+    [reference, societyId],
   )

@@ -2257,6 +2257,7 @@ const onProofFileChange = async (event: Event) => {
             <label v-if="paymentEditForm.allocationMode === 'TENURE_PACK'">
               <span class="field-label">Tenure months <span class="required-marker">*</span></span>
               <InputText v-model="paymentEditForm.tenureMonths" inputmode="numeric" :invalid="Boolean(paymentEditFieldError('tenureMonths'))" />
+              <small class="field-help">Earlier unpaid late fees are covered first; they do not use a tenure slot.</small>
               <small v-if="paymentEditFieldError('tenureMonths')" class="field-error">{{ paymentEditFieldError('tenureMonths') }}</small>
             </label>
             <label v-if="paymentEditShowsAdvanceScope">

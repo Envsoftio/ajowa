@@ -625,7 +625,10 @@ const previewAllocation = async () => {
 }
 
 const checkDuplicateReference = async () => {
-  if (!referenceValue.value) return
+  if (!referenceValue.value) {
+    duplicate.value = null
+    return null
+  }
   duplicatePending.value = true
 
   try {
@@ -634,6 +637,7 @@ const checkDuplicateReference = async () => {
     })
     duplicate.value = response.data
     form.allowDuplicateUtr = response.data.duplicate ? form.allowDuplicateUtr : false
+    return response.data
   } finally {
     duplicatePending.value = false
   }
@@ -705,6 +709,20 @@ const submitPayment = async () => {
 
   saving.value = true
   try {
+    if (needsReference.value && !form.allowDuplicateUtr) {
+      const referenceCheck = await checkDuplicateReference()
+      if (referenceCheck?.duplicate) {
+        setFieldError('reference', 'This UTR/reference is already linked to a payment.')
+        toast.add({
+          severity: 'warn',
+          summary: 'Reference already used',
+          detail: 'Check the existing payment before recording another one. Use the actual new reference or an approved duplicate override.',
+          life: 10000,
+        })
+        return
+      }
+    }
+
     const response = await api<PaymentCreateResponse>('/api/payments', {
       method: 'POST',
       body: {
@@ -987,6 +1005,7 @@ const resetForm = () => {
             <label v-if="form.allocationMode === 'TENURE_PACK'">
               <span class="field-label">Tenure months <span class="required-marker">*</span></span>
               <InputText v-model="form.tenureMonths" inputmode="numeric" :invalid="Boolean(fieldError('tenureMonths'))" />
+              <small class="field-help">Earlier unpaid late fees are covered first; they do not use a tenure slot.</small>
               <small v-if="fieldError('tenureMonths')" class="field-error">{{ fieldError('tenureMonths') }}</small>
             </label>
             <label v-if="form.allocationMode === 'ADVANCE_ONLY'">
